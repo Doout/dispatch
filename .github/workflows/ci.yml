@@ -41,5 +41,6 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Containerfile
           push: false
           tags: dispatch:test
