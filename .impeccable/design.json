@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-03T03:45:00Z",
+  "title": "Design System: Dispatch",
+  "extensions": {
+    "colorMeta": {
+      "graphite-rail": { "role": "neutral", "displayName": "Graphite Rail", "canonical": "#101b25", "tonalRamp": ["#101b25", "#1b2b38", "#33434f", "#5d6a75", "#91a4b2", "#b9c7d1", "#d8e2e9", "#f8fafb"] },
+      "mineral-canvas": { "role": "neutral", "displayName": "Mineral Canvas", "canonical": "#edf1f4", "tonalRamp": ["#17212b", "#33434f", "#5d6a75", "#91a4b2", "#c7d0d7", "#dce3e8", "#edf1f4", "#fbfcfc"] },
+      "signal-blue": { "role": "primary", "displayName": "Signal Blue", "canonical": "#075dcc", "tonalRamp": ["#03234d", "#043c82", "#064ca6", "#075dcc", "#3d7fd5", "#78a8e3", "#b5d0f1", "#e8f1fc"] },
+      "ready-green": { "role": "secondary", "displayName": "Ready Green", "canonical": "#08783d", "tonalRamp": ["#032a17", "#045128", "#08783d", "#169a57", "#48b878", "#82d0a2", "#bce5cd", "#e6f4eb"] },
+      "exception-red": { "role": "tertiary", "displayName": "Exception Red", "canonical": "#b4232d", "tonalRamp": ["#420b10", "#73151d", "#921d26", "#b4232d", "#ce5861", "#df8c93", "#efbdc1", "#fdecee"] },
+      "amber-demo": { "role": "tertiary", "displayName": "Amber Demo", "canonical": "#a95b00", "tonalRamp": ["#3d2000", "#6d3a00", "#8b4a00", "#a95b00", "#ca7b1a", "#e6a64f", "#f3ce91", "#fff1dd"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Movement Heading", "purpose": "Names the current operational surface." },
+      "body": { "displayName": "Operator Text", "purpose": "Inventory, descriptions, and actions." },
+      "evidence": { "displayName": "Immutable Evidence", "purpose": "Commits, digests, timestamps, and logs." }
+    },
+    "shadows": [
+      { "name": "record-rest", "value": "0 3px 6px rgba(31, 47, 59, .08)", "purpose": "Identifies a selectable movement record." },
+      { "name": "record-selected", "value": "0 0 0 2px rgba(7,93,204,.16), 0 5px 10px rgba(31,47,59,.1)", "purpose": "Pins the record shown in the evidence dossier." }
+    ],
+    "motion": [
+      { "name": "rail-reveal", "value": "240ms cubic-bezier(.2,.8,.2,1)", "purpose": "Reveals the mobile navigation rail." },
+      { "name": "reduced-motion", "value": "0.01ms", "purpose": "Collapses nonessential animation when requested." }
+    ],
+    "breakpoints": [
+      { "name": "compact-desktop", "value": "1180px" },
+      { "name": "stacked-workbench", "value": "960px" },
+      { "name": "mobile", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single high-confidence operator action in a region.",
+      "html": "<button class=\"ds-primary\">DEPLOY APP</button>",
+      "css": ".ds-primary{min-height:42px;padding:0 16px;color:#fff;background:#075dcc;border:1px solid #075dcc;border-radius:7px;box-shadow:0 3px 8px rgba(7,67,145,.18);font:700 13px Arial,sans-serif}.ds-primary:hover{background:#064ca6}.ds-primary:active{transform:translateY(1px)}.ds-primary:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(7,93,204,.24)}"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "description": "A secondary inventory or inspection action.",
+      "html": "<button class=\"ds-quiet\">MANAGE INVENTORY</button>",
+      "css": ".ds-quiet{min-height:42px;padding:0 16px;color:#17212b;background:#f9fbfc;border:1px solid #aebbc5;border-radius:7px;font:700 13px Arial,sans-serif}.ds-quiet:hover{background:#fff;border-color:#7f909e}.ds-quiet:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(7,93,204,.24);border-color:#075dcc}"
+    },
+    {
+      "name": "Operator Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "A compact source, target, or configuration field.",
+      "html": "<input class=\"ds-field\" value=\"https://github.com/doout/app.git\" aria-label=\"Repository URL\">",
+      "css": ".ds-field{width:100%;min-height:44px;padding:0 11px;color:#17212b;background:#fff;border:1px solid #aebbc5;border-radius:6px;font:400 13px Arial,sans-serif}.ds-field:focus{outline:0;border-color:#075dcc;box-shadow:0 0 0 3px rgba(7,93,204,.24)}"
+    },
+    {
+      "name": "Rail Navigation Item",
+      "kind": "nav",
+      "description": "The selected global control-plane destination.",
+      "html": "<nav class=\"ds-rail\"><a class=\"ds-nav-active\" href=\"#\">MOVEMENT BOARD</a></nav>",
+      "css": ".ds-rail{padding:10px;background:#101b25}.ds-nav-active{display:flex;align-items:center;min-height:44px;padding:0 12px;color:#fff;background:#203343;border:1px solid #344957;border-radius:7px;box-shadow:inset 1px 0 0 #708797;text-decoration:none;font:600 14px Arial,sans-serif}.ds-nav-active:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(7,93,204,.24)}"
+    },
+    {
+      "name": "Dispatch Record",
+      "kind": "custom",
+      "refersTo": "dispatch-record",
+      "description": "The signature source-to-target movement record.",
+      "html": "<button class=\"ds-record\"><i></i><span><strong>checkout-api</strong><small>f7e9d1a0 · local-docker</small></span><b>CHECKING</b></button>",
+      "css": ".ds-record{position:relative;display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:12px;width:100%;min-height:92px;padding:0 18px 0 12px;text-align:left;color:#17212b;background:#fbfcfc;border:1px solid #075dcc;border-radius:9px;box-shadow:0 0 0 2px rgba(7,93,204,.16),0 5px 10px rgba(31,47,59,.1)}.ds-record:before{content:'';position:absolute;inset:0 auto 0 0;width:4px;background:#075dcc}.ds-record i{width:27px;height:27px;border:1.5px solid #075dcc;border-radius:50%}.ds-record span{display:grid;gap:7px}.ds-record strong{font:700 15px Arial,sans-serif}.ds-record small{color:#5d6a75;font:600 11px Consolas,monospace}.ds-record b{color:#075dcc;font:700 11px Arial,sans-serif}.ds-record:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(7,93,204,.24)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Dispatch Workbench",
+    "overview": "Dispatch feels like an operator's physical work surface translated into software: factual, evidence-first, and organized around movement records. Calm mineral surfaces and a dark rail preserve the meaning of sparse semantic signals.",
+    "keyCharacteristics": ["Evidence-first and exceptions-first hierarchy", "Compact records with explicit handoff stages", "Reserved semantic color and mostly flat structural surfaces", "Responsive document flow with keyboard-visible controls"],
+    "rules": [
+      { "name": "The Semantic Signal Rule", "body": "Never use green, red, or amber as decoration; each must communicate a current operational fact.", "section": "colors" },
+      { "name": "The Evidence Type Rule", "body": "Use monospace only where exact character identity matters.", "section": "typography" },
+      { "name": "The Structural Depth Rule", "body": "Shadows identify interaction or selection, never decorate static containers.", "section": "elevation" }
+    ],
+    "dos": ["Do put urgent and active records before completed history.", "Do keep source, commit, target, spec digest, state, and log evidence inspectable.", "Do preserve 44px mobile controls, visible keyboard focus, and reduced-motion behavior."],
+    "donts": ["Don't turn the workbench into a card-grid metrics dashboard.", "Don't use semantic status colors for visual variety.", "Don't create dead navigation or fixed mobile panels that obscure operator actions."]
+  }
+}

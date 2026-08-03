@@ -1,0 +1,18 @@
+services:
+  dispatch:
+    build:
+      context: .
+      dockerfile: Containerfile
+    restart: unless-stopped
+    environment:
+      DISPATCH_ADDR: 0.0.0.0:8080
+      DATABASE_URL: /data/dispatch.db
+      DISPATCH_EXECUTOR: simulation
+      DISPATCH_ADMIN_TOKEN: ${DISPATCH_ADMIN_TOKEN:?set DISPATCH_ADMIN_TOKEN}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - dispatch-data:/data
+
+volumes:
+  dispatch-data:

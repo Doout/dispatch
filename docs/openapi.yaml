@@ -1,0 +1,196 @@
+openapi: 3.1.0
+info:
+  title: Dispatch controller API
+  version: 0.1.0
+  description: Private, single-operator deployment control-plane API.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /overview:
+    get:
+      operationId: getOverview
+      responses:
+        "200":
+          description: Current inventory and recent deployment evidence.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+  /projects:
+    get:
+      operationId: listProjects
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+    post:
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        "201": { description: Project created. }
+  /servers:
+    get:
+      operationId: listServers
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+    post:
+      operationId: createServer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, address]
+              properties:
+                name: { type: string }
+                address: { type: string }
+                runtime: { type: string, enum: [docker] }
+                agentMode: { type: string }
+      responses:
+        "201": { description: Server inventory record created. }
+  /apps:
+    get:
+      operationId: listApps
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+    post:
+      operationId: createApp
+      responses:
+        "201": { description: Application specification created. }
+  /apps/{appId}/deployments:
+    post:
+      operationId: startDeployment
+      parameters:
+        - $ref: "#/components/parameters/AppID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                commitSha: { type: string, default: HEAD }
+      responses:
+        "202":
+          description: Deployment accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /deployments:
+    get:
+      operationId: listDeployments
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /deployments/{deploymentId}:
+    get:
+      operationId: getDeployment
+      parameters:
+        - $ref: "#/components/parameters/DeploymentID"
+      responses:
+        "200":
+          description: Deployment evidence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /deployments/{deploymentId}/logs:
+    get:
+      operationId: listDeploymentLogs
+      parameters:
+        - $ref: "#/components/parameters/DeploymentID"
+        - in: query
+          name: after
+          schema: { type: integer, format: int64, default: 0 }
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /deployments/{deploymentId}/events:
+    get:
+      operationId: streamDeploymentEvents
+      parameters:
+        - $ref: "#/components/parameters/DeploymentID"
+      responses:
+        "200":
+          description: Server-sent log and state events.
+          content:
+            text/event-stream: {}
+  /deployments/{deploymentId}/cancel:
+    post:
+      operationId: cancelDeployment
+      parameters:
+        - $ref: "#/components/parameters/DeploymentID"
+      responses:
+        "204": { description: Cancellation requested. }
+        "409": { $ref: "#/components/responses/Problem" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    AppID:
+      in: path
+      name: appId
+      required: true
+      schema: { type: string }
+    DeploymentID:
+      in: path
+      name: deploymentId
+      required: true
+      schema: { type: string }
+  responses:
+    JSONList:
+      description: JSON array.
+      content:
+        application/json:
+          schema: { type: array, items: {} }
+    Problem:
+      description: RFC 9457-style problem response.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Overview:
+      type: object
+      required: [demo, projects, servers, apps, deployments]
+      properties:
+        demo: { type: boolean }
+        projects: { type: array, items: { type: object } }
+        servers: { type: array, items: { type: object } }
+        apps: { type: array, items: { type: object } }
+        deployments: { type: array, items: { $ref: "#/components/schemas/Deployment" } }
+    Deployment:
+      type: object
+      required: [id, appId, commitSha, specDigest, state, message, createdAt]
+      properties:
+        id: { type: string }
+        appId: { type: string }
+        commitSha: { type: string }
+        specDigest: { type: string }
+        state:
+          type: string
+          enum: [queued, fetching, building, starting, checking, routing, succeeded, failed, cancelled]
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+    Problem:
+      type: object
+      required: [status, title, detail]
+      properties:
+        status: { type: integer }
+        title: { type: string }
+        detail: { type: string }

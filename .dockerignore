@@ -1,0 +1,12 @@
+.git
+.github
+.impeccable
+web/node_modules
+node_modules
+web/*.tsbuildinfo
+dispatch
+dispatch-agent
+dispatch.db*
+data
+.env*
+!.env.example

@@ -1,0 +1,12 @@
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dispatch-agent ./cmd/dispatch-agent
+
+FROM docker:29-cli
+COPY --from=build /out/dispatch-agent /usr/local/bin/dispatch-agent
+RUN addgroup -S dispatch && adduser -S -G dispatch dispatch
+EXPOSE 9090
+ENTRYPOINT ["/usr/local/bin/dispatch-agent"]

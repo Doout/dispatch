@@ -1,0 +1,73 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/doout/dispatch/internal/api"
+	"github.com/doout/dispatch/internal/config"
+	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/store"
+)
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if err := run(logger); err != nil {
+		logger.Error("dispatch stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(logger *slog.Logger) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if _, err := secretcrypto.OpenFile(cfg.MasterKeyFile); err != nil {
+		return err
+	}
+	ctx := context.Background()
+	data, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer data.Close()
+	if err := data.Migrate(ctx); err != nil {
+		return err
+	}
+	if cfg.Demo {
+		if err := data.SeedDemo(ctx); err != nil {
+			return err
+		}
+	}
+	var executor deploy.Executor = deploy.SimulationExecutor{}
+	if cfg.Executor == "docker" {
+		executor = deploy.DockerExecutor{}
+	}
+	deployments := deploy.NewService(data, executor)
+	server := &http.Server{
+		Addr: cfg.Addr, Handler: api.New(data, deployments, cfg.Demo, cfg.AdminToken, logger),
+		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
+	}
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-shutdownCtx.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = api.Shutdown(ctx, server)
+	}()
+	logger.Info("dispatch controller listening", "addr", cfg.Addr, "executor", cfg.Executor, "demo", cfg.Demo)
+	err = server.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
