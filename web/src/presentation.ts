@@ -1,4 +1,6 @@
-import { Deployment, DeploymentState } from "./api";
+import { Deployment, DeploymentState, Overview } from "./api";
+
+export type SetupStage = "server" | "project" | "app" | "complete";
 
 export const stages = ["planned", "building", "checking", "live"] as const;
 type Stage = typeof stages[number];
@@ -43,4 +45,11 @@ export function groupDeployments(deployments: Deployment[]) {
     attention: deployments.filter((item) => item.state !== "succeeded" && item.state !== "cancelled"),
     history: deployments.filter((item) => item.state === "succeeded" || item.state === "cancelled"),
   };
+}
+
+export function setupStage(data: Overview): SetupStage {
+  if (!data.servers.some((server) => server.state === "ready")) return "server";
+  if (data.projects.length === 0) return "project";
+  if (data.apps.length === 0) return "app";
+  return "complete";
 }

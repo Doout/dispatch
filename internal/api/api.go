@@ -199,8 +199,13 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 		a.notFoundOrInternal(w, err, "Project")
 		return
 	}
-	if _, err := a.store.GetServer(r.Context(), input.ServerID); err != nil {
+	server, err := a.store.GetServer(r.Context(), input.ServerID)
+	if err != nil {
 		a.notFoundOrInternal(w, err, "Server")
+		return
+	}
+	if server.State != "ready" {
+		problem(w, http.StatusConflict, "Server not ready", "Choose a ready server or complete its enrollment before defining an application.")
 		return
 	}
 	if input.Branch == "" {

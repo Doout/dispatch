@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { api, App as AppModel, Deployment, DeploymentLog, getToken, Overview, setToken } from "./api";
-import { groupDeployments, relative, short, stages, stageIndex, stateStage, statusTone } from "./presentation";
+import { InventorySetup, OnboardingView } from "./Onboarding";
+import { groupDeployments, relative, setupStage, short, stages, stageIndex, stateStage, statusTone } from "./presentation";
 
 type Panel = "evidence" | "deploy" | "setup";
 
@@ -36,13 +37,24 @@ export default function DispatchApp() {
   }, [selected?.id]);
 
   const groups = useMemo(() => groupDeployments(overview?.deployments ?? []), [overview]);
+  const currentSetupStage = overview ? setupStage(overview) : "server";
+  const needsSetup = currentSetupStage !== "complete";
+  const primaryLabel = currentSetupStage === "server" ? "Add server" : currentSetupStage === "project" ? "Create project" : currentSetupStage === "app" ? "Define app" : "Deploy app";
+  const openInventory = () => {
+    if (needsSetup) {
+      document.getElementById("onboarding")?.scrollIntoView({ behavior: "smooth" });
+      const fieldID = currentSetupStage === "server" ? "server-name" : currentSetupStage === "project" ? "project-name" : "application-name";
+      window.requestAnimationFrame(() => document.getElementById(fieldID)?.focus());
+    } else setPanel("setup");
+    setMobileNav(false);
+  };
 
   if (needsAuth) return <AuthScreen onAuthenticated={() => { setNeedsAuth(false); setLoading(true); void load(); }} />;
 
   return (
     <div className="shell">
-      <a className="skip-link" href="#movement-board">Skip to deployment board</a>
-      <Nav open={mobileNav} onClose={() => setMobileNav(false)} demo={overview?.demo ?? false} />
+      <a className="skip-link" href={needsSetup ? "#onboarding" : "#movement-board"}>Skip to {needsSetup ? "setup" : "deployment board"}</a>
+      <Nav open={mobileNav} onClose={() => setMobileNav(false)} demo={overview?.demo ?? false} needsSetup={needsSetup} servers={overview?.servers.length ?? 0} apps={overview?.apps.length ?? 0} deployments={overview?.deployments.length ?? 0} onInventory={openInventory} />
       <main className="workspace">
         <header className="context-bar">
           <button className="menu-button" aria-label="Open navigation" aria-controls="primary-navigation" aria-expanded={mobileNav} onClick={() => setMobileNav(true)}><span /><span /><span /></button>
@@ -51,43 +63,44 @@ export default function DispatchApp() {
           <div className="context-cell optional"><span>Applications</span><strong>{overview?.apps.length ?? 0}</strong></div>
           <div className="context-actions">
             {overview?.demo && <span className="demo-badge"><i /> Demo data</span>}
-            <button className="primary-button" onClick={() => setPanel(overview?.apps.length ? "deploy" : "setup")}>Deploy app</button>
+            <button className="primary-button" onClick={() => needsSetup ? openInventory() : setPanel("deploy")}>{primaryLabel}</button>
           </div>
         </header>
 
         {error && <div className="error-banner" role="alert"><strong>Dispatch lost the inventory feed.</strong><span>{error}</span><button onClick={() => void load()}>Retry now</button></div>}
-        <div className="workbench">
+        {loading && <div className="workbench loading-workbench"><section className="movement"><LoadingBoard /></section><aside className="dossier"><div className="dossier-empty"><Mark /><h2>Loading inventory</h2><p>Reading targets, application specs, and deployment evidence.</p></div></aside></div>}
+        {!loading && overview && needsSetup && <OnboardingView data={overview} onChanged={() => load()} />}
+        {!loading && overview && !needsSetup && <div className="workbench">
           <section className="movement" id="movement-board" aria-labelledby="movement-title">
             <div className="page-heading">
               <div><h1 id="movement-title">Movement board</h1><p>Revisions ordered by urgency, with every handoff visible.</p></div>
               <button className="quiet-button" onClick={() => setPanel("setup")}>Manage inventory</button>
             </div>
 
-            {loading && <LoadingBoard />}
-            {!loading && overview && overview.deployments.length === 0 && <EmptyBoard onSetup={() => setPanel("setup")} />}
-            {!loading && groups.attention.length > 0 && <DeploymentGroup title="Needs attention" count={groups.attention.length} deployments={groups.attention} selectedID={selected?.id} onSelect={(id) => { setSelectedID(id); setPanel("evidence"); }} />}
-            {!loading && groups.history.length > 0 && <DeploymentGroup title="Deployment history" count={groups.history.length} deployments={groups.history} selectedID={selected?.id} onSelect={(id) => { setSelectedID(id); setPanel("evidence"); }} />}
+            {overview.deployments.length === 0 && <EmptyBoard onDeploy={() => setPanel("deploy")} />}
+            {groups.attention.length > 0 && <DeploymentGroup title="Needs attention" count={groups.attention.length} deployments={groups.attention} selectedID={selected?.id} onSelect={(id) => { setSelectedID(id); setPanel("evidence"); }} />}
+            {groups.history.length > 0 && <DeploymentGroup title="Deployment history" count={groups.history.length} deployments={groups.history} selectedID={selected?.id} onSelect={(id) => { setSelectedID(id); setPanel("evidence"); }} />}
           </section>
 
           <aside className={`dossier ${panel !== "evidence" ? "editing" : ""}`} aria-label={panel === "evidence" ? "Deployment evidence" : "Deployment action"}>
             {panel === "evidence" && <Evidence deployment={selected} logs={logs} onCancel={async () => { if (!selected) return; try { await api.cancel(selected.id); await load(); } catch (cause) { setError((cause as Error).message); } }} />}
-            {panel === "deploy" && overview && <DeployPanel apps={overview.apps} onClose={() => setPanel("evidence")} onComplete={async (id) => { setSelectedID(id); setPanel("evidence"); await load(); }} />}
-            {panel === "setup" && overview && <SetupPanel data={overview} onClose={() => setPanel("evidence")} onChanged={() => load()} />}
+            {panel === "deploy" && <DeployPanel apps={overview.apps} onClose={() => setPanel("evidence")} onComplete={async (id) => { setSelectedID(id); setPanel("evidence"); await load(); }} />}
+            {panel === "setup" && <SetupPanel data={overview} onClose={() => setPanel("evidence")} onChanged={() => load()} />}
           </aside>
-        </div>
+        </div>}
       </main>
     </div>
   );
 }
 
-function Nav({ open, onClose, demo }: { open: boolean; onClose: () => void; demo: boolean }) {
+function Nav({ open, onClose, demo, needsSetup, servers, apps, deployments, onInventory }: { open: boolean; onClose: () => void; demo: boolean; needsSetup: boolean; servers: number; apps: number; deployments: number; onInventory: () => void }) {
   return <><div className={`nav-scrim ${open ? "visible" : ""}`} onClick={onClose} /><nav id="primary-navigation" className={`rail ${open ? "open" : ""}`} aria-label="Primary">
     <div className="wordmark"><Mark /><span>Dispatch</span><button aria-label="Close navigation" onClick={onClose}>×</button></div>
     <div className="nav-list">
-      <a className="active" href="#movement-board"><NavGlyph kind="movement" />Movement board</a>
-      <a href="#deployment-history"><NavGlyph kind="release" />Deployments</a>
-      <span className="disabled" aria-disabled="true"><NavGlyph kind="app" />Applications<small>Planned</small></span>
-      <span className="disabled" aria-disabled="true"><NavGlyph kind="target" />Targets<small>Planned</small></span>
+      {needsSetup ? <span className="disabled" aria-disabled="true"><NavGlyph kind="movement" />Movement board<small>Locked</small></span> : <a className="active" href="#movement-board" onClick={onClose}><NavGlyph kind="movement" />Movement board</a>}
+      {deployments ? <a href="#deployment-history" onClick={onClose}><NavGlyph kind="release" />Deployments<small>{deployments}</small></a> : <span className="disabled" aria-disabled="true"><NavGlyph kind="release" />Deployments<small>Empty</small></span>}
+      <button onClick={onInventory}><NavGlyph kind="app" />Applications<small>{apps || "Setup"}</small></button>
+      <button className={needsSetup ? "active" : ""} onClick={onInventory}><NavGlyph kind="target" />Targets<small>{servers || "Add"}</small></button>
       <span className="disabled" aria-disabled="true"><NavGlyph kind="settings" />Settings<small>Planned</small></span>
     </div>
     <div className="rail-foot"><div className="control-mark"><span className={demo ? "demo-dot" : "live-dot"} /><div><strong>Control plane</strong><span>{demo ? "Demonstration mode" : "Private controller"}</span></div></div><div className="operator"><span>DO</span><div><strong>doout</strong><small>Administrator</small></div></div></div>
@@ -95,7 +108,7 @@ function Nav({ open, onClose, demo }: { open: boolean; onClose: () => void; demo
 }
 
 function Mark() { return <svg viewBox="0 0 36 36" aria-hidden="true"><path d="M5 8.5 18 2l13 6.5v18L18 34 5 26.5Z" fill="none" stroke="currentColor" strokeWidth="2"/><path d="m5 8.5 13 7 13-7M18 15.5V34" fill="none" stroke="currentColor" strokeWidth="2"/><path d="m10 11 8-4 8 4-8 4Z" fill="currentColor"/></svg>; }
-function NavGlyph({ kind }: { kind: string }) { return <span className={`nav-glyph ${kind}`} aria-hidden="true"><i /><b /></span>; }
+function NavGlyph({ kind }: { kind: string }) { return <span className={`nav-glyph nav-${kind}`} aria-hidden="true"><i /><b /></span>; }
 
 function DeploymentGroup({ title, count, deployments, selectedID, onSelect }: { title: string; count: number; deployments: Deployment[]; selectedID?: string; onSelect: (id: string) => void }) {
   return <div className="deployment-group" id={title === "Deployment history" ? "deployment-history" : undefined}>
@@ -142,31 +155,16 @@ function DeployPanel({ apps, onClose, onComplete }: { apps: AppModel[]; onClose:
 }
 
 function SetupPanel({ data, onClose, onChanged }: { data: Overview; onClose: () => void; onChanged: () => Promise<void> }) {
-  return <ActionPanel title="Deployment inventory" intro="Create the minimum chain Dispatch needs: project, target, then application." onClose={onClose}>
-    <div className="setup-sequence"><SetupProject done={data.projects.length > 0} onChanged={onChanged} /><SetupServer done={data.servers.length > 0} onChanged={onChanged} /><SetupApp data={data} done={data.apps.length > 0} onChanged={onChanged} /></div>
+  return <ActionPanel title="Deployment inventory" intro="Infrastructure comes first: add a ready target, then projects and applications." onClose={onClose}>
+    <InventorySetup data={data} onChanged={onChanged} />
   </ActionPanel>;
 }
 
 function ActionPanel({ title, intro, onClose, children }: { title: string; intro: string; onClose: () => void; children: React.ReactNode }) { return <><div className="action-head"><button onClick={onClose} aria-label="Close action panel">×</button><span>Operator action</span><h2>{title}</h2><p>{intro}</p></div>{children}</>; }
-
-function SetupProject({ done, onChanged }: { done: boolean; onChanged: () => Promise<void> }) {
-  const [name, setName] = useState(""), [description, setDescription] = useState("");
-  return <SetupStep title="Project" done={done}><form onSubmit={async (e) => { e.preventDefault(); await api.createProject({ name, description }); setName(""); await onChanged(); }}><input aria-label="Project name" placeholder="Platform apps" value={name} onChange={(e) => setName(e.target.value)} required /><input aria-label="Project description" placeholder="Optional description" value={description} onChange={(e) => setDescription(e.target.value)} /><button disabled={!name}>Create project</button></form></SetupStep>;
-}
-function SetupServer({ done, onChanged }: { done: boolean; onChanged: () => Promise<void> }) {
-  const [name, setName] = useState(""), [address, setAddress] = useState("local");
-  return <SetupStep title="Docker target" done={done}><form onSubmit={async (e) => { e.preventDefault(); await api.createServer({ name, address, runtime: "docker" }); setName(""); await onChanged(); }}><input aria-label="Server name" placeholder="build-01" value={name} onChange={(e) => setName(e.target.value)} required /><input aria-label="Server address" placeholder="local or hostname" value={address} onChange={(e) => setAddress(e.target.value)} required /><button disabled={!name || !address}>Connect target</button></form></SetupStep>;
-}
-function SetupApp({ data, done, onChanged }: { data: Overview; done: boolean; onChanged: () => Promise<void> }) {
-  const [name, setName] = useState(""), [repo, setRepo] = useState(""), [buildType, setBuildType] = useState("dockerfile");
-  const ready = data.projects[0] && data.servers[0];
-  return <SetupStep title="Application" done={done}><form onSubmit={async (e) => { e.preventDefault(); if (!ready) return; await api.createApp({ projectId: data.projects[0].id, serverId: data.servers[0].id, name, sourceRepo: repo, branch: "main", buildType, contextPath: ".", dockerfilePath: "Dockerfile", composePath: "compose.yml", containerPort: 8080, domain: "" }); setName(""); setRepo(""); await onChanged(); }}><input aria-label="Application name" placeholder="checkout-api" value={name} onChange={(e) => setName(e.target.value)} required /><input aria-label="HTTPS repository URL" placeholder="https://github.com/doout/app.git" value={repo} onChange={(e) => setRepo(e.target.value)} required /><select aria-label="Build type" value={buildType} onChange={(e) => setBuildType(e.target.value)}><option value="dockerfile">Dockerfile</option><option value="compose">Compose</option></select><button disabled={!ready || !name || !repo}>Create application</button></form></SetupStep>;
-}
-function SetupStep({ title, done, children }: { title: string; done: boolean; children: React.ReactNode }) { return <section className={`setup-step ${done ? "done" : ""}`}><div><span>{done ? "✓" : "○"}</span><h3>{title}</h3></div>{children}</section>; }
 
 function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
   const [token, update] = useState(getToken()), [error, setError] = useState("");
   return <main className="auth-screen"><div className="auth-mark"><Mark /></div><div className="auth-copy"><span>Private control plane</span><h1>Authenticate to Dispatch</h1><p>Use the administrator token configured on this controller. It remains in this browser tab only.</p><form onSubmit={async (e) => { e.preventDefault(); setToken(token); try { await api.overview(); onAuthenticated(); } catch { setError("The controller rejected this token."); } }}><label>Administrator token<input type="password" value={token} onChange={(e) => update(e.target.value)} autoFocus required /></label>{error && <p role="alert">{error}</p>}<button className="primary-button">Open control plane</button></form></div></main>;
 }
 function LoadingBoard() { return <div className="loading-board" aria-label="Loading deployment inventory"><span /><span /><span /></div>; }
-function EmptyBoard({ onSetup }: { onSetup: () => void }) { return <div className="empty-board"><div className="empty-path"><i>source</i><span /><i>target</i><span /><i>live</i></div><h2>No movement records yet</h2><p>Create a project, connect a Docker target, and define an application. Dispatch will record the first revision from acceptance to live.</p><button className="primary-button" onClick={onSetup}>Build deployment chain</button></div>; }
+function EmptyBoard({ onDeploy }: { onDeploy: () => void }) { return <div className="empty-board"><div className="empty-path"><i>source</i><span /><i>target</i><span /><i>live</i></div><h2>The chain is ready</h2><p>The application contract and target are in place. Dispatch the first revision to begin its evidence trail.</p><button className="primary-button" onClick={onDeploy}>Deploy first revision</button></div>; }

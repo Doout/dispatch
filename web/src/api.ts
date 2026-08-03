@@ -44,6 +44,6 @@ export const api = {
   deploy: (appId: string, commitSha: string) => request<Deployment>(`/api/v1/apps/${appId}/deployments`, { method: "POST", body: JSON.stringify({ commitSha }) }),
   cancel: (id: string) => request<void>(`/api/v1/deployments/${id}/cancel`, { method: "POST" }),
   createProject: (body: { name: string; description: string }) => request<Project>("/api/v1/projects", { method: "POST", body: JSON.stringify(body) }),
-  createServer: (body: { name: string; address: string; runtime: string }) => request<Server>("/api/v1/servers", { method: "POST", body: JSON.stringify(body) }),
+  createServer: (body: { name: string; address: string; runtime: string; agentMode?: string }) => request<Server>("/api/v1/servers", { method: "POST", body: JSON.stringify(body) }),
   createApp: (body: Record<string, unknown>) => request<App>("/api/v1/apps", { method: "POST", body: JSON.stringify(body) }),
 };

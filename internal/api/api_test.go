@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -50,6 +51,43 @@ func TestHealthDoesNotRequireToken(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", response.Code)
+	}
+}
+
+func TestApplicationRequiresReadyServer(t *testing.T) {
+	handler, cleanup := testHandler(t, "")
+	defer cleanup()
+
+	serverBody := bytes.NewBufferString(`{"name":"remote-01","address":"10.0.0.8","runtime":"docker"}`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/servers", serverBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected server creation to return 201, got %d: %s", response.Code, response.Body.String())
+	}
+	var server core.Server
+	if err := json.NewDecoder(response.Body).Decode(&server); err != nil {
+		t.Fatal(err)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/overview", nil))
+	var overview core.Overview
+	if err := json.NewDecoder(response.Body).Decode(&overview); err != nil {
+		t.Fatal(err)
+	}
+	appBody, err := json.Marshal(map[string]any{
+		"projectId":  overview.Projects[0].ID,
+		"serverId":   server.ID,
+		"name":       "pending-app",
+		"sourceRepo": "https://example.test/pending.git",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/apps", bytes.NewReader(appBody)))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected pending target to return 409, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
