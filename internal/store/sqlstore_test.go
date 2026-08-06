@@ -75,6 +75,39 @@ func TestSQLiteAdminCredentialIsSingleUse(t *testing.T) {
 	}
 }
 
+func TestSQLiteAdminSessionsSurviveStoreReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "sessions.db")
+	data, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := data.CreateAdminSession(ctx, "hashed-token", now.Add(time.Hour), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	valid, err := data.AdminSessionValid(ctx, "hashed-token", now.Add(time.Minute))
+	if err != nil || !valid {
+		t.Fatalf("persisted session was not valid: valid=%v err=%v", valid, err)
+	}
+	valid, err = data.AdminSessionValid(ctx, "hashed-token", now.Add(2*time.Hour))
+	if err != nil || valid {
+		t.Fatalf("expired session remained valid: valid=%v err=%v", valid, err)
+	}
+}
+
 func TestSQLiteMigrationAndDemoSeed(t *testing.T) {
 	ctx := context.Background()
 	data, err := Open(ctx, filepath.Join(t.TempDir(), "dispatch.db"))
@@ -344,8 +377,12 @@ func TestSQLitePreviewEventLifecycleIsIdempotent(t *testing.T) {
 	if err := data.CreateApp(ctx, app); err != nil {
 		t.Fatal(err)
 	}
+	secret := core.Secret{ID: "secret-registry", Name: "Registry token", EnvironmentVariable: "REGISTRY_TOKEN", EncryptedValue: "encrypted-token", CreatedAt: now, UpdatedAt: now}
+	if err := data.CreateSecret(ctx, secret); err != nil {
+		t.Fatal(err)
+	}
 	trigger := core.EventTrigger{ID: "trigger-preview", AppID: app.ID, Provider: core.EventProviderGitHub, Repository: "acme/checkout", Command: "/preview", Enabled: true,
-		PreDeployHook: "echo pre", PostDeployHook: "echo post", CreatedAt: now, UpdatedAt: now}
+		PreDeployHook: "echo pre", PostDeployHook: "echo post", SecretIDs: []string{secret.ID}, CreatedAt: now, UpdatedAt: now}
 	storedTrigger, created, err := data.CreateEventTrigger(ctx, trigger)
 	if err != nil || !created || storedTrigger.ID != trigger.ID {
 		t.Fatalf("unexpected trigger creation: trigger=%#v created=%v err=%v", storedTrigger, created, err)
@@ -366,6 +403,9 @@ func TestSQLitePreviewEventLifecycleIsIdempotent(t *testing.T) {
 	}
 	if preview.PreDeployHook != "echo pre" || preview.PostDeployHook != "echo post" || preview.HookEnvironment["DISPATCH_EVENT_ACTOR"] != "octo" {
 		t.Fatalf("event hook snapshot was not persisted: %#v", preview)
+	}
+	if preview.HookEnvironment[core.SecretEnvironmentKey(secret.ID, secret.EnvironmentVariable)] != secret.EncryptedValue {
+		t.Fatalf("encrypted event secret was not snapshotted: %#v", preview.HookEnvironment)
 	}
 	result, err = data.ProcessIncomingEvent(ctx, comment)
 	if err != nil || !result.Duplicate || len(result.Previews) != 1 || result.Previews[0].ID != preview.ID {

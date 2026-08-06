@@ -111,6 +111,77 @@ func (s *SQLStore) CreateAdminCredential(ctx context.Context, credential AdminCr
 	return err
 }
 
+func (s *SQLStore) CreateAdminSession(ctx context.Context, tokenHash string, expiresAt, createdAt time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, s.q(`DELETE FROM admin_sessions WHERE expires_at<=?`), stamp(createdAt)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO admin_sessions(token_hash,expires_at,created_at) VALUES(?,?,?)`), tokenHash, stamp(expiresAt), stamp(createdAt)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLStore) AdminSessionValid(ctx context.Context, tokenHash string, now time.Time) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM admin_sessions WHERE token_hash=? AND expires_at>?`), tokenHash, stamp(now)).Scan(&count)
+	return count == 1, err
+}
+
+func (s *SQLStore) CreateSecret(ctx context.Context, secret core.Secret) error {
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO secrets(id,name,environment_variable,encrypted_value,created_at,updated_at) VALUES(?,?,?,?,?,?)`),
+		secret.ID, secret.Name, secret.EnvironmentVariable, secret.EncryptedValue, stamp(secret.CreatedAt), stamp(secret.UpdatedAt))
+	return err
+}
+
+func (s *SQLStore) UpdateSecret(ctx context.Context, secret core.Secret) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE secrets SET name=?,environment_variable=?,encrypted_value=?,updated_at=? WHERE id=?`),
+		secret.Name, secret.EnvironmentVariable, secret.EncryptedValue, stamp(secret.UpdatedAt), secret.ID)
+	return changed(result, err)
+}
+
+func (s *SQLStore) DeleteSecret(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM secrets WHERE id=?`), id)
+	return changed(result, err)
+}
+
+func (s *SQLStore) ListSecrets(ctx context.Context) ([]core.Secret, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,environment_variable,encrypted_value,created_at,updated_at FROM secrets ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.Secret{}
+	for rows.Next() {
+		item, err := scanSecret(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLStore) GetSecret(ctx context.Context, id string) (core.Secret, error) {
+	item, err := scanSecret(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,environment_variable,encrypted_value,created_at,updated_at FROM secrets WHERE id=?`), id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	return item, err
+}
+
+func scanSecret(row scanner) (core.Secret, error) {
+	var item core.Secret
+	var created, updated string
+	err := row.Scan(&item.ID, &item.Name, &item.EnvironmentVariable, &item.EncryptedValue, &created, &updated)
+	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
+	return item, err
+}
+
 func (s *SQLStore) CreateProject(ctx context.Context, project core.Project) error {
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO projects(id,name,description,created_at) VALUES(?,?,?,?)`),
 		project.ID, project.Name, project.Description, stamp(project.CreatedAt))
@@ -611,13 +682,25 @@ func (s *SQLStore) CreateEventTrigger(ctx context.Context, trigger core.EventTri
 	if !errors.Is(err, ErrNotFound) {
 		return core.EventTrigger{}, false, err
 	}
-	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO event_triggers(
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return core.EventTrigger{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO event_triggers(
         id,app_id,provider,repository,command,enabled,pre_deploy_hook,post_deploy_hook,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`),
 		trigger.ID, trigger.AppID, string(trigger.Provider), trigger.Repository, trigger.Command, trigger.Enabled,
 		trigger.PreDeployHook, trigger.PostDeployHook, stamp(trigger.CreatedAt), stamp(trigger.UpdatedAt))
 	if err == nil {
+		if err = s.replaceEventTriggerSecrets(ctx, tx, trigger.ID, trigger.SecretIDs); err != nil {
+			return core.EventTrigger{}, false, err
+		}
+		if err = tx.Commit(); err != nil {
+			return core.EventTrigger{}, false, err
+		}
 		return trigger, true, nil
 	}
+	_ = tx.Rollback()
 	// A concurrent, identical request is idempotent.
 	existing, lookupErr := s.eventTriggerForApp(ctx, trigger.AppID, trigger.Provider, trigger.Repository)
 	if lookupErr == nil {
@@ -632,6 +715,9 @@ func (s *SQLStore) eventTriggerForApp(ctx context.Context, appID string, provide
 	item, err := scanEventTrigger(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
+	}
+	if err == nil {
+		item.SecretIDs, err = s.eventTriggerSecretIDs(ctx, item.ID)
 	}
 	return item, err
 }
@@ -657,7 +743,19 @@ func (s *SQLStore) ListEventTriggers(ctx context.Context, appID string) ([]core.
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range items {
+		items[index].SecretIDs, err = s.eventTriggerSecretIDs(ctx, items[index].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 func scanEventTrigger(row scanner) (core.EventTrigger, error) {
@@ -672,9 +770,50 @@ func scanEventTrigger(row scanner) (core.EventTrigger, error) {
 }
 
 func (s *SQLStore) UpdateEventTrigger(ctx context.Context, trigger core.EventTrigger) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE event_triggers SET command=?,enabled=?,pre_deploy_hook=?,post_deploy_hook=?,updated_at=? WHERE id=?`),
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE event_triggers SET command=?,enabled=?,pre_deploy_hook=?,post_deploy_hook=?,updated_at=? WHERE id=?`),
 		trigger.Command, trigger.Enabled, trigger.PreDeployHook, trigger.PostDeployHook, stamp(trigger.UpdatedAt), trigger.ID)
-	return changed(result, err)
+	if err := changed(result, err); err != nil {
+		return err
+	}
+	if err := s.replaceEventTriggerSecrets(ctx, tx, trigger.ID, trigger.SecretIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLStore) replaceEventTriggerSecrets(ctx context.Context, tx *sql.Tx, triggerID string, secretIDs []string) error {
+	var err error
+	if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM event_trigger_secrets WHERE trigger_id=?`), triggerID); err != nil {
+		return err
+	}
+	for _, id := range secretIDs {
+		if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO event_trigger_secrets(trigger_id,secret_id) VALUES(?,?)`), triggerID, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQLStore) eventTriggerSecretIDs(ctx context.Context, triggerID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, s.q(`SELECT secret_id FROM event_trigger_secrets WHERE trigger_id=? ORDER BY secret_id`), triggerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *SQLStore) DeleteEventTrigger(ctx context.Context, id string) error {
@@ -776,12 +915,29 @@ func (s *SQLStore) ProcessIncomingEvent(ctx context.Context, event core.Incoming
 			return core.EventResult{}, err
 		}
 		for _, trigger := range triggers {
+			hookEnvironment := event.HookEnvironment()
+			secretRows, secretErr := tx.QueryContext(ctx, s.q(`SELECT s.id,s.environment_variable,s.encrypted_value
+				FROM secrets s JOIN event_trigger_secrets ets ON ets.secret_id=s.id WHERE ets.trigger_id=?`), trigger.ID)
+			if secretErr != nil {
+				return core.EventResult{}, secretErr
+			}
+			for secretRows.Next() {
+				var id, environmentVariable, encryptedValue string
+				if scanErr := secretRows.Scan(&id, &environmentVariable, &encryptedValue); scanErr != nil {
+					_ = secretRows.Close()
+					return core.EventResult{}, scanErr
+				}
+				hookEnvironment[core.SecretEnvironmentKey(id, environmentVariable)] = encryptedValue
+			}
+			if secretErr = secretRows.Close(); secretErr != nil {
+				return core.EventResult{}, secretErr
+			}
 			preview := core.PreviewEnvironment{
 				ID: newID(), TriggerID: trigger.ID, TemplateAppID: trigger.AppID, Provider: event.Provider,
 				Repository: event.Repository, PullRequestNumber: event.PullRequestNumber, HeadRef: event.HeadRef,
 				HeadSHA: event.HeadSHA, BaseRef: event.BaseRef, DeliveryID: event.DeliveryID,
 				SourceCommentID: event.SourceCommentID, TriggeredBy: event.Actor, State: core.PreviewRequested,
-				PreDeployHook: trigger.PreDeployHook, PostDeployHook: trigger.PostDeployHook, HookEnvironment: event.HookEnvironment(),
+				PreDeployHook: trigger.PreDeployHook, PostDeployHook: trigger.PostDeployHook, HookEnvironment: hookEnvironment,
 				Message: "Preview requested", CreatedAt: event.ReceivedAt, UpdatedAt: event.ReceivedAt,
 			}
 			_, insertErr := tx.ExecContext(ctx, s.q(`INSERT INTO preview_environments(

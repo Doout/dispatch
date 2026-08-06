@@ -297,8 +297,35 @@ type EventTrigger struct {
 	Enabled        bool          `json:"enabled"`
 	PreDeployHook  string        `json:"preDeployHook,omitempty"`
 	PostDeployHook string        `json:"postDeployHook,omitempty"`
+	SecretIDs      []string      `json:"secretIds"`
 	CreatedAt      time.Time     `json:"createdAt"`
 	UpdatedAt      time.Time     `json:"updatedAt"`
+}
+
+// Secret is write-only except for its identifying metadata. EncryptedValue is
+// persisted by the store but is never serialized to API clients.
+type Secret struct {
+	ID                  string    `json:"id"`
+	Name                string    `json:"name"`
+	EnvironmentVariable string    `json:"environmentVariable"`
+	EncryptedValue      string    `json:"-"`
+	CreatedAt           time.Time `json:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"`
+}
+
+const SecretEnvironmentPrefix = "__DISPATCH_SECRET__"
+
+func SecretEnvironmentKey(id, environmentVariable string) string {
+	return SecretEnvironmentPrefix + id + "__" + environmentVariable
+}
+
+func ParseSecretEnvironmentKey(key string) (id, environmentVariable string, ok bool) {
+	value, ok := strings.CutPrefix(key, SecretEnvironmentPrefix)
+	if !ok {
+		return "", "", false
+	}
+	id, environmentVariable, ok = strings.Cut(value, "__")
+	return id, environmentVariable, ok && id != "" && environmentVariable != ""
 }
 
 type IncomingEvent struct {
@@ -394,13 +421,15 @@ type EventResult struct {
 }
 
 type Overview struct {
-	Demo             bool                 `json:"demo"`
-	Projects         []Project            `json:"projects"`
-	Servers          []Server             `json:"servers"`
-	Apps             []App                `json:"apps"`
-	Deployments      []Deployment         `json:"deployments"`
-	EventTriggers    []EventTrigger       `json:"eventTriggers"`
-	Previews         []PreviewEnvironment `json:"previews"`
-	PreviewGroups    []PreviewGroup       `json:"previewGroups"`
-	PreviewGroupRuns []PreviewGroupRun    `json:"previewGroupRuns"`
+	Demo                    bool                 `json:"demo"`
+	SecretStorageConfigured bool                 `json:"secretStorageConfigured"`
+	Projects                []Project            `json:"projects"`
+	Servers                 []Server             `json:"servers"`
+	Apps                    []App                `json:"apps"`
+	Deployments             []Deployment         `json:"deployments"`
+	EventTriggers           []EventTrigger       `json:"eventTriggers"`
+	Previews                []PreviewEnvironment `json:"previews"`
+	PreviewGroups           []PreviewGroup       `json:"previewGroups"`
+	PreviewGroupRuns        []PreviewGroupRun    `json:"previewGroupRuns"`
+	Secrets                 []Secret             `json:"secrets"`
 }

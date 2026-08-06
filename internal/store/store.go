@@ -19,6 +19,13 @@ type Store interface {
 	SeedDemo(context.Context) error
 	GetAdminCredential(context.Context) (AdminCredential, error)
 	CreateAdminCredential(context.Context, AdminCredential) error
+	CreateAdminSession(context.Context, string, time.Time, time.Time) error
+	AdminSessionValid(context.Context, string, time.Time) (bool, error)
+	CreateSecret(context.Context, core.Secret) error
+	UpdateSecret(context.Context, core.Secret) error
+	DeleteSecret(context.Context, string) error
+	ListSecrets(context.Context) ([]core.Secret, error)
+	GetSecret(context.Context, string) (core.Secret, error)
 
 	CreateProject(context.Context, core.Project) error
 	UpdateProject(context.Context, core.Project) error
