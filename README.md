@@ -20,7 +20,7 @@ The Docker executor is deliberately capability-gated. Development/demo mode can 
 
 Applications can use an HTTPS Git repository or a Compose definition pasted directly into the console. Pasted definitions are stored with the application, validated by Docker Compose, and applied without cloning a repository. Image-based services work directly; relative build contexts still require repository source files. The Templates tab saves Dockerfile, Compose, or Helm definitions without deploying them; event rules and preview groups instantiate runnable copies when work is triggered.
 
-Helm applications accept OCI chart references or chart names from HTTPS repositories. Deployments use `helm upgrade --install` with optional chart versions and values overrides. Cleanup uses `helm uninstall`, which gives preview automation a deterministic close path. Private OCI access uses the standard Helm registry configuration. HTTPS repositories can use `HELM_REPOSITORY_USERNAME` and `HELM_REPOSITORY_PASSWORD`; these values remain environment-only credentials.
+Helm applications accept OCI chart references or chart names from HTTPS repositories. Deployments and cleanup run through Helm's embedded Go SDK, so the controller does not require a `helm` binary. Upgrade/install operations support optional chart versions and layered values overrides, and cleanup gives preview automation a deterministic close path. Private OCI access uses the standard Helm registry configuration. HTTPS repositories can use `HELM_REPOSITORY_USERNAME` and `HELM_REPOSITORY_PASSWORD`; these values remain environment-only credentials.
 
 ## Pull request previews
 
@@ -118,7 +118,7 @@ Open <http://localhost:8080>. Set `DISPATCH_DEMO=true` to load clearly labeled l
 
 When the Docker socket is available, Dispatch automatically registers this controller as a ready `local-docker` server. That inventory record is reconciled at startup, becomes unavailable when the socket is absent, and cannot be edited or deleted. The standard Compose deployment mounts the socket automatically; the **Add server** flow is for remote Docker hosts and Kubernetes clusters. Set `DOCKER_GID` to the host group that owns the socket when it differs from the Compose default of `1001`.
 
-Kubernetes servers accept pasted or uploaded kubeconfig YAML, or a controller-mounted file. An optional CA bundle can also be pasted or uploaded. Stored kubeconfigs and CA bundles are never returned by the API; Dispatch materializes them as private temporary files only while Helm or kubectl is running. If the selected cluster already includes `certificate-authority-data`, no separate CA is needed. Stored kubeconfigs must embed client certificates, client keys, and token data instead of referencing external files.
+Kubernetes servers accept pasted or uploaded kubeconfig YAML, or a controller-mounted file. An optional CA bundle can also be pasted or uploaded. Stored kubeconfigs and CA bundles are never returned by the API; Dispatch materializes them as private temporary files only for the duration of a Kubernetes operation. If the selected cluster already includes `certificate-authority-data`, no separate CA is needed. Stored kubeconfigs must embed client certificates, client keys, and token data instead of referencing external files.
 
 Mounted kubeconfig files remain available through `DISPATCH_KUBECONFIG_DIR`, which is exposed read-only at `/kubeconfigs`. Dispatch verifies that the file and selected context are readable before marking the target ready.
 
