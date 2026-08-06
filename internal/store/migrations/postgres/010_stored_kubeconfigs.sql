@@ -1,0 +1,2 @@
+ALTER TABLE servers ADD COLUMN kubeconfig_data TEXT NOT NULL DEFAULT '';
+ALTER TABLE servers ADD COLUMN kube_ca_data TEXT NOT NULL DEFAULT '';

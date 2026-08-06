@@ -8,5 +8,6 @@ dispatch
 dispatch-agent
 dispatch.db*
 data
+kubeconfigs
 .env*
 !.env.example

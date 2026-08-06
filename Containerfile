@@ -1,7 +1,7 @@
-FROM node:22-alpine AS web
+FROM node:22.13-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/pnpm-lock.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN npm install --global pnpm@11.18.0 && pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
@@ -14,8 +14,11 @@ COPY --from=web /src/internal/ui/dist ./internal/ui/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dispatch ./cmd/dispatch && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dispatch-agent ./cmd/dispatch-agent
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM docker:cli
+RUN apk add --no-cache ca-certificates git helm kubectl && \
+    addgroup -S -g 65532 dispatch && \
+    adduser -S -D -H -u 65532 -G dispatch dispatch
 COPY --from=build /out/dispatch /usr/local/bin/dispatch
-USER nonroot:nonroot
+USER dispatch:dispatch
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/dispatch"]

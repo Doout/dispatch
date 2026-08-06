@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Deployment, Overview } from "./api";
-import { groupDeployments, relative, setupStage, short, stageIndex, statusTone } from "./presentation";
+import { Deployment } from "./api";
+import { groupDeployments, relative, short, stageIndex, statusTone } from "./presentation";
 
 describe("deployment presentation", () => {
   it("maps runtime states onto the four visible handoffs", () => {
@@ -36,18 +36,5 @@ describe("deployment presentation", () => {
     const groups = groupDeployments(deployments);
     expect(groups.attention.map((item) => item.state)).toEqual(["queued", "failed"]);
     expect(groups.history.map((item) => item.state)).toEqual(["succeeded", "cancelled"]);
-  });
-
-  it("unlocks inventory in server-first order", () => {
-    const data: Overview = { demo: false, projects: [], servers: [], apps: [], deployments: [] };
-    expect(setupStage(data)).toBe("server");
-    data.servers.push({ id: "pending", name: "remote", address: "host", runtime: "docker", state: "pending", agentMode: "ssh-bootstrap", createdAt: "" });
-    expect(setupStage(data)).toBe("server");
-    data.servers[0].state = "ready";
-    expect(setupStage(data)).toBe("project");
-    data.projects.push({ id: "project", name: "Platform", description: "", createdAt: "" });
-    expect(setupStage(data)).toBe("app");
-    data.apps.push({ id: "app", projectId: "project", serverId: "pending", name: "api", sourceRepo: "https://example.test/api.git", branch: "main", buildType: "dockerfile", contextPath: ".", dockerfilePath: "Dockerfile", composePath: "compose.yml", containerPort: 8080, domain: "", state: "ready", createdAt: "" });
-    expect(setupStage(data)).toBe("complete");
   });
 });

@@ -1,0 +1,3 @@
+ALTER TABLE servers ADD COLUMN kubeconfig_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE servers ADD COLUMN kube_context TEXT NOT NULL DEFAULT '';
+ALTER TABLE servers ADD COLUMN kube_namespace TEXT NOT NULL DEFAULT '';
