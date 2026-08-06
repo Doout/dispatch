@@ -6,8 +6,65 @@ info:
 servers:
   - url: /api/v1
 security:
+  - basicAuth: []
   - bearerAuth: []
 paths:
+  /auth/status:
+    get:
+      operationId: getAuthenticationStatus
+      security: []
+      responses:
+        "200":
+          description: Whether first-run administrator setup is required.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [setupRequired, tokenLoginAvailable]
+                properties:
+                  setupRequired: { type: boolean }
+                  tokenLoginAvailable: { type: boolean }
+  /auth/setup:
+    post:
+      operationId: setupAdministrator
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, minLength: 3, maxLength: 64 }
+                password: { type: string, minLength: 12, maxLength: 72 }
+      responses:
+        "201": { description: First administrator created. }
+        "409": { $ref: "#/components/responses/Problem" }
+  /auth/login:
+    post:
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: Browser session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token: { type: string }
   /overview:
     get:
       operationId: getOverview
@@ -37,6 +94,30 @@ paths:
                 description: { type: string }
       responses:
         "201": { description: Project created. }
+  /projects/{projectId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    put:
+      operationId: updateProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        "200": { description: Project updated. }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteProject
+      responses:
+        "204": { description: Project deleted. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /servers:
     get:
       operationId: listServers
@@ -50,14 +131,74 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, address]
+              required: [name, runtime]
               properties:
                 name: { type: string }
-                address: { type: string }
-                runtime: { type: string, enum: [docker] }
-                agentMode: { type: string }
+                address:
+                  type: string
+                  description: Required for Docker. Kubernetes derives its connection from the selected kubeconfig source.
+                runtime: { type: string, enum: [docker, kubernetes, openshift] }
+                kubernetes: { $ref: "#/components/schemas/KubernetesServerConfig" }
+                agentMode:
+                  type: string
+                  description: Compatibility hint. Manually registered hosts use SSH bootstrap.
       responses:
-        "201": { description: Server inventory record created. }
+        "201": { description: Server inventory record created. Kubernetes targets are validated before becoming ready. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: The local controller target is managed automatically from the Docker socket.
+          $ref: "#/components/responses/Problem"
+  /servers/{serverId}:
+    parameters:
+      - $ref: "#/components/parameters/ServerID"
+    put:
+      operationId: updateServer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                address:
+                  type: string
+                  description: Required when updating a Docker server.
+                kubernetes: { $ref: "#/components/schemas/KubernetesServerConfig" }
+      responses:
+        "200": { description: Server updated. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteServer
+      responses:
+        "204": { description: Server deleted. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /servers/{serverId}/repair:
+    parameters:
+      - $ref: "#/components/parameters/ServerID"
+    post:
+      operationId: repairOpenShiftServer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [loginCommand]
+              properties:
+                loginCommand:
+                  type: string
+                  writeOnly: true
+                  description: Fresh non-interactive oc login command used once to rotate the managed token and rebuild the stored kubeconfig.
+      responses:
+        "200": { description: Managed OpenShift connection repaired. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
   /apps:
     get:
       operationId: listApps
@@ -65,8 +206,229 @@ paths:
         "200": { $ref: "#/components/responses/JSONList" }
     post:
       operationId: createApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, serverId, name]
+              properties:
+                projectId: { type: string }
+                serverId: { type: string }
+                name: { type: string }
+                template:
+                  type: boolean
+                  default: false
+                  description: Saves a reusable definition that is instantiated by event rules or preview groups and cannot be deployed directly.
+                sourceRepo:
+                  type: string
+                  description: HTTPS Git repository. Optional for Compose and Helm applications.
+                composeContent:
+                  type: string
+                  maxLength: 524288
+                  description: Docker Compose definition stored and deployed without Git.
+                branch: { type: string, default: main }
+                buildType: { type: string, enum: [dockerfile, compose, helm] }
+                helmChart:
+                  type: string
+                  description: OCI or HTTPS chart reference, or a relative chart name when helmRepository is set.
+                helmVersion: { type: string }
+                helmRepository:
+                  type: string
+                  format: uri
+                  description: Optional HTTPS chart repository.
+                helmValues:
+                  type: string
+                  maxLength: 524288
+                helmNamespace: { type: string }
+                helmRelease: { type: string }
+                preDeployHook:
+                  type: string
+                  maxLength: 65536
+                  deprecated: true
+                  description: Legacy default for manual deployments. Event rules should define their own hook.
+                postDeployHook:
+                  type: string
+                  maxLength: 65536
+                  deprecated: true
+                  description: Legacy default for manual deployments. Event rules should define their own hook.
       responses:
         "201": { description: Application specification created. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+  /apps/{appId}:
+    parameters:
+      - $ref: "#/components/parameters/AppID"
+    delete:
+      operationId: deleteApp
+      description: Cleans deployed resources, then transactionally deletes the application and its deployment history.
+      responses:
+        "204": { description: Application and dependent history deleted. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /apps/{appId}/event-triggers:
+    post:
+      operationId: createEventTrigger
+      parameters:
+        - $ref: "#/components/parameters/AppID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repository]
+              properties:
+                provider: { type: string, enum: [github], default: github }
+                repository: { type: string, description: Owner and repository name. }
+                command: { type: string, default: /preview }
+                enabled: { type: boolean, default: true }
+                preDeployHook: { type: string, maxLength: 65536 }
+                postDeployHook: { type: string, maxLength: 65536 }
+      responses:
+        "201": { description: Event trigger created. }
+        "400": { $ref: "#/components/responses/Problem" }
+  /event-triggers:
+    get:
+      operationId: listEventTriggers
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /event-triggers/{triggerId}:
+    put:
+      operationId: updateEventTrigger
+      description: Updates the command, enabled state, and deployment hooks used by future event attempts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                command: { type: string, default: /preview }
+                enabled: { type: boolean }
+                preDeployHook: { type: string, maxLength: 65536 }
+                postDeployHook: { type: string, maxLength: 65536 }
+      responses:
+        "200": { description: Event trigger updated. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteEventTrigger
+      responses:
+        "204": { description: Event trigger deleted. }
+        "404": { $ref: "#/components/responses/Problem" }
+  /preview-environments:
+    get:
+      operationId: listPreviewEnvironments
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /preview-groups:
+    get:
+      operationId: listPreviewGroups
+      responses:
+        "200":
+          description: Preview group definitions.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/PreviewGroup" } }
+    post:
+      operationId: createPreviewGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PreviewGroupInput" }
+      responses:
+        "201": { description: Preview group created. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /preview-groups/{previewGroupId}:
+    parameters:
+      - $ref: "#/components/parameters/PreviewGroupID"
+    get:
+      operationId: getPreviewGroup
+      responses:
+        "200":
+          description: Preview group definition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreviewGroup" }
+        "404": { $ref: "#/components/responses/Problem" }
+    put:
+      operationId: updatePreviewGroup
+      description: Updates the configuration used by future attempts. Existing attempt snapshots remain immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PreviewGroupInput" }
+      responses:
+        "200": { description: Preview group updated. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deletePreviewGroup
+      responses:
+        "204": { description: Preview group deleted. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /preview-group-runs:
+    get:
+      operationId: listPreviewGroupRuns
+      parameters:
+        - in: query
+          name: groupId
+          schema: { type: string }
+      responses:
+        "200":
+          description: Preview group runs.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/PreviewGroupRun" } }
+  /preview-group-runs/{previewGroupRunId}:
+    get:
+      operationId: getPreviewGroupRun
+      parameters:
+        - $ref: "#/components/parameters/PreviewGroupRunID"
+      responses:
+        "200":
+          description: Preview group run, sources, components, outputs, and deployment references.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreviewGroupRun" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /preview-group-runs/{previewGroupRunId}/cleanup:
+    post:
+      operationId: cleanupPreviewGroupRun
+      parameters:
+        - $ref: "#/components/parameters/PreviewGroupRunID"
+      responses:
+        "200":
+          description: Preview group cleaned up.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreviewGroupRun" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /events/github:
+    post:
+      operationId: receiveGitHubEvent
+      security: []
+      description: Receives signed issue comment and pull request lifecycle events.
+      responses:
+        "202": { description: Event accepted. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /apps/{appId}/cleanup:
+    post:
+      operationId: cleanupApplication
+      parameters:
+        - $ref: "#/components/parameters/AppID"
+      responses:
+        "204": { description: Application runtime resources removed. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /apps/{appId}/deployments:
     post:
       operationId: startDeployment
@@ -137,10 +499,23 @@ paths:
         "409": { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
     bearerAuth:
       type: http
       scheme: bearer
   parameters:
+    ProjectID:
+      in: path
+      name: projectId
+      required: true
+      schema: { type: string }
+    ServerID:
+      in: path
+      name: serverId
+      required: true
+      schema: { type: string }
     AppID:
       in: path
       name: appId
@@ -149,6 +524,16 @@ components:
     DeploymentID:
       in: path
       name: deploymentId
+      required: true
+      schema: { type: string }
+    PreviewGroupID:
+      in: path
+      name: previewGroupId
+      required: true
+      schema: { type: string }
+    PreviewGroupRunID:
+      in: path
+      name: previewGroupRunId
       required: true
       schema: { type: string }
   responses:
@@ -163,15 +548,119 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    KubernetesServerConfig:
+      type: object
+      properties:
+        source:
+          type: string
+          enum: [stored, path, openshift]
+          description: Store pasted credentials, use a controller-mounted file, or bootstrap a managed OpenShift connection.
+        kubeconfigPath:
+          type: string
+          description: Absolute path to a readable kubeconfig mounted on the controller.
+        kubeconfig:
+          type: string
+          writeOnly: true
+          maxLength: 4194304
+          description: Kubeconfig YAML saved in Dispatch storage. Omit during updates to retain the stored value.
+        certificateAuthority:
+          type: string
+          writeOnly: true
+          maxLength: 1048576
+          description: Optional PEM CA bundle used when the selected cluster does not embed certificate-authority-data.
+        loginCommand:
+          type: string
+          writeOnly: true
+          description: Non-interactive oc login syntax. Dispatch parses it and calls OpenShift APIs directly; the command is never executed or stored.
+        kubeconfigStored:
+          type: boolean
+          readOnly: true
+        certificateAuthorityStored:
+          type: boolean
+          readOnly: true
+        context:
+          type: string
+          description: Existing kubeconfig context. The current context is used when omitted.
+        namespace:
+          type: string
+          default: default
+        openShift:
+          type: object
+          readOnly: true
+          properties:
+            managed: { type: boolean }
+            serviceAccount: { type: string }
+            serviceAccountNamespace: { type: string }
+            tokenSecret: { type: string }
+            connectedAt: { type: string, format: date-time }
     Overview:
       type: object
-      required: [demo, projects, servers, apps, deployments]
+      required: [demo, projects, servers, apps, deployments, previewGroups, previewGroupRuns]
       properties:
         demo: { type: boolean }
         projects: { type: array, items: { type: object } }
         servers: { type: array, items: { type: object } }
         apps: { type: array, items: { type: object } }
         deployments: { type: array, items: { $ref: "#/components/schemas/Deployment" } }
+        previewGroups: { type: array, items: { $ref: "#/components/schemas/PreviewGroup" } }
+        previewGroupRuns: { type: array, items: { $ref: "#/components/schemas/PreviewGroupRun" } }
+    PreviewGroupBinding:
+      type: object
+      required: [source, helmValuePath]
+      properties:
+        source: { type: string, example: service.url }
+        helmValuePath: { type: string, example: config.backendUrl }
+    PreviewGroupComponentInput:
+      type: object
+      required: [appId, alias, repository, defaultBranch, entrypoint, dependsOn]
+      properties:
+        appId: { type: string }
+        alias: { type: string, pattern: "^[a-z][a-z0-9-]{0,30}$" }
+        repository: { type: string, description: Owner and repository name. }
+        defaultBranch: { type: string }
+        entrypoint: { type: boolean }
+        dependsOn: { type: array, items: { type: string } }
+        bindings: { type: array, items: { $ref: "#/components/schemas/PreviewGroupBinding" } }
+        preDeployHook: { type: string, maxLength: 65536 }
+        postDeployHook: { type: string, maxLength: 65536 }
+    PreviewGroupInput:
+      type: object
+      required: [name, command, components]
+      properties:
+        name: { type: string, maxLength: 80 }
+        command: { type: string, default: /preview }
+        enabled: { type: boolean, default: true }
+        components: { type: array, minItems: 1, items: { $ref: "#/components/schemas/PreviewGroupComponentInput" } }
+    PreviewGroup:
+      allOf:
+        - $ref: "#/components/schemas/PreviewGroupInput"
+        - type: object
+          required: [id, enabled, createdAt, updatedAt]
+          properties:
+            id: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    PreviewGroupRun:
+      type: object
+      required: [id, groupId, slug, namespace, state, attempt, sources, components, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        groupId: { type: string }
+        slug: { type: string }
+        namespace: { type: string }
+        state:
+          type: string
+          enum: [requested, deploying, ready, rolling_back, degraded, failed, cleaning, closed]
+        message: { type: string }
+        entrypointUrl: { type: string, format: uri }
+        attempt: { type: integer }
+        sources: { type: array, items: { type: object } }
+        components: { type: array, items: { type: object } }
+        attempts: { type: array, items: { type: object } }
+        group: { $ref: "#/components/schemas/PreviewGroup" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        closedAt: { type: string, format: date-time }
     Deployment:
       type: object
       required: [id, appId, commitSha, specDigest, state, message, createdAt]

@@ -1,6 +1,4 @@
-import { Deployment, DeploymentState, Overview } from "./api";
-
-export type SetupStage = "server" | "project" | "app" | "complete";
+import { Deployment, DeploymentState } from "./api";
 
 export const stages = ["planned", "building", "checking", "live"] as const;
 type Stage = typeof stages[number];
@@ -18,7 +16,7 @@ export const stateStage: Record<DeploymentState, Stage> = {
 };
 
 export function short(value?: string, length = 8) {
-  return value && value.length > length ? value.slice(0, length) : value || "—";
+  return value && value.length > length ? value.slice(0, length) : value || "-";
 }
 
 export function relative(value?: string, now = Date.now()) {
@@ -45,11 +43,4 @@ export function groupDeployments(deployments: Deployment[]) {
     attention: deployments.filter((item) => item.state !== "succeeded" && item.state !== "cancelled"),
     history: deployments.filter((item) => item.state === "succeeded" || item.state === "cancelled"),
   };
-}
-
-export function setupStage(data: Overview): SetupStage {
-  if (!data.servers.some((server) => server.state === "ready")) return "server";
-  if (data.projects.length === 0) return "project";
-  if (data.apps.length === 0) return "app";
-  return "complete";
 }

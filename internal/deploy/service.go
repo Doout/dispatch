@@ -12,22 +12,26 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-var ErrDeploymentActive = errors.New("an active deployment already exists for this app")
+var (
+	ErrDeploymentActive    = errors.New("an active deployment already exists for this app")
+	ErrApplicationTemplate = errors.New("application templates cannot be deployed directly")
+)
 
 type Service struct {
 	store    store.Store
 	executor Executor
 	mu       sync.Mutex
 	cancels  map[string]context.CancelFunc
+	appLocks map[string]*sync.Mutex
 }
 
 func NewService(data store.Store, executor Executor) *Service {
-	return &Service{store: data, executor: executor, cancels: map[string]context.CancelFunc{}}
+	return &Service{store: data, executor: executor, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
 }
 
 func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Deployment, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockApp(appID)
+	defer unlock()
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
 	if err != nil {
 		return core.Deployment{}, err
@@ -39,8 +43,17 @@ func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Depl
 	if err != nil {
 		return core.Deployment{}, err
 	}
+	if app.Template {
+		return core.Deployment{}, ErrApplicationTemplate
+	}
 	if commitSHA == "" {
-		commitSHA = "HEAD"
+		if app.BuildType == core.BuildTypeHelm {
+			commitSHA = "chart"
+		} else if app.ComposeContent != "" {
+			commitSHA = "inline"
+		} else {
+			commitSHA = "HEAD"
+		}
 	}
 	now := time.Now().UTC()
 	deployment := core.Deployment{
@@ -54,7 +67,9 @@ func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Depl
 		return core.Deployment{}, err
 	}
 	jobCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
 	s.cancels[deployment.ID] = cancel
+	s.mu.Unlock()
 	go s.run(jobCtx, deployment)
 	return deployment, nil
 }
@@ -68,6 +83,46 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 	}
 	cancel()
 	return nil
+}
+
+func (s *Service) Cleanup(ctx context.Context, appID string, progress Progress) error {
+	unlock := s.lockApp(appID)
+	defer unlock()
+	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if active != nil {
+		return ErrDeploymentActive
+	}
+	app, err := s.store.GetApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	server, err := s.store.GetServer(ctx, app.ServerID)
+	if err != nil {
+		return err
+	}
+	cleaner, ok := s.executor.(CleanupExecutor)
+	if !ok {
+		return ErrCleanupUnsupported
+	}
+	if progress == nil {
+		progress = func(core.DeploymentState, string) error { return nil }
+	}
+	return cleaner.Cleanup(ctx, app, server, progress)
+}
+
+func (s *Service) lockApp(appID string) func() {
+	s.mu.Lock()
+	lock := s.appLocks[appID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.appLocks[appID] = lock
+	}
+	s.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 func (s *Service) run(ctx context.Context, deployment core.Deployment) {
@@ -89,7 +144,13 @@ func (s *Service) run(ctx context.Context, deployment core.Deployment) {
 	now := time.Now().UTC()
 	lease := now.Add(10 * time.Minute)
 	deployment.StartedAt, deployment.LeaseUntil = &now, &lease
-	if err := s.transition(ctx, &deployment, core.DeploymentFetching, "Preparing source acquisition"); err != nil {
+	preparing := "Preparing source acquisition"
+	if app.BuildType == core.BuildTypeHelm {
+		preparing = "Preparing Helm release"
+	} else if app.ComposeContent != "" {
+		preparing = "Preparing saved Compose definition"
+	}
+	if err := s.transition(ctx, &deployment, core.DeploymentFetching, preparing); err != nil {
 		return
 	}
 	err = s.executor.Deploy(ctx, deployment, app, server, func(state core.DeploymentState, message string) error {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -47,13 +48,24 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 	}
+	local, err := data.ReconcileLocalDockerServer(ctx, dockerSocketAvailable(cfg.DockerSocket))
+	if err != nil {
+		return err
+	}
+	if local != nil {
+		logger.Info("local Docker server reconciled", "server", local.Name, "state", local.State, "socket", cfg.DockerSocket)
+	}
 	var executor deploy.Executor = deploy.SimulationExecutor{}
 	if cfg.Executor == "docker" {
-		executor = deploy.DockerExecutor{}
+		runtime := deploy.RuntimeExecutor{Default: deploy.DockerExecutor{}, Helm: deploy.HelmExecutor{}}
+		executor = deploy.HookExecutor{Next: runtime, Outputs: data}
 	}
 	deployments := deploy.NewService(data, executor)
 	server := &http.Server{
-		Addr: cfg.Addr, Handler: api.New(data, deployments, cfg.Demo, cfg.AdminToken, logger),
+		Addr: cfg.Addr, Handler: api.New(data, deployments, cfg.Demo, api.AuthConfig{
+			AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword,
+		}, logger, api.EventConfig{WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
+			GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken}),
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -70,4 +82,9 @@ func run(logger *slog.Logger) error {
 		return nil
 	}
 	return err
+}
+
+func dockerSocketAvailable(path string) bool {
+	info, err := os.Stat(filepath.Clean(path))
+	return err == nil && info.Mode()&os.ModeSocket != 0
 }

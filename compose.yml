@@ -1,18 +1,57 @@
 services:
+  dispatch-data-init:
+    image: alpine:3.22
+    command: chown -R 65532:65532 /data
+    network_mode: none
+    volumes:
+      - dispatch-data:/data
+
   dispatch:
     build:
       context: .
       dockerfile: Containerfile
+    depends_on:
+      dispatch-data-init:
+        condition: service_completed_successfully
     restart: unless-stopped
+    group_add:
+      - "${DOCKER_GID:-1001}"
     environment:
       DISPATCH_ADDR: 0.0.0.0:8080
       DATABASE_URL: /data/dispatch.db
-      DISPATCH_EXECUTOR: simulation
-      DISPATCH_ADMIN_TOKEN: ${DISPATCH_ADMIN_TOKEN:?set DISPATCH_ADMIN_TOKEN}
+      DISPATCH_EXECUTOR: docker
+      DISPATCH_ADMIN_TOKEN: ${DISPATCH_ADMIN_TOKEN:-}
+      DISPATCH_ADMIN_USERNAME: ${DISPATCH_ADMIN_USERNAME:-}
+      DISPATCH_ADMIN_PASSWORD: ${DISPATCH_ADMIN_PASSWORD:-}
+      DISPATCH_DOCKER_SOCKET: /var/run/docker.sock
+      DISPATCH_GITHUB_WEBHOOK_SECRET: ${DISPATCH_GITHUB_WEBHOOK_SECRET:-}
+      DISPATCH_PREVIEW_COMMAND: ${DISPATCH_PREVIEW_COMMAND:-/preview}
+      DISPATCH_GITHUB_API_URL: ${DISPATCH_GITHUB_API_URL:-https://api.github.com}
+      DISPATCH_GITHUB_TOKEN: ${DISPATCH_GITHUB_TOKEN:-}
+      DISPATCH_GIT_TOKEN: ${DISPATCH_GIT_TOKEN:-}
+      DISPATCH_HOOK_REGISTRY: ${DISPATCH_HOOK_REGISTRY:-}
+      DISPATCH_HOOK_REGISTRY_USERNAME: ${DISPATCH_HOOK_REGISTRY_USERNAME:-}
+      DISPATCH_HOOK_REGISTRY_PASSWORD: ${DISPATCH_HOOK_REGISTRY_PASSWORD:-}
+      HELM_REPOSITORY_USERNAME: ${HELM_REPOSITORY_USERNAME:-}
+      HELM_REPOSITORY_PASSWORD: ${HELM_REPOSITORY_PASSWORD:-}
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - dispatch-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DISPATCH_KUBECONFIG_DIR:-./kubeconfigs}:/kubeconfigs:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dispatch.rule=Host(`dispatch.h.sshlab.top`)"
+      - "traefik.http.routers.dispatch.tls=true"
+      - "traefik.http.routers.dispatch.tls.certresolver=letsencrypt"
+      - "traefik.http.services.dispatch.loadbalancer.server.port=8080"
+    networks:
+      - web
 
 volumes:
   dispatch-data:
+
+networks:
+  web:
+    external: true
