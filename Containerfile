@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dispatch ./cmd/dis
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dispatch-agent ./cmd/dispatch-agent
 
 FROM docker:cli
-RUN apk add --no-cache ca-certificates git helm kubectl && \
+RUN apk add --no-cache ca-certificates git && \
     addgroup -S -g 65532 dispatch && \
     adduser -S -D -H -u 65532 -G dispatch dispatch
 COPY --from=build /out/dispatch /usr/local/bin/dispatch

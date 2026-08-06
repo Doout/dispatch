@@ -25,7 +25,7 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Every transition is recorded before work continues.
 - A controller restart can reclaim an expired deployment lease.
 - Docker execution is opt-in. Simulation is the safe development default.
-- Pasted Kubernetes credentials remain API-write-only in storage and are materialized as mode `0600` temporary files for each Helm or kubectl operation.
+- Pasted Kubernetes credentials remain API-write-only in storage and are materialized as mode `0600` temporary files for each Kubernetes operation.
 - Managed OpenShift connections persist only the cluster-admin service-account kubeconfig. Repair verifies and persists a replacement token Secret before revoking the prior credential.
 
 ## Preview group invariants
