@@ -30,16 +30,20 @@ When the command appears on the first line of a pull request comment from a repo
 
 Preview URLs may contain `{pr}`, `{branch}`, and `{sha}` placeholders. Hooks receive `DISPATCH_APP_ID`, `DISPATCH_APP_NAME`, `DISPATCH_REVISION`, `DISPATCH_SOURCE_REPOSITORY`, `DISPATCH_SOURCE_BRANCH`, `DISPATCH_SERVER_NAME`, `DISPATCH_DEPLOYMENT_URL`, and `DISPATCH_VALUES_FILE`.
 
-Hooks do not inherit controller credentials. Variables deliberately prefixed with `DISPATCH_HOOK_` are passed through for build-specific credentials. A pre-hook can build and publish an image, then provide the Helm override without modifying the saved application:
+Hooks do not inherit controller credentials. Variables deliberately prefixed with `DISPATCH_HOOK_` are passed through for build-specific credentials. Operators can also add write-only values on the **Secrets** page and attach them to an application event rule under **Events → Hooks**. Attached values are encrypted at rest, snapshotted as ciphertext for the event attempt, and decrypted only into that hook process under the configured environment-variable name. Secret storage requires `DISPATCH_MASTER_KEY_FILE`.
+
+An attached `GIT_TOKEN` or `GITHUB_TOKEN` is also used for the event hook's HTTPS source checkout, allowing private GitHub repositories without granting that token to other rules.
+
+A registry rule can attach `REGISTRY`, `REGISTRY_USERNAME`, and `REGISTRY_PASSWORD`, then build and publish an image without modifying the saved application:
 
 ```sh
-printf '%s' "$DISPATCH_HOOK_REGISTRY_PASSWORD" | docker login "$DISPATCH_HOOK_REGISTRY" \
-  --username "$DISPATCH_HOOK_REGISTRY_USERNAME" --password-stdin
-image="$DISPATCH_HOOK_REGISTRY/team/service:$DISPATCH_REVISION"
+printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY" \
+  --username "$REGISTRY_USERNAME" --password-stdin
+image="$REGISTRY/team/service:$DISPATCH_REVISION"
 docker build --tag "$image" .
 docker push "$image"
 printf 'image:\n  repository: %s\n  tag: %s\n' \
-  "$DISPATCH_HOOK_REGISTRY/team/service" "$DISPATCH_REVISION" > "$DISPATCH_VALUES_FILE"
+  "$REGISTRY/team/service" "$DISPATCH_REVISION" > "$DISPATCH_VALUES_FILE"
 ```
 
 ### Linked preview groups
@@ -140,7 +144,7 @@ curl --fail-with-body https://dispatch.example.com/api/v1/auth/setup \
   --data '{"username":"admin","password":"replace-with-a-long-password"}'
 ```
 
-The first successful request stores a bcrypt password hash. Later setup requests return `409 Conflict`. Protected API calls accept HTTP Basic credentials or the optional bearer token. The web console exchanges the password for a 12-hour, memory-only session token.
+The first successful request stores a bcrypt password hash. Later setup requests return `409 Conflict`. Protected API calls accept HTTP Basic credentials or the optional bearer token. The web console exchanges the password for a 12-hour session token, stores the token in browser session storage, and persists only its SHA-256 hash in the controller database so container restarts do not invalidate active sessions.
 
 Schema changes live as ordered SQL files under `internal/store/migrations`; Go only discovers and applies them. See [docs/architecture.md](docs/architecture.md) for system boundaries, [docs/openapi.yaml](docs/openapi.yaml) for the controller contract, [docs/provider-api.md](docs/provider-api.md) for the private provider contract, and [docs/roadmap.md](docs/roadmap.md) for staged scope.
 

@@ -31,7 +31,8 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if _, err := secretcrypto.OpenFile(cfg.MasterKeyFile); err != nil {
+	vault, err := secretcrypto.OpenFile(cfg.MasterKeyFile)
+	if err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -58,14 +59,14 @@ func run(logger *slog.Logger) error {
 	var executor deploy.Executor = deploy.SimulationExecutor{}
 	if cfg.Executor == "docker" {
 		runtime := deploy.RuntimeExecutor{Default: deploy.DockerExecutor{}, Helm: deploy.HelmExecutor{}}
-		executor = deploy.HookExecutor{Next: runtime, Outputs: data}
+		executor = deploy.HookExecutor{Next: runtime, Outputs: data, Vault: vault}
 	}
 	deployments := deploy.NewService(data, executor)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: api.New(data, deployments, cfg.Demo, api.AuthConfig{
 			AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword,
 		}, logger, api.EventConfig{WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
-			GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken}),
+			GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault}),
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

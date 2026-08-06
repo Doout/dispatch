@@ -75,6 +75,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Overview"
+  /secrets:
+    get:
+      operationId: listSecrets
+      description: Lists write-only secret metadata. Values are never returned.
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+    post:
+      operationId: createSecret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, environmentVariable, value]
+              properties:
+                name: { type: string, maxLength: 80 }
+                environmentVariable: { type: string, maxLength: 128 }
+                value: { type: string, maxLength: 65536, writeOnly: true }
+      responses:
+        "201": { description: Encrypted secret created; only metadata is returned. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /secrets/{secretId}:
+    parameters:
+      - name: secretId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: updateSecret
+      description: Updates metadata and optionally rotates the write-only value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, environmentVariable]
+              properties:
+                name: { type: string, maxLength: 80 }
+                environmentVariable: { type: string, maxLength: 128 }
+                value: { type: string, maxLength: 65536, writeOnly: true, description: Omit to retain the current value. }
+      responses:
+        "200": { description: Secret metadata updated. }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteSecret
+      responses:
+        "204": { description: Secret and future event-rule bindings deleted. }
+        "404": { $ref: "#/components/responses/Problem" }
   /projects:
     get:
       operationId: listProjects
@@ -286,6 +337,7 @@ paths:
                 enabled: { type: boolean, default: true }
                 preDeployHook: { type: string, maxLength: 65536 }
                 postDeployHook: { type: string, maxLength: 65536 }
+                secretIds: { type: array, items: { type: string }, description: Write-only secrets exposed to this rule's hooks. }
       responses:
         "201": { description: Event trigger created. }
         "400": { $ref: "#/components/responses/Problem" }
@@ -309,6 +361,7 @@ paths:
                 enabled: { type: boolean }
                 preDeployHook: { type: string, maxLength: 65536 }
                 postDeployHook: { type: string, maxLength: 65536 }
+                secretIds: { type: array, items: { type: string } }
       responses:
         "200": { description: Event trigger updated. }
         "400": { $ref: "#/components/responses/Problem" }

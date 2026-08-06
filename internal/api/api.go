@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -11,12 +12,15 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/events"
 	"github.com/doout/dispatch/internal/groups"
@@ -42,6 +46,7 @@ type EventConfig struct {
 	DefaultCommand string
 	GitHubAPIURL   string
 	GitHubToken    string
+	Vault          *secretcrypto.Vault
 }
 
 type API struct {
@@ -99,6 +104,10 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		r.Group(func(r chi.Router) {
 			r.Use(a.authorize)
 			r.Get("/overview", a.overview)
+			r.Get("/secrets", a.listSecrets)
+			r.Post("/secrets", a.createSecret)
+			r.Put("/secrets/{id}", a.updateSecret)
+			r.Delete("/secrets/{id}", a.deleteSecret)
 			r.Get("/projects", a.listProjects)
 			r.Post("/projects", a.createProject)
 			r.Put("/projects/{id}", a.updateProject)
@@ -172,7 +181,11 @@ func (a *API) validBearer(r *http.Request) bool {
 	a.sessionMu.RLock()
 	expires, found := a.sessions[provided]
 	a.sessionMu.RUnlock()
-	return found && time.Now().Before(expires)
+	if found && time.Now().Before(expires) {
+		return true
+	}
+	valid, err := a.store.AdminSessionValid(r.Context(), sessionHash(provided), time.Now().UTC())
+	return err == nil && valid
 }
 
 func secureEqual(left, right string) bool {
@@ -216,7 +229,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		unauthorized(w, setupRequired)
 		return
 	}
-	token, err := a.createSession()
+	token, err := a.createSession(r.Context())
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -225,22 +238,31 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
-func (a *API) createSession() (string, error) {
+func (a *API) createSession(ctx context.Context) (string, error) {
 	buffer := make([]byte, 32)
 	if _, err := rand.Read(buffer); err != nil {
 		return "", err
 	}
 	token := base64.RawURLEncoding.EncodeToString(buffer)
-	now := time.Now()
+	now := time.Now().UTC()
+	expires := now.Add(12 * time.Hour)
+	if err := a.store.CreateAdminSession(ctx, sessionHash(token), expires, now); err != nil {
+		return "", err
+	}
 	a.sessionMu.Lock()
 	for existing, expires := range a.sessions {
 		if now.After(expires) {
 			delete(a.sessions, existing)
 		}
 	}
-	a.sessions[token] = now.Add(12 * time.Hour)
+	a.sessions[token] = expires
 	a.sessionMu.Unlock()
 	return token, nil
+}
+
+func sessionHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func (a *API) authStatus(w http.ResponseWriter, r *http.Request) {
@@ -356,8 +378,116 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, core.Overview{Demo: a.demo, Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
-		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns})
+	secrets, err := a.store.ListSecrets(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, core.Overview{Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
+		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets})
+}
+
+type secretRequest struct {
+	Name                string  `json:"name"`
+	EnvironmentVariable string  `json:"environmentVariable"`
+	Value               *string `json:"value"`
+}
+
+var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+
+func validateSecretInput(name, environmentVariable string, value *string, requireValue bool) string {
+	if name == "" || len(name) > 80 {
+		return "Enter a name no longer than 80 characters."
+	}
+	if !environmentVariablePattern.MatchString(environmentVariable) {
+		return "Use a valid environment variable name."
+	}
+	if strings.HasPrefix(environmentVariable, "DISPATCH_") {
+		return "DISPATCH_ variables are reserved by the controller."
+	}
+	if requireValue && (value == nil || *value == "") {
+		return "Enter a secret value."
+	}
+	if value != nil && len(*value) > 64<<10 {
+		return "Keep the secret value under 64 KiB."
+	}
+	return ""
+}
+
+func (a *API) listSecrets(w http.ResponseWriter, r *http.Request) {
+	items, err := a.store.ListSecrets(r.Context())
+	a.list(w, items, err)
+}
+
+func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
+	if a.eventConfig.Vault == nil {
+		problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before saving credentials.")
+		return
+	}
+	var input secretRequest
+	if !decode(w, r, &input) {
+		return
+	}
+	input.Name, input.EnvironmentVariable = strings.TrimSpace(input.Name), strings.TrimSpace(input.EnvironmentVariable)
+	if detail := validateSecretInput(input.Name, input.EnvironmentVariable, input.Value, true); detail != "" {
+		problem(w, http.StatusBadRequest, "Invalid secret", detail)
+		return
+	}
+	now := time.Now().UTC()
+	item := core.Secret{ID: ulid.Make().String(), Name: input.Name, EnvironmentVariable: input.EnvironmentVariable, CreatedAt: now, UpdatedAt: now}
+	encrypted, err := a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	item.EncryptedValue = encrypted
+	if err := a.store.CreateSecret(r.Context(), item); err != nil {
+		a.internal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, item)
+}
+
+func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
+	if a.eventConfig.Vault == nil {
+		problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before saving credentials.")
+		return
+	}
+	item, err := a.store.GetSecret(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Secret")
+		return
+	}
+	var input secretRequest
+	if !decode(w, r, &input) {
+		return
+	}
+	input.Name, input.EnvironmentVariable = strings.TrimSpace(input.Name), strings.TrimSpace(input.EnvironmentVariable)
+	if detail := validateSecretInput(input.Name, input.EnvironmentVariable, input.Value, false); detail != "" {
+		problem(w, http.StatusBadRequest, "Invalid secret", detail)
+		return
+	}
+	item.Name, item.EnvironmentVariable, item.UpdatedAt = input.Name, input.EnvironmentVariable, time.Now().UTC()
+	if input.Value != nil && *input.Value != "" {
+		item.EncryptedValue, err = a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+	}
+	if err := a.store.UpdateSecret(r.Context(), item); err != nil {
+		a.notFoundOrInternal(w, err, "Secret")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (a *API) deleteSecret(w http.ResponseWriter, r *http.Request) {
+	if err := a.store.DeleteSecret(r.Context(), chi.URLParam(r, "id")); err != nil {
+		a.notFoundOrInternal(w, err, "Secret")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -379,12 +509,27 @@ func (a *API) listEventTriggers(w http.ResponseWriter, r *http.Request) {
 }
 
 type createEventTriggerRequest struct {
-	Provider       string `json:"provider"`
-	Repository     string `json:"repository"`
-	Command        string `json:"command"`
-	Enabled        *bool  `json:"enabled"`
-	PreDeployHook  string `json:"preDeployHook"`
-	PostDeployHook string `json:"postDeployHook"`
+	Provider       string   `json:"provider"`
+	Repository     string   `json:"repository"`
+	Command        string   `json:"command"`
+	Enabled        *bool    `json:"enabled"`
+	PreDeployHook  string   `json:"preDeployHook"`
+	PostDeployHook string   `json:"postDeployHook"`
+	SecretIDs      []string `json:"secretIds"`
+}
+
+func (a *API) validateSecretIDs(ctx context.Context, ids []string) error {
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			return errors.New("secret bindings must be unique")
+		}
+		seen[id] = true
+		if _, err := a.store.GetSecret(ctx, id); err != nil {
+			return errors.New("one or more selected secrets no longer exist")
+		}
+	}
+	return nil
 }
 
 const maxEventHookBytes = 64 << 10
@@ -408,6 +553,10 @@ func (a *API) createEventTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateEventHooks(input.PreDeployHook, input.PostDeployHook); err != nil {
 		problem(w, http.StatusBadRequest, "Invalid deployment hook", err.Error())
+		return
+	}
+	if err := a.validateSecretIDs(r.Context(), input.SecretIDs); err != nil {
+		problem(w, http.StatusBadRequest, "Invalid secret binding", err.Error())
 		return
 	}
 	providerName := strings.ToLower(strings.TrimSpace(input.Provider))
@@ -435,13 +584,13 @@ func (a *API) createEventTrigger(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	requested := core.EventTrigger{ID: ulid.Make().String(), AppID: appID, Provider: core.EventProvider(providerName),
 		Repository: repository, Command: command, Enabled: enabled, PreDeployHook: input.PreDeployHook,
-		PostDeployHook: input.PostDeployHook, CreatedAt: now, UpdatedAt: now}
+		PostDeployHook: input.PostDeployHook, SecretIDs: input.SecretIDs, CreatedAt: now, UpdatedAt: now}
 	item, created, err := a.store.CreateEventTrigger(r.Context(), requested)
 	if err != nil {
 		a.internal(w, err)
 		return
 	}
-	if !created && (item.Command != requested.Command || item.Enabled != requested.Enabled || item.PreDeployHook != requested.PreDeployHook || item.PostDeployHook != requested.PostDeployHook) {
+	if !created && (item.Command != requested.Command || item.Enabled != requested.Enabled || item.PreDeployHook != requested.PreDeployHook || item.PostDeployHook != requested.PostDeployHook || !slices.Equal(item.SecretIDs, requested.SecretIDs)) {
 		problem(w, http.StatusConflict, "Event trigger already exists", "Update the existing event rule to change its command, state, or deployment hooks.")
 		return
 	}
@@ -478,6 +627,10 @@ func (a *API) updateEventTrigger(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Invalid deployment hook", err.Error())
 		return
 	}
+	if err := a.validateSecretIDs(r.Context(), input.SecretIDs); err != nil {
+		problem(w, http.StatusBadRequest, "Invalid secret binding", err.Error())
+		return
+	}
 	command, err := events.NormalizeCommand(input.Command, item.Command)
 	if err != nil {
 		problem(w, http.StatusBadRequest, "Invalid trigger command", err.Error())
@@ -491,6 +644,7 @@ func (a *API) updateEventTrigger(w http.ResponseWriter, r *http.Request) {
 	item.Enabled = enabled
 	item.PreDeployHook = input.PreDeployHook
 	item.PostDeployHook = input.PostDeployHook
+	item.SecretIDs = input.SecretIDs
 	item.UpdatedAt = time.Now().UTC()
 	if err := a.store.UpdateEventTrigger(r.Context(), *item); err != nil {
 		a.notFoundOrInternal(w, err, "Event trigger")

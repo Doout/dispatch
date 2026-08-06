@@ -38,12 +38,14 @@ export type PreviewGroupRun = {
 };
 export type DeploymentLog = { id: number; deploymentId: string; level: string; message: string; createdAt: string };
 export type Overview = {
-  demo: boolean; projects: Project[]; servers: Server[]; apps: App[]; deployments: Deployment[];
+  demo: boolean; secretStorageConfigured: boolean; projects: Project[]; servers: Server[]; apps: App[]; deployments: Deployment[];
   eventTriggers: EventTrigger[]; previews: PreviewEnvironment[];
   previewGroups: PreviewGroup[]; previewGroupRuns: PreviewGroupRun[];
+	secrets: Secret[];
 };
+export type Secret = { id: string; name: string; environmentVariable: string; createdAt: string; updatedAt: string };
 export type AuthStatus = { setupRequired: boolean; tokenLoginAvailable: boolean };
-export type EventTrigger = { id: string; appId: string; provider: "github"; repository: string; command: string; enabled: boolean; preDeployHook?: string; postDeployHook?: string; createdAt: string; updatedAt: string };
+export type EventTrigger = { id: string; appId: string; provider: "github"; repository: string; command: string; enabled: boolean; preDeployHook?: string; postDeployHook?: string; secretIds: string[]; createdAt: string; updatedAt: string };
 export type PreviewEnvironment = { id: string; appId: string; repository: string; pullRequestNumber: number; state: string; url?: string; deploymentId?: string; message?: string; updatedAt: string };
 
 const tokenKey = "dispatch-admin-token";
@@ -89,10 +91,13 @@ export const api = {
   deleteServer: (id: string) => request<void>(`/api/v1/servers/${id}`, { method: "DELETE" }),
   createApp: (body: Record<string, unknown>) => request<App>("/api/v1/apps", { method: "POST", body: JSON.stringify(body) }),
   deleteApp: (id: string) => request<void>(`/api/v1/apps/${id}`, { method: "DELETE" }),
-  createEventTrigger: (appId: string, body: { provider: "github"; repository: string; command: string; enabled: boolean; preDeployHook?: string; postDeployHook?: string }) => request<EventTrigger>(`/api/v1/apps/${appId}/event-triggers`, { method: "POST", body: JSON.stringify(body) }),
-  updateEventTrigger: (id: string, body: { command: string; enabled: boolean; preDeployHook: string; postDeployHook: string }) => request<EventTrigger>(`/api/v1/event-triggers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  createEventTrigger: (appId: string, body: { provider: "github"; repository: string; command: string; enabled: boolean; preDeployHook?: string; postDeployHook?: string; secretIds?: string[] }) => request<EventTrigger>(`/api/v1/apps/${appId}/event-triggers`, { method: "POST", body: JSON.stringify(body) }),
+  updateEventTrigger: (id: string, body: { command: string; enabled: boolean; preDeployHook: string; postDeployHook: string; secretIds: string[] }) => request<EventTrigger>(`/api/v1/event-triggers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   eventTriggers: (appId = "") => request<EventTrigger[]>(`/api/v1/event-triggers${appId ? `?appId=${encodeURIComponent(appId)}` : ""}`),
   deleteEventTrigger: (id: string) => request<void>(`/api/v1/event-triggers/${id}`, { method: "DELETE" }),
+	createSecret: (body: { name: string; environmentVariable: string; value: string }) => request<Secret>("/api/v1/secrets", { method: "POST", body: JSON.stringify(body) }),
+	updateSecret: (id: string, body: { name: string; environmentVariable: string; value?: string }) => request<Secret>(`/api/v1/secrets/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+	deleteSecret: (id: string) => request<void>(`/api/v1/secrets/${id}`, { method: "DELETE" }),
   previews: (appId = "") => request<PreviewEnvironment[]>(`/api/v1/preview-environments${appId ? `?appId=${encodeURIComponent(appId)}` : ""}`),
   createPreviewGroup: (body: { name: string; command: string; enabled?: boolean; components: PreviewGroupComponent[] }) => request<PreviewGroup>("/api/v1/preview-groups", { method: "POST", body: JSON.stringify(body) }),
   updatePreviewGroup: (id: string, body: { name: string; command: string; enabled?: boolean; components: PreviewGroupComponent[] }) => request<PreviewGroup>(`/api/v1/preview-groups/${id}`, { method: "PUT", body: JSON.stringify(body) }),

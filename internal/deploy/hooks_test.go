@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/doout/dispatch/internal/core"
+	secretcrypto "github.com/doout/dispatch/internal/crypto"
 )
 
 type outputRecorder struct{ outputs map[string]string }
@@ -17,6 +18,53 @@ type outputRecorder struct{ outputs map[string]string }
 func (r *outputRecorder) UpdateDeploymentOutputs(_ context.Context, _ string, outputs map[string]string) error {
 	r.outputs = outputs
 	return nil
+}
+
+func TestHookExecutorDecryptsOnlyBoundSecretForHookProcess(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := vault.Encrypt("secret:registry", []byte("super-secret-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captured []string
+	executor := HookExecutor{Next: &captureExecutor{}, Vault: vault, checkout: func(_ context.Context, _ core.Deployment, app core.App, _ string) error {
+		if token := hookGitToken(app); token != "super-secret-token" {
+			t.Fatalf("checkout did not receive attached token: %q", token)
+		}
+		return nil
+	}, runHook: func(_ context.Context, _ string, _ string, environment []string) error {
+		captured = append([]string(nil), environment...)
+		return nil
+	}}
+	app := core.App{SourceRepo: "https://github.com/acme/private.git", PreDeployHook: "docker login", HookEnvironment: map[string]string{
+		core.SecretEnvironmentKey("registry", "GITHUB_TOKEN"): ciphertext,
+	}}
+	if err := executor.Deploy(context.Background(), core.Deployment{}, app, core.Server{}, func(core.DeploymentState, string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(captured, "\n")
+	if !strings.Contains(joined, "GITHUB_TOKEN=super-secret-token") {
+		t.Fatalf("decrypted secret was not provided: %#v", captured)
+	}
+	if strings.Contains(joined, ciphertext) {
+		t.Fatal("encrypted storage value leaked into the hook environment")
+	}
+}
+
+func TestHookErrorsRedactAttachedSecretValues(t *testing.T) {
+	err := redactHookError(errors.New("login failed for super-secret-token"), core.App{HookEnvironment: map[string]string{
+		resolvedSecretPrefix + "REGISTRY_TOKEN": "super-secret-token",
+	}})
+	if strings.Contains(err.Error(), "super-secret-token") || !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("secret was not redacted: %v", err)
+	}
 }
 
 type captureExecutor struct {

@@ -5,6 +5,7 @@ import {
   ArrowRight,
   FolderSimple,
   HardDrives,
+	Key,
   Lightning,
   List,
   LockSimple,
@@ -14,12 +15,12 @@ import {
   Trash,
   X,
 } from "@phosphor-icons/react";
-import { api, App as AppModel, Deployment, DeploymentLog, EventTrigger, Overview, PreviewGroup, PreviewGroupComponent, Project, Server, setToken } from "./api";
+import { api, App as AppModel, Deployment, DeploymentLog, EventTrigger, Overview, PreviewGroup, PreviewGroupComponent, Project, Secret, Server, setToken } from "./api";
 import { AppForm, ProjectForm, ServerForm } from "./Onboarding";
 import { PreviewGroupsArea } from "./PreviewGroups";
 import { groupDeployments, relative, short, stages, stageIndex, stateStage, statusTone } from "./presentation";
 
-type View = "deployments" | "applications" | "events" | "projects" | "servers";
+type View = "deployments" | "applications" | "events" | "projects" | "servers" | "secrets";
 type Dialog = "deploy" | "project" | "server" | "repair" | null;
 type DeleteTarget = { kind: "project"; item: Project } | { kind: "server"; item: Server } | { kind: "application"; item: AppModel };
 
@@ -29,6 +30,7 @@ const viewCopy: Record<View, { title: string; description: string }> = {
   events: { title: "Events", description: "Pull request commands and the preview environments they start." },
   projects: { title: "Projects", description: "Independent groups for related applications." },
   servers: { title: "Servers", description: "Docker hosts, Kubernetes clusters, and OpenShift clusters available to this controller." },
+	secrets: { title: "Secrets", description: "Write-only credentials scoped to event-driven deployment hooks." },
 };
 
 export default function DispatchApp() {
@@ -126,6 +128,7 @@ export default function DispatchApp() {
           {!loading && overview && view === "events" && <EventsPage overview={overview} onConfigure={() => navigate("applications")} onChanged={async () => { await load(); }} />}
           {!loading && overview && view === "projects" && <ProjectsPage overview={overview} onAdd={() => { setEditingProject(null); setDialog("project"); }} onEdit={(project) => { setEditingProject(project); setDialog("project"); }} onDelete={(project) => setDeleteTarget({ kind: "project", item: project })} />}
           {!loading && overview && view === "servers" && <ServersPage overview={overview} onAdd={() => { setEditingServer(null); setDialog("server"); }} onEdit={(server) => { setEditingServer(server); setDialog("server"); }} onRepair={(server) => { setEditingServer(server); setDialog("repair"); }} onDelete={(server) => setDeleteTarget({ kind: "server", item: server })} />}
+		  {!loading && overview && view === "secrets" && <SecretsPage overview={overview} onChanged={async () => { await load(); }} />}
         </div>
       </main>
 
@@ -142,6 +145,7 @@ function Nav({ open, view, overview, onClose, onNavigate }: { open: boolean; vie
     { id: "events", label: "Events", icon: <Lightning size={19} />, count: (overview?.eventTriggers.length ?? 0) + (overview?.previewGroups.length ?? 0) },
     { id: "projects", label: "Projects", icon: <FolderSimple size={19} />, count: overview?.projects.length ?? 0 },
     { id: "servers", label: "Servers", icon: <HardDrives size={19} />, count: overview?.servers.length ?? 0 },
+	{ id: "secrets", label: "Secrets", icon: <Key size={19} />, count: overview?.secrets.length ?? 0 },
   ];
 
   return <>
@@ -150,7 +154,6 @@ function Nav({ open, view, overview, onClose, onNavigate }: { open: boolean; vie
       <div className="wordmark"><Mark /><span>Dispatch</span><button aria-label="Close navigation" onClick={onClose}><X size={20} weight="bold" /></button></div>
       <nav className="nav-list">
         {entries.map((entry) => <button key={entry.id} className={view === entry.id ? "active" : ""} aria-current={view === entry.id ? "page" : undefined} onClick={() => onNavigate(entry.id)}>{entry.icon}<span>{entry.label}</span><small aria-hidden="true">{entry.count}</small></button>)}
-        {view === "servers" && overview && overview.servers.length > 0 && <div className="nav-server-list" aria-label="Registered servers">{overview.servers.slice(0, 5).map((server) => <div key={server.id}><i className={server.state} /><span><strong>{server.name}</strong><small>{server.address === "local" ? "Local Docker" : server.runtime === "openshift" ? `OpenShift · ${server.kubernetes?.namespace || "default"}` : server.runtime === "kubernetes" ? `Kubernetes · ${server.kubernetes?.context || server.kubernetes?.namespace || "direct"}` : server.address}</small></span></div>)}</div>}
       </nav>
       <footer className="rail-foot"><div className="control-mark"><span className={overview?.demo ? "demo-dot" : "live-dot"} /><div><strong>Control plane</strong><span>{overview?.demo ? "Demonstration mode" : "Connected"}</span></div></div></footer>
     </aside>
@@ -233,7 +236,7 @@ function EventsPage({ overview, onConfigure, onChanged }: { overview: Overview; 
       <div className="section-toolbar"><div><h2 id="event-rules-title">Event rules</h2><p>Trusted pull request comments matched by repository and command.</p></div><span className="section-count">{rules.length}</span></div>
       {rules.length ? <div className="resource-table-wrap"><table className="resource-table event-table"><thead><tr><th>Rule</th><th>Repository</th><th>Command</th><th>Target</th><th>Hooks</th><th>Status</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td data-label="Rule"><strong>{rule.name}</strong></td><td data-label="Repository"><div className="event-sources">{rule.repositories.map((repository) => <code key={repository}>{repository}</code>)}</div></td><td data-label="Command"><code>{rule.command}</code></td><td data-label="Target">{rule.targetLabel}</td><td data-label="Hooks">{rule.hooks}</td><td data-label="Status"><StatusLabel state={rule.enabled ? "enabled" : "disabled"} /></td><td className="row-actions"><button aria-label={`Edit deployment hooks for ${rule.name}`} onClick={() => setHookTarget(rule.hookTarget)}><PencilSimple size={15} />Hooks</button></td></tr>)}</tbody></table></div> : <EmptyState title="No event rules" body="Configure a pull request command on an application or preview group." />}
     </section>
-    {hookTarget && <EventHookEditor key={hookTarget.type === "trigger" ? hookTarget.trigger.id : hookTarget.group.id} target={hookTarget} onClose={() => setHookTarget(null)} onSaved={async () => { setHookTarget(null); await onChanged(); }} />}
+    {hookTarget && <EventHookEditor key={hookTarget.type === "trigger" ? hookTarget.trigger.id : hookTarget.group.id} target={hookTarget} secrets={overview.secrets} onClose={() => setHookTarget(null)} onSaved={async () => { setHookTarget(null); await onChanged(); }} />}
     <section className="event-section" aria-labelledby="event-activity-title">
       <div className="section-toolbar"><div><h2 id="event-activity-title">Preview activity</h2><p>Environments created from pull request commands.</p></div><span className="section-count">{activity.length}</span></div>
       {activity.length ? <div className="resource-table-wrap"><table className="resource-table event-table"><thead><tr><th>Environment</th><th>Source</th><th>Status</th><th>Updated</th><th className="actions-head"><span className="sr-only">Preview URL</span></th></tr></thead><tbody>{activity.slice(0, 30).map((item) => <tr key={item.id}><td data-label="Environment"><strong>{item.name}</strong></td><td data-label="Source"><div className="event-sources">{item.sources.map((source) => <code key={source}>{source}</code>)}</div></td><td data-label="Status"><StatusLabel state={item.state} /></td><td data-label="Updated">{relative(item.updatedAt)}</td><td className="row-actions">{item.url && <a className="table-action" href={item.url} target="_blank" rel="noreferrer">Open<ArrowRight size={14} /></a>}</td></tr>)}</tbody></table></div> : <EmptyState title="No preview activity" body="Preview environments will appear here after an event rule is triggered." />}
@@ -241,11 +244,12 @@ function EventsPage({ overview, onConfigure, onChanged }: { overview: Overview; 
   </div>;
 }
 
-function EventHookEditor({ target, onClose, onSaved }: { target: EventHookTarget; onClose: () => void; onSaved: () => Promise<void> }) {
+function EventHookEditor({ target, secrets, onClose, onSaved }: { target: EventHookTarget; secrets: Secret[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const trigger = target.type === "trigger" ? target.trigger : undefined;
   const group = target.type === "group" ? target.group : undefined;
   const [preDeployHook, setPreDeployHook] = useState(trigger?.preDeployHook ?? "");
   const [postDeployHook, setPostDeployHook] = useState(trigger?.postDeployHook ?? "");
+	const [secretIds, setSecretIds] = useState<string[]>(trigger?.secretIds ?? []);
   const [components, setComponents] = useState<PreviewGroupComponent[]>(group?.components.map((component) => ({ ...component })) ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -260,7 +264,7 @@ function EventHookEditor({ target, onClose, onSaved }: { target: EventHookTarget
     setError("");
     try {
       if (trigger) {
-        await api.updateEventTrigger(trigger.id, { command: trigger.command, enabled: trigger.enabled, preDeployHook, postDeployHook });
+        await api.updateEventTrigger(trigger.id, { command: trigger.command, enabled: trigger.enabled, preDeployHook, postDeployHook, secretIds });
       } else if (group) {
         await api.updatePreviewGroup(group.id, { name: group.name, command: group.command, enabled: group.enabled, components });
       }
@@ -277,6 +281,7 @@ function EventHookEditor({ target, onClose, onSaved }: { target: EventHookTarget
     <header><div><h2 id="event-hook-editor-title">Deployment hooks</h2><p>{title} · hooks run only for deployments started by this event rule.</p></div><button type="button" aria-label="Close deployment hooks" onClick={onClose}><X size={18} weight="bold" /></button></header>
     <form onSubmit={save}>
       {trigger ? <HookFields preDeployHook={preDeployHook} postDeployHook={postDeployHook} onPreDeployHook={setPreDeployHook} onPostDeployHook={setPostDeployHook} /> : components.map((component, index) => <fieldset className="event-component-hooks" key={component.id ?? component.alias}><legend>{component.alias || `Component ${index + 1}`} <span>{component.repository}</span></legend><HookFields preDeployHook={component.preDeployHook ?? ""} postDeployHook={component.postDeployHook ?? ""} onPreDeployHook={(value) => changeComponent(index, { preDeployHook: value })} onPostDeployHook={(value) => changeComponent(index, { postDeployHook: value })} /></fieldset>)}
+	  {trigger && <fieldset className="event-secret-bindings"><legend>Hook credentials</legend><p>Selected values are decrypted only for this rule's hook process.</p>{secrets.length ? <div>{secrets.map((secret) => <label key={secret.id}><input type="checkbox" checked={secretIds.includes(secret.id)} onChange={(event) => setSecretIds((current) => event.target.checked ? [...current, secret.id] : current.filter((id) => id !== secret.id))} /><span><strong>{secret.name}</strong><code>{secret.environmentVariable}</code></span></label>)}</div> : <small>Create a secret from the Secrets page, then return here to attach it.</small>}</fieldset>}
       <div className="event-hook-context"><strong>Event context</strong><p>Available as environment variables in both hooks.</p><div>{["DISPATCH_EVENT_REPOSITORY", "DISPATCH_EVENT_PULL_REQUEST_NUMBER", "DISPATCH_EVENT_HEAD_REF", "DISPATCH_EVENT_HEAD_SHA", "DISPATCH_EVENT_ACTOR", "DISPATCH_EVENT_COMMAND", "DISPATCH_EVENT_ARGUMENTS"].map((name) => <code key={name}>{name}</code>)}</div></div>
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="builder-actions"><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? "Saving..." : "Save hooks"}</button></div>
@@ -309,6 +314,42 @@ function ProjectsPage({ overview, onAdd, onEdit, onDelete }: { overview: Overvie
     <ResourceSummary items={[{ label: "Projects", value: overview.projects.length }, { label: "Applications", value: overview.apps.length }]} />
     {overview.projects.length ? <div className="resource-table-wrap"><table className="resource-table"><thead><tr><th>Project</th><th>Description</th><th>Applications</th><th>Created</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead><tbody>{overview.projects.map((project) => <tr key={project.id}><td data-label="Project"><strong>{project.name}</strong></td><td data-label="Description">{project.description || "No description"}</td><td data-label="Applications">{overview.apps.filter((app) => app.projectId === project.id).length}</td><td data-label="Created">{new Date(project.createdAt).toLocaleDateString()}</td><td className="row-actions"><button aria-label={`Edit ${project.name}`} onClick={() => onEdit(project)}><PencilSimple size={15} />Edit</button><button className="delete-action" aria-label={`Delete ${project.name}`} onClick={() => onDelete(project)}><Trash size={15} />Delete</button></td></tr>)}</tbody></table></div> : <EmptyState title="No projects" body="Create a project when you want to group applications." />}
   </div>;
+}
+
+function SecretsPage({ overview, onChanged }: { overview: Overview; onChanged: () => Promise<void> }) {
+	const [editing, setEditing] = useState<Secret | null>(null);
+	const [creating, setCreating] = useState(false);
+	const [name, setName] = useState("");
+	const [environmentVariable, setEnvironmentVariable] = useState("");
+	const [value, setValue] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+
+	function open(secret?: Secret) {
+		setEditing(secret ?? null); setCreating(true); setName(secret?.name ?? ""); setEnvironmentVariable(secret?.environmentVariable ?? ""); setValue(""); setError("");
+	}
+
+	async function save(event: FormEvent) {
+		event.preventDefault(); setBusy(true); setError("");
+		try {
+			if (editing) await api.updateSecret(editing.id, { name, environmentVariable, ...(value ? { value } : {}) });
+			else await api.createSecret({ name, environmentVariable, value });
+			setCreating(false); setEditing(null); setValue(""); await onChanged();
+		} catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
+	}
+
+	async function remove(secret: Secret) {
+		if (!window.confirm(`Delete ${secret.name}? Event rules using it will lose this credential.`)) return;
+		try { await api.deleteSecret(secret.id); await onChanged(); } catch (cause) { setError((cause as Error).message); }
+	}
+
+	return <div className="page-layout">
+		<PageHeader view="secrets" action={{ label: creating ? "Close form" : "Add secret", onClick: () => creating ? setCreating(false) : open(), tone: creating ? "quiet" : "primary", disabled: !overview.secretStorageConfigured }} />
+		{!overview.secretStorageConfigured && <div className="error-banner secret-storage-notice" role="status"><strong>Encrypted storage is not configured</strong><span>Set DISPATCH_MASTER_KEY_FILE and restart the controller before adding secrets.</span></div>}
+		{creating && <section className="inline-create secret-editor" aria-labelledby="secret-editor-title"><header><h2 id="secret-editor-title">{editing ? "Update secret" : "New secret"}</h2><p>The value is encrypted at rest and is never returned by the API.</p></header><div className="inline-create-body"><form className="resource-form" onSubmit={save}><label><span>Name</span><input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Container registry" /><small>A recognizable label for operators.</small></label><label><span>Environment variable</span><input required maxLength={128} value={environmentVariable} onChange={(event) => setEnvironmentVariable(event.target.value)} placeholder="REGISTRY_PASSWORD" spellCheck={false} /><small>The variable exposed to selected hooks.</small></label><label className="wide"><span>{editing ? "New value (optional)" : "Secret value"}</span><input type="password" required={!editing} value={value} onChange={(event) => setValue(event.target.value)} autoComplete="new-password" /><small>{editing ? "Leave blank to retain the current value." : "Values are write-only after saving."}</small></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><button className="primary-button" disabled={busy}>{busy ? "Saving..." : editing ? "Update secret" : "Save secret"}</button></div></form></div></section>}
+		{!creating && error && <p className="form-error" role="alert">{error}</p>}
+		{overview.secrets.length ? <div className="resource-table-wrap"><table className="resource-table"><thead><tr><th>Secret</th><th>Environment variable</th><th>Used by</th><th>Updated</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead><tbody>{overview.secrets.map((secret) => { const uses = overview.eventTriggers.filter((trigger) => trigger.secretIds.includes(secret.id)).length; return <tr key={secret.id}><td data-label="Secret"><strong>{secret.name}</strong><small>Value stored</small></td><td data-label="Environment variable"><code>{secret.environmentVariable}</code></td><td data-label="Used by">{uses} event rule{uses === 1 ? "" : "s"}</td><td data-label="Updated">{relative(secret.updatedAt)}</td><td className="row-actions"><button aria-label={`Edit ${secret.name}`} onClick={() => open(secret)}><PencilSimple size={15} />Edit</button><button className="delete-action" aria-label={`Delete ${secret.name}`} onClick={() => void remove(secret)}><Trash size={15} />Delete</button></td></tr>; })}</tbody></table></div> : creating ? null : <EmptyState title="No secrets" body="Add a registry, GitHub, or provider credential and attach it to an event rule." />}
+	</div>;
 }
 
 function ApplicationsPage({ overview, creating, onToggleCreate, onChanged, onComposeDeployed, onDeploy, onDelete, onNavigate }: { overview: Overview; creating: boolean; onToggleCreate: () => void; onChanged: () => Promise<void>; onComposeDeployed: (id: string) => Promise<void>; onDeploy: (appID: string) => void; onDelete: (application: AppModel) => void; onNavigate: (view: View) => void }) {

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/store"
 )
@@ -56,6 +57,52 @@ func TestHealthDoesNotRequireToken(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", response.Code)
+	}
+}
+
+func TestSecretsAreWriteOnlyAndAttachToEventRules(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, true, EventConfig{Vault: vault})
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(`{"name":"Registry password","environmentVariable":"REGISTRY_PASSWORD","value":"top-secret"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create secret: %d %s", response.Code, response.Body.String())
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("top-secret")) || bytes.Contains(response.Body.Bytes(), []byte("encryptedValue")) {
+		t.Fatalf("secret value leaked in response: %s", response.Body.String())
+	}
+	var secret core.Secret
+	if err := json.NewDecoder(response.Body).Decode(&secret); err != nil {
+		t.Fatal(err)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/overview", nil))
+	var overview core.Overview
+	if err := json.NewDecoder(response.Body).Decode(&overview); err != nil {
+		t.Fatal(err)
+	}
+	triggerBody, _ := json.Marshal(map[string]any{"repository": "acme/credentials", "preDeployHook": "docker login", "secretIds": []string{secret.ID}})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/apps/"+overview.Apps[0].ID+"/event-triggers", bytes.NewReader(triggerBody)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create event trigger: %d %s", response.Code, response.Body.String())
+	}
+	var trigger core.EventTrigger
+	if err := json.NewDecoder(response.Body).Decode(&trigger); err != nil {
+		t.Fatal(err)
+	}
+	if len(trigger.SecretIDs) != 1 || trigger.SecretIDs[0] != secret.ID {
+		t.Fatalf("secret binding was not returned: %#v", trigger)
 	}
 }
 
