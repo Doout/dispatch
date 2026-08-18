@@ -1,15 +1,41 @@
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
-import { api, KubernetesServerInput, Overview, Project, Server } from "./api";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Check, Copy, Key, LockKey, TerminalWindow } from "@phosphor-icons/react";
+import { api, GitHubRepository, HelmChartInspection, HelmValue, KubernetesServerInput, Overview, Project, Server } from "./api";
 import { readKubernetesTextFile } from "./fileUploads";
+import { HelmValuesEditor, helmValueOverrides, mergeHelmValues } from "./HelmValuesEditor";
 
 type Changed = () => Promise<void>;
 const isKubernetesRuntime = (runtime: Server["runtime"]) => runtime === "kubernetes" || runtime === "openshift";
 
-export function ServerForm({ onChanged, server, repairing = false }: { onChanged: Changed; server?: Server; repairing?: boolean }) {
+function newRelayToken() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+export function ServerForm({ onChanged, onCancel, server, repairing = false }: { onChanged: Changed; onCancel?: () => void; server?: Server; repairing?: boolean }) {
   const editing = Boolean(server);
   const [name, setName] = useState(server?.name ?? "");
-  const [runtime, setRuntime] = useState<"docker" | "kubernetes" | "openshift">(server?.runtime ?? "docker");
+  const [runtime, setRuntime] = useState<"docker" | "kubernetes" | "openshift" | "relay">(server?.runtime ?? "docker");
   const [remoteAddress, setRemoteAddress] = useState(server?.runtime === "docker" ? server.address : "");
+  const [relayAddress, setRelayAddress] = useState(server?.runtime === "relay" ? server.address : "");
+  const [relayAccessToken, setRelayAccessToken] = useState(() => server ? "" : newRelayToken());
+  const [relayInstallMethod, setRelayInstallMethod] = useState<"manual" | "ssh">("manual");
+  const [sshHost, setSSHHost] = useState("");
+  const [sshPort, setSSHPort] = useState("22");
+  const [sshUser, setSSHUser] = useState("root");
+  const [sshAuthType, setSSHAuthType] = useState<"password" | "private_key">("private_key");
+  const [sshPassword, setSSHPassword] = useState("");
+  const [sshPrivateKey, setSSHPrivateKey] = useState("");
+  const [sshPrivateKeyPassword, setSSHPrivateKeyPassword] = useState("");
+  const [sshSudoPassword, setSSHSudoPassword] = useState("");
+  const [sshFingerprint, setSSHFingerprint] = useState("");
+  const [scanningSSH, setScanningSSH] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState(false);
   const [kubeconfigSource, setKubeconfigSource] = useState<"stored" | "path">(server?.kubernetes?.kubeconfigStored ? "stored" : server ? "path" : "stored");
   const [kubeconfigPath, setKubeconfigPath] = useState(server?.kubernetes?.kubeconfigPath ?? "");
   const [kubeconfig, setKubeconfig] = useState("");
@@ -25,6 +51,27 @@ export function ServerForm({ onChanged, server, repairing = false }: { onChanged
   const [error, setError] = useState("");
   const kubeconfigFile = useRef<HTMLInputElement>(null);
   const certificateFile = useRef<HTMLInputElement>(null);
+  const relayCommand = `curl -fsSL ${shellQuote(`${window.location.origin}/relay/install.sh`)} | sudo env DISPATCH_RELAY_PUBLIC_URL=${shellQuote(relayAddress.trim())} DISPATCH_RELAY_TOKEN=${shellQuote(relayAccessToken)} DISPATCH_RELAY_DOWNLOAD_BASE=${shellQuote(window.location.origin)} sh`;
+
+  async function scanRelayHost() {
+    setScanningSSH(true);
+    setError("");
+    setSSHFingerprint("");
+    try {
+      const result = await api.scanRelaySSHHost(sshHost, Number(sshPort));
+      setSSHFingerprint(result.fingerprint);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setScanningSSH(false);
+    }
+  }
+
+  async function copyRelayCommand() {
+    await navigator.clipboard.writeText(relayCommand);
+    setCopiedCommand(true);
+    window.setTimeout(() => setCopiedCommand(false), 1800);
+  }
 
   async function loadCredentialFile(kind: "kubeconfig" | "certificate", event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -74,8 +121,20 @@ export function ServerForm({ onChanged, server, repairing = false }: { onChanged
           ? { source: "stored", context: server?.kubernetes?.context, namespace }
           : { source: "openshift", loginCommand, namespace };
       }
-      if (server) await api.updateServer(server.id, { name, address: remoteAddress, kubernetes });
-      else await api.createServer({ name, address: remoteAddress, runtime, kubernetes });
+      if (runtime === "relay" && !editing && relayInstallMethod === "ssh") {
+        await api.installRelayOverSSH({
+          host: sshHost, port: Number(sshPort), user: sshUser, authType: sshAuthType,
+          password: sshAuthType === "password" ? sshPassword : undefined,
+          privateKey: sshAuthType === "private_key" ? sshPrivateKey : undefined,
+          privateKeyPassword: sshAuthType === "private_key" ? sshPrivateKeyPassword : undefined,
+          sudoPassword: sshUser === "root" ? undefined : sshSudoPassword,
+          hostKeyFingerprint: sshFingerprint, relayUrl: relayAddress, relayToken: relayAccessToken,
+        });
+      }
+      const address = runtime === "relay" ? relayAddress : remoteAddress;
+      const relay = runtime === "relay" && relayAccessToken.trim() ? { accessToken: relayAccessToken } : undefined;
+      if (server) await api.updateServer(server.id, { name, address, kubernetes, relay });
+      else await api.createServer({ name, address, runtime, kubernetes, relay });
       await onChanged();
     } catch (cause) {
       setError((cause as Error).message);
@@ -85,18 +144,45 @@ export function ServerForm({ onChanged, server, repairing = false }: { onChanged
   }
 
   if (repairing && server) {
-    return <form className="resource-form server-form" onSubmit={submit}>
+    return <form className="resource-form server-form" onSubmit={submit} aria-busy={busy}>
       <div className="openshift-warning wide"><strong>Fresh administrator login required</strong><p>Dispatch will rerun the managed service-account setup and replace its stored cluster connection. The login command is used once and is never saved.</p></div>
       <label className="wide openshift-login-field"><span>oc login command</span><textarea placeholder="oc login --token=… --server=https://api.cluster.example:6443" value={loginCommand} onChange={(event) => setLoginCommand(event.target.value)} required spellCheck={false} /><small>Paste a non-interactive command containing a temporary token, or a username and password.</small></label>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="dialog-actions"><button className="primary-button" disabled={busy || !loginCommand.trim()}>{busy ? "Repairing connection..." : "Repair connection"}</button></div>
+      <div className="dialog-actions">{onCancel && <button type="button" className="quiet-button" onClick={onCancel}>Cancel</button>}<button className="primary-button" disabled={busy || !loginCommand.trim()}>{busy ? "Repairing connection..." : "Repair connection"}</button></div>
     </form>;
   }
 
-  return <form className="resource-form server-form" onSubmit={submit}>
-    <label><span>Server name</span><input placeholder={runtime === "openshift" ? "openshift-cluster" : runtime === "kubernetes" ? "preview-cluster" : "build-01"} value={name} onChange={(event) => setName(event.target.value)} required /><small>Shown in Dispatch.</small></label>
-    <label><span>Runtime</span><select value={runtime} disabled={editing} onChange={(event) => setRuntime(event.target.value as "docker" | "kubernetes" | "openshift")}><option value="docker">Docker</option><option value="kubernetes">Kubernetes</option><option value="openshift">OpenShift</option></select><small>{editing ? "Runtime cannot be changed." : "Choose where applications will run."}</small></label>
-    {runtime === "docker" ? <>
+  return <form className={`resource-form server-form server-form-${runtime}`} onSubmit={submit} aria-busy={busy}>
+    {runtime !== "relay" && <div className="form-section-heading wide"><div><strong>Target</strong><small>Name the server and choose its runtime.</small></div></div>}
+    <label><span>Server name</span><input placeholder={runtime === "relay" ? "event-relay" : runtime === "openshift" ? "openshift-cluster" : runtime === "kubernetes" ? "preview-cluster" : "build-01"} value={name} onChange={(event) => setName(event.target.value)} required /><small>Shown in Dispatch.</small></label>
+    <label><span>Server type</span><select value={runtime} disabled={editing} onChange={(event) => setRuntime(event.target.value as "docker" | "kubernetes" | "openshift" | "relay")}><option value="docker">Docker target</option><option value="kubernetes">Kubernetes target</option><option value="openshift">OpenShift target</option><option value="relay">Webhook relay</option></select><small>{editing ? "Server type cannot be changed." : runtime === "relay" ? "Receives events without exposing this controller." : "Choose where applications will run."}</small></label>
+    {runtime !== "relay" && <div className="form-section-heading wide"><div><strong>Connection</strong><small>Provide the controller with access to this runtime.</small></div></div>}
+    {runtime === "relay" ? <>
+      <label className="wide"><span>Relay URL</span><input type="url" placeholder="https://relay.example.com" value={relayAddress} onChange={(event) => setRelayAddress(event.target.value)} required spellCheck={false} /><small>Dispatch connects outbound to this address.</small></label>
+      <label className="wide relay-token-field"><span>Access token</span><div><input type="password" pattern="[A-Za-z0-9_-]{24,256}" placeholder={server?.relay?.accessTokenConfigured ? "Credential saved" : "Relay access token"} value={relayAccessToken} onChange={(event) => setRelayAccessToken(event.target.value)} required={!server?.relay?.accessTokenConfigured} autoComplete="new-password" />{!editing && <button type="button" className="quiet-button" onClick={() => setRelayAccessToken(newRelayToken())}>Regenerate</button>}</div><small>{server?.relay?.accessTokenConfigured ? "Leave blank to retain the encrypted token." : "Generated locally and saved encrypted after setup."}</small></label>
+      {!editing && <fieldset className="relay-install wide"><legend><strong>Install relay</strong><small>Choose how to prepare the public node.</small></legend>
+        <div className="relay-install-options">
+          <label className={relayInstallMethod === "manual" ? "selected" : ""}><input type="radio" name="relay-install" checked={relayInstallMethod === "manual"} onChange={() => setRelayInstallMethod("manual")} /><TerminalWindow size={17} /><span><strong>Run a command</strong></span></label>
+          <label className={relayInstallMethod === "ssh" ? "selected" : ""}><input type="radio" name="relay-install" checked={relayInstallMethod === "ssh"} onChange={() => setRelayInstallMethod("ssh")} /><Key size={17} /><span><strong>Install over SSH</strong></span></label>
+        </div>
+        {relayInstallMethod === "manual" ? <div className="relay-command-panel">
+          <header><div><strong>Run on the relay node</strong><small>Linux with systemd, curl, and sudo is required.</small></div><button type="button" className="quiet-button" disabled={!relayAddress.trim()} onClick={() => void copyRelayCommand()}>{copiedCommand ? <Check size={14} weight="bold" /> : <Copy size={14} />}{copiedCommand ? "Copied" : "Copy command"}</button></header>
+          <pre><code>{relayCommand}</code></pre>
+        </div> : <div className="relay-ssh-panel">
+          <div className="relay-ssh-grid">
+            <label><span>SSH host</span><input placeholder="relay.example.com" value={sshHost} onChange={(event) => { setSSHHost(event.target.value); setSSHFingerprint(""); }} required /></label>
+            <label><span>Port</span><input type="number" min="1" max="65535" value={sshPort} onChange={(event) => { setSSHPort(event.target.value); setSSHFingerprint(""); }} required /></label>
+            <label><span>User</span><input placeholder="root" value={sshUser} onChange={(event) => setSSHUser(event.target.value)} required /></label>
+            <label><span>Authentication</span><select value={sshAuthType} onChange={(event) => setSSHAuthType(event.target.value as "password" | "private_key")}><option value="private_key">Private key</option><option value="password">Password</option></select></label>
+          </div>
+          {sshAuthType === "private_key" ? <><label><span>SSH private key</span><textarea className="relay-ssh-key" placeholder="Paste an OpenSSH or PEM private key" value={sshPrivateKey} onChange={(event) => setSSHPrivateKey(event.target.value)} required spellCheck={false} /></label><label><span>Key passphrase</span><input type="password" placeholder="Optional" value={sshPrivateKeyPassword} onChange={(event) => setSSHPrivateKeyPassword(event.target.value)} autoComplete="new-password" /></label></> : <label><span>SSH password</span><input type="password" value={sshPassword} onChange={(event) => setSSHPassword(event.target.value)} required autoComplete="new-password" /></label>}
+          {sshUser !== "root" && <label><span>Sudo password</span><input type="password" placeholder="Leave blank for passwordless sudo" value={sshSudoPassword} onChange={(event) => setSSHSudoPassword(event.target.value)} autoComplete="new-password" /></label>}
+          <div className="relay-host-key"><div><strong>Node fingerprint</strong><code>{sshFingerprint || "Not verified"}</code></div><button type="button" className="quiet-button" disabled={scanningSSH || !sshHost.trim()} onClick={() => void scanRelayHost()}>{scanningSSH ? "Checking..." : sshFingerprint ? "Check again" : "Check fingerprint"}</button></div>
+          <small className="relay-ssh-note">Confirm this fingerprint against the node before installing. SSH credentials are used once and are not saved.</small>
+        </div>}
+      </fieldset>}
+      <div className="relay-durability-note wide"><LockKey size={16} /><p><strong>Durable delivery.</strong> Events stay queued on this node until Dispatch acknowledges them.</p></div>
+    </> : runtime === "docker" ? <>
       <label><span>Connection</span><select value="remote" disabled><option value="remote">Remote server</option></select><small>{editing ? "Connection type cannot be changed." : "Waits for enrollment."}</small></label>
       <label><span>Address</span><input placeholder="docker-host.example.com" value={remoteAddress} onChange={(event) => setRemoteAddress(event.target.value)} required spellCheck={false} /><small>Hostname or IP address.</small></label>
     </> : runtime === "openshift" ? <>
@@ -127,11 +213,11 @@ export function ServerForm({ onChanged, server, repairing = false }: { onChanged
     </>}
     {fileError && <p className="form-error" role="alert">{fileError}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="dialog-actions"><button className="primary-button" disabled={busy || !name.trim() || (runtime === "docker" ? !remoteAddress.trim() : runtime === "openshift" ? !editing && !loginCommand.trim() : kubeconfigSource === "path" ? !kubeconfigPath.trim() : !kubeconfig.trim() && !server?.kubernetes?.kubeconfigStored)}>{busy ? runtime === "openshift" && !editing ? "Connecting..." : "Saving..." : editing ? "Save changes" : runtime === "openshift" ? "Connect OpenShift" : "Add server"}</button></div>
+    <div className="dialog-actions">{onCancel && <button type="button" className="quiet-button" onClick={onCancel}>Cancel</button>}<button className="primary-button" disabled={busy || !name.trim() || (runtime === "relay" ? !relayAddress.trim() || (!editing && (!relayAccessToken.trim() || (relayInstallMethod === "ssh" && (!sshHost.trim() || !sshUser.trim() || !sshFingerprint || (sshAuthType === "password" ? !sshPassword : !sshPrivateKey.trim()))))) : runtime === "docker" ? !remoteAddress.trim() : runtime === "openshift" ? !editing && !loginCommand.trim() : kubeconfigSource === "path" ? !kubeconfigPath.trim() : !kubeconfig.trim() && !server?.kubernetes?.kubeconfigStored)}>{busy ? runtime === "openshift" && !editing ? "Connecting..." : runtime === "relay" && relayInstallMethod === "ssh" && !editing ? "Installing..." : runtime === "relay" ? "Connecting..." : "Saving..." : editing ? "Save changes" : runtime === "openshift" ? "Connect OpenShift" : runtime === "relay" ? relayInstallMethod === "ssh" ? "Install and connect" : "Connect relay" : "Add server"}</button></div>
   </form>;
 }
 
-export function ProjectForm({ onChanged, project }: { onChanged: Changed; project?: Project }) {
+export function ProjectForm({ onChanged, onCancel, project }: { onChanged: Changed; onCancel?: () => void; project?: Project }) {
   const [name, setName] = useState(project?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? "");
   const [busy, setBusy] = useState(false);
@@ -152,17 +238,29 @@ export function ProjectForm({ onChanged, project }: { onChanged: Changed; projec
     }
   }
 
-  return <form className="resource-form" onSubmit={submit}>
+  return <form className="resource-form" onSubmit={submit} aria-busy={busy}>
     <label><span>Project name</span><input placeholder="Platform apps" value={name} onChange={(event) => setName(event.target.value)} required /><small>Used to group related applications.</small></label>
     <label><span>Description</span><input placeholder="Optional" value={description} onChange={(event) => setDescription(event.target.value)} /><small>Short internal context.</small></label>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="dialog-actions"><button className="primary-button" disabled={busy || !name.trim()}>{busy ? "Saving..." : project ? "Save changes" : "Add project"}</button></div>
+    <div className="dialog-actions">{onCancel && <button type="button" className="quiet-button" onClick={onCancel}>Cancel</button>}<button className="primary-button" disabled={busy || !name.trim()}>{busy ? "Saving..." : project ? "Save changes" : "Add project"}</button></div>
   </form>;
 }
 
 type ApplicationSourceType = "compose" | "repository" | "helm";
 
-export function AppForm({ data, onChanged, onDeployed, focusName = false, initialSourceType = "compose", sourceTypeLocked = false, template = false }: { data: Overview; onChanged: Changed; onDeployed: (id: string) => Promise<void>; focusName?: boolean; initialSourceType?: ApplicationSourceType; sourceTypeLocked?: boolean; template?: boolean }) {
+function repositoryIdentifier(value: string) {
+  const trimmed = value.trim().replace(/\.git$/, "");
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.pathname.split("/").filter(Boolean).slice(0, 2).join("/").toLowerCase();
+  } catch {
+    const sshPath = trimmed.includes(":") ? trimmed.split(":").at(-1) ?? "" : trimmed;
+    const parts = sshPath.split("/").filter(Boolean);
+    return parts.length === 2 ? parts.join("/").toLowerCase() : "";
+  }
+}
+
+export function AppForm({ data, onChanged, focusName = false, initialSourceType = "compose", sourceTypeLocked = false, template = false }: { data: Overview; onChanged: Changed; focusName?: boolean; initialSourceType?: ApplicationSourceType; sourceTypeLocked?: boolean; template?: boolean }) {
   const readyServers = useMemo(() => data.servers.filter((server) => server.state === "ready"), [data.servers]);
   const initialServers = readyServers.filter((server) => initialSourceType === "helm" ? isKubernetesRuntime(server.runtime) : server.runtime === "docker");
   const [projectID, setProjectID] = useState(data.projects[0]?.id ?? "");
@@ -170,20 +268,33 @@ export function AppForm({ data, onChanged, onDeployed, focusName = false, initia
   const [name, setName] = useState("");
   const [sourceType, setSourceType] = useState<ApplicationSourceType>(initialSourceType);
   const [repo, setRepo] = useState("");
+  const [branch, setBranch] = useState("main");
+  const [sourceAuthType, setSourceAuthType] = useState<"" | "github_app" | "github_token" | "ssh_key">("");
+  const [sourceCredentialID, setSourceCredentialID] = useState("");
   const [composeContent, setComposeContent] = useState("");
   const [buildType, setBuildType] = useState("dockerfile");
+  const [helmOrigin, setHelmOrigin] = useState<"direct" | "repository" | "git">("direct");
   const [helmChart, setHelmChart] = useState("");
   const [helmVersion, setHelmVersion] = useState("");
   const [helmRepository, setHelmRepository] = useState("");
   const [helmValues, setHelmValues] = useState("");
+  const [helmInspection, setHelmInspection] = useState<HelmChartInspection | null>(null);
+  const [helmEffectiveValues, setHelmEffectiveValues] = useState<Record<string, HelmValue>>({});
+  const [helmValueBaseline, setHelmValueBaseline] = useState<Record<string, HelmValue>>({});
+  const [helmValuesMode, setHelmValuesMode] = useState<"structured" | "raw">("structured");
+  const [helmProfile, setHelmProfile] = useState("");
+  const [inspectingHelm, setInspectingHelm] = useState(false);
+  const [helmInspectionError, setHelmInspectionError] = useState("");
   const [helmNamespace, setHelmNamespace] = useState("");
   const [helmRelease, setHelmRelease] = useState("");
   const [domain, setDomain] = useState("");
-  const [preDeployHook, setPreDeployHook] = useState("");
-  const [postDeployHook, setPostDeployHook] = useState("");
   const [eventEnabled, setEventEnabled] = useState(false);
+  const [eventGitHubAppID, setEventGitHubAppID] = useState("");
   const [eventRepository, setEventRepository] = useState("");
   const [eventCommand, setEventCommand] = useState("/preview");
+  const [eventRepositories, setEventRepositories] = useState<GitHubRepository[]>([]);
+  const [eventRepositoriesLoading, setEventRepositoriesLoading] = useState(false);
+  const [eventRepositoryError, setEventRepositoryError] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -194,23 +305,23 @@ export function AppForm({ data, onChanged, onDeployed, focusName = false, initia
     try {
       const directCompose = sourceType === "compose";
       const helm = sourceType === "helm";
+      const structuredHelmValues = helm && helmOrigin === "git" && helmInspection && helmValuesMode === "structured"
+        ? helmValueOverrides(helmInspection.defaults, helmEffectiveValues)
+        : undefined;
       const created = await api.createApp({
         projectId: projectID, serverId: serverID, name, template,
-        sourceRepo: directCompose ? "" : repo, composeContent: directCompose ? composeContent : "",
-        branch: directCompose ? "" : "main", buildType: directCompose ? "compose" : helm ? "helm" : buildType,
+        sourceRepo: directCompose ? "" : helm ? helmOrigin === "git" ? repo : "" : repo, composeContent: directCompose ? composeContent : "",
+        branch: directCompose ? "" : branch, buildType: directCompose ? "compose" : helm ? "helm" : buildType,
+        sourceAuthType: !directCompose && repo.trim() ? sourceAuthType : "", sourceCredentialId: !directCompose && repo.trim() ? sourceCredentialID : "",
         contextPath: ".", dockerfilePath: "Dockerfile", composePath: "compose.yml", containerPort: 8080, domain,
-        helmChart: helm ? helmChart : "", helmVersion: helm ? helmVersion : "", helmRepository: helm ? helmRepository : "",
-        helmValues: helm ? helmValues : "", helmNamespace: helm ? helmNamespace : "", helmRelease: helm ? helmRelease : "",
+        helmChart: helm ? helmChart : "", helmVersion: helm ? helmVersion : "", helmRepository: helm && helmOrigin === "repository" ? helmRepository : "",
+        helmValues: helm && structuredHelmValues === undefined ? helmValues : "", helmValueOverrides: structuredHelmValues,
+        helmNamespace: helm ? helmNamespace : "", helmRelease: helm ? helmRelease : "",
       });
-      if (eventEnabled) {
-        await api.createEventTrigger(created.id, { provider: "github", repository: eventRepository, command: eventCommand, enabled: true, preDeployHook, postDeployHook });
+      if (eventEnabled && !helm) {
+        await api.createEventTrigger(created.id, { githubAppId: eventGitHubAppID, provider: "github", repository: eventRepository, command: eventCommand, enabled: true });
       }
-      if (directCompose && !template) {
-        const deployment = await api.deploy(created.id, "inline");
-        await onDeployed(deployment.id);
-      } else {
-        await onChanged();
-      }
+      await onChanged();
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -224,27 +335,123 @@ export function AppForm({ data, onChanged, onDeployed, focusName = false, initia
     if (!eligible.some((server) => server.id === serverID)) setServerID(eligible[0]?.id ?? "");
   }
 
-  const eligibleServers = readyServers.filter((server) => sourceType === "helm" ? isKubernetesRuntime(server.runtime) : server.runtime === "docker");
+  function invalidateHelmInspection() {
+    setHelmInspection(null);
+    setHelmInspectionError("");
+    setHelmProfile("");
+    setHelmEffectiveValues({});
+    setHelmValueBaseline({});
+  }
 
-  return <form className="resource-form application-form" onSubmit={submit}>
-    <label><span>{template ? "Template name" : "Application name"}</span><input placeholder="checkout-api" value={name} onChange={(event) => setName(event.target.value)} autoFocus={focusName} required /><small>{template ? "Reusable name shown in Dispatch." : "Shown in Dispatch."}</small></label>
-    <label><span>Project</span><select value={projectID} onChange={(event) => setProjectID(event.target.value)}>{data.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select><small>Groups this application.</small></label>
-    <label><span>Server</span><select value={serverID} onChange={(event) => setServerID(event.target.value)}>{eligibleServers.map((server) => <option value={server.id} key={server.id}>{server.name}</option>)}</select><small>{sourceType === "helm" ? "Kubernetes servers only." : "Receives deployments."}</small></label>
-    {!sourceTypeLocked && <label><span>Source</span><select value={sourceType} onChange={(event) => changeSource(event.target.value as ApplicationSourceType)}><option value="compose">Paste Compose file</option><option value="repository">Git repository</option>{template && <option value="helm">Helm chart</option>}</select><small>Choose the application definition.</small></label>}
-    {sourceType === "repository" && <><label><span>Build method</span><select value={buildType} onChange={(event) => setBuildType(event.target.value)}><option value="dockerfile">Dockerfile</option><option value="compose">Compose</option></select><small>Defines the repository build contract.</small></label><label className="wide"><span>Repository URL</span><input placeholder="https://github.com/owner/app.git" value={repo} onChange={(event) => setRepo(event.target.value)} required spellCheck={false} /><small>HTTPS source repository.</small></label></>}
-    {sourceType === "compose" && <label className="wide compose-field"><span>Docker Compose</span><textarea placeholder={'services:\n  app:\n    image: ghcr.io/owner/app:latest\n    ports:\n      - "8080:8080"'} value={composeContent} onChange={(event) => setComposeContent(event.target.value)} required spellCheck={false} /><small>Image-based services deploy as pasted. Relative build contexts need a repository.</small></label>}
+  useEffect(() => {
+    if (sourceAuthType === "github_app" && sourceCredentialID && !eventGitHubAppID) setEventGitHubAppID(sourceCredentialID);
+  }, [eventGitHubAppID, sourceAuthType, sourceCredentialID]);
+
+  useEffect(() => {
+    let active = true;
+    setEventRepositories([]);
+    setEventRepositoryError("");
+    if (!eventGitHubAppID) return () => { active = false; };
+    setEventRepositoriesLoading(true);
+    void api.githubAppRepositories(eventGitHubAppID).then((items) => {
+      if (!active) return;
+      setEventRepositories(items);
+    }).catch((cause) => { if (active) setEventRepositoryError((cause as Error).message); }).finally(() => { if (active) setEventRepositoriesLoading(false); });
+    return () => { active = false; };
+  }, [eventGitHubAppID]);
+
+  useEffect(() => {
+    const inferred = repositoryIdentifier(repo);
+    const match = eventRepositories.find((repository) => repository.fullName.toLowerCase() === inferred);
+    if (match) setEventRepository((current) => current || match.fullName);
+  }, [eventRepositories, repo]);
+
+  async function inspectHelmChart() {
+    setInspectingHelm(true);
+    setHelmInspectionError("");
+    try {
+      const inspection = await api.inspectHelmSource({ sourceRepo: repo, branch, chartPath: helmChart, sourceAuthType, sourceCredentialId: sourceCredentialID });
+      const defaults = structuredClone(inspection.defaults);
+      setHelmInspection(inspection);
+      setRepo(inspection.repository);
+      setBranch(inspection.branch);
+      setHelmChart(inspection.chartPath);
+      setHelmEffectiveValues(defaults);
+      setHelmValueBaseline(structuredClone(defaults));
+      setHelmValues("");
+      setHelmProfile("");
+      setHelmValuesMode("structured");
+      if (!name.trim()) setName(inspection.chart.name);
+      if (!helmRelease.trim()) setHelmRelease(inspection.chart.name);
+    } catch (cause) {
+      setHelmInspectionError((cause as Error).message);
+    } finally {
+      setInspectingHelm(false);
+    }
+  }
+
+  function selectHelmProfile(path: string) {
+    const profile = helmInspection?.profiles.find((item) => item.path === path);
+    const baseline = helmInspection ? mergeHelmValues(helmInspection.defaults, profile?.values ?? {}) : {};
+    setHelmProfile(path);
+    setHelmValueBaseline(structuredClone(baseline));
+    setHelmEffectiveValues(structuredClone(baseline));
+    setHelmValues(profile?.valuesYaml ?? "");
+  }
+
+  const eligibleServers = readyServers.filter((server) => sourceType === "helm" ? isKubernetesRuntime(server.runtime) : server.runtime === "docker");
+  const repositorySource = sourceType === "repository" || (sourceType === "helm" && helmOrigin === "git");
+  const repositoryAuthentication = repositorySource && repo.trim() !== "";
+  const compatibleSourceSecrets = data.secrets.filter((secret) => sourceAuthType === "ssh_key"
+    ? secret.type === "ssh_private_key" || secret.type === "text"
+    : sourceAuthType === "github_token"
+      ? secret.type === "github_token" || secret.type === "api_token" || secret.type === "text"
+      : false);
+  const repositoryHost = (() => { try { return new URL(repo).host.toLowerCase(); } catch { return ""; } })();
+  const compatibleGitHubApps = data.githubApps.filter((connection) => connection.state === "ready" && (() => {
+    if (!repositoryHost) return true;
+    try { return new URL(connection.webUrl).host.toLowerCase() === repositoryHost; } catch { return false; }
+  })());
+  const selectedProject = data.projects.find((project) => project.id === projectID);
+  const selectedServer = eligibleServers.find((server) => server.id === serverID);
+
+  return <form className={`resource-form application-form application-form-${sourceType}`} onSubmit={submit} aria-busy={busy}>
+    <label className={sourceTypeLocked && data.projects.length <= 1 && eligibleServers.length <= 1 ? "wide" : undefined}><span>{template ? "Template name" : "Application name"}</span><input placeholder="checkout-api" value={name} onChange={(event) => setName(event.target.value)} autoFocus={focusName} required /></label>
+    {!sourceTypeLocked && <label><span>Deploy from</span><select value={sourceType} onChange={(event) => changeSource(event.target.value as ApplicationSourceType)}><option value="compose">Compose file</option><option value="repository">Git repository</option>{template && <option value="helm">Helm chart</option>}</select></label>}
+    {data.projects.length > 1 && <label><span>Project</span><select value={projectID} onChange={(event) => setProjectID(event.target.value)}>{data.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>}
+    {eligibleServers.length > 1 && <label><span>Target server</span><select value={serverID} onChange={(event) => setServerID(event.target.value)}>{eligibleServers.map((server) => <option value={server.id} key={server.id}>{server.name}</option>)}</select></label>}
+    {sourceType === "helm" && <div className="form-section-heading wide"><div><strong>Chart</strong></div></div>}
+    {sourceType === "repository" && <><label className="wide"><span>Repository URL</span><input placeholder={sourceAuthType === "ssh_key" ? "git@github.com:owner/app.git" : "https://github.com/owner/app.git"} value={repo} onChange={(event) => setRepo(event.target.value)} required spellCheck={false} /></label><label><span>Branch</span><input placeholder="main" value={branch} onChange={(event) => setBranch(event.target.value)} required spellCheck={false} /></label><label><span>Build method</span><select value={buildType} onChange={(event) => setBuildType(event.target.value)}><option value="dockerfile">Dockerfile</option><option value="compose">Compose</option></select></label></>}
+    {sourceType === "compose" && <label className="wide compose-field"><span>Compose definition</span><textarea rows={9} placeholder={'services:\n  app:\n    image: ghcr.io/owner/app:latest'} value={composeContent} onChange={(event) => setComposeContent(event.target.value)} required spellCheck={false} /></label>}
     {sourceType === "helm" && <>
-      <label className="wide"><span>Chart</span><input placeholder="oci://registry.example.com/charts/service" value={helmChart} onChange={(event) => setHelmChart(event.target.value)} required spellCheck={false} /><small>OCI or HTTPS reference. Use a chart name when a repository is set.</small></label>
-      <label className="wide"><span>Helm repository</span><input placeholder="https://charts.example.com" value={helmRepository} onChange={(event) => setHelmRepository(event.target.value)} spellCheck={false} /><small>Optional HTTPS repository for a relative chart name.</small></label>
-      <label><span>Version</span><input placeholder="Latest" value={helmVersion} onChange={(event) => setHelmVersion(event.target.value)} spellCheck={false} /><small>Optional chart version.</small></label>
-      <label><span>Namespace</span><input placeholder="Server default" value={helmNamespace} onChange={(event) => setHelmNamespace(event.target.value)} spellCheck={false} /><small>Overrides the server namespace.</small></label>
-      <label><span>Release</span><input placeholder="Generated automatically" value={helmRelease} onChange={(event) => setHelmRelease(event.target.value)} spellCheck={false} /><small>Stable name used for upgrades and cleanup.</small></label>
-      <label className="wide compose-field"><span>Values</span><textarea placeholder={'image:\n  repository: registry.example.com/team/service\n  tag: latest'} value={helmValues} onChange={(event) => setHelmValues(event.target.value)} spellCheck={false} /><small>Optional values override applied during install and upgrade.</small></label>
-      <label className="wide"><span>Source repository</span><input placeholder="https://github.com/owner/app.git" value={repo} onChange={(event) => setRepo(event.target.value)} spellCheck={false} /><small>Optional source checkout for build hooks and preview branches.</small></label>
-      <label className="wide"><span>Preview URL</span><input placeholder="https://preview.example.com" value={domain} onChange={(event) => setDomain(event.target.value)} spellCheck={false} /><small>Published in event status updates after deployment.</small></label>
+      <fieldset className="source-selector wide"><legend>Chart origin</legend><div>
+        <label><input type="radio" name="helm-origin" value="direct" checked={helmOrigin === "direct"} onChange={() => { setHelmOrigin("direct"); invalidateHelmInspection(); }} /><span><strong>Direct reference</strong></span></label>
+        <label><input type="radio" name="helm-origin" value="repository" checked={helmOrigin === "repository"} onChange={() => { setHelmOrigin("repository"); invalidateHelmInspection(); }} /><span><strong>Helm repository</strong></span></label>
+        <label><input type="radio" name="helm-origin" value="git" checked={helmOrigin === "git"} onChange={() => { setHelmOrigin("git"); invalidateHelmInspection(); }} /><span><strong>Git repository</strong></span></label>
+      </div></fieldset>
+      {helmOrigin === "repository" && <label className="wide"><span>Helm repository URL</span><input placeholder="https://charts.example.com" value={helmRepository} onChange={(event) => setHelmRepository(event.target.value)} required spellCheck={false} /></label>}
+      {helmOrigin === "git" && <><label className="wide"><span>Repository or chart folder URL</span><input placeholder="https://github.example.com/owner/repo/tree/main/helm/chart" value={repo} onChange={(event) => { setRepo(event.target.value); invalidateHelmInspection(); }} required spellCheck={false} /></label><label><span>Branch</span><input placeholder="main" value={branch} onChange={(event) => { setBranch(event.target.value); invalidateHelmInspection(); }} required spellCheck={false} /></label></>}
+      <label className="wide"><span>{helmOrigin === "git" ? "Chart directory" : "Chart"}</span><input placeholder={helmOrigin === "git" ? "helm/agentops-preview" : helmOrigin === "repository" ? "service" : "oci://registry.example.com/charts/service"} value={helmChart} onChange={(event) => { setHelmChart(event.target.value); if (helmOrigin === "git") invalidateHelmInspection(); }} required={helmOrigin !== "git" || !repo.includes("/tree/")} spellCheck={false} /></label>
+      {helmOrigin !== "git" && <label><span>Version</span><input placeholder="Chart default" value={helmVersion} onChange={(event) => setHelmVersion(event.target.value)} spellCheck={false} /></label>}
+      <label><span>Namespace</span><input placeholder="Server default" value={helmNamespace} onChange={(event) => setHelmNamespace(event.target.value)} spellCheck={false} /></label>
+      <label><span>Release name</span><input placeholder="Generated automatically" value={helmRelease} onChange={(event) => setHelmRelease(event.target.value)} spellCheck={false} /></label>
+      <details className="optional-settings preview-settings wide"><summary>Advanced settings <span>Optional</span></summary><div><label><span>Preview URL</span><input placeholder="https://preview.example.com" value={domain} onChange={(event) => setDomain(event.target.value)} spellCheck={false} /></label></div></details>
     </>}
-    <details className="event-config wide"><summary>Pull request events</summary><div><label className="event-toggle"><input type="checkbox" checked={eventEnabled} onChange={(event) => setEventEnabled(event.target.checked)} /><span>Create previews from pull request comments</span></label>{eventEnabled && <><label><span>Repository</span><input placeholder="owner/repository" value={eventRepository} onChange={(event) => setEventRepository(event.target.value)} required spellCheck={false} /><small>Repository identifier used by webhook events.</small></label><label><span>Comment command</span><input placeholder="/preview" value={eventCommand} onChange={(event) => setEventCommand(event.target.value)} required spellCheck={false} /><small>The first line of a pull request comment.</small></label><label className="event-hook-field"><span>Pre-deploy hook</span><textarea placeholder={'docker build -t registry.example.com/team/app:$DISPATCH_REVISION .\ndocker push registry.example.com/team/app:$DISPATCH_REVISION'} value={preDeployHook} onChange={(event) => setPreDeployHook(event.target.value)} spellCheck={false} /><small>Runs for previews started by this event.</small></label><label className="event-hook-field"><span>Post-deploy hook</span><textarea placeholder={'echo "Ready at $DISPATCH_DEPLOYMENT_URL"'} value={postDeployHook} onChange={(event) => setPostDeployHook(event.target.value)} spellCheck={false} /><small>Runs after this event's deployment is ready.</small></label></>}</div></details>
+    {repositorySource && <details className="optional-settings repository-access wide"><summary>Repository access <span>Optional</span></summary><div>
+      <label><span>Authentication</span><select value={sourceAuthType} onChange={(event) => { setSourceAuthType(event.target.value as "" | "github_app" | "github_token" | "ssh_key"); setSourceCredentialID(""); invalidateHelmInspection(); }}><option value="">Public repository</option><option value="github_app">GitHub App</option><option value="github_token">GitHub token</option><option value="ssh_key">SSH private key</option></select></label>
+      {sourceAuthType === "github_app" ? <label><span>GitHub App</span><select value={sourceCredentialID} onChange={(event) => { setSourceCredentialID(event.target.value); invalidateHelmInspection(); }} required><option value="">Select a connection</option>{compatibleGitHubApps.map((connection) => <option value={connection.id} key={connection.id}>{connection.name} ({connection.installationAccount || new URL(connection.webUrl).host})</option>)}</select>{!compatibleGitHubApps.length && <small>Add and verify a GitHub App connection first.</small>}</label> : sourceAuthType && <label><span>Credential</span><select value={sourceCredentialID} onChange={(event) => { setSourceCredentialID(event.target.value); invalidateHelmInspection(); }} required><option value="">Select a secret</option>{compatibleSourceSecrets.map((secret) => <option value={secret.id} key={secret.id}>{secret.name}</option>)}</select>{!compatibleSourceSecrets.length && <small>Add a compatible secret first.</small>}</label>}
+    </div></details>}
+    {sourceType === "helm" && helmOrigin === "git" && !helmInspection && helmValuesMode !== "raw" && <section className="helm-inspection-prompt wide">
+      <div><strong>Chart values</strong><p>Load values.yaml as editable fields.</p>{helmInspectionError && <small role="alert">{helmInspectionError}</small>}</div>
+      <div><button type="button" className="quiet-button" onClick={() => setHelmValuesMode("raw")}>Raw YAML</button><button type="button" className="primary-button" disabled={inspectingHelm || !repo.trim() || (!helmChart.trim() && !repo.includes("/tree/")) || (!!sourceAuthType && !sourceCredentialID)} onClick={() => void inspectHelmChart()}>{inspectingHelm ? "Loading..." : "Load values"}</button></div>
+    </section>}
+    {sourceType === "helm" && helmOrigin === "git" && helmInspection && helmValuesMode === "structured" && <HelmValuesEditor inspection={helmInspection} values={helmEffectiveValues} baseline={helmValueBaseline} selectedProfile={helmProfile} onProfileChange={selectHelmProfile} onChange={setHelmEffectiveValues} onRawMode={() => setHelmValuesMode("raw")} />}
+    {sourceType === "helm" && (helmOrigin !== "git" || helmValuesMode === "raw") && <section className="helm-raw-values wide">
+      <header><div><strong>Helm values</strong></div>{helmOrigin === "git" && <button type="button" className="quiet-button" onClick={() => setHelmValuesMode("structured")}>{helmInspection ? "Form editor" : "Load values"}</button>}</header>
+      <textarea placeholder={'image:\n  repository: registry.example.com/team/service\n  tag: latest'} value={helmValues} onChange={(event) => setHelmValues(event.target.value)} spellCheck={false} />
+    </section>}
+    {sourceType !== "helm" && <details className="event-config wide"><summary>Pull request previews <span>Optional</span></summary><div><label className="event-toggle"><input type="checkbox" checked={eventEnabled} onChange={(event) => setEventEnabled(event.target.checked)} /><span>Enable comment commands</span></label>{eventEnabled && <><label><span>GitHub connection</span><select value={eventGitHubAppID} onChange={(event) => { setEventGitHubAppID(event.target.value); setEventRepository(""); }} required><option value="">Choose a connection</option>{data.githubApps.filter((connection) => connection.state === "ready").map((connection) => <option key={connection.id} value={connection.id}>{connection.name} ({connection.installationAccount || "installed"})</option>)}</select><small>The App webhook receives the pull request comment.</small></label><label><span>Repository</span><select value={eventRepository} onChange={(event) => setEventRepository(event.target.value)} disabled={!eventGitHubAppID || eventRepositoriesLoading} required><option value="">{eventRepositoriesLoading ? "Loading repositories..." : "Choose a repository"}</option>{eventRepositories.map((repository) => <option key={repository.id} value={repository.fullName}>{repository.fullName}</option>)}</select>{eventRepositoryError ? <small className="field-error">{eventRepositoryError}</small> : <small>Repositories selected for this installation.</small>}</label><label><span>Command</span><input placeholder="/preview" value={eventCommand} onChange={(event) => setEventCommand(event.target.value)} required spellCheck={false} /></label></>}</div></details>}
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="dialog-actions"><button className="primary-button" disabled={busy || !projectID || !serverID || !name.trim() || (sourceType === "compose" ? !composeContent.trim() : sourceType === "repository" ? !repo.trim() : !helmChart.trim()) || (eventEnabled && (!eventRepository.trim() || !eventCommand.trim()))}>{busy ? template ? "Saving template..." : sourceType === "compose" ? "Starting deployment..." : sourceType === "helm" ? "Adding Helm source..." : "Adding application..." : template ? "Create template" : sourceType === "compose" ? "Deploy Compose" : sourceType === "helm" ? "Add Helm source" : "Add application"}</button></div>
+    <div className="dialog-actions application-actions"><span className="form-review">{selectedProject && selectedServer ? `${selectedProject.name} / ${selectedServer.name}` : "Select a target"}</span><button className="primary-button" disabled={busy || !projectID || !serverID || !name.trim() || (sourceType === "compose" ? !composeContent.trim() : sourceType === "repository" ? !repo.trim() : !helmChart.trim() || (helmOrigin === "git" && !repo.trim()) || (helmOrigin === "repository" && !helmRepository.trim())) || (repositoryAuthentication && !!sourceAuthType && !sourceCredentialID) || (sourceType !== "helm" && eventEnabled && (!eventGitHubAppID || eventRepositoriesLoading || !eventRepository.trim() || !eventCommand.trim()))}>{busy ? template ? "Saving..." : sourceType === "helm" ? "Saving..." : "Saving..." : template ? "Create template" : sourceType === "helm" ? "Save Helm source" : "Save application"}</button></div>
   </form>;
 }

@@ -2,25 +2,30 @@ export type Project = { id: string; name: string; description: string; createdAt
 export type OpenShiftServerConfig = { managed: boolean; serviceAccount: string; serviceAccountNamespace: string; tokenSecret: string; connectedAt?: string };
 export type KubernetesServerConfig = { kubeconfigPath?: string; kubeconfigStored: boolean; certificateAuthorityStored: boolean; context?: string; namespace?: string; openShift?: OpenShiftServerConfig };
 export type KubernetesServerInput = { source: "stored" | "path" | "openshift"; kubeconfigPath?: string; kubeconfig?: string; certificateAuthority?: string; context?: string; namespace?: string; loginCommand?: string };
-export type Server = { id: string; name: string; address: string; runtime: "docker" | "kubernetes" | "openshift"; state: string; agentMode: string; kubernetes?: KubernetesServerConfig; createdAt: string };
+export type RelayServerConfig = { accessTokenConfigured: boolean; pendingEvents: number; oldestPendingAt?: string; lastConnectedAt?: string; lastError?: string };
+export type Server = { id: string; name: string; address: string; runtime: "docker" | "kubernetes" | "openshift" | "relay"; state: string; agentMode: string; kubernetes?: KubernetesServerConfig; relay?: RelayServerConfig; createdAt: string };
+export type RelayWebhook = { id: string; serverId: string; name: string; provider: string; providerConnectionId?: string; remoteId: string; url: string; state: string; lastDeliveryAt?: string; lastError?: string; createdAt: string; updatedAt: string };
+export type RelaySSHInstallInput = { host: string; port: number; user: string; authType: "password" | "private_key"; password?: string; privateKey?: string; privateKeyPassword?: string; sudoPassword?: string; hostKeyFingerprint: string; relayUrl: string; relayToken: string };
 export type App = {
   id: string; projectId: string; serverId: string; name: string; sourceRepo: string; branch: string;
+  sourceAuthType?: "github_app" | "github_token" | "ssh_key"; sourceCredentialId?: string;
   buildType: "dockerfile" | "compose" | "helm"; contextPath: string; dockerfilePath: string; composePath: string;
   helmChart?: string; helmVersion?: string; helmRepository?: string; helmValues?: string; helmNamespace?: string; helmRelease?: string;
+  preDeployHook?: string; postDeployHook?: string; hookSecretIds?: string[];
   containerPort: number; domain: string; template: boolean; state: string; createdAt: string;
 };
 export type DeploymentState = "queued" | "fetching" | "building" | "starting" | "checking" | "routing" | "succeeded" | "failed" | "cancelled";
 export type Deployment = {
   id: string; appId: string; commitSha: string; specDigest: string; state: DeploymentState; message: string;
-  createdAt: string; startedAt?: string; finishedAt?: string; app?: App; server?: Server;
+  createdAt: string; startedAt?: string; finishedAt?: string; outputs?: Record<string, string>; app?: App; server?: Server;
 };
 export type PreviewGroupBinding = { source: string; helmValuePath: string };
 export type PreviewGroupComponent = {
   id?: string; groupId?: string; appId: string; alias: string; repository: string; defaultBranch: string;
-  entrypoint: boolean; dependsOn: string[]; bindings: PreviewGroupBinding[]; preDeployHook?: string; postDeployHook?: string;
+  entrypoint: boolean; dependsOn: string[]; bindings: PreviewGroupBinding[]; preDeployHook?: string; postDeployHook?: string; secretIds: string[];
 };
 export type PreviewGroup = {
-  id: string; name: string; command: string; enabled: boolean; components: PreviewGroupComponent[]; createdAt: string; updatedAt: string;
+  id: string; name: string; githubAppId?: string; command: string; enabled: boolean; components: PreviewGroupComponent[]; createdAt: string; updatedAt: string;
 };
 export type PreviewGroupSource = {
   id: string; runId: string; groupId: string; componentId: string; alias: string; repository: string; pullRequest?: number;
@@ -41,12 +46,30 @@ export type Overview = {
   demo: boolean; secretStorageConfigured: boolean; projects: Project[]; servers: Server[]; apps: App[]; deployments: Deployment[];
   eventTriggers: EventTrigger[]; previews: PreviewEnvironment[];
   previewGroups: PreviewGroup[]; previewGroupRuns: PreviewGroupRun[];
-	secrets: Secret[];
+	secrets: Secret[]; githubApps: GitHubAppConnection[]; relayWebhooks: RelayWebhook[];
 };
-export type Secret = { id: string; name: string; environmentVariable: string; createdAt: string; updatedAt: string };
+export type GitHubAppConnection = {
+  id: string; name: string; webUrl: string; apiUrl: string; appId: number; clientId?: string; slug?: string;
+  registrationOwner?: string; registrationOwnerType?: string; installationId?: number; installationAccount?: string; installationUrl?: string; webhookUrl: string; relayWebhookId?: string; privateKeyConfigured: boolean;
+  webhookSecretConfigured: boolean; state: "needs_installation" | "unverified" | "ready" | string;
+  lastVerifiedAt?: string; createdAt: string; updatedAt: string;
+};
+export type GitHubAppInstallation = { id: number; account: string; target: string };
+export type GitHubRepository = { id: number; fullName: string; name: string; owner: string; defaultBranch: string; private: boolean; webUrl: string };
+export type GitHubAppVerification = { slug: string; clientId: string; registrationOwner: string; registrationOwnerType: string; installationAccount: string; repositorySelection: string; repositoryCount: number };
+export type GitHubAppManifest = { action: string; manifest: Record<string, unknown> };
+export type SecretType = "text" | "api_token" | "github_token" | "ssh_private_key" | "registry_password";
+export type Secret = { id: string; name: string; type: SecretType; environmentVariable: string; publicValue?: string; createdAt: string; updatedAt: string };
 export type AuthStatus = { setupRequired: boolean; tokenLoginAvailable: boolean };
-export type EventTrigger = { id: string; appId: string; provider: "github"; repository: string; command: string; enabled: boolean; preDeployHook?: string; postDeployHook?: string; secretIds: string[]; createdAt: string; updatedAt: string };
+export type EventTrigger = { id: string; appId: string; githubAppId?: string; provider: "github"; repository: string; command: string; enabled: boolean; preDeployHook?: string; postDeployHook?: string; secretIds: string[]; createdAt: string; updatedAt: string };
 export type PreviewEnvironment = { id: string; appId: string; repository: string; pullRequestNumber: number; state: string; url?: string; deploymentId?: string; message?: string; updatedAt: string };
+export type HelmValue = string | number | boolean | null | HelmValue[] | { [key: string]: HelmValue };
+export type HelmValuesProfile = { path: string; name: string; values: Record<string, HelmValue>; valuesYaml: string };
+export type HelmChartInspection = {
+  repository: string; branch: string; chartPath: string;
+  chart: { name: string; description?: string; version?: string; appVersion?: string; type?: string };
+  defaults: Record<string, HelmValue>; valuesYaml: string; schema?: unknown; profiles: HelmValuesProfile[];
+};
 
 const tokenKey = "dispatch-admin-token";
 export const getToken = () => sessionStorage.getItem(tokenKey) ?? "";
@@ -85,22 +108,38 @@ export const api = {
   createProject: (body: { name: string; description: string }) => request<Project>("/api/v1/projects", { method: "POST", body: JSON.stringify(body) }),
   updateProject: (id: string, body: { name: string; description: string }) => request<Project>(`/api/v1/projects/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteProject: (id: string) => request<void>(`/api/v1/projects/${id}`, { method: "DELETE" }),
-  createServer: (body: { name: string; address?: string; runtime: "docker" | "kubernetes" | "openshift"; agentMode?: string; kubernetes?: KubernetesServerInput }) => request<Server>("/api/v1/servers", { method: "POST", body: JSON.stringify(body) }),
-  updateServer: (id: string, body: { name: string; address?: string; kubernetes?: KubernetesServerInput }) => request<Server>(`/api/v1/servers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  createServer: (body: { name: string; address?: string; runtime: "docker" | "kubernetes" | "openshift" | "relay"; agentMode?: string; kubernetes?: KubernetesServerInput; relay?: { accessToken?: string } }) => request<Server>("/api/v1/servers", { method: "POST", body: JSON.stringify(body) }),
+  scanRelaySSHHost: (host: string, port: number) => request<{ fingerprint: string }>("/api/v1/relay/ssh/scan", { method: "POST", body: JSON.stringify({ host, port }) }),
+  installRelayOverSSH: (body: RelaySSHInstallInput) => request<{ status: string; output: string }>("/api/v1/relay/ssh/install", { method: "POST", body: JSON.stringify(body) }),
+  updateServer: (id: string, body: { name: string; address?: string; kubernetes?: KubernetesServerInput; relay?: { accessToken?: string } }) => request<Server>(`/api/v1/servers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  verifyRelayServer: (id: string) => request<Server>(`/api/v1/servers/${id}/relay/verify`, { method: "POST" }),
+  relayWebhooks: (id: string) => request<RelayWebhook[]>(`/api/v1/servers/${id}/relay/webhooks`),
+  createRelayWebhook: (id: string, body: { name: string; provider: string; providerConnectionId?: string }) => request<RelayWebhook>(`/api/v1/servers/${id}/relay/webhooks`, { method: "POST", body: JSON.stringify(body) }),
+  deleteRelayWebhook: (serverId: string, id: string) => request<void>(`/api/v1/servers/${serverId}/relay/webhooks/${id}`, { method: "DELETE" }),
   repairServer: (id: string, loginCommand: string) => request<Server>(`/api/v1/servers/${id}/repair`, { method: "POST", body: JSON.stringify({ loginCommand }) }),
   deleteServer: (id: string) => request<void>(`/api/v1/servers/${id}`, { method: "DELETE" }),
   createApp: (body: Record<string, unknown>) => request<App>("/api/v1/apps", { method: "POST", body: JSON.stringify(body) }),
+  updateAppHooks: (id: string, body: { preDeployHook: string; postDeployHook: string; secretIds: string[] }) => request<App>(`/api/v1/apps/${id}/hooks`, { method: "PUT", body: JSON.stringify(body) }),
+  inspectHelmSource: (body: { sourceRepo: string; branch: string; chartPath: string; sourceAuthType?: string; sourceCredentialId?: string }) => request<HelmChartInspection>("/api/v1/helm/inspect", { method: "POST", body: JSON.stringify(body) }),
+	githubApps: () => request<GitHubAppConnection[]>("/api/v1/github-apps"),
+	createGitHubApp: (body: Record<string, unknown>) => request<GitHubAppConnection>("/api/v1/github-apps", { method: "POST", body: JSON.stringify(body) }),
+	updateGitHubApp: (id: string, body: Record<string, unknown>) => request<GitHubAppConnection>(`/api/v1/github-apps/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+	deleteGitHubApp: (id: string) => request<void>(`/api/v1/github-apps/${id}`, { method: "DELETE" }),
+	verifyGitHubApp: (id: string) => request<{ connection: GitHubAppConnection; verification: GitHubAppVerification }>(`/api/v1/github-apps/${id}/verify`, { method: "POST" }),
+	githubAppInstallations: (id: string) => request<GitHubAppInstallation[]>(`/api/v1/github-apps/${id}/installations`),
+	githubAppRepositories: (id: string) => request<GitHubRepository[]>(`/api/v1/github-apps/${id}/repositories`),
+  startGitHubAppManifest: (body: { name: string; webUrl: string; apiUrl?: string; ownerType: "personal" | "organization"; owner?: string; relayServerId?: string }) => request<GitHubAppManifest>("/api/v1/github-apps/manifest", { method: "POST", body: JSON.stringify(body) }),
   deleteApp: (id: string) => request<void>(`/api/v1/apps/${id}`, { method: "DELETE" }),
-  createEventTrigger: (appId: string, body: { provider: "github"; repository: string; command: string; enabled: boolean; preDeployHook?: string; postDeployHook?: string; secretIds?: string[] }) => request<EventTrigger>(`/api/v1/apps/${appId}/event-triggers`, { method: "POST", body: JSON.stringify(body) }),
-  updateEventTrigger: (id: string, body: { command: string; enabled: boolean; preDeployHook: string; postDeployHook: string; secretIds: string[] }) => request<EventTrigger>(`/api/v1/event-triggers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  createEventTrigger: (appId: string, body: { githubAppId?: string; provider: "github"; repository: string; command: string; enabled: boolean; preDeployHook?: string; postDeployHook?: string; secretIds?: string[] }) => request<EventTrigger>(`/api/v1/apps/${appId}/event-triggers`, { method: "POST", body: JSON.stringify(body) }),
+  updateEventTrigger: (id: string, body: { githubAppId?: string; command: string; enabled: boolean; preDeployHook: string; postDeployHook: string; secretIds: string[] }) => request<EventTrigger>(`/api/v1/event-triggers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   eventTriggers: (appId = "") => request<EventTrigger[]>(`/api/v1/event-triggers${appId ? `?appId=${encodeURIComponent(appId)}` : ""}`),
   deleteEventTrigger: (id: string) => request<void>(`/api/v1/event-triggers/${id}`, { method: "DELETE" }),
-	createSecret: (body: { name: string; environmentVariable: string; value: string }) => request<Secret>("/api/v1/secrets", { method: "POST", body: JSON.stringify(body) }),
-	updateSecret: (id: string, body: { name: string; environmentVariable: string; value?: string }) => request<Secret>(`/api/v1/secrets/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+	createSecret: (body: { name: string; type: SecretType; environmentVariable: string; value?: string; generate?: boolean }) => request<Secret>("/api/v1/secrets", { method: "POST", body: JSON.stringify(body) }),
+	updateSecret: (id: string, body: { name: string; type: SecretType; environmentVariable: string; value?: string; generate?: boolean }) => request<Secret>(`/api/v1/secrets/${id}`, { method: "PUT", body: JSON.stringify(body) }),
 	deleteSecret: (id: string) => request<void>(`/api/v1/secrets/${id}`, { method: "DELETE" }),
   previews: (appId = "") => request<PreviewEnvironment[]>(`/api/v1/preview-environments${appId ? `?appId=${encodeURIComponent(appId)}` : ""}`),
-  createPreviewGroup: (body: { name: string; command: string; enabled?: boolean; components: PreviewGroupComponent[] }) => request<PreviewGroup>("/api/v1/preview-groups", { method: "POST", body: JSON.stringify(body) }),
-  updatePreviewGroup: (id: string, body: { name: string; command: string; enabled?: boolean; components: PreviewGroupComponent[] }) => request<PreviewGroup>(`/api/v1/preview-groups/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  createPreviewGroup: (body: { name: string; githubAppId: string; command: string; enabled?: boolean; components: PreviewGroupComponent[] }) => request<PreviewGroup>("/api/v1/preview-groups", { method: "POST", body: JSON.stringify(body) }),
+  updatePreviewGroup: (id: string, body: { name: string; githubAppId: string; command: string; enabled?: boolean; components: PreviewGroupComponent[] }) => request<PreviewGroup>(`/api/v1/preview-groups/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deletePreviewGroup: (id: string) => request<void>(`/api/v1/preview-groups/${id}`, { method: "DELETE" }),
   previewGroupRun: (id: string) => request<PreviewGroupRun>(`/api/v1/preview-group-runs/${id}`),
   cleanupPreviewGroupRun: (id: string) => request<PreviewGroupRun>(`/api/v1/preview-group-runs/${id}/cleanup`, { method: "POST" }),
