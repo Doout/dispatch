@@ -82,7 +82,7 @@ func (s *Service) Process(ctx context.Context, event core.IncomingEvent) ([]core
 		if !event.TrustedActor {
 			return nil, nil
 		}
-		groups, err := s.store.MatchingPreviewGroups(ctx, event.Provider, event.Repository, event.Command)
+		groups, err := s.store.MatchingPreviewGroups(ctx, event.Provider, event.Repository, event.Command, event.ProviderConnectionID)
 		if err != nil {
 			return nil, err
 		}
@@ -111,6 +111,9 @@ func (s *Service) Process(ctx context.Context, event core.IncomingEvent) ([]core
 		}
 		items := []core.PreviewGroupRun{}
 		for _, group := range groups {
+			if group.GitHubAppID != event.ProviderConnectionID {
+				continue
+			}
 			run, err := s.store.FindPreviewGroupRunForPR(ctx, group.ID, event.Repository, event.PullRequestNumber)
 			if err != nil {
 				return items, err
@@ -547,6 +550,13 @@ func (s *Service) deployComponent(ctx context.Context, run core.PreviewGroupRun,
 	}
 	app.HookEnvironment["DISPATCH_EVENT_COMPONENT_ALIAS"] = component.Alias
 	app.HookEnvironment["DISPATCH_EVENT_COMPONENT_REPOSITORY"] = component.Repository
+	for _, secretID := range component.SecretIDs {
+		secret, secretErr := s.store.GetSecret(ctx, secretID)
+		if secretErr != nil {
+			return item, fmt.Errorf("load hook credential for %s: %w", component.Alias, secretErr)
+		}
+		app.HookEnvironment[core.SecretEnvironmentKey(secret.ID, secret.EnvironmentVariable)] = secret.EncryptedValue
+	}
 	app.State, app.CreatedAt = "preview-group", time.Now().UTC()
 	item.GeneratedAppID, item.URL = app.ID, publicURL(app.Domain)
 	item.Outputs = map[string]string{"url": item.URL, "host": host(item.URL), "namespace": run.Namespace, "release": app.HelmRelease}

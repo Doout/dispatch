@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -133,14 +134,20 @@ func (s *SQLStore) AdminSessionValid(ctx context.Context, tokenHash string, now 
 }
 
 func (s *SQLStore) CreateSecret(ctx context.Context, secret core.Secret) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO secrets(id,name,environment_variable,encrypted_value,created_at,updated_at) VALUES(?,?,?,?,?,?)`),
-		secret.ID, secret.Name, secret.EnvironmentVariable, secret.EncryptedValue, stamp(secret.CreatedAt), stamp(secret.UpdatedAt))
+	if secret.Type == "" {
+		secret.Type = core.SecretTypeText
+	}
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO secrets(id,name,secret_type,environment_variable,public_value,encrypted_value,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`),
+		secret.ID, secret.Name, secret.Type, secret.EnvironmentVariable, secret.PublicValue, secret.EncryptedValue, stamp(secret.CreatedAt), stamp(secret.UpdatedAt))
 	return err
 }
 
 func (s *SQLStore) UpdateSecret(ctx context.Context, secret core.Secret) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE secrets SET name=?,environment_variable=?,encrypted_value=?,updated_at=? WHERE id=?`),
-		secret.Name, secret.EnvironmentVariable, secret.EncryptedValue, stamp(secret.UpdatedAt), secret.ID)
+	if secret.Type == "" {
+		secret.Type = core.SecretTypeText
+	}
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE secrets SET name=?,secret_type=?,environment_variable=?,public_value=?,encrypted_value=?,updated_at=? WHERE id=?`),
+		secret.Name, secret.Type, secret.EnvironmentVariable, secret.PublicValue, secret.EncryptedValue, stamp(secret.UpdatedAt), secret.ID)
 	return changed(result, err)
 }
 
@@ -150,7 +157,7 @@ func (s *SQLStore) DeleteSecret(ctx context.Context, id string) error {
 }
 
 func (s *SQLStore) ListSecrets(ctx context.Context) ([]core.Secret, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,environment_variable,encrypted_value,created_at,updated_at FROM secrets ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,secret_type,environment_variable,public_value,encrypted_value,created_at,updated_at FROM secrets ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +174,7 @@ func (s *SQLStore) ListSecrets(ctx context.Context) ([]core.Secret, error) {
 }
 
 func (s *SQLStore) GetSecret(ctx context.Context, id string) (core.Secret, error) {
-	item, err := scanSecret(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,environment_variable,encrypted_value,created_at,updated_at FROM secrets WHERE id=?`), id))
+	item, err := scanSecret(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,secret_type,environment_variable,public_value,encrypted_value,created_at,updated_at FROM secrets WHERE id=?`), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -177,7 +184,74 @@ func (s *SQLStore) GetSecret(ctx context.Context, id string) (core.Secret, error
 func scanSecret(row scanner) (core.Secret, error) {
 	var item core.Secret
 	var created, updated string
-	err := row.Scan(&item.ID, &item.Name, &item.EnvironmentVariable, &item.EncryptedValue, &created, &updated)
+	err := row.Scan(&item.ID, &item.Name, &item.Type, &item.EnvironmentVariable, &item.PublicValue, &item.EncryptedValue, &created, &updated)
+	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
+	return item, err
+}
+
+func (s *SQLStore) CreateGitHubApp(ctx context.Context, item core.GitHubAppConnection) error {
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO github_apps(
+		id,name,web_url,api_url,app_id,client_id,slug,registration_owner,registration_owner_type,installation_id,installation_account,installation_url,webhook_url,
+		relay_webhook_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.Name, item.WebURL, item.APIURL, item.AppID,
+		item.ClientID, item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL,
+		item.RelayWebhookID, item.EncryptedPrivateKey, item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt),
+		stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	return err
+}
+
+func (s *SQLStore) UpdateGitHubApp(ctx context.Context, item core.GitHubAppConnection) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE github_apps SET name=?,web_url=?,api_url=?,app_id=?,client_id=?,slug=?,
+		registration_owner=?,registration_owner_type=?,installation_id=?,installation_account=?,installation_url=?,webhook_url=?,relay_webhook_id=?,encrypted_private_key=?,encrypted_webhook_secret=?,state=?,
+		last_verified_at=?,updated_at=? WHERE id=?`), item.Name, item.WebURL, item.APIURL, item.AppID, item.ClientID,
+		item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL, item.RelayWebhookID, item.EncryptedPrivateKey,
+		item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ID)
+	return changed(result, err)
+}
+
+func (s *SQLStore) DeleteGitHubApp(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM github_apps WHERE id=?`), id)
+	return changed(result, err)
+}
+
+const githubAppSelect = `SELECT id,name,web_url,api_url,app_id,client_id,slug,registration_owner,registration_owner_type,installation_id,installation_account,installation_url,webhook_url,
+	relay_webhook_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at FROM github_apps`
+
+func (s *SQLStore) ListGitHubApps(ctx context.Context) ([]core.GitHubAppConnection, error) {
+	rows, err := s.db.QueryContext(ctx, githubAppSelect+` ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.GitHubAppConnection{}
+	for rows.Next() {
+		item, err := scanGitHubApp(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLStore) GetGitHubApp(ctx context.Context, id string) (core.GitHubAppConnection, error) {
+	item, err := scanGitHubApp(s.db.QueryRowContext(ctx, s.q(githubAppSelect+` WHERE id=?`), id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	return item, err
+}
+
+func scanGitHubApp(row scanner) (core.GitHubAppConnection, error) {
+	var item core.GitHubAppConnection
+	var verified sql.NullString
+	var created, updated string
+	err := row.Scan(&item.ID, &item.Name, &item.WebURL, &item.APIURL, &item.AppID, &item.ClientID, &item.Slug,
+		&item.RegistrationOwner, &item.RegistrationOwnerType, &item.InstallationID, &item.InstallationAccount, &item.InstallationURL, &item.WebhookURL, &item.RelayWebhookID, &item.EncryptedPrivateKey,
+		&item.EncryptedWebhookSecret, &item.State, &verified, &created, &updated)
+	item.PrivateKeyConfigured = item.EncryptedPrivateKey != ""
+	item.WebhookSecretConfigured = item.EncryptedWebhookSecret != ""
+	item.LastVerifiedAt = parseNullTime(verified)
 	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
 	return item, err
 }
@@ -232,24 +306,30 @@ func (s *SQLStore) GetProject(ctx context.Context, id string) (core.Project, err
 
 func (s *SQLStore) CreateServer(ctx context.Context, server core.Server) error {
 	kubernetes := kubernetesServerColumns(server)
+	relay := relayServerColumns(server)
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO servers(
         id,name,address,runtime,state,agent_mode,kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,
-        openshift_service_account,openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), server.ID, server.Name, server.Address, server.Runtime, server.State, server.AgentMode,
+        openshift_service_account,openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,
+        relay_access_token,relay_pending_events,relay_oldest_pending_at,relay_last_connected_at,relay_last_error,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), server.ID, server.Name, server.Address, server.Runtime, server.State, server.AgentMode,
 		kubernetes.KubeconfigPath, kubernetes.Context, kubernetes.Namespace, kubernetes.KubeconfigData,
 		kubernetes.CertificateAuthorityData, openShiftServiceAccount(kubernetes), openShiftServiceAccountNamespace(kubernetes),
-		openShiftTokenSecret(kubernetes), openShiftConnectedAt(kubernetes), stamp(server.CreatedAt))
+		openShiftTokenSecret(kubernetes), openShiftConnectedAt(kubernetes), relay.EncryptedAccessToken, relay.PendingEvents,
+		nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, stamp(server.CreatedAt))
 	return err
 }
 
 func (s *SQLStore) UpdateServer(ctx context.Context, server core.Server) error {
 	kubernetes := kubernetesServerColumns(server)
+	relay := relayServerColumns(server)
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE servers SET name=?,address=?,runtime=?,state=?,agent_mode=?,
         kubeconfig_path=?,kube_context=?,kube_namespace=?,kubeconfig_data=?,kube_ca_data=?,openshift_service_account=?,
-        openshift_service_account_namespace=?,openshift_token_secret=?,openshift_connected_at=? WHERE id=?`), server.Name, server.Address, server.Runtime,
+        openshift_service_account_namespace=?,openshift_token_secret=?,openshift_connected_at=?,relay_access_token=?,relay_pending_events=?,
+        relay_oldest_pending_at=?,relay_last_connected_at=?,relay_last_error=? WHERE id=?`), server.Name, server.Address, server.Runtime,
 		server.State, server.AgentMode, kubernetes.KubeconfigPath, kubernetes.Context, kubernetes.Namespace,
 		kubernetes.KubeconfigData, kubernetes.CertificateAuthorityData, openShiftServiceAccount(kubernetes),
-		openShiftServiceAccountNamespace(kubernetes), openShiftTokenSecret(kubernetes), openShiftConnectedAt(kubernetes), server.ID)
+		openShiftServiceAccountNamespace(kubernetes), openShiftTokenSecret(kubernetes), openShiftConnectedAt(kubernetes),
+		relay.EncryptedAccessToken, relay.PendingEvents, nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, server.ID)
 	return changed(result, err)
 }
 
@@ -261,7 +341,8 @@ func (s *SQLStore) DeleteServer(ctx context.Context, id string) error {
 func (s *SQLStore) ListServers(ctx context.Context) ([]core.Server, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,address,runtime,state,agent_mode,
         kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,openshift_service_account,
-        openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,created_at FROM servers ORDER BY name`)
+        openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,relay_access_token,relay_pending_events,
+        relay_oldest_pending_at,relay_last_connected_at,relay_last_error,created_at FROM servers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +361,8 @@ func (s *SQLStore) ListServers(ctx context.Context) ([]core.Server, error) {
 func (s *SQLStore) GetServer(ctx context.Context, id string) (core.Server, error) {
 	item, err := scanServer(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,address,runtime,state,agent_mode,
         kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,openshift_service_account,
-        openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,created_at FROM servers WHERE id=?`), id))
+        openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,relay_access_token,relay_pending_events,
+        relay_oldest_pending_at,relay_last_connected_at,relay_last_error,created_at FROM servers WHERE id=?`), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -292,6 +374,13 @@ func kubernetesServerColumns(server core.Server) core.KubernetesServerConfig {
 		return core.KubernetesServerConfig{}
 	}
 	return *server.Kubernetes
+}
+
+func relayServerColumns(server core.Server) core.RelayServerConfig {
+	if server.Relay == nil {
+		return core.RelayServerConfig{}
+	}
+	return *server.Relay
 }
 
 func openShiftServiceAccount(config core.KubernetesServerConfig) string {
@@ -327,10 +416,12 @@ func scanServer(row scanner) (core.Server, error) {
 	var created string
 	var kubernetes core.KubernetesServerConfig
 	var serviceAccount, serviceAccountNamespace, tokenSecret string
-	var connected sql.NullString
+	var connected, relayOldest, relayConnected sql.NullString
+	var relay core.RelayServerConfig
 	err := row.Scan(&item.ID, &item.Name, &item.Address, &item.Runtime, &item.State, &item.AgentMode,
 		&kubernetes.KubeconfigPath, &kubernetes.Context, &kubernetes.Namespace, &kubernetes.KubeconfigData,
-		&kubernetes.CertificateAuthorityData, &serviceAccount, &serviceAccountNamespace, &tokenSecret, &connected, &created)
+		&kubernetes.CertificateAuthorityData, &serviceAccount, &serviceAccountNamespace, &tokenSecret, &connected,
+		&relay.EncryptedAccessToken, &relay.PendingEvents, &relayOldest, &relayConnected, &relay.LastError, &created)
 	kubernetes.KubeconfigStored = kubernetes.KubeconfigData != ""
 	kubernetes.CertificateAuthorityStored = kubernetes.CertificateAuthorityData != ""
 	item.CreatedAt = parseTime(created)
@@ -340,6 +431,12 @@ func scanServer(row scanner) (core.Server, error) {
 	}
 	if core.IsKubernetesRuntime(item.Runtime) || kubernetes.KubeconfigPath != "" || kubernetes.KubeconfigStored {
 		item.Kubernetes = &kubernetes
+	}
+	if item.Runtime == core.ServerRuntimeRelay || relay.EncryptedAccessToken != "" {
+		relay.AccessTokenConfigured = relay.EncryptedAccessToken != ""
+		relay.OldestPendingAt = parseNullTime(relayOldest)
+		relay.LastConnectedAt = parseNullTime(relayConnected)
+		item.Relay = &relay
 	}
 	return item, err
 }
@@ -413,14 +510,85 @@ func (s *SQLStore) ReconcileLocalDockerServer(ctx context.Context, available boo
 	return nil, nil
 }
 
+func (s *SQLStore) CreateRelayWebhook(ctx context.Context, item core.RelayWebhook) error {
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO relay_webhooks(id,server_id,name,provider,provider_connection_id,remote_id,url,state,last_delivery_at,last_error,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.ServerID, item.Name, string(item.Provider), item.ProviderConnectionID,
+		item.RemoteID, item.URL, item.State, nullTime(item.LastDeliveryAt), item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	return err
+}
+
+func (s *SQLStore) UpdateRelayWebhook(ctx context.Context, item core.RelayWebhook) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE relay_webhooks SET name=?,provider=?,provider_connection_id=?,remote_id=?,url=?,state=?,last_delivery_at=?,last_error=?,updated_at=? WHERE id=?`),
+		item.Name, string(item.Provider), item.ProviderConnectionID, item.RemoteID, item.URL, item.State,
+		nullTime(item.LastDeliveryAt), item.LastError, stamp(item.UpdatedAt), item.ID)
+	return changed(result, err)
+}
+
+func (s *SQLStore) DeleteRelayWebhook(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM relay_webhooks WHERE id=?`), id)
+	return changed(result, err)
+}
+
+func (s *SQLStore) ListRelayWebhooks(ctx context.Context, serverID string) ([]core.RelayWebhook, error) {
+	query := `SELECT id,server_id,name,provider,provider_connection_id,remote_id,url,state,last_delivery_at,last_error,created_at,updated_at FROM relay_webhooks`
+	args := []any{}
+	if serverID != "" {
+		query += ` WHERE server_id=?`
+		args = append(args, serverID)
+	}
+	query += ` ORDER BY name`
+	rows, err := s.db.QueryContext(ctx, s.q(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.RelayWebhook{}
+	for rows.Next() {
+		item, err := scanRelayWebhook(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLStore) GetRelayWebhook(ctx context.Context, id string) (core.RelayWebhook, error) {
+	item, err := scanRelayWebhook(s.db.QueryRowContext(ctx, s.q(`SELECT id,server_id,name,provider,provider_connection_id,remote_id,url,state,last_delivery_at,last_error,created_at,updated_at FROM relay_webhooks WHERE id=?`), id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	return item, err
+}
+
+func (s *SQLStore) GetRelayWebhookByRemoteID(ctx context.Context, serverID, remoteID string) (core.RelayWebhook, error) {
+	item, err := scanRelayWebhook(s.db.QueryRowContext(ctx, s.q(`SELECT id,server_id,name,provider,provider_connection_id,remote_id,url,state,last_delivery_at,last_error,created_at,updated_at FROM relay_webhooks WHERE server_id=? AND remote_id=?`), serverID, remoteID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	return item, err
+}
+
+func scanRelayWebhook(row scanner) (core.RelayWebhook, error) {
+	var item core.RelayWebhook
+	var provider, created, updated string
+	var delivered sql.NullString
+	err := row.Scan(&item.ID, &item.ServerID, &item.Name, &provider, &item.ProviderConnectionID, &item.RemoteID, &item.URL, &item.State, &delivered, &item.LastError, &created, &updated)
+	item.Provider = core.EventProvider(provider)
+	item.LastDeliveryAt = parseNullTime(delivered)
+	item.CreatedAt = parseTime(created)
+	item.UpdatedAt = parseTime(updated)
+	return item, err
+}
+
 func (s *SQLStore) CreateApp(ctx context.Context, app core.App) error {
 	hookEnvironment, _ := json.Marshal(app.HookEnvironment)
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO apps(
-        id,project_id,server_id,name,source_repo,branch,build_type,context_path,dockerfile_path,compose_path,
+        id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,dockerfile_path,compose_path,
         compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,helm_release,
         pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-		app.ID, app.ProjectID, app.ServerID, app.Name, app.SourceRepo, app.Branch, string(app.BuildType),
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		app.ID, app.ProjectID, app.ServerID, app.Name, app.SourceRepo, app.Branch, app.SourceAuthType, app.SourceCredentialID, string(app.BuildType),
 		app.ContextPath, app.DockerfilePath, app.ComposePath, app.ComposeContent, app.HelmChart, app.HelmVersion,
 		app.HelmRepository, app.HelmValues, app.HelmNamespace, app.HelmRelease, app.PreDeployHook, app.PostDeployHook,
 		app.ContainerPort, app.Domain, app.State, stamp(app.CreatedAt), app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template)
@@ -429,11 +597,11 @@ func (s *SQLStore) CreateApp(ctx context.Context, app core.App) error {
 
 func (s *SQLStore) UpdateApp(ctx context.Context, app core.App) error {
 	hookEnvironment, _ := json.Marshal(app.HookEnvironment)
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE apps SET project_id=?,server_id=?,name=?,source_repo=?,branch=?,build_type=?,
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE apps SET project_id=?,server_id=?,name=?,source_repo=?,branch=?,source_auth_type=?,source_credential_id=?,build_type=?,
         context_path=?,dockerfile_path=?,compose_path=?,compose_content=?,helm_chart=?,helm_version=?,helm_repository=?,
         helm_values=?,helm_namespace=?,helm_release=?,pre_deploy_hook=?,post_deploy_hook=?,container_port=?,domain=?,state=?,
         helm_group_values=?,hook_environment=?,generated=?,template=? WHERE id=?`),
-		app.ProjectID, app.ServerID, app.Name, app.SourceRepo, app.Branch, string(app.BuildType), app.ContextPath, app.DockerfilePath,
+		app.ProjectID, app.ServerID, app.Name, app.SourceRepo, app.Branch, app.SourceAuthType, app.SourceCredentialID, string(app.BuildType), app.ContextPath, app.DockerfilePath,
 		app.ComposePath, app.ComposeContent, app.HelmChart, app.HelmVersion, app.HelmRepository, app.HelmValues, app.HelmNamespace,
 		app.HelmRelease, app.PreDeployHook, app.PostDeployHook, app.ContainerPort, app.Domain, app.State,
 		app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, app.ID)
@@ -490,7 +658,7 @@ func (s *SQLStore) DeleteApp(ctx context.Context, id string) error {
 }
 
 func (s *SQLStore) ListApps(ctx context.Context) ([]core.App, error) {
-	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,build_type,context_path,
+	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
         dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
         helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template FROM apps
         WHERE state <> 'closed' AND generated=? ORDER BY name`), false)
@@ -510,7 +678,7 @@ func (s *SQLStore) ListApps(ctx context.Context) ([]core.App, error) {
 }
 
 func (s *SQLStore) GetApp(ctx context.Context, id string) (core.App, error) {
-	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,build_type,context_path,
+	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
         dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
         helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template FROM apps WHERE id=?`), id)
 	app, err := scanApp(row)
@@ -525,7 +693,7 @@ type scanner interface{ Scan(...any) error }
 func scanApp(row scanner) (core.App, error) {
 	var item core.App
 	var buildType, created, hookEnvironment string
-	err := row.Scan(&item.ID, &item.ProjectID, &item.ServerID, &item.Name, &item.SourceRepo, &item.Branch,
+	err := row.Scan(&item.ID, &item.ProjectID, &item.ServerID, &item.Name, &item.SourceRepo, &item.Branch, &item.SourceAuthType, &item.SourceCredentialID,
 		&buildType, &item.ContextPath, &item.DockerfilePath, &item.ComposePath, &item.ComposeContent, &item.HelmChart,
 		&item.HelmVersion, &item.HelmRepository, &item.HelmValues, &item.HelmNamespace, &item.HelmRelease,
 		&item.PreDeployHook, &item.PostDeployHook, &item.ContainerPort,
@@ -533,6 +701,12 @@ func scanApp(row scanner) (core.App, error) {
 	item.BuildType = core.BuildType(buildType)
 	item.CreatedAt = parseTime(created)
 	_ = json.Unmarshal([]byte(hookEnvironment), &item.HookEnvironment)
+	for key := range item.HookEnvironment {
+		if id, _, ok := core.ParseSecretEnvironmentKey(key); ok {
+			item.HookSecretIDs = append(item.HookSecretIDs, id)
+		}
+	}
+	slices.Sort(item.HookSecretIDs)
 	return item, err
 }
 
@@ -688,8 +862,8 @@ func (s *SQLStore) CreateEventTrigger(ctx context.Context, trigger core.EventTri
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO event_triggers(
-        id,app_id,provider,repository,command,enabled,pre_deploy_hook,post_deploy_hook,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`),
-		trigger.ID, trigger.AppID, string(trigger.Provider), trigger.Repository, trigger.Command, trigger.Enabled,
+		id,app_id,github_app_id,provider,repository,command,enabled,pre_deploy_hook,post_deploy_hook,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`),
+		trigger.ID, trigger.AppID, trigger.GitHubAppID, string(trigger.Provider), trigger.Repository, trigger.Command, trigger.Enabled,
 		trigger.PreDeployHook, trigger.PostDeployHook, stamp(trigger.CreatedAt), stamp(trigger.UpdatedAt))
 	if err == nil {
 		if err = s.replaceEventTriggerSecrets(ctx, tx, trigger.ID, trigger.SecretIDs); err != nil {
@@ -710,7 +884,7 @@ func (s *SQLStore) CreateEventTrigger(ctx context.Context, trigger core.EventTri
 }
 
 func (s *SQLStore) eventTriggerForApp(ctx context.Context, appID string, provider core.EventProvider, repository string) (core.EventTrigger, error) {
-	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,app_id,provider,repository,command,enabled,pre_deploy_hook,post_deploy_hook,created_at,updated_at
+	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,app_id,github_app_id,provider,repository,command,enabled,pre_deploy_hook,post_deploy_hook,created_at,updated_at
         FROM event_triggers WHERE app_id=? AND provider=? AND repository=?`), appID, string(provider), repository)
 	item, err := scanEventTrigger(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -723,7 +897,7 @@ func (s *SQLStore) eventTriggerForApp(ctx context.Context, appID string, provide
 }
 
 func (s *SQLStore) ListEventTriggers(ctx context.Context, appID string) ([]core.EventTrigger, error) {
-	query := `SELECT id,app_id,provider,repository,command,enabled,pre_deploy_hook,post_deploy_hook,created_at,updated_at FROM event_triggers`
+	query := `SELECT id,app_id,github_app_id,provider,repository,command,enabled,pre_deploy_hook,post_deploy_hook,created_at,updated_at FROM event_triggers`
 	args := []any{}
 	if appID != "" {
 		query += ` WHERE app_id=?`
@@ -761,7 +935,7 @@ func (s *SQLStore) ListEventTriggers(ctx context.Context, appID string) ([]core.
 func scanEventTrigger(row scanner) (core.EventTrigger, error) {
 	var item core.EventTrigger
 	var provider, created, updated string
-	err := row.Scan(&item.ID, &item.AppID, &provider, &item.Repository, &item.Command, &item.Enabled,
+	err := row.Scan(&item.ID, &item.AppID, &item.GitHubAppID, &provider, &item.Repository, &item.Command, &item.Enabled,
 		&item.PreDeployHook, &item.PostDeployHook, &created, &updated)
 	item.Provider = core.EventProvider(provider)
 	item.CreatedAt = parseTime(created)
@@ -775,8 +949,8 @@ func (s *SQLStore) UpdateEventTrigger(ctx context.Context, trigger core.EventTri
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE event_triggers SET command=?,enabled=?,pre_deploy_hook=?,post_deploy_hook=?,updated_at=? WHERE id=?`),
-		trigger.Command, trigger.Enabled, trigger.PreDeployHook, trigger.PostDeployHook, stamp(trigger.UpdatedAt), trigger.ID)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE event_triggers SET github_app_id=?,command=?,enabled=?,pre_deploy_hook=?,post_deploy_hook=?,updated_at=? WHERE id=?`),
+		trigger.GitHubAppID, trigger.Command, trigger.Enabled, trigger.PreDeployHook, trigger.PostDeployHook, stamp(trigger.UpdatedAt), trigger.ID)
 	if err := changed(result, err); err != nil {
 		return err
 	}
@@ -846,10 +1020,11 @@ func (s *SQLStore) IncomingEventExists(ctx context.Context, provider core.EventP
 	return count > 0, err
 }
 
-func (s *SQLStore) HasEventTrigger(ctx context.Context, provider core.EventProvider, repository, command string) (bool, error) {
+func (s *SQLStore) HasEventTrigger(ctx context.Context, provider core.EventProvider, repository, command, connectionID string) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM event_triggers
-        WHERE provider=? AND repository=? AND command=? AND enabled=?`), string(provider), repository, command, true).Scan(&count)
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM event_triggers t
+		WHERE t.provider=? AND t.repository=? AND t.command=? AND t.enabled=?
+		AND t.github_app_id=?`), string(provider), repository, command, true, connectionID).Scan(&count)
 	return count > 0, err
 }
 
@@ -876,7 +1051,7 @@ func (s *SQLStore) ProcessIncomingEvent(ctx context.Context, event core.Incoming
 		return core.EventResult{}, err
 	}
 	if inserted == 0 {
-		previews, lookupErr := listPreviewEnvironments(ctx, tx, s.q, "", event.Provider, event.Repository, event.PullRequestNumber)
+		previews, lookupErr := listPreviewEnvironmentsForConnection(ctx, tx, s.q, event.Provider, event.Repository, event.PullRequestNumber, event.ProviderConnectionID)
 		if lookupErr != nil {
 			return core.EventResult{}, lookupErr
 		}
@@ -896,9 +1071,10 @@ func (s *SQLStore) ProcessIncomingEvent(ctx context.Context, event core.Incoming
 			result.Ignored = true
 			break
 		}
-		rows, queryErr := tx.QueryContext(ctx, s.q(`SELECT id,app_id,provider,repository,command,enabled,pre_deploy_hook,post_deploy_hook,created_at,updated_at
-            FROM event_triggers WHERE provider=? AND repository=? AND command=? AND enabled=? ORDER BY id`),
-			string(event.Provider), event.Repository, event.Command, true)
+		rows, queryErr := tx.QueryContext(ctx, s.q(`SELECT t.id,t.app_id,t.github_app_id,t.provider,t.repository,t.command,t.enabled,t.pre_deploy_hook,t.post_deploy_hook,t.created_at,t.updated_at
+			FROM event_triggers t
+			WHERE t.provider=? AND t.repository=? AND t.command=? AND t.enabled=?
+			AND t.github_app_id=? ORDER BY t.id`), string(event.Provider), event.Repository, event.Command, true, event.ProviderConnectionID)
 		if queryErr != nil {
 			return core.EventResult{}, queryErr
 		}
@@ -959,7 +1135,7 @@ func (s *SQLStore) ProcessIncomingEvent(ctx context.Context, event core.Incoming
 			result.Previews = append(result.Previews, stored)
 		}
 	case event.Kind == core.EventKindPullRequest && event.Action == "closed":
-		previews, queryErr := listPreviewEnvironments(ctx, tx, s.q, "", event.Provider, event.Repository, event.PullRequestNumber)
+		previews, queryErr := listPreviewEnvironmentsForConnection(ctx, tx, s.q, event.Provider, event.Repository, event.PullRequestNumber, event.ProviderConnectionID)
 		if queryErr != nil {
 			return core.EventResult{}, queryErr
 		}
@@ -1043,6 +1219,39 @@ func listPreviewEnvironments(ctx context.Context, queryer queryer, q func(string
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func listPreviewEnvironmentsForConnection(ctx context.Context, queryer queryer, q func(string) string, provider core.EventProvider, repository string, number int, connectionID string) ([]core.PreviewEnvironment, error) {
+	rows, err := queryer.QueryContext(ctx, q(`SELECT p.id FROM preview_environments p JOIN event_triggers t ON t.id=p.trigger_id
+		WHERE p.provider=? AND p.repository=? AND p.pull_request_number=? AND t.github_app_id=? ORDER BY p.created_at DESC`),
+		string(provider), repository, number, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	items := make([]core.PreviewEnvironment, 0, len(ids))
+	for _, id := range ids {
+		item, err := scanPreviewEnvironment(queryer.QueryRowContext(ctx, q(previewSelect+` WHERE id=?`), id))
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 func scanPreviewEnvironment(row scanner) (core.PreviewEnvironment, error) {

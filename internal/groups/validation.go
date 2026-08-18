@@ -27,6 +27,15 @@ func Validate(ctx context.Context, data store.Store, group *core.PreviewGroup, d
 		return err
 	}
 	group.Command = command
+	if group.GitHubAppID != "" {
+		connection, err := data.GetGitHubApp(ctx, group.GitHubAppID)
+		if err != nil {
+			return errors.New("selected GitHub App connection no longer exists")
+		}
+		if connection.InstallationID < 1 {
+			return errors.New("selected GitHub App must be installed before it can receive preview commands")
+		}
+	}
 	if len(group.Components) == 0 {
 		return errors.New("at least one component is required")
 	}
@@ -59,6 +68,16 @@ func Validate(ctx context.Context, data store.Store, group *core.PreviewGroup, d
 		}
 		if len(component.PreDeployHook) > 64<<10 || len(component.PostDeployHook) > 64<<10 {
 			return fmt.Errorf("component %q deployment hooks must each be no larger than 64 KiB", component.Alias)
+		}
+		seenSecrets := map[string]bool{}
+		for _, secretID := range component.SecretIDs {
+			if secretID == "" || seenSecrets[secretID] {
+				return fmt.Errorf("component %q secret bindings must be unique", component.Alias)
+			}
+			seenSecrets[secretID] = true
+			if _, err := data.GetSecret(ctx, secretID); err != nil {
+				return fmt.Errorf("component %q has a secret that no longer exists", component.Alias)
+			}
 		}
 		app, err := data.GetApp(ctx, component.AppID)
 		if err != nil {
@@ -128,7 +147,7 @@ func Validate(ctx context.Context, data store.Store, group *core.PreviewGroup, d
 	}
 	if group.Enabled {
 		for _, other := range existing {
-			if other.ID == group.ID || !other.Enabled || other.Command != group.Command {
+			if other.ID == group.ID || !other.Enabled || other.Command != group.Command || other.GitHubAppID != group.GitHubAppID {
 				continue
 			}
 			for _, left := range group.Components {

@@ -3,6 +3,8 @@ package deploy
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -73,6 +75,37 @@ func TestHelmExecutorInstallsRepositoryChartWithMergedValuesAndTargetConfig(t *t
 	}
 	if !slices.Equal(states, []core.DeploymentState{core.DeploymentFetching, core.DeploymentBuilding, core.DeploymentStarting, core.DeploymentChecking, core.DeploymentRouting}) {
 		t.Fatalf("unexpected progress states: %#v", states)
+	}
+}
+
+func TestHelmExecutorChecksOutGitBackedChart(t *testing.T) {
+	repository := filepath.Join(t.TempDir(), "charts")
+	chart := filepath.Join(repository, "charts", "platform")
+	if err := os.MkdirAll(filepath.Join(chart, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chart, "Chart.yaml"), []byte("apiVersion: v2\nname: platform\nversion: 0.1.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "--initial-branch", "main", repository}, {"-C", repository, "add", "."}, {"-C", repository, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "initial"}} {
+		if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	client := &recordingHelmClient{}
+	executor := HelmExecutor{newClient: func(_ core.Server, _ string, _ string) (helmClient, error) {
+		return client, nil
+	}}
+	app := core.App{ID: "git-chart", Name: "Git chart", BuildType: core.BuildTypeHelm, SourceRepo: "file://" + repository, Branch: "main", HelmChart: "charts/platform"}
+	server := core.Server{Name: "cluster", Runtime: core.ServerRuntimeKubernetes, Kubernetes: &core.KubernetesServerConfig{KubeconfigPath: "/config"}}
+	if err := executor.Deploy(context.Background(), core.Deployment{CommitSHA: "HEAD"}, app, server, func(core.DeploymentState, string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(client.app.HelmChart) || filepath.Base(client.app.HelmChart) != "platform" {
+		t.Fatalf("Helm did not receive the checked-out chart path: %q", client.app.HelmChart)
+	}
+	if _, err := os.Stat(client.app.HelmChart); !os.IsNotExist(err) {
+		t.Fatalf("Helm source workspace was not removed after deployment: %v", err)
 	}
 }
 

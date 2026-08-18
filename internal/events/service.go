@@ -24,7 +24,7 @@ var (
 
 type Store interface {
 	IncomingEventExists(context.Context, core.EventProvider, string) (bool, error)
-	HasEventTrigger(context.Context, core.EventProvider, string, string) (bool, error)
+	HasEventTrigger(context.Context, core.EventProvider, string, string, string) (bool, error)
 	ProcessIncomingEvent(context.Context, core.IncomingEvent) (core.EventResult, error)
 	GetPreviewEnvironment(context.Context, string) (core.PreviewEnvironment, error)
 	TransitionPreviewEnvironment(context.Context, core.PreviewEnvironment, ...core.PreviewState) (bool, error)
@@ -222,7 +222,7 @@ func (s *Service) Process(ctx context.Context, event core.IncomingEvent) (core.E
 		if err != nil {
 			return core.EventResult{}, err
 		}
-		matches, err := s.store.HasEventTrigger(ctx, event.Provider, event.Repository, event.Command)
+		matches, err := s.store.HasEventTrigger(ctx, event.Provider, event.Repository, event.Command, event.ProviderConnectionID)
 		if err != nil {
 			return core.EventResult{}, err
 		}

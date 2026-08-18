@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/hookresult"
+	"gopkg.in/yaml.v3"
 )
 
 type hookRunFunc func(context.Context, string, string, []string) error
@@ -43,7 +46,16 @@ func (e HookExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 		return err
 	}
 	defer os.RemoveAll(workspace)
+	credentialDirectory, err := os.MkdirTemp("", "dispatch-hook-credentials-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(credentialDirectory)
 	resolvedApp, err := resolveHookSecrets(app, e.Vault)
+	if err != nil {
+		return err
+	}
+	sshEnvironment, err := materializeHookSSHCredential(credentialDirectory, resolvedApp)
 	if err != nil {
 		return err
 	}
@@ -61,7 +73,10 @@ func (e HookExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 	}
 	valuesPath := filepath.Join(workspace, "dispatch-values.yaml")
 	outputPath := filepath.Join(workspace, "dispatch-outputs.json")
-	environment := hookEnvironment(deployment, resolvedApp, server, valuesPath, outputPath)
+	resultPath := filepath.Join(workspace, "dispatch-result.json")
+	environment := hookEnvironment(deployment, resolvedApp, server, valuesPath, outputPath, resultPath)
+	environment = append(environment, sshEnvironment...)
+	pipelineOutputs := map[string]string{}
 	if app.PreDeployHook != "" {
 		if err := progress(core.DeploymentBuilding, "Running pre-deploy hook"); err != nil {
 			return err
@@ -69,16 +84,22 @@ func (e HookExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 		if err := e.executeHook(ctx, app.PreDeployHook, workspace, environment); err != nil {
 			return fmt.Errorf("pre-deploy hook: %w", redactHookError(err, resolvedApp))
 		}
-		generated, err := os.ReadFile(valuesPath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("read generated Helm values: %w", err)
+		outputs, generated, err := collectHookResult(resultPath, outputPath, valuesPath)
+		if err != nil {
+			return fmt.Errorf("pre-deploy result: %w", err)
 		}
-		if len(generated) > maxGeneratedValuesBytes {
-			return errors.New("generated Helm values exceed 512 KB")
+		mergeOutputs(pipelineOutputs, outputs)
+		if err := e.persistHookOutputs(ctx, deployment.ID, pipelineOutputs, "pre-deploy"); err != nil {
+			return err
 		}
-		if strings.TrimSpace(string(generated)) != "" {
-			app.HelmGeneratedValues = string(generated)
+		if strings.TrimSpace(generated) != "" {
+			app.HelmGeneratedValues = generated
 		}
+		outputEnvironment, err := hookresult.OutputEnvironment(pipelineOutputs)
+		if err != nil {
+			return fmt.Errorf("prepare hook outputs for later steps: %w", err)
+		}
+		environment = append(environment, outputEnvironment...)
 	}
 	nextProgress := progress
 	if app.PreDeployHook != "" {
@@ -109,15 +130,41 @@ func (e HookExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 			}
 			return fmt.Errorf("%w; deployment rolled back", postErr)
 		}
-		outputs, err := readHookOutputs(outputPath)
+		outputs, _, err := collectHookResult(resultPath, outputPath, valuesPath)
 		if err != nil {
-			return e.rollbackPostHook(ctx, app, server, fmt.Errorf("post-deploy outputs: %w", err))
+			return e.rollbackPostHook(ctx, app, server, fmt.Errorf("post-deploy result: %w", err))
 		}
-		if len(outputs) > 0 && e.Outputs != nil {
-			if err := e.Outputs.UpdateDeploymentOutputs(ctx, deployment.ID, outputs); err != nil {
-				return fmt.Errorf("persist post-deploy outputs: %w", err)
-			}
+		mergeOutputs(pipelineOutputs, outputs)
+		if err := e.persistHookOutputs(ctx, deployment.ID, pipelineOutputs, "post-deploy"); err != nil {
+			return e.rollbackPostHook(ctx, app, server, err)
 		}
+	}
+	return nil
+}
+
+func materializeHookSSHCredential(workspace string, app core.App) ([]string, error) {
+	privateKey := strings.TrimSpace(app.HookEnvironment[resolvedSecretPrefix+"SSH_PRIVATE_KEY"])
+	if privateKey == "" && app.SourceAuthType == SourceAuthSSHKey {
+		privateKey = strings.TrimSpace(app.SourceCredential)
+	}
+	if privateKey == "" {
+		return nil, nil
+	}
+	keyPath := filepath.Join(workspace, ".dispatch-ssh-key")
+	if err := os.WriteFile(keyPath, []byte(privateKey+"\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("prepare hook SSH credential: %w", err)
+	}
+	knownHostsPath := filepath.Join(workspace, ".dispatch-known-hosts")
+	command := "ssh -i " + keyPath + " -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + knownHostsPath
+	return []string{"GIT_SSH_COMMAND=" + command}, nil
+}
+
+func (e HookExecutor) persistHookOutputs(ctx context.Context, deploymentID string, outputs map[string]string, stage string) error {
+	if len(outputs) == 0 || e.Outputs == nil {
+		return nil
+	}
+	if err := e.Outputs.UpdateDeploymentOutputs(ctx, deploymentID, outputs); err != nil {
+		return fmt.Errorf("persist %s outputs: %w", stage, err)
 	}
 	return nil
 }
@@ -170,9 +217,9 @@ const maxOutputFileBytes = 64 * 1024
 
 var outputKey = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,127}$`)
 
-func hookEnvironment(deployment core.Deployment, app core.App, server core.Server, valuesPath, outputPath string) []string {
+func hookEnvironment(deployment core.Deployment, app core.App, server core.Server, valuesPath, outputPath, resultPath string) []string {
 	environment := make([]string, 0, 16)
-	for _, name := range []string{"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "DOCKER_CONFIG"} {
+	for _, name := range []string{"PATH", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "DOCKER_CONFIG"} {
 		if value, ok := os.LookupEnv(name); ok {
 			environment = append(environment, name+"="+value)
 		}
@@ -192,6 +239,7 @@ func hookEnvironment(deployment core.Deployment, app core.App, server core.Serve
 		}
 	}
 	return append(environment,
+		"HOME="+filepath.Dir(valuesPath),
 		"DISPATCH_APP_ID="+app.ID,
 		"DISPATCH_APP_NAME="+app.Name,
 		"DISPATCH_REVISION="+deployment.CommitSHA,
@@ -199,9 +247,31 @@ func hookEnvironment(deployment core.Deployment, app core.App, server core.Serve
 		"DISPATCH_SOURCE_BRANCH="+app.Branch,
 		"DISPATCH_SERVER_NAME="+server.Name,
 		"DISPATCH_DEPLOYMENT_URL="+app.Domain,
+		"DISPATCH_PREVIEW_TAG="+hookPreviewTag(deployment, app),
 		"DISPATCH_VALUES_FILE="+valuesPath,
 		"DISPATCH_OUTPUT_FILE="+outputPath,
+		"DISPATCH_RESULT_FILE="+resultPath,
 	)
+}
+
+var imageTagPart = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
+
+func hookPreviewTag(deployment core.Deployment, app core.App) string {
+	value := strings.TrimSpace(app.HookEnvironment["DISPATCH_EVENT_PULL_REQUEST_NUMBER"])
+	if value == "" {
+		value = strings.TrimSpace(deployment.CommitSHA)
+	}
+	if value == "" || value == "HEAD" || value == "chart" || value == "inline" {
+		value = app.ID
+	}
+	value = strings.Trim(imageTagPart.ReplaceAllString(value, "-"), "-._")
+	if value == "" {
+		value = "build"
+	}
+	if len(value) > 48 {
+		value = value[:48]
+	}
+	return "preview-" + value
 }
 
 var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
@@ -254,6 +324,45 @@ func readHookOutputs(path string) (map[string]string, error) {
 	return outputs, nil
 }
 
+func collectHookResult(resultPath, legacyOutputPath, legacyValuesPath string) (map[string]string, string, error) {
+	outputs, err := readHookOutputs(legacyOutputPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("legacy outputs: %w", err)
+	}
+	if outputs == nil {
+		outputs = map[string]string{}
+	}
+	result, err := hookresult.Read(resultPath)
+	if err != nil {
+		return nil, "", err
+	}
+	mergeOutputs(outputs, result.Outputs)
+
+	generated := ""
+	contents, err := os.ReadFile(filepath.Clean(legacyValuesPath))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, "", fmt.Errorf("read generated Helm values: %w", err)
+	}
+	if len(contents) > maxGeneratedValuesBytes {
+		return nil, "", errors.New("generated Helm values exceed 512 KB")
+	}
+	generated = string(contents)
+	if result.Deployment != nil && len(result.Deployment.HelmValues) > 0 {
+		contents, err = yaml.Marshal(result.Deployment.HelmValues)
+		if err != nil {
+			return nil, "", fmt.Errorf("encode hook-result Helm values: %w", err)
+		}
+		generated = string(contents)
+	}
+	return outputs, generated, nil
+}
+
+func mergeOutputs(destination, source map[string]string) {
+	for key, value := range source {
+		destination[key] = value
+	}
+}
+
 func (e HookExecutor) executeHook(ctx context.Context, script, workspace string, environment []string) error {
 	run := e.runHook
 	if run == nil {
@@ -264,7 +373,14 @@ func (e HookExecutor) executeHook(ctx context.Context, script, workspace string,
 
 func runShellHook(ctx context.Context, script, workspace string, environment []string) error {
 	var output strings.Builder
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-euc", script)
+	previewTag := "preview-build"
+	for _, entry := range environment {
+		if value, found := strings.CutPrefix(entry, "DISPATCH_PREVIEW_TAG="); found {
+			previewTag = value
+			break
+		}
+	}
+	cmd := exec.CommandContext(ctx, "/bin/bash", "-euo", "pipefail", "-c", script, "dispatch-hook", previewTag)
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = workspace, environment, &output, &output
 	if err := cmd.Run(); err != nil {
 		detail := strings.TrimSpace(output.String())
@@ -273,7 +389,102 @@ func runShellHook(ctx context.Context, script, workspace string, environment []s
 		}
 		return err
 	}
+	return capturePublishedHookSummary(output.String(), environment)
+}
+
+func capturePublishedHookSummary(output string, environment []string) error {
+	valuesPath, outputPath, resultPath := "", "", ""
+	for _, entry := range environment {
+		if value, found := strings.CutPrefix(entry, "DISPATCH_VALUES_FILE="); found {
+			valuesPath = value
+		}
+		if value, found := strings.CutPrefix(entry, "DISPATCH_OUTPUT_FILE="); found {
+			outputPath = value
+		}
+		if value, found := strings.CutPrefix(entry, "DISPATCH_RESULT_FILE="); found {
+			resultPath = value
+		}
+	}
+	// A versioned result is authoritative. Summary parsing exists only for
+	// scripts written before dispatch-hook was available.
+	if resultPath != "" && fileExists(resultPath) {
+		return nil
+	}
+	images := map[string]string{}
+	values := map[string]any{}
+	section := ""
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		switch line {
+		case "Published paired preview images:":
+			section = "images"
+			continue
+		case "Helm image overrides:":
+			section = "values"
+			continue
+		}
+		switch section {
+		case "images":
+			name, remainder, found := strings.Cut(line, ":")
+			if !found || (name != "backend" && name != "ui") {
+				continue
+			}
+			fields := strings.Fields(strings.TrimSpace(remainder))
+			if len(fields) > 0 {
+				images[name+"Image"] = fields[0]
+			}
+		case "values":
+			assignment, found := strings.CutPrefix(line, "--set-string ")
+			if !found {
+				continue
+			}
+			path, value, found := strings.Cut(assignment, "=")
+			if found && valuePathPattern.MatchString(path) {
+				setHookValue(values, path, value)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read hook output summary: %w", err)
+	}
+	if len(images) > 0 && outputPath != "" && !fileExists(outputPath) {
+		contents, _ := json.Marshal(images)
+		if err := os.WriteFile(filepath.Clean(outputPath), contents, 0o600); err != nil {
+			return fmt.Errorf("record published images: %w", err)
+		}
+	}
+	if len(values) > 0 && valuesPath != "" && !fileExists(valuesPath) {
+		contents, err := yaml.Marshal(values)
+		if err != nil {
+			return fmt.Errorf("encode published image overrides: %w", err)
+		}
+		if err := os.WriteFile(filepath.Clean(valuesPath), contents, 0o600); err != nil {
+			return fmt.Errorf("record published image overrides: %w", err)
+		}
+	}
 	return nil
+}
+
+var valuePathPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
+
+func setHookValue(root map[string]any, path, value string) {
+	parts := strings.Split(path, ".")
+	cursor := root
+	for _, part := range parts[:len(parts)-1] {
+		next, ok := cursor[part].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			cursor[part] = next
+		}
+		cursor = next
+	}
+	cursor[parts[len(parts)-1]] = value
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func checkoutHookSource(ctx context.Context, deployment core.Deployment, app core.App, workspace string) error {
@@ -282,16 +493,26 @@ func checkoutHookSource(ctx context.Context, deployment core.Deployment, app cor
 		args = append(args, "--branch", app.Branch)
 	}
 	args = append(args, app.SourceRepo, workspace)
-	if err := runGitWithToken(ctx, hookGitToken(app), args...); err != nil {
+	if app.SourceCredential != "" {
+		if err := runGitForApp(ctx, app, args...); err != nil {
+			return err
+		}
+	} else if err := runGitWithToken(ctx, hookGitToken(app), args...); err != nil {
 		return err
 	}
 	if deployment.CommitSHA == "" || deployment.CommitSHA == "HEAD" || deployment.CommitSHA == "chart" || deployment.CommitSHA == "inline" {
 		return nil
 	}
-	if err := runGitWithToken(ctx, hookGitToken(app), "-C", workspace, "fetch", "--depth", "1", "origin", deployment.CommitSHA); err != nil {
+	run := func(args ...string) error {
+		if app.SourceCredential != "" {
+			return runGitForApp(ctx, app, args...)
+		}
+		return runGitWithToken(ctx, hookGitToken(app), args...)
+	}
+	if err := run("-C", workspace, "fetch", "--depth", "1", "origin", deployment.CommitSHA); err != nil {
 		return err
 	}
-	return runGitWithToken(ctx, hookGitToken(app), "-C", workspace, "checkout", "--detach", deployment.CommitSHA)
+	return run("-C", workspace, "checkout", "--detach", deployment.CommitSHA)
 }
 
 func runGit(ctx context.Context, args ...string) error {

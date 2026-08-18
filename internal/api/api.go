@@ -2,16 +2,19 @@ package api
 
 import (
 	"context"
+	"crypto"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -23,6 +26,7 @@ import (
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/events"
+	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/groups"
 	"github.com/doout/dispatch/internal/kubeconfig"
 	"github.com/doout/dispatch/internal/openshift"
@@ -33,6 +37,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/oklog/ulid/v2"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/ssh"
+	"gopkg.in/yaml.v3"
 )
 
 type AuthConfig struct {
@@ -47,24 +53,36 @@ type EventConfig struct {
 	GitHubAPIURL   string
 	GitHubToken    string
 	Vault          *secretcrypto.Vault
+	GitHubApps     *githubapp.Manager
+}
+
+type githubEventServices struct {
+	events *events.Service
+	groups *groups.Service
 }
 
 type API struct {
-	store       store.Store
-	deploy      *deploy.Service
-	demo        bool
-	auth        AuthConfig
-	logger      *slog.Logger
-	events      *events.Service
-	groups      *groups.Service
-	eventConfig EventConfig
-	openShift   *openshift.Bootstrapper
+	handler        http.Handler
+	store          store.Store
+	deploy         *deploy.Service
+	demo           bool
+	auth           AuthConfig
+	logger         *slog.Logger
+	events         *events.Service
+	groups         *groups.Service
+	eventConfig    EventConfig
+	openShift      *openshift.Bootstrapper
+	lifecycle      events.Lifecycle
+	githubMu       sync.Mutex
+	githubServices map[string]githubEventServices
+	manifestMu     sync.Mutex
+	manifestStates map[string]githubAppManifestState
 
 	sessionMu sync.RWMutex
 	sessions  map[string]time.Time
 }
 
-func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConfig, logger *slog.Logger, eventConfigs ...EventConfig) http.Handler {
+func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConfig, logger *slog.Logger, eventConfigs ...EventConfig) *API {
 	eventConfig := EventConfig{DefaultCommand: "/preview"}
 	if len(eventConfigs) > 0 {
 		eventConfig = eventConfigs[0]
@@ -89,18 +107,23 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 				return value
 			}
 			return nil
-		}(), nil), eventConfig: eventConfig, openShift: openshift.New()}
+		}(), nil), eventConfig: eventConfig, openShift: openshift.New(), lifecycle: lifecycle,
+		githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState)}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
 	r.Use(a.logRequest)
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	r.Get("/relay/install.sh", a.relayInstallScript)
+	r.Get("/relay/bin/{platform}", a.relayBinary)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/auth/status", a.authStatus)
 		r.Post("/auth/setup", a.setupAdmin)
 		r.Post("/auth/login", a.login)
 		r.Post("/events/github", a.githubWebhook)
+		r.Post("/events/github/apps/{id}", a.githubAppWebhook)
+		r.Get("/github-apps/manifest/callback", a.completeGitHubAppManifest)
 		r.Group(func(r chi.Router) {
 			r.Use(a.authorize)
 			r.Get("/overview", a.overview)
@@ -108,17 +131,33 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Post("/secrets", a.createSecret)
 			r.Put("/secrets/{id}", a.updateSecret)
 			r.Delete("/secrets/{id}", a.deleteSecret)
+			r.Get("/github-apps", a.listGitHubApps)
+			r.Post("/github-apps", a.createGitHubApp)
+			r.Put("/github-apps/{id}", a.updateGitHubApp)
+			r.Delete("/github-apps/{id}", a.deleteGitHubApp)
+			r.Post("/github-apps/{id}/verify", a.verifyGitHubApp)
+			r.Get("/github-apps/{id}/installations", a.listGitHubAppInstallations)
+			r.Get("/github-apps/{id}/repositories", a.listGitHubAppRepositories)
+			r.Post("/github-apps/manifest", a.startGitHubAppManifest)
 			r.Get("/projects", a.listProjects)
 			r.Post("/projects", a.createProject)
 			r.Put("/projects/{id}", a.updateProject)
 			r.Delete("/projects/{id}", a.deleteProject)
 			r.Get("/servers", a.listServers)
 			r.Post("/servers", a.createServer)
+			r.Post("/relay/ssh/scan", a.scanRelaySSHHost)
+			r.Post("/relay/ssh/install", a.installRelayOverSSH)
 			r.Put("/servers/{id}", a.updateServer)
+			r.Post("/servers/{id}/relay/verify", a.verifyRelayServer)
+			r.Get("/servers/{id}/relay/webhooks", a.listRelayWebhooks)
+			r.Post("/servers/{id}/relay/webhooks", a.createRelayWebhook)
+			r.Delete("/servers/{id}/relay/webhooks/{webhookId}", a.deleteRelayWebhook)
 			r.Post("/servers/{id}/repair", a.repairOpenShiftServer)
 			r.Delete("/servers/{id}", a.deleteServer)
 			r.Get("/apps", a.listApps)
+			r.Post("/helm/inspect", a.inspectHelmSource)
 			r.Post("/apps", a.createApp)
+			r.Put("/apps/{id}/hooks", a.updateAppHooks)
 			r.Delete("/apps/{id}", a.deleteApp)
 			r.Get("/event-triggers", a.listEventTriggers)
 			r.Post("/apps/{id}/event-triggers", a.createEventTrigger)
@@ -146,8 +185,11 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	})
 	r.Handle("/*", ui.Handler())
 	r.Handle("/", ui.Handler())
-	return r
+	a.handler = r
+	return a
 }
+
+func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.handler.ServeHTTP(w, r) }
 
 func (a *API) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -383,21 +425,36 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	githubApps, err := a.store.ListGitHubApps(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	relayWebhooks, err := a.store.ListRelayWebhooks(r.Context(), "")
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, core.Overview{Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
-		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets})
+		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets, GitHubApps: githubApps, RelayWebhooks: relayWebhooks})
 }
 
 type secretRequest struct {
 	Name                string  `json:"name"`
+	Type                string  `json:"type"`
 	EnvironmentVariable string  `json:"environmentVariable"`
 	Value               *string `json:"value"`
+	Generate            bool    `json:"generate"`
 }
 
 var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
-func validateSecretInput(name, environmentVariable string, value *string, requireValue bool) string {
+func validateSecretInput(name string, secretType core.SecretType, environmentVariable string, value *string, requireValue bool) string {
 	if name == "" || len(name) > 80 {
 		return "Enter a name no longer than 80 characters."
+	}
+	if !core.ValidSecretType(secretType) {
+		return "Choose a supported secret type."
 	}
 	if !environmentVariablePattern.MatchString(environmentVariable) {
 		return "Use a valid environment variable name."
@@ -411,7 +468,55 @@ func validateSecretInput(name, environmentVariable string, value *string, requir
 	if value != nil && len(*value) > 64<<10 {
 		return "Keep the secret value under 64 KiB."
 	}
+	if value != nil && *value != "" && secretType == core.SecretTypeSSHPrivateKey {
+		if _, err := sshPublicKey(*value); err != nil {
+			return err.Error()
+		}
+	}
 	return ""
+}
+
+func normalizeSecretType(value string) core.SecretType {
+	if strings.TrimSpace(value) == "" {
+		return core.SecretTypeText
+	}
+	return core.SecretType(strings.TrimSpace(value))
+}
+
+func generateSSHKey() (privateKey, publicKey string, err error) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	block, err := ssh.MarshalPrivateKey(private, "dispatch")
+	if err != nil {
+		return "", "", err
+	}
+	public, err := ssh.NewPublicKey(private.Public())
+	if err != nil {
+		return "", "", err
+	}
+	return string(pem.EncodeToMemory(block)), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(public))), nil
+}
+
+func sshPublicKey(privateKey string) (string, error) {
+	parsed, err := ssh.ParseRawPrivateKey([]byte(strings.TrimSpace(privateKey)))
+	if err != nil {
+		var missing *ssh.PassphraseMissingError
+		if errors.As(err, &missing) {
+			return "", errors.New("Use an unencrypted SSH private key so deployments can run without a passphrase")
+		}
+		return "", errors.New("Enter a valid OpenSSH or PEM private key")
+	}
+	signer, ok := parsed.(crypto.Signer)
+	if !ok {
+		return "", errors.New("The SSH private key uses an unsupported format")
+	}
+	public, err := ssh.NewPublicKey(signer.Public())
+	if err != nil {
+		return "", errors.New("Could not derive the SSH public key")
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(public))), nil
 }
 
 func (a *API) listSecrets(w http.ResponseWriter, r *http.Request) {
@@ -429,12 +534,28 @@ func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Name, input.EnvironmentVariable = strings.TrimSpace(input.Name), strings.TrimSpace(input.EnvironmentVariable)
-	if detail := validateSecretInput(input.Name, input.EnvironmentVariable, input.Value, true); detail != "" {
+	secretType := normalizeSecretType(input.Type)
+	if input.Generate {
+		if secretType != core.SecretTypeSSHPrivateKey {
+			problem(w, http.StatusBadRequest, "Invalid secret", "Only SSH private keys can be generated.")
+			return
+		}
+		privateKey, _, err := generateSSHKey()
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		input.Value = &privateKey
+	}
+	if detail := validateSecretInput(input.Name, secretType, input.EnvironmentVariable, input.Value, true); detail != "" {
 		problem(w, http.StatusBadRequest, "Invalid secret", detail)
 		return
 	}
 	now := time.Now().UTC()
-	item := core.Secret{ID: ulid.Make().String(), Name: input.Name, EnvironmentVariable: input.EnvironmentVariable, CreatedAt: now, UpdatedAt: now}
+	item := core.Secret{ID: ulid.Make().String(), Name: input.Name, Type: secretType, EnvironmentVariable: input.EnvironmentVariable, CreatedAt: now, UpdatedAt: now}
+	if item.Type == core.SecretTypeSSHPrivateKey {
+		item.PublicValue, _ = sshPublicKey(*input.Value)
+	}
 	encrypted, err := a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
 	if err != nil {
 		a.internal(w, err)
@@ -463,17 +584,54 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Name, input.EnvironmentVariable = strings.TrimSpace(input.Name), strings.TrimSpace(input.EnvironmentVariable)
-	if detail := validateSecretInput(input.Name, input.EnvironmentVariable, input.Value, false); detail != "" {
+	secretType := item.Type
+	if strings.TrimSpace(input.Type) != "" {
+		secretType = normalizeSecretType(input.Type)
+	}
+	if input.Generate {
+		if secretType != core.SecretTypeSSHPrivateKey {
+			problem(w, http.StatusBadRequest, "Invalid secret", "Only SSH private keys can be generated.")
+			return
+		}
+		privateKey, _, generateErr := generateSSHKey()
+		if generateErr != nil {
+			a.internal(w, generateErr)
+			return
+		}
+		input.Value = &privateKey
+	}
+	validationValue := input.Value
+	if (validationValue == nil || *validationValue == "") && secretType != item.Type {
+		plaintext, decryptErr := a.eventConfig.Vault.Decrypt("secret:"+item.ID, item.EncryptedValue)
+		if decryptErr != nil {
+			a.internal(w, decryptErr)
+			return
+		}
+		current := string(plaintext)
+		validationValue = &current
+	}
+	if detail := validateSecretInput(input.Name, secretType, input.EnvironmentVariable, validationValue, false); detail != "" {
 		problem(w, http.StatusBadRequest, "Invalid secret", detail)
 		return
 	}
-	item.Name, item.EnvironmentVariable, item.UpdatedAt = input.Name, input.EnvironmentVariable, time.Now().UTC()
+	item.Name, item.Type, item.EnvironmentVariable, item.UpdatedAt = input.Name, secretType, input.EnvironmentVariable, time.Now().UTC()
 	if input.Value != nil && *input.Value != "" {
 		item.EncryptedValue, err = a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
 		if err != nil {
 			a.internal(w, err)
 			return
 		}
+	}
+	if item.Type == core.SecretTypeSSHPrivateKey {
+		value := validationValue
+		if input.Value != nil && *input.Value != "" {
+			value = input.Value
+		}
+		if value != nil {
+			item.PublicValue, _ = sshPublicKey(*value)
+		}
+	} else {
+		item.PublicValue = ""
 	}
 	if err := a.store.UpdateSecret(r.Context(), item); err != nil {
 		a.notFoundOrInternal(w, err, "Secret")
@@ -483,7 +641,47 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteSecret(w http.ResponseWriter, r *http.Request) {
-	if err := a.store.DeleteSecret(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	apps, err := a.store.ListApps(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	for _, app := range apps {
+		if app.SourceCredentialID == id {
+			problem(w, http.StatusConflict, "Credential in use", "Remove this credential from the application source before deleting it.")
+			return
+		}
+		if slices.Contains(app.HookSecretIDs, id) {
+			problem(w, http.StatusConflict, "Credential in use", "Detach this credential from the application build hook before deleting it.")
+			return
+		}
+	}
+	triggers, err := a.store.ListEventTriggers(r.Context(), "")
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	for _, trigger := range triggers {
+		if slices.Contains(trigger.SecretIDs, id) {
+			problem(w, http.StatusConflict, "Credential in use", "Detach this credential from the event build hook before deleting it.")
+			return
+		}
+	}
+	groups, err := a.store.ListPreviewGroups(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	for _, group := range groups {
+		for _, component := range group.Components {
+			if slices.Contains(component.SecretIDs, id) {
+				problem(w, http.StatusConflict, "Credential in use", "Detach this credential from the preview group build hook before deleting it.")
+				return
+			}
+		}
+	}
+	if err := a.store.DeleteSecret(r.Context(), id); err != nil {
 		a.notFoundOrInternal(w, err, "Secret")
 		return
 	}
@@ -510,6 +708,7 @@ func (a *API) listEventTriggers(w http.ResponseWriter, r *http.Request) {
 
 type createEventTriggerRequest struct {
 	Provider       string   `json:"provider"`
+	GitHubAppID    *string  `json:"githubAppId"`
 	Repository     string   `json:"repository"`
 	Command        string   `json:"command"`
 	Enabled        *bool    `json:"enabled"`
@@ -537,6 +736,9 @@ const maxEventHookBytes = 64 << 10
 func validateEventHooks(preDeployHook, postDeployHook string) error {
 	if len(preDeployHook) > maxEventHookBytes || len(postDeployHook) > maxEventHookBytes {
 		return fmt.Errorf("each deployment hook must be no larger than 64 KiB")
+	}
+	if strings.ContainsRune(preDeployHook+postDeployHook, 0) {
+		return errors.New("deployment hooks must contain plain shell text")
 	}
 	return nil
 }
@@ -572,6 +774,16 @@ func (a *API) createEventTrigger(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Repository required", "Use an owner/repository identifier.")
 		return
 	}
+	githubAppID := ""
+	if input.GitHubAppID != nil {
+		githubAppID = strings.TrimSpace(*input.GitHubAppID)
+	}
+	if githubAppID != "" {
+		if err := a.validateGitHubRepositoryAccess(r.Context(), githubAppID, repository); err != nil {
+			problem(w, http.StatusBadRequest, "Repository is not connected", err.Error())
+			return
+		}
+	}
 	command, err := events.NormalizeCommand(input.Command, a.eventConfig.DefaultCommand)
 	if err != nil {
 		problem(w, http.StatusBadRequest, "Invalid trigger command", err.Error())
@@ -582,7 +794,7 @@ func (a *API) createEventTrigger(w http.ResponseWriter, r *http.Request) {
 		enabled = *input.Enabled
 	}
 	now := time.Now().UTC()
-	requested := core.EventTrigger{ID: ulid.Make().String(), AppID: appID, Provider: core.EventProvider(providerName),
+	requested := core.EventTrigger{ID: ulid.Make().String(), AppID: appID, GitHubAppID: githubAppID, Provider: core.EventProvider(providerName),
 		Repository: repository, Command: command, Enabled: enabled, PreDeployHook: input.PreDeployHook,
 		PostDeployHook: input.PostDeployHook, SecretIDs: input.SecretIDs, CreatedAt: now, UpdatedAt: now}
 	item, created, err := a.store.CreateEventTrigger(r.Context(), requested)
@@ -590,7 +802,7 @@ func (a *API) createEventTrigger(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	if !created && (item.Command != requested.Command || item.Enabled != requested.Enabled || item.PreDeployHook != requested.PreDeployHook || item.PostDeployHook != requested.PostDeployHook || !slices.Equal(item.SecretIDs, requested.SecretIDs)) {
+	if !created && (item.GitHubAppID != requested.GitHubAppID || item.Command != requested.Command || item.Enabled != requested.Enabled || item.PreDeployHook != requested.PreDeployHook || item.PostDeployHook != requested.PostDeployHook || !slices.Equal(item.SecretIDs, requested.SecretIDs)) {
 		problem(w, http.StatusConflict, "Event trigger already exists", "Update the existing event rule to change its command, state, or deployment hooks.")
 		return
 	}
@@ -636,6 +848,16 @@ func (a *API) updateEventTrigger(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Invalid trigger command", err.Error())
 		return
 	}
+	if input.GitHubAppID != nil {
+		githubAppID := strings.TrimSpace(*input.GitHubAppID)
+		if githubAppID != "" {
+			if err := a.validateGitHubRepositoryAccess(r.Context(), githubAppID, item.Repository); err != nil {
+				problem(w, http.StatusBadRequest, "Repository is not connected", err.Error())
+				return
+			}
+		}
+		item.GitHubAppID = githubAppID
+	}
 	enabled := item.Enabled
 	if input.Enabled != nil {
 		enabled = *input.Enabled
@@ -673,40 +895,7 @@ func (a *API) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusServiceUnavailable, "Webhook receiver is not configured", "Set a webhook secret before sending events.")
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBytes))
-	if err != nil {
-		problem(w, http.StatusBadRequest, "Invalid webhook body", "Keep the webhook payload under 1 MB.")
-		return
-	}
-	if err := events.VerifySignature(a.eventConfig.WebhookSecret, body, r.Header.Get("X-Hub-Signature-256")); err != nil {
-		problem(w, http.StatusUnauthorized, "Invalid webhook signature", "Sign the request body with the configured webhook secret.")
-		return
-	}
-	event, err := events.ParseGitHubEvent(r.Header.Get("X-GitHub-Event"), r.Header.Get("X-GitHub-Delivery"), body, time.Now().UTC())
-	if errors.Is(err, events.ErrEventUnsupported) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if err != nil {
-		problem(w, http.StatusBadRequest, "Invalid webhook event", err.Error())
-		return
-	}
-	groupRuns, err := a.groups.Process(r.Context(), event)
-	if err != nil {
-		problem(w, http.StatusUnprocessableEntity, "Preview group event rejected", err.Error())
-		return
-	}
-	result, err := a.events.Process(r.Context(), event)
-	if err != nil {
-		a.internal(w, err)
-		return
-	}
-	result.PreviewGroupRuns = groupRuns
-	status := http.StatusAccepted
-	if result.Duplicate {
-		status = http.StatusOK
-	}
-	writeJSON(w, status, result)
+	a.processGitHubWebhook(w, r, a.eventConfig.WebhookSecret, "", 0, a.groups, a.events)
 }
 
 func (a *API) listDeployments(w http.ResponseWriter, r *http.Request) {
@@ -807,6 +996,11 @@ type createServerRequest struct {
 	Runtime    string                   `json:"runtime"`
 	AgentMode  string                   `json:"agentMode"`
 	Kubernetes *kubernetesServerRequest `json:"kubernetes"`
+	Relay      *relayServerRequest      `json:"relay"`
+}
+
+type relayServerRequest struct {
+	AccessToken *string `json:"accessToken"`
 }
 
 type kubernetesServerRequest struct {
@@ -865,8 +1059,28 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 		}
 		kubernetes := openshift.Config(result, namespace)
 		item.Address, item.State, item.AgentMode, item.Kubernetes = result.Server, "ready", "direct", &kubernetes
+	case core.ServerRuntimeRelay:
+		address, detail := validateRelayAddress(input.Address)
+		if detail != "" {
+			problem(w, http.StatusBadRequest, "Relay connection invalid", detail)
+			return
+		}
+		if input.Relay == nil || input.Relay.AccessToken == nil || len(strings.TrimSpace(*input.Relay.AccessToken)) < 24 {
+			problem(w, http.StatusBadRequest, "Relay access token required", "Enter the access token configured on the relay node.")
+			return
+		}
+		if a.eventConfig.Vault == nil {
+			problem(w, http.StatusServiceUnavailable, "Encrypted storage required", "Configure the master key before adding a relay server.")
+			return
+		}
+		encrypted, err := a.eventConfig.Vault.Encrypt("relay-server:"+item.ID+":access-token", []byte(strings.TrimSpace(*input.Relay.AccessToken)))
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		item.Address, item.State, item.AgentMode, item.Relay = address, "connecting", "outbound", &core.RelayServerConfig{EncryptedAccessToken: encrypted, AccessTokenConfigured: true}
 	default:
-		problem(w, http.StatusBadRequest, "Runtime unavailable", "Use docker, kubernetes, or openshift.")
+		problem(w, http.StatusBadRequest, "Runtime unavailable", "Use docker, kubernetes, openshift, or relay.")
 		return
 	}
 	if err := a.store.CreateServer(r.Context(), item); err != nil {
@@ -880,6 +1094,7 @@ type updateServerRequest struct {
 	Name       string                   `json:"name"`
 	Address    string                   `json:"address"`
 	Kubernetes *kubernetesServerRequest `json:"kubernetes"`
+	Relay      *relayServerRequest      `json:"relay"`
 }
 
 func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
@@ -937,6 +1152,26 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item.Kubernetes = kubernetes
+	case core.ServerRuntimeRelay:
+		address, detail := validateRelayAddress(input.Address)
+		if detail != "" {
+			problem(w, http.StatusBadRequest, "Relay connection invalid", detail)
+			return
+		}
+		item.Address = address
+		if input.Relay != nil && input.Relay.AccessToken != nil && strings.TrimSpace(*input.Relay.AccessToken) != "" {
+			if len(strings.TrimSpace(*input.Relay.AccessToken)) < 24 {
+				problem(w, http.StatusBadRequest, "Relay access token invalid", "Use at least 24 characters.")
+				return
+			}
+			encrypted, encryptErr := a.eventConfig.Vault.Encrypt("relay-server:"+item.ID+":access-token", []byte(strings.TrimSpace(*input.Relay.AccessToken)))
+			if encryptErr != nil {
+				a.internal(w, encryptErr)
+				return
+			}
+			item.Relay.EncryptedAccessToken, item.Relay.AccessTokenConfigured = encrypted, true
+		}
+		item.State = "connecting"
 	default:
 		problem(w, http.StatusConflict, "Runtime unavailable", "This server uses an unsupported runtime.")
 		return
@@ -957,9 +1192,25 @@ func normalizeServerRuntime(runtime string) string {
 		return core.ServerRuntimeKubernetes
 	case core.ServerRuntimeOpenShift:
 		return core.ServerRuntimeOpenShift
+	case core.ServerRuntimeRelay:
+		return core.ServerRuntimeRelay
 	default:
 		return strings.ToLower(strings.TrimSpace(runtime))
 	}
+}
+
+func validateRelayAddress(value string) (string, string) {
+	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(value), "/"))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return "", "Enter an HTTP or HTTPS relay URL."
+	}
+	if parsed.Scheme == "http" && parsed.Hostname() != "localhost" && parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
+		return "", "Use HTTPS for relay servers outside this host."
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", "Relay URLs cannot contain credentials, query values, or fragments."
+	}
+	return parsed.String(), ""
 }
 
 func validateKubernetesServer(input *kubernetesServerRequest, existing *core.KubernetesServerConfig) (*core.KubernetesServerConfig, string) {
@@ -1102,6 +1353,17 @@ func (a *API) deleteServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if server.Runtime == core.ServerRuntimeRelay {
+		webhooks, listErr := a.store.ListRelayWebhooks(r.Context(), id)
+		if listErr != nil {
+			a.internal(w, listErr)
+			return
+		}
+		if len(webhooks) > 0 {
+			problem(w, http.StatusConflict, "Relay server in use", "Remove its webhook endpoints and connector bindings before deleting this relay.")
+			return
+		}
+	}
 	if err := a.store.DeleteServer(r.Context(), id); err != nil {
 		a.notFoundOrInternal(w, err, "Server")
 		return
@@ -1111,7 +1373,9 @@ func (a *API) deleteServer(w http.ResponseWriter, r *http.Request) {
 
 type createAppRequest struct {
 	ProjectID, ServerID, Name, SourceRepo, Branch, BuildType, ContextPath, DockerfilePath, ComposePath, ComposeContent, Domain string
+	SourceAuthType, SourceCredentialID                                                                                         string
 	HelmChart, HelmVersion, HelmRepository, HelmValues, HelmNamespace, HelmRelease                                             string
+	HelmValueOverrides                                                                                                         map[string]interface{}
 	PreDeployHook, PostDeployHook                                                                                              string
 	ContainerPort                                                                                                              int
 	Template                                                                                                                   bool
@@ -1127,6 +1391,8 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.SourceRepo = strings.TrimSpace(input.SourceRepo)
+	input.SourceAuthType = strings.TrimSpace(input.SourceAuthType)
+	input.SourceCredentialID = strings.TrimSpace(input.SourceCredentialID)
 	input.ComposeContent = strings.TrimSpace(input.ComposeContent)
 	input.HelmChart = strings.TrimSpace(input.HelmChart)
 	input.HelmVersion = strings.TrimSpace(input.HelmVersion)
@@ -1137,6 +1403,18 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	input.PostDeployHook = strings.TrimSpace(input.PostDeployHook)
 	directCompose := input.ComposeContent != ""
 	helmApplication := input.BuildType == string(core.BuildTypeHelm)
+	if input.HelmValueOverrides != nil {
+		if strings.TrimSpace(input.HelmValues) != "" {
+			problem(w, http.StatusBadRequest, "Choose one Helm values format", "Send structured Helm value overrides or raw Helm values, not both.")
+			return
+		}
+		encoded, err := encodeHelmValueOverrides(input.HelmValueOverrides)
+		if err != nil {
+			problem(w, http.StatusBadRequest, "Helm values unavailable", err.Error())
+			return
+		}
+		input.HelmValues = encoded
+	}
 	if input.ProjectID == "" || input.ServerID == "" || input.Name == "" {
 		problem(w, http.StatusBadRequest, "Application details required", "Choose a project and server, then enter an application name.")
 		return
@@ -1144,6 +1422,41 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	if input.SourceRepo == "" && !directCompose && !helmApplication {
 		problem(w, http.StatusBadRequest, "Application source required", "Enter a repository URL, paste a Docker Compose file, or configure a Helm chart.")
 		return
+	}
+	if detail := validateSourceAuthentication(input.SourceRepo, input.SourceAuthType, input.SourceCredentialID); detail != "" {
+		problem(w, http.StatusBadRequest, "Invalid source authentication", detail)
+		return
+	}
+	if input.SourceCredentialID != "" {
+		if a.eventConfig.Vault == nil {
+			problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before attaching repository credentials.")
+			return
+		}
+		if input.SourceAuthType == deploy.SourceAuthGitHubApp {
+			connection, err := a.store.GetGitHubApp(r.Context(), input.SourceCredentialID)
+			if err != nil {
+				a.notFoundOrInternal(w, err, "GitHub App")
+				return
+			}
+			if connection.State != "ready" {
+				problem(w, http.StatusConflict, "GitHub App not ready", "Install and verify this GitHub App before using it for a repository.")
+				return
+			}
+			if err := githubapp.ValidateRepositoryHost(input.SourceRepo, connection.WebURL); err != nil {
+				problem(w, http.StatusBadRequest, "GitHub App host mismatch", err.Error())
+				return
+			}
+		} else {
+			secret, err := a.store.GetSecret(r.Context(), input.SourceCredentialID)
+			if err != nil {
+				a.notFoundOrInternal(w, err, "Source credential")
+				return
+			}
+			if err := deploy.ValidateSourceCredentialType(input.SourceAuthType, secret.Type); err != nil {
+				problem(w, http.StatusBadRequest, "Invalid source credential", err.Error())
+				return
+			}
+		}
 	}
 	if len(input.ComposeContent) > maxComposeContentBytes || len(input.HelmValues) > maxComposeContentBytes {
 		problem(w, http.StatusRequestEntityTooLarge, "Application definition too large", "Keep Compose content and Helm values under 512 KB.")
@@ -1167,7 +1480,8 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if helmApplication {
-		candidate := core.App{BuildType: core.BuildTypeHelm, HelmChart: input.HelmChart, HelmRepository: input.HelmRepository}
+		candidate := core.App{BuildType: core.BuildTypeHelm, SourceRepo: input.SourceRepo, SourceAuthType: input.SourceAuthType,
+			HelmChart: input.HelmChart, HelmRepository: input.HelmRepository}
 		if err := deploy.ValidateHelmTarget(candidate, server); err != nil {
 			problem(w, http.StatusBadRequest, "Helm configuration unavailable", err.Error())
 			return
@@ -1180,7 +1494,7 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 		input.BuildType = string(core.BuildTypeCompose)
 		input.Branch = ""
 		input.ComposePath = "compose.yml"
-	} else if helmApplication {
+	} else if helmApplication && input.SourceRepo == "" {
 		input.Branch = ""
 	} else if input.Branch == "" {
 		input.Branch = "main"
@@ -1206,7 +1520,8 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 		state = "template"
 	}
 	item := core.App{ID: ulid.Make().String(), ProjectID: input.ProjectID, ServerID: input.ServerID, Name: input.Name,
-		SourceRepo: input.SourceRepo, Branch: input.Branch, BuildType: core.BuildType(input.BuildType), ContextPath: input.ContextPath,
+		SourceRepo: input.SourceRepo, Branch: input.Branch, SourceAuthType: input.SourceAuthType, SourceCredentialID: input.SourceCredentialID,
+		BuildType: core.BuildType(input.BuildType), ContextPath: input.ContextPath,
 		DockerfilePath: input.DockerfilePath, ComposePath: input.ComposePath, ComposeContent: input.ComposeContent, ContainerPort: input.ContainerPort,
 		HelmChart: input.HelmChart, HelmVersion: input.HelmVersion, HelmRepository: input.HelmRepository, HelmValues: input.HelmValues,
 		HelmNamespace: input.HelmNamespace, HelmRelease: input.HelmRelease, PreDeployHook: input.PreDeployHook,
@@ -1216,6 +1531,189 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, item)
+}
+
+type updateAppHooksRequest struct {
+	PreDeployHook  string   `json:"preDeployHook"`
+	PostDeployHook string   `json:"postDeployHook"`
+	SecretIDs      []string `json:"secretIds"`
+}
+
+func (a *API) updateAppHooks(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.GetApp(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Application")
+		return
+	}
+	if item.Generated {
+		problem(w, http.StatusConflict, "Generated application cannot be edited", "Update hooks on its application source or event rule instead.")
+		return
+	}
+	var input updateAppHooksRequest
+	if !decode(w, r, &input) {
+		return
+	}
+	if err := validateEventHooks(input.PreDeployHook, input.PostDeployHook); err != nil {
+		problem(w, http.StatusBadRequest, "Invalid deployment hook", err.Error())
+		return
+	}
+	if err := a.validateSecretIDs(r.Context(), input.SecretIDs); err != nil {
+		problem(w, http.StatusBadRequest, "Invalid secret binding", err.Error())
+		return
+	}
+	item.PreDeployHook = strings.TrimSpace(input.PreDeployHook)
+	item.PostDeployHook = strings.TrimSpace(input.PostDeployHook)
+	item.HookEnvironment = make(map[string]string, len(input.SecretIDs))
+	item.HookSecretIDs = append([]string(nil), input.SecretIDs...)
+	for _, id := range input.SecretIDs {
+		secret, err := a.store.GetSecret(r.Context(), id)
+		if err != nil {
+			a.notFoundOrInternal(w, err, "Build credential")
+			return
+		}
+		item.HookEnvironment[core.SecretEnvironmentKey(secret.ID, secret.EnvironmentVariable)] = secret.EncryptedValue
+	}
+	if err := a.store.UpdateApp(r.Context(), item); err != nil {
+		a.notFoundOrInternal(w, err, "Application")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+type inspectHelmSourceRequest struct {
+	SourceRepo         string `json:"sourceRepo"`
+	Branch             string `json:"branch"`
+	ChartPath          string `json:"chartPath"`
+	SourceAuthType     string `json:"sourceAuthType"`
+	SourceCredentialID string `json:"sourceCredentialId"`
+}
+
+func (a *API) inspectHelmSource(w http.ResponseWriter, r *http.Request) {
+	var input inspectHelmSourceRequest
+	if !decode(w, r, &input) {
+		return
+	}
+	input.SourceRepo, input.Branch, input.ChartPath = deploy.NormalizeGitHelmSource(input.SourceRepo, input.Branch, input.ChartPath)
+	input.SourceAuthType = strings.TrimSpace(input.SourceAuthType)
+	input.SourceCredentialID = strings.TrimSpace(input.SourceCredentialID)
+	input.SourceRepo = deploy.RepositoryForSourceAuth(input.SourceRepo, input.SourceAuthType)
+	if input.Branch == "" {
+		input.Branch = "main"
+	}
+	if input.SourceRepo == "" || input.ChartPath == "" {
+		problem(w, http.StatusBadRequest, "Helm source required", "Enter a repository URL and chart directory, or paste a GitHub folder URL.")
+		return
+	}
+	if detail := validateSourceAuthentication(input.SourceRepo, input.SourceAuthType, input.SourceCredentialID); detail != "" {
+		problem(w, http.StatusBadRequest, "Invalid source authentication", detail)
+		return
+	}
+	app := core.App{SourceRepo: input.SourceRepo, Branch: input.Branch, SourceAuthType: input.SourceAuthType,
+		SourceCredentialID: input.SourceCredentialID, BuildType: core.BuildTypeHelm, HelmChart: input.ChartPath}
+	if input.SourceCredentialID != "" {
+		if a.eventConfig.Vault == nil {
+			problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before inspecting private repositories.")
+			return
+		}
+		if input.SourceAuthType == deploy.SourceAuthGitHubApp {
+			connection, err := a.store.GetGitHubApp(r.Context(), input.SourceCredentialID)
+			if err != nil {
+				a.notFoundOrInternal(w, err, "GitHub App")
+				return
+			}
+			if connection.State != "ready" {
+				problem(w, http.StatusConflict, "GitHub App not ready", "Install and verify this GitHub App before loading the chart.")
+				return
+			}
+			if err := githubapp.ValidateRepositoryHost(input.SourceRepo, connection.WebURL); err != nil {
+				problem(w, http.StatusBadRequest, "GitHub App host mismatch", err.Error())
+				return
+			}
+		}
+		resolved, err := (deploy.SourceAuthExecutor{Secrets: a.store, Vault: a.eventConfig.Vault, GitHubApps: a.eventConfig.GitHubApps}).Resolve(r.Context(), app)
+		if err != nil {
+			problem(w, http.StatusBadRequest, "Repository credential unavailable", err.Error())
+			return
+		}
+		app = resolved
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	inspection, err := deploy.InspectGitHelmSource(ctx, app)
+	if err != nil {
+		status := http.StatusUnprocessableEntity
+		if errors.Is(err, context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		}
+		problem(w, status, "Helm chart could not be loaded", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, inspection)
+}
+
+func encodeHelmValueOverrides(values map[string]interface{}) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+	encoded, err := yaml.Marshal(values)
+	if err != nil {
+		return "", fmt.Errorf("encode structured Helm values: %w", err)
+	}
+	if len(encoded) > maxComposeContentBytes {
+		return "", errors.New("structured Helm values exceed 512 KB")
+	}
+	return string(encoded), nil
+}
+
+func validateSourceAuthentication(repository, authType, credentialID string) string {
+	if repository != "" {
+		switch {
+		case strings.HasPrefix(repository, "https://"):
+			parsed, err := url.Parse(repository)
+			if err != nil || parsed.Host == "" {
+				return "Enter a valid HTTPS repository URL."
+			}
+			if parsed.User != nil {
+				return "Do not embed credentials in the repository URL; attach a stored credential instead."
+			}
+		case strings.HasPrefix(repository, "file://"):
+			if authType != "" || credentialID != "" {
+				return "Local file repositories do not use stored credentials."
+			}
+		case strings.HasPrefix(repository, "ssh://"), strings.Contains(repository, "@"):
+			if authType == "" && credentialID == "" {
+				return "SSH repositories require a stored SSH private key."
+			}
+		default:
+			return "Use an HTTPS repository URL, or SSH with a stored private key."
+		}
+	}
+	if authType == "" && credentialID == "" {
+		return ""
+	}
+	if repository == "" {
+		return "Repository credentials require a source repository."
+	}
+	if authType == "" || credentialID == "" {
+		return "Choose both an authentication method and a stored credential."
+	}
+	switch authType {
+	case deploy.SourceAuthGitHubApp:
+		if !strings.HasPrefix(repository, "https://") {
+			return "GitHub Apps require an HTTPS repository URL."
+		}
+	case deploy.SourceAuthGitHubToken:
+		if !strings.HasPrefix(repository, "https://") {
+			return "GitHub tokens require an HTTPS repository URL."
+		}
+	case deploy.SourceAuthSSHKey:
+		if !strings.HasPrefix(repository, "ssh://") && !strings.Contains(repository, "@") {
+			return "SSH keys require an ssh:// or git@host:path repository URL."
+		}
+	default:
+		return "Use github_app, github_token, or ssh_key."
+	}
+	return ""
 }
 
 func (a *API) deleteApp(w http.ResponseWriter, r *http.Request) {

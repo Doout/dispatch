@@ -44,7 +44,7 @@ type sdkHelmClient struct {
 
 var helmNamePart = regexp.MustCompile(`[^a-z0-9-]+`)
 
-func (e HelmExecutor) Deploy(ctx context.Context, _ core.Deployment, app core.App, server core.Server, progress Progress) error {
+func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, app core.App, server core.Server, progress Progress) error {
 	if err := ValidateHelmTarget(app, server); err != nil {
 		return err
 	}
@@ -61,7 +61,33 @@ func (e HelmExecutor) Deploy(ctx context.Context, _ core.Deployment, app core.Ap
 	}
 	defer os.RemoveAll(workspace)
 
-	if app.HelmRepository != "" {
+	if gitBackedHelmChart(app) {
+		if err := progress(core.DeploymentFetching, "Checking out Helm chart source from "+app.SourceRepo); err != nil {
+			return err
+		}
+		sourcePath := filepath.Join(workspace, "source")
+		args := []string{"clone", "--depth", "1"}
+		if app.Branch != "" {
+			args = append(args, "--branch", app.Branch)
+		}
+		args = append(args, app.SourceRepo, sourcePath)
+		if err := runGitForApp(ctx, app, args...); err != nil {
+			return fmt.Errorf("fetch Helm source: %w", err)
+		}
+		if deployment.CommitSHA != "" && deployment.CommitSHA != "HEAD" && deployment.CommitSHA != "chart" {
+			if err := runGitForApp(ctx, app, "-C", sourcePath, "fetch", "--depth", "1", "origin", deployment.CommitSHA); err != nil {
+				return fmt.Errorf("fetch Helm revision: %w", err)
+			}
+			if err := runGitForApp(ctx, app, "-C", sourcePath, "checkout", "--detach", deployment.CommitSHA); err != nil {
+				return fmt.Errorf("checkout Helm revision: %w", err)
+			}
+		}
+		chartPath, err := within(sourcePath, app.HelmChart)
+		if err != nil {
+			return fmt.Errorf("Helm chart path: %w", err)
+		}
+		app.HelmChart = chartPath
+	} else if app.HelmRepository != "" {
 		if err := progress(core.DeploymentFetching, "Loading Helm repository metadata"); err != nil {
 			return err
 		}
@@ -289,6 +315,15 @@ func ValidateHelmTarget(app core.App, server core.Server) error {
 		return errors.New("Helm chart is required")
 	}
 	repository := strings.TrimSpace(app.HelmRepository)
+	if gitBackedHelmChart(app) {
+		if !validGitSourceForExecution(app) {
+			return errors.New("Git-backed Helm charts require an HTTPS repository, or an SSH repository with a configured key")
+		}
+		if _, err := within("/source", chart); err != nil {
+			return fmt.Errorf("invalid Helm chart path: %w", err)
+		}
+		return nil
+	}
 	if repository != "" {
 		if !strings.HasPrefix(repository, "https://") {
 			return errors.New("Helm repository must use HTTPS")
@@ -302,6 +337,11 @@ func ValidateHelmTarget(app core.App, server core.Server) error {
 		return errors.New("Helm chart must use OCI or HTTPS, or specify a Helm repository")
 	}
 	return nil
+}
+
+func gitBackedHelmChart(app core.App) bool {
+	chart := strings.TrimSpace(app.HelmChart)
+	return strings.TrimSpace(app.SourceRepo) != "" && strings.TrimSpace(app.HelmRepository) == "" && !strings.Contains(chart, "://")
 }
 
 func prepareKubernetesServer(server core.Server) (core.Server, func(), error) {
