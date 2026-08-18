@@ -1,16 +1,17 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ArrowSquareOut, Broom, GitPullRequest, LinkSimple, PencilSimple, Plus, Trash, X } from "@phosphor-icons/react";
-import { api, App, Overview, PreviewGroup, PreviewGroupComponent, PreviewGroupRun } from "./api";
+import { api, App, GitHubRepository, Overview, PreviewGroup, PreviewGroupComponent, PreviewGroupRun } from "./api";
 import { relative, short } from "./presentation";
 
 type Props = { overview: Overview; onChanged: () => Promise<void> };
 
 const blankComponent = (app?: App, entrypoint = false): PreviewGroupComponent => ({
-  appId: app?.id ?? "", alias: "", repository: "", defaultBranch: "main", entrypoint, dependsOn: [], bindings: [], preDeployHook: "", postDeployHook: "",
+  appId: app?.id ?? "", alias: "", repository: "", defaultBranch: "main", entrypoint, dependsOn: [], bindings: [], preDeployHook: "", postDeployHook: "", secretIds: [],
 });
 
 export function PreviewGroupsArea({ overview, onChanged }: Props) {
   const helmApps = overview.apps.filter((app) => app.buildType === "helm" && ["kubernetes", "openshift"].includes(overview.servers.find((server) => server.id === app.serverId)?.runtime ?? ""));
+  const readyConnections = overview.githubApps.filter((connection) => connection.installationId && connection.state !== "needs_installation");
   const [editing, setEditing] = useState<PreviewGroup | "new" | null>(null);
   const [selectedRunID, setSelectedRunID] = useState("");
   const [confirmCleanup, setConfirmCleanup] = useState("");
@@ -31,25 +32,30 @@ export function PreviewGroupsArea({ overview, onChanged }: Props) {
   }
 
   if (editing) return <PreviewGroupBuilder overview={overview} helmApps={helmApps} group={editing === "new" ? undefined : editing} onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await onChanged(); }} />;
+  if (selectedRun) return <div className="preview-groups-area">
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <RunDetail run={selectedRun} confirming={confirmCleanup === selectedRun.id} onClose={() => { setSelectedRunID(""); setConfirmCleanup(""); }} onCleanup={() => setConfirmCleanup(selectedRun.id)} onCancelCleanup={() => setConfirmCleanup("")} onConfirmCleanup={() => void cleanup(selectedRun)} />
+  </div>;
 
   return <div className="preview-groups-area">
-    <div className="section-toolbar">
-      <div><h2>Preview groups</h2><p>Deploy linked Helm applications as one preview environment.</p></div>
-      {helmApps.length > 0 && <button className="primary-button" onClick={() => setEditing("new")}><Plus size={16} weight="bold" />New group</button>}
+    <div className="section-toolbar collection-toolbar">
+      <div><p>Deploy linked Helm sources as one preview environment.</p></div>
+      {helmApps.length > 0 && readyConnections.length > 0 && <button className="primary-button" onClick={() => setEditing("new")}><Plus size={16} weight="bold" />New group</button>}
     </div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {overview.previewGroups.length === 0 ? <section className="compact-empty">
       <LinkSimple size={24} />
-      <div><h3>{helmApps.length ? "No preview groups" : "Helm applications required"}</h3><p>{helmApps.length ? "Create a group to coordinate one or more application templates." : "Create a Helm application on a Kubernetes server first."}</p></div>
-    </section> : <div className="resource-table-wrap"><table className="resource-table preview-group-table"><thead><tr><th>Group</th><th>Entrypoint</th><th>Components</th><th>Active run</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead><tbody>
+      <div><h3>{!helmApps.length ? "Helm applications required" : !readyConnections.length ? "GitHub connection required" : "No preview groups"}</h3><p>{!helmApps.length ? "Create a Helm application on a Kubernetes server first." : !readyConnections.length ? "Install a GitHub App on the repositories that should receive preview commands." : "Create a group to coordinate one or more application templates."}</p></div>
+    </section> : <div className="resource-table-wrap"><table className="resource-table preview-group-table"><thead><tr><th>Group</th><th>Entrypoint</th><th>Components</th><th>Status</th><th>Active preview</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead><tbody>
       {overview.previewGroups.map((group) => {
         const run = overview.previewGroupRuns.find((item) => item.groupId === group.id && item.state !== "closed");
         const entrypoint = group.components.find((component) => component.entrypoint);
         return <tr key={group.id}>
-          <td data-label="Group"><strong>{group.name}</strong><small><code>{group.command}</code>{group.enabled ? "" : " Disabled"}</small></td>
+          <td data-label="Group"><strong>{group.name}</strong><small><code>{group.command}</code></small></td>
           <td data-label="Entrypoint">{entrypoint?.alias ?? "Not set"}</td>
           <td data-label="Components">{group.components.length}</td>
-          <td data-label="Active run">{run ? <button className="run-link" onClick={() => setSelectedRunID(run.id)}><Status state={run.state} />{run.entrypointUrl && <ArrowSquareOut size={14} />}</button> : <span className="muted-value">None</span>}</td>
+          <td data-label="Status"><Status state={group.enabled ? "enabled" : "disabled"} /></td>
+          <td data-label="Active preview">{run ? <button className="run-link" onClick={() => setSelectedRunID(run.id)}><Status state={run.state} />{run.entrypointUrl && <ArrowSquareOut size={14} />}</button> : <span className="muted-value">None</span>}</td>
           <td className="row-actions">
             <button aria-label={`Edit ${group.name}`} onClick={() => setEditing(group)}><PencilSimple size={15} />Edit</button>
             <button className="delete-action" aria-label={`Delete ${group.name}`} onClick={() => setConfirmDelete(group.id)}><Trash size={15} />Delete</button>
@@ -59,17 +65,29 @@ export function PreviewGroupsArea({ overview, onChanged }: Props) {
     </tbody></table></div>}
 
     {confirmDelete && <ConfirmBar title="Delete preview group?" body="Existing closed run history remains. Active groups must be cleaned up first." confirmLabel="Delete group" danger onCancel={() => setConfirmDelete("")} onConfirm={() => { const group = overview.previewGroups.find((item) => item.id === confirmDelete); if (group) void removeGroup(group); }} />}
-    {selectedRun && <RunDetail run={selectedRun} confirming={confirmCleanup === selectedRun.id} onClose={() => { setSelectedRunID(""); setConfirmCleanup(""); }} onCleanup={() => setConfirmCleanup(selectedRun.id)} onCancelCleanup={() => setConfirmCleanup("")} onConfirmCleanup={() => void cleanup(selectedRun)} />}
   </div>;
 }
 
 function PreviewGroupBuilder({ overview, helmApps, group, onCancel, onSaved }: { overview: Overview; helmApps: App[]; group?: PreviewGroup; onCancel: () => void; onSaved: () => Promise<void> }) {
+  const readyConnections = overview.githubApps.filter((connection) => connection.installationId && connection.state !== "needs_installation");
   const [name, setName] = useState(group?.name ?? "");
+  const [githubAppID, setGitHubAppID] = useState(group?.githubAppId ?? readyConnections[0]?.id ?? "");
   const [command, setCommand] = useState(group?.command ?? "/preview");
   const [enabled, setEnabled] = useState(group?.enabled ?? true);
-  const [components, setComponents] = useState<PreviewGroupComponent[]>(group?.components.map((item) => ({ ...item, dependsOn: [...item.dependsOn], bindings: item.bindings.map((binding) => ({ ...binding })) })) ?? [blankComponent(helmApps[0], true)]);
+  const [components, setComponents] = useState<PreviewGroupComponent[]>(group?.components.map((item) => ({ ...item, dependsOn: [...item.dependsOn], bindings: item.bindings.map((binding) => ({ ...binding })), secretIds: [...(item.secretIds ?? [])] })) ?? [blankComponent(helmApps[0], true)]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [repositories, setRepositories] = useState<GitHubRepository[]>([]);
+  const [repositoriesLoading, setRepositoriesLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setRepositories([]);
+    if (!githubAppID) return () => { active = false; };
+    setRepositoriesLoading(true);
+    void api.githubAppRepositories(githubAppID).then((items) => { if (active) setRepositories(items); }).catch((cause) => { if (active) setError((cause as Error).message); }).finally(() => { if (active) setRepositoriesLoading(false); });
+    return () => { active = false; };
+  }, [githubAppID]);
 
   function change(index: number, values: Partial<PreviewGroupComponent>) {
     setComponents((current) => {
@@ -99,7 +117,7 @@ function PreviewGroupBuilder({ overview, helmApps, group, onCancel, onSaved }: {
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      const body = { name, command, enabled, components: components.map(({ id: _id, groupId: _groupId, ...component }) => component) };
+      const body = { name, githubAppId: githubAppID, command, enabled, components: components.map(({ id: _id, groupId: _groupId, ...component }) => component) };
       if (group) await api.updatePreviewGroup(group.id, body); else await api.createPreviewGroup(body);
       await onSaved();
     } catch (cause) { setError((cause as Error).message); }
@@ -111,24 +129,27 @@ function PreviewGroupBuilder({ overview, helmApps, group, onCancel, onSaved }: {
     <form onSubmit={submit}>
       <div className="group-basics">
         <label><span>Name</span><input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /><small>Shown in status comments and Dispatch.</small></label>
+        <label><span>GitHub connection</span><select required value={githubAppID} onChange={(event) => setGitHubAppID(event.target.value)}><option value="">Choose a connection</option>{readyConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name} ({connection.installationAccount || "installed"})</option>)}</select><small>Receives comments and reads every linked pull request.</small></label>
         <label><span>Command</span><input required value={command} onChange={(event) => setCommand(event.target.value)} /><small>Starts the group from a trusted PR comment.</small></label>
         <label className="check-field"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Accept preview commands</span></label>
       </div>
-      <div className="component-builder-head"><div><h3>Components</h3><p>Choose an existing Helm application for each repository.</p></div><button type="button" className="quiet-button" onClick={() => setComponents((current) => [...current, blankComponent(helmApps[0])])}><Plus size={14} />Add component</button></div>
-      <div className="component-builders">{components.map((component, index) => <ComponentBuilder key={component.id ?? index} index={index} component={component} components={components} helmApps={helmApps} onChange={(values) => change(index, values)} onEntrypoint={() => makeEntrypoint(index)} onRemove={() => removeComponent(index)} />)}</div>
+      <div className="linked-command-guide"><GitPullRequest size={18} /><div><strong>Link pull requests in one comment</strong><p>Post <code>{command || "/preview"}</code> on a component PR. Add the other repositories with <code>with alias=#123</code>.</p>{components.length > 1 && <code className="command-example">{command || "/preview"} with {components.slice(1).map((component, index) => `${component.alias || `component-${index + 2}`}=#${123 + index}`).join(" ")}</code>}</div></div>
+      <div className="component-builder-head"><div><h3>Components</h3><p>Choose an existing Helm source for each repository.</p></div></div>
+      <div className="component-builders">{components.map((component, index) => <ComponentBuilder key={component.id ?? index} index={index} component={component} components={components} helmApps={helmApps} repositories={repositories} repositoriesLoading={repositoriesLoading} onChange={(values) => change(index, values)} onEntrypoint={() => makeEntrypoint(index)} onRemove={() => removeComponent(index)} />)}</div>
+      <button type="button" className="add-component-button" onClick={() => setComponents((current) => [...current, blankComponent(helmApps[0])])}><Plus size={14} />Add another component</button>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="builder-actions"><button type="button" className="quiet-button" onClick={onCancel}>Cancel</button><button className="primary-button" disabled={busy || components.length === 0}>{busy ? "Saving..." : group ? "Save group" : "Create group"}</button></div>
+      <div className="builder-actions"><button type="button" className="quiet-button" onClick={onCancel}>Cancel</button><button className="primary-button" disabled={busy || !githubAppID || repositoriesLoading || components.length === 0}>{busy ? "Saving..." : group ? "Save group" : "Create group"}</button></div>
     </form>
   </section>;
 }
 
-function ComponentBuilder({ index, component, components, helmApps, onChange, onEntrypoint, onRemove }: { index: number; component: PreviewGroupComponent; components: PreviewGroupComponent[]; helmApps: App[]; onChange: (values: Partial<PreviewGroupComponent>) => void; onEntrypoint: () => void; onRemove: () => void }) {
+function ComponentBuilder({ index, component, components, helmApps, repositories, repositoriesLoading, onChange, onEntrypoint, onRemove }: { index: number; component: PreviewGroupComponent; components: PreviewGroupComponent[]; helmApps: App[]; repositories: GitHubRepository[]; repositoriesLoading: boolean; onChange: (values: Partial<PreviewGroupComponent>) => void; onEntrypoint: () => void; onRemove: () => void }) {
   const dependencies = components.filter((candidate) => candidate !== component && candidate.alias);
   return <fieldset className="component-builder"><legend>Component {index + 1}</legend>
     <div className="component-fields">
       <label><span>Application template</span><select required value={component.appId} onChange={(event) => onChange({ appId: event.target.value })}>{helmApps.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}</select></label>
       <label><span>Alias</span><input required placeholder="service" value={component.alias} onChange={(event) => onChange({ alias: event.target.value })} /><small>Used in commands and output bindings.</small></label>
-      <label><span>Repository</span><input required placeholder="owner/repository" value={component.repository} onChange={(event) => onChange({ repository: event.target.value })} /></label>
+      <label><span>Repository</span><select required value={component.repository} disabled={repositoriesLoading} onChange={(event) => { const repository = repositories.find((item) => item.fullName === event.target.value); const suggestedAlias = repository?.name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "").slice(0, 31); onChange({ repository: event.target.value, ...(repository?.defaultBranch ? { defaultBranch: repository.defaultBranch } : {}), ...(!component.alias && suggestedAlias ? { alias: suggestedAlias } : {}) }); }}><option value="">{repositoriesLoading ? "Loading repositories..." : "Choose a repository"}</option>{component.repository && !repositories.some((item) => item.fullName === component.repository) && <option value={component.repository}>{component.repository} (not currently installed)</option>}{repositories.map((repository) => <option key={repository.id} value={repository.fullName}>{repository.fullName}</option>)}</select><small>Only repositories installed for this connection are listed.</small></label>
       <label><span>Default branch</span><input required value={component.defaultBranch} onChange={(event) => onChange({ defaultBranch: event.target.value })} /></label>
     </div>
     <div className="component-options">

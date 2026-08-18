@@ -14,10 +14,11 @@ import (
 )
 
 type previewGroupRequest struct {
-	Name       string                       `json:"name"`
-	Command    string                       `json:"command"`
-	Enabled    *bool                        `json:"enabled"`
-	Components []core.PreviewGroupComponent `json:"components"`
+	Name        string                       `json:"name"`
+	GitHubAppID string                       `json:"githubAppId"`
+	Command     string                       `json:"command"`
+	Enabled     *bool                        `json:"enabled"`
+	Components  []core.PreviewGroupComponent `json:"components"`
 }
 
 func (a *API) listPreviewGroups(w http.ResponseWriter, r *http.Request) {
@@ -40,13 +41,17 @@ func (a *API) createPreviewGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	item := core.PreviewGroup{ID: ulid.Make().String(), Name: input.Name, Command: input.Command, Enabled: true,
+	item := core.PreviewGroup{ID: ulid.Make().String(), Name: input.Name, GitHubAppID: strings.TrimSpace(input.GitHubAppID), Command: input.Command, Enabled: true,
 		Components: input.Components, CreatedAt: now, UpdatedAt: now}
 	if input.Enabled != nil {
 		item.Enabled = *input.Enabled
 	}
 	preparePreviewGroupComponents(&item)
 	if err := groups.Validate(r.Context(), a.store, &item, a.eventConfig.DefaultCommand); err != nil {
+		previewGroupProblem(w, err)
+		return
+	}
+	if err := a.validatePreviewGroupRepositories(r, item); err != nil {
 		previewGroupProblem(w, err)
 		return
 	}
@@ -67,12 +72,16 @@ func (a *API) updatePreviewGroup(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	existing.Name, existing.Command, existing.Components, existing.UpdatedAt = input.Name, input.Command, input.Components, time.Now().UTC()
+	existing.Name, existing.GitHubAppID, existing.Command, existing.Components, existing.UpdatedAt = input.Name, strings.TrimSpace(input.GitHubAppID), input.Command, input.Components, time.Now().UTC()
 	if input.Enabled != nil {
 		existing.Enabled = *input.Enabled
 	}
 	preparePreviewGroupComponents(&existing)
 	if err := groups.Validate(r.Context(), a.store, &existing, a.eventConfig.DefaultCommand); err != nil {
+		previewGroupProblem(w, err)
+		return
+	}
+	if err := a.validatePreviewGroupRepositories(r, existing); err != nil {
 		previewGroupProblem(w, err)
 		return
 	}
@@ -89,6 +98,22 @@ func preparePreviewGroupComponents(group *core.PreviewGroup) {
 		group.Components[index].GroupID = group.ID
 		group.Components[index].Alias = strings.TrimSpace(group.Components[index].Alias)
 	}
+}
+
+func (a *API) validatePreviewGroupRepositories(r *http.Request, group core.PreviewGroup) error {
+	if group.GitHubAppID == "" {
+		return nil
+	}
+	installed, err := a.githubRepositoryAccess(r.Context(), group.GitHubAppID)
+	if err != nil {
+		return err
+	}
+	for _, component := range group.Components {
+		if !installed[component.Repository] {
+			return errors.New("repository " + component.Repository + " is not installed for the selected GitHub App")
+		}
+	}
+	return nil
 }
 
 func (a *API) deletePreviewGroup(w http.ResponseWriter, r *http.Request) {

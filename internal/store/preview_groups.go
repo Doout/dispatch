@@ -26,8 +26,8 @@ func (s *SQLStore) CreatePreviewGroup(ctx context.Context, group core.PreviewGro
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO preview_groups(id,name,command,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?)`),
-		group.ID, group.Name, group.Command, group.Enabled, stamp(group.CreatedAt), stamp(group.UpdatedAt)); err != nil {
+	if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO preview_groups(id,name,github_app_id,command,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`),
+		group.ID, group.Name, group.GitHubAppID, group.Command, group.Enabled, stamp(group.CreatedAt), stamp(group.UpdatedAt)); err != nil {
 		return err
 	}
 	if err := s.insertPreviewGroupComponents(ctx, tx, group); err != nil {
@@ -42,8 +42,8 @@ func (s *SQLStore) UpdatePreviewGroup(ctx context.Context, group core.PreviewGro
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE preview_groups SET name=?,command=?,enabled=?,updated_at=? WHERE id=?`),
-		group.Name, group.Command, group.Enabled, stamp(group.UpdatedAt), group.ID)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE preview_groups SET name=?,github_app_id=?,command=?,enabled=?,updated_at=? WHERE id=?`),
+		group.Name, group.GitHubAppID, group.Command, group.Enabled, stamp(group.UpdatedAt), group.ID)
 	if err := changed(result, err); err != nil {
 		return err
 	}
@@ -66,6 +66,11 @@ func (s *SQLStore) insertPreviewGroupComponents(ctx context.Context, tx *sql.Tx,
 			component.PostDeployHook); err != nil {
 			return err
 		}
+		for _, secretID := range component.SecretIDs {
+			if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO preview_group_component_secrets(component_id,secret_id) VALUES(?,?)`), component.ID, secretID); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -85,8 +90,8 @@ func (s *SQLStore) DeletePreviewGroup(ctx context.Context, id string) error {
 func (s *SQLStore) GetPreviewGroup(ctx context.Context, id string) (core.PreviewGroup, error) {
 	var group core.PreviewGroup
 	var created, updated string
-	err := s.db.QueryRowContext(ctx, s.q(`SELECT id,name,command,enabled,created_at,updated_at FROM preview_groups WHERE id=?`), id).
-		Scan(&group.ID, &group.Name, &group.Command, &group.Enabled, &created, &updated)
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT id,name,github_app_id,command,enabled,created_at,updated_at FROM preview_groups WHERE id=?`), id).
+		Scan(&group.ID, &group.Name, &group.GitHubAppID, &group.Command, &group.Enabled, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return group, ErrNotFound
 	}
@@ -99,7 +104,7 @@ func (s *SQLStore) GetPreviewGroup(ctx context.Context, id string) (core.Preview
 }
 
 func (s *SQLStore) ListPreviewGroups(ctx context.Context) ([]core.PreviewGroup, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,command,enabled,created_at,updated_at FROM preview_groups ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,github_app_id,command,enabled,created_at,updated_at FROM preview_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +113,7 @@ func (s *SQLStore) ListPreviewGroups(ctx context.Context) ([]core.PreviewGroup, 
 	for rows.Next() {
 		var item core.PreviewGroup
 		var created, updated string
-		if err := rows.Scan(&item.ID, &item.Name, &item.Command, &item.Enabled, &created, &updated); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.GitHubAppID, &item.Command, &item.Enabled, &created, &updated); err != nil {
 			return nil, err
 		}
 		item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
@@ -146,12 +151,41 @@ func (s *SQLStore) listPreviewGroupComponents(ctx context.Context, groupID strin
 		_ = json.Unmarshal([]byte(bindings), &item.Bindings)
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range items {
+		items[index].SecretIDs, err = s.previewGroupComponentSecretIDs(ctx, items[index].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
-func (s *SQLStore) MatchingPreviewGroups(ctx context.Context, _ core.EventProvider, repository, command string) ([]core.PreviewGroup, error) {
+func (s *SQLStore) previewGroupComponentSecretIDs(ctx context.Context, componentID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, s.q(`SELECT secret_id FROM preview_group_component_secrets WHERE component_id=? ORDER BY secret_id`), componentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *SQLStore) MatchingPreviewGroups(ctx context.Context, _ core.EventProvider, repository, command, connectionID string) ([]core.PreviewGroup, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT DISTINCT g.id FROM preview_groups g JOIN preview_group_components c ON c.group_id=g.id
-		WHERE g.enabled=? AND c.repository=? AND g.command=? ORDER BY g.id`), true, repository, command)
+		WHERE g.enabled=? AND c.repository=? AND g.command=? AND g.github_app_id=? ORDER BY g.id`), true, repository, command, connectionID)
 	if err != nil {
 		return nil, err
 	}

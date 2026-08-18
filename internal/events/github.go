@@ -13,9 +13,10 @@ import (
 )
 
 type GitHubNotifier struct {
-	BaseURL string
-	Token   string
-	Client  *http.Client
+	BaseURL     string
+	Token       string
+	TokenSource func(context.Context) (string, error)
+	Client      *http.Client
 }
 
 func (n GitHubNotifier) UpdatePreview(ctx context.Context, notification Notification) (string, error) {
@@ -48,8 +49,12 @@ func (n GitHubNotifier) UpdateComment(ctx context.Context, repository string, nu
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("Content-Type", "application/json")
-	if n.Token != "" {
-		request.Header.Set("Authorization", "Bearer "+n.Token)
+	token, err := githubToken(ctx, n.Token, n.TokenSource)
+	if err != nil {
+		return "", err
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := n.Client
 	if client == nil {
@@ -100,9 +105,10 @@ func previewComment(notification Notification) string {
 }
 
 type GitHubResolver struct {
-	BaseURL string
-	Token   string
-	Client  *http.Client
+	BaseURL     string
+	Token       string
+	TokenSource func(context.Context) (string, error)
+	Client      *http.Client
 }
 
 func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository string, number int) (SourceRevision, error) {
@@ -120,8 +126,12 @@ func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository strin
 		return SourceRevision{}, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	if r.Token != "" {
-		request.Header.Set("Authorization", "Bearer "+r.Token)
+	token, err := githubToken(ctx, r.Token, r.TokenSource)
+	if err != nil {
+		return SourceRevision{}, err
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := r.Client
 	if client == nil {
@@ -169,8 +179,12 @@ func (r GitHubResolver) ResolveBranch(ctx context.Context, repository, branch st
 		return SourceRevision{}, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	if r.Token != "" {
-		request.Header.Set("Authorization", "Bearer "+r.Token)
+	token, err := githubToken(ctx, r.Token, r.TokenSource)
+	if err != nil {
+		return SourceRevision{}, err
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := r.Client
 	if client == nil {
@@ -194,4 +208,11 @@ func (r GitHubResolver) ResolveBranch(ctx context.Context, repository, branch st
 		return SourceRevision{}, errors.New("branch revision is incomplete")
 	}
 	return SourceRevision{HeadRef: branch, HeadSHA: payload.SHA, Open: true}, nil
+}
+
+func githubToken(ctx context.Context, static string, source func(context.Context) (string, error)) (string, error) {
+	if source != nil {
+		return source(ctx)
+	}
+	return static, nil
 }

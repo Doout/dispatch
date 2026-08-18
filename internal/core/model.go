@@ -24,6 +24,7 @@ type Server struct {
 	State      string                  `json:"state"`
 	AgentMode  string                  `json:"agentMode"`
 	Kubernetes *KubernetesServerConfig `json:"kubernetes,omitempty"`
+	Relay      *RelayServerConfig      `json:"relay,omitempty"`
 	CreatedAt  time.Time               `json:"createdAt"`
 }
 
@@ -31,7 +32,13 @@ const (
 	ServerRuntimeDocker     = "docker"
 	ServerRuntimeKubernetes = "kubernetes"
 	ServerRuntimeOpenShift  = "openshift"
+	ServerRuntimeRelay      = "relay"
 )
+
+func IsDeploymentRuntime(runtime string) bool {
+	runtime = strings.ToLower(strings.TrimSpace(runtime))
+	return runtime == ServerRuntimeDocker || IsKubernetesRuntime(runtime)
+}
 
 func IsKubernetesRuntime(runtime string) bool {
 	runtime = strings.ToLower(strings.TrimSpace(runtime))
@@ -57,6 +64,32 @@ type OpenShiftServerConfig struct {
 	ConnectedAt             *time.Time `json:"connectedAt,omitempty"`
 }
 
+// RelayServerConfig configures an outbound connection to a provider-neutral,
+// durable webhook relay. The access token is encrypted and never serialized.
+type RelayServerConfig struct {
+	EncryptedAccessToken  string     `json:"-"`
+	AccessTokenConfigured bool       `json:"accessTokenConfigured"`
+	PendingEvents         int        `json:"pendingEvents"`
+	OldestPendingAt       *time.Time `json:"oldestPendingAt,omitempty"`
+	LastConnectedAt       *time.Time `json:"lastConnectedAt,omitempty"`
+	LastError             string     `json:"lastError,omitempty"`
+}
+
+type RelayWebhook struct {
+	ID                   string        `json:"id"`
+	ServerID             string        `json:"serverId"`
+	Name                 string        `json:"name"`
+	Provider             EventProvider `json:"provider"`
+	ProviderConnectionID string        `json:"providerConnectionId,omitempty"`
+	RemoteID             string        `json:"remoteId"`
+	URL                  string        `json:"url"`
+	State                string        `json:"state"`
+	LastDeliveryAt       *time.Time    `json:"lastDeliveryAt,omitempty"`
+	LastError            string        `json:"lastError,omitempty"`
+	CreatedAt            time.Time     `json:"createdAt"`
+	UpdatedAt            time.Time     `json:"updatedAt"`
+}
+
 type BuildType string
 
 const (
@@ -66,21 +99,26 @@ const (
 )
 
 type App struct {
-	ID             string    `json:"id"`
-	ProjectID      string    `json:"projectId"`
-	ServerID       string    `json:"serverId"`
-	Name           string    `json:"name"`
-	SourceRepo     string    `json:"sourceRepo"`
-	Branch         string    `json:"branch"`
-	BuildType      BuildType `json:"buildType"`
-	ContextPath    string    `json:"contextPath"`
-	DockerfilePath string    `json:"dockerfilePath"`
-	ComposePath    string    `json:"composePath"`
-	ComposeContent string    `json:"-"`
-	HelmChart      string    `json:"helmChart,omitempty"`
-	HelmVersion    string    `json:"helmVersion,omitempty"`
-	HelmRepository string    `json:"helmRepository,omitempty"`
-	HelmValues     string    `json:"-"`
+	ID                 string `json:"id"`
+	ProjectID          string `json:"projectId"`
+	ServerID           string `json:"serverId"`
+	Name               string `json:"name"`
+	SourceRepo         string `json:"sourceRepo"`
+	Branch             string `json:"branch"`
+	SourceAuthType     string `json:"sourceAuthType,omitempty"`
+	SourceCredentialID string `json:"sourceCredentialId,omitempty"`
+	// SourceCredential is decrypted only for the duration of a deployment. It
+	// is never persisted, returned by the API, or included in the spec digest.
+	SourceCredential string    `json:"-"`
+	BuildType        BuildType `json:"buildType"`
+	ContextPath      string    `json:"contextPath"`
+	DockerfilePath   string    `json:"dockerfilePath"`
+	ComposePath      string    `json:"composePath"`
+	ComposeContent   string    `json:"-"`
+	HelmChart        string    `json:"helmChart,omitempty"`
+	HelmVersion      string    `json:"helmVersion,omitempty"`
+	HelmRepository   string    `json:"helmRepository,omitempty"`
+	HelmValues       string    `json:"-"`
 	// HelmGeneratedValues is populated transiently by a pre-deploy hook. It is
 	// never persisted, returned by the API, or included in the stored spec digest.
 	HelmGeneratedValues string `json:"-"`
@@ -92,8 +130,9 @@ type App struct {
 	Template        bool              `json:"template"`
 	HelmNamespace   string            `json:"helmNamespace,omitempty"`
 	HelmRelease     string            `json:"helmRelease,omitempty"`
-	PreDeployHook   string            `json:"-"`
-	PostDeployHook  string            `json:"-"`
+	PreDeployHook   string            `json:"preDeployHook,omitempty"`
+	PostDeployHook  string            `json:"postDeployHook,omitempty"`
+	HookSecretIDs   []string          `json:"hookSecretIds,omitempty"`
 	ContainerPort   int               `json:"containerPort"`
 	Domain          string            `json:"domain"`
 	State           string            `json:"state"`
@@ -102,27 +141,29 @@ type App struct {
 
 func (a App) SpecDigest() string {
 	payload, _ := json.Marshal(struct {
-		ServerID        string
-		SourceRepo      string
-		Branch          string
-		BuildType       BuildType
-		ContextPath     string
-		DockerfilePath  string
-		ComposePath     string
-		ComposeContent  string
-		HelmChart       string
-		HelmVersion     string
-		HelmRepository  string
-		HelmValues      string
-		HelmNamespace   string
-		HelmRelease     string
-		PreDeployHook   string
-		PostDeployHook  string
-		HelmGroupValues string
-		HookEnvironment map[string]string
-		ContainerPort   int
-		Domain          string
-	}{a.ServerID, a.SourceRepo, a.Branch, a.BuildType, a.ContextPath, a.DockerfilePath, a.ComposePath, a.ComposeContent,
+		ServerID           string
+		SourceRepo         string
+		Branch             string
+		SourceAuthType     string
+		SourceCredentialID string
+		BuildType          BuildType
+		ContextPath        string
+		DockerfilePath     string
+		ComposePath        string
+		ComposeContent     string
+		HelmChart          string
+		HelmVersion        string
+		HelmRepository     string
+		HelmValues         string
+		HelmNamespace      string
+		HelmRelease        string
+		PreDeployHook      string
+		PostDeployHook     string
+		HelmGroupValues    string
+		HookEnvironment    map[string]string
+		ContainerPort      int
+		Domain             string
+	}{a.ServerID, a.SourceRepo, a.Branch, a.SourceAuthType, a.SourceCredentialID, a.BuildType, a.ContextPath, a.DockerfilePath, a.ComposePath, a.ComposeContent,
 		a.HelmChart, a.HelmVersion, a.HelmRepository, a.HelmValues, a.HelmNamespace, a.HelmRelease,
 		a.PreDeployHook, a.PostDeployHook, a.HelmGroupValues, a.HookEnvironment, a.ContainerPort, a.Domain})
 	sum := sha256.Sum256(payload)
@@ -195,16 +236,18 @@ type PreviewGroupComponent struct {
 	Bindings       []PreviewGroupBinding `json:"bindings"`
 	PreDeployHook  string                `json:"preDeployHook,omitempty"`
 	PostDeployHook string                `json:"postDeployHook,omitempty"`
+	SecretIDs      []string              `json:"secretIds"`
 }
 
 type PreviewGroup struct {
-	ID         string                  `json:"id"`
-	Name       string                  `json:"name"`
-	Command    string                  `json:"command"`
-	Enabled    bool                    `json:"enabled"`
-	Components []PreviewGroupComponent `json:"components"`
-	CreatedAt  time.Time               `json:"createdAt"`
-	UpdatedAt  time.Time               `json:"updatedAt"`
+	ID          string                  `json:"id"`
+	Name        string                  `json:"name"`
+	GitHubAppID string                  `json:"githubAppId,omitempty"`
+	Command     string                  `json:"command"`
+	Enabled     bool                    `json:"enabled"`
+	Components  []PreviewGroupComponent `json:"components"`
+	CreatedAt   time.Time               `json:"createdAt"`
+	UpdatedAt   time.Time               `json:"updatedAt"`
 }
 
 type PreviewGroupSource struct {
@@ -291,6 +334,7 @@ const (
 type EventTrigger struct {
 	ID             string        `json:"id"`
 	AppID          string        `json:"appId"`
+	GitHubAppID    string        `json:"githubAppId,omitempty"`
 	Provider       EventProvider `json:"provider"`
 	Repository     string        `json:"repository"`
 	Command        string        `json:"command"`
@@ -302,15 +346,63 @@ type EventTrigger struct {
 	UpdatedAt      time.Time     `json:"updatedAt"`
 }
 
+// GitHubAppConnection stores one GitHub App registration and installation.
+// PrivateKey and WebhookSecret are encrypted at rest and never serialized.
+type GitHubAppConnection struct {
+	ID                      string     `json:"id"`
+	Name                    string     `json:"name"`
+	WebURL                  string     `json:"webUrl"`
+	APIURL                  string     `json:"apiUrl"`
+	AppID                   int64      `json:"appId"`
+	ClientID                string     `json:"clientId,omitempty"`
+	Slug                    string     `json:"slug,omitempty"`
+	RegistrationOwner       string     `json:"registrationOwner,omitempty"`
+	RegistrationOwnerType   string     `json:"registrationOwnerType,omitempty"`
+	InstallationID          int64      `json:"installationId,omitempty"`
+	InstallationAccount     string     `json:"installationAccount,omitempty"`
+	InstallationURL         string     `json:"installationUrl,omitempty"`
+	WebhookURL              string     `json:"webhookUrl"`
+	RelayWebhookID          string     `json:"relayWebhookId,omitempty"`
+	PrivateKeyConfigured    bool       `json:"privateKeyConfigured"`
+	WebhookSecretConfigured bool       `json:"webhookSecretConfigured"`
+	EncryptedPrivateKey     string     `json:"-"`
+	EncryptedWebhookSecret  string     `json:"-"`
+	State                   string     `json:"state"`
+	LastVerifiedAt          *time.Time `json:"lastVerifiedAt,omitempty"`
+	CreatedAt               time.Time  `json:"createdAt"`
+	UpdatedAt               time.Time  `json:"updatedAt"`
+}
+
 // Secret is write-only except for its identifying metadata. EncryptedValue is
 // persisted by the store but is never serialized to API clients.
 type Secret struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	EnvironmentVariable string    `json:"environmentVariable"`
-	EncryptedValue      string    `json:"-"`
-	CreatedAt           time.Time `json:"createdAt"`
-	UpdatedAt           time.Time `json:"updatedAt"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Type                SecretType `json:"type"`
+	EnvironmentVariable string     `json:"environmentVariable"`
+	PublicValue         string     `json:"publicValue,omitempty"`
+	EncryptedValue      string     `json:"-"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
+}
+
+type SecretType string
+
+const (
+	SecretTypeText             SecretType = "text"
+	SecretTypeAPIToken         SecretType = "api_token"
+	SecretTypeGitHubToken      SecretType = "github_token"
+	SecretTypeSSHPrivateKey    SecretType = "ssh_private_key"
+	SecretTypeRegistryPassword SecretType = "registry_password"
+)
+
+func ValidSecretType(value SecretType) bool {
+	switch value {
+	case SecretTypeText, SecretTypeAPIToken, SecretTypeGitHubToken, SecretTypeSSHPrivateKey, SecretTypeRegistryPassword:
+		return true
+	default:
+		return false
+	}
 }
 
 const SecretEnvironmentPrefix = "__DISPATCH_SECRET__"
@@ -329,23 +421,26 @@ func ParseSecretEnvironmentKey(key string) (id, environmentVariable string, ok b
 }
 
 type IncomingEvent struct {
-	ID                string        `json:"id"`
-	Provider          EventProvider `json:"provider"`
-	DeliveryID        string        `json:"deliveryId"`
-	Kind              EventKind     `json:"kind"`
-	Action            string        `json:"action"`
-	Repository        string        `json:"repository"`
-	PullRequestNumber int           `json:"pullRequestNumber"`
-	HeadRef           string        `json:"headRef"`
-	HeadSHA           string        `json:"headSha"`
-	BaseRef           string        `json:"baseRef"`
-	Actor             string        `json:"actor"`
-	ActorAssociation  string        `json:"actorAssociation"`
-	TrustedActor      bool          `json:"trustedActor"`
-	Command           string        `json:"command,omitempty"`
-	Arguments         string        `json:"arguments,omitempty"`
-	SourceCommentID   string        `json:"sourceCommentId,omitempty"`
-	ReceivedAt        time.Time     `json:"receivedAt"`
+	ID       string        `json:"id"`
+	Provider EventProvider `json:"provider"`
+	// ProviderConnectionID identifies the GitHub App webhook that delivered
+	// this event. It is intentionally omitted for legacy repository webhooks.
+	ProviderConnectionID string    `json:"providerConnectionId,omitempty"`
+	DeliveryID           string    `json:"deliveryId"`
+	Kind                 EventKind `json:"kind"`
+	Action               string    `json:"action"`
+	Repository           string    `json:"repository"`
+	PullRequestNumber    int       `json:"pullRequestNumber"`
+	HeadRef              string    `json:"headRef"`
+	HeadSHA              string    `json:"headSha"`
+	BaseRef              string    `json:"baseRef"`
+	Actor                string    `json:"actor"`
+	ActorAssociation     string    `json:"actorAssociation"`
+	TrustedActor         bool      `json:"trustedActor"`
+	Command              string    `json:"command,omitempty"`
+	Arguments            string    `json:"arguments,omitempty"`
+	SourceCommentID      string    `json:"sourceCommentId,omitempty"`
+	ReceivedAt           time.Time `json:"receivedAt"`
 }
 
 func (e IncomingEvent) HookEnvironment() map[string]string {
@@ -421,15 +516,17 @@ type EventResult struct {
 }
 
 type Overview struct {
-	Demo                    bool                 `json:"demo"`
-	SecretStorageConfigured bool                 `json:"secretStorageConfigured"`
-	Projects                []Project            `json:"projects"`
-	Servers                 []Server             `json:"servers"`
-	Apps                    []App                `json:"apps"`
-	Deployments             []Deployment         `json:"deployments"`
-	EventTriggers           []EventTrigger       `json:"eventTriggers"`
-	Previews                []PreviewEnvironment `json:"previews"`
-	PreviewGroups           []PreviewGroup       `json:"previewGroups"`
-	PreviewGroupRuns        []PreviewGroupRun    `json:"previewGroupRuns"`
-	Secrets                 []Secret             `json:"secrets"`
+	Demo                    bool                  `json:"demo"`
+	SecretStorageConfigured bool                  `json:"secretStorageConfigured"`
+	Projects                []Project             `json:"projects"`
+	Servers                 []Server              `json:"servers"`
+	Apps                    []App                 `json:"apps"`
+	Deployments             []Deployment          `json:"deployments"`
+	EventTriggers           []EventTrigger        `json:"eventTriggers"`
+	Previews                []PreviewEnvironment  `json:"previews"`
+	PreviewGroups           []PreviewGroup        `json:"previewGroups"`
+	PreviewGroupRuns        []PreviewGroupRun     `json:"previewGroupRuns"`
+	Secrets                 []Secret              `json:"secrets"`
+	GitHubApps              []GitHubAppConnection `json:"githubApps"`
+	RelayWebhooks           []RelayWebhook        `json:"relayWebhooks"`
 }

@@ -26,6 +26,11 @@ type Store interface {
 	DeleteSecret(context.Context, string) error
 	ListSecrets(context.Context) ([]core.Secret, error)
 	GetSecret(context.Context, string) (core.Secret, error)
+	CreateGitHubApp(context.Context, core.GitHubAppConnection) error
+	UpdateGitHubApp(context.Context, core.GitHubAppConnection) error
+	DeleteGitHubApp(context.Context, string) error
+	ListGitHubApps(context.Context) ([]core.GitHubAppConnection, error)
+	GetGitHubApp(context.Context, string) (core.GitHubAppConnection, error)
 
 	CreateProject(context.Context, core.Project) error
 	UpdateProject(context.Context, core.Project) error
@@ -39,6 +44,12 @@ type Store interface {
 	ListServers(context.Context) ([]core.Server, error)
 	GetServer(context.Context, string) (core.Server, error)
 	ReconcileLocalDockerServer(context.Context, bool) (*core.Server, error)
+	CreateRelayWebhook(context.Context, core.RelayWebhook) error
+	UpdateRelayWebhook(context.Context, core.RelayWebhook) error
+	DeleteRelayWebhook(context.Context, string) error
+	ListRelayWebhooks(context.Context, string) ([]core.RelayWebhook, error)
+	GetRelayWebhook(context.Context, string) (core.RelayWebhook, error)
+	GetRelayWebhookByRemoteID(context.Context, string, string) (core.RelayWebhook, error)
 
 	CreateApp(context.Context, core.App) error
 	UpdateApp(context.Context, core.App) error
@@ -62,7 +73,7 @@ type Store interface {
 	ListEventTriggers(context.Context, string) ([]core.EventTrigger, error)
 	DeleteEventTrigger(context.Context, string) error
 	IncomingEventExists(context.Context, core.EventProvider, string) (bool, error)
-	HasEventTrigger(context.Context, core.EventProvider, string, string) (bool, error)
+	HasEventTrigger(context.Context, core.EventProvider, string, string, string) (bool, error)
 	ProcessIncomingEvent(context.Context, core.IncomingEvent) (core.EventResult, error)
 	ListPreviewEnvironments(context.Context, string) ([]core.PreviewEnvironment, error)
 	GetPreviewEnvironment(context.Context, string) (core.PreviewEnvironment, error)
@@ -74,7 +85,7 @@ type Store interface {
 	DeletePreviewGroup(context.Context, string) error
 	GetPreviewGroup(context.Context, string) (core.PreviewGroup, error)
 	ListPreviewGroups(context.Context) ([]core.PreviewGroup, error)
-	MatchingPreviewGroups(context.Context, core.EventProvider, string, string) ([]core.PreviewGroup, error)
+	MatchingPreviewGroups(context.Context, core.EventProvider, string, string, string) ([]core.PreviewGroup, error)
 	RecordPreviewGroupDelivery(context.Context, core.EventProvider, string, string, time.Time) (bool, error)
 	CreatePreviewGroupRun(context.Context, core.PreviewGroupRun) error
 	UpdatePreviewGroupRun(context.Context, core.PreviewGroupRun) error

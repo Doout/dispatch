@@ -112,9 +112,13 @@ func TestLinkedGroupDeploysDependenciesAndKeepsStableURLWhenPRIsAttached(t *test
 			t.Fatal(err)
 		}
 	}
+	registrySecret := core.Secret{ID: "registry-secret", Name: "Registry key", Type: core.SecretTypeRegistryPassword, EnvironmentVariable: "IBMCLOUD_API_KEY", EncryptedValue: "encrypted-registry-key", CreatedAt: now, UpdatedAt: now}
+	if err := data.CreateSecret(ctx, registrySecret); err != nil {
+		t.Fatal(err)
+	}
 	group := core.PreviewGroup{ID: "group", Name: "Full stack", Command: "/preview", Enabled: true, CreatedAt: now, UpdatedAt: now,
 		Components: []core.PreviewGroupComponent{
-			{ID: "service", GroupID: "group", AppID: "service-app", Alias: "service", Repository: "org/service", DefaultBranch: "main", PreDeployHook: "echo build service"},
+			{ID: "service", GroupID: "group", AppID: "service-app", Alias: "service", Repository: "org/service", DefaultBranch: "main", PreDeployHook: "echo build service", SecretIDs: []string{registrySecret.ID}},
 			{ID: "ui", GroupID: "group", AppID: "ui-app", Alias: "ui", Repository: "org/ui", DefaultBranch: "main", Entrypoint: true, DependsOn: []string{"service"}, PostDeployHook: "echo publish ui", Bindings: []core.PreviewGroupBinding{{Source: "service.url", HelmValuePath: "config.backendUrl"}}},
 		}}
 	if err := Validate(ctx, data, &group, "/preview"); err != nil {
@@ -160,6 +164,9 @@ func TestLinkedGroupDeploysDependenciesAndKeepsStableURLWhenPRIsAttached(t *test
 	}
 	if serviceApp.PreDeployHook != "echo build service" || uiApp.PostDeployHook != "echo publish ui" || serviceApp.HookEnvironment["DISPATCH_EVENT_REPOSITORY"] != "org/service" || uiApp.HookEnvironment["DISPATCH_EVENT_COMPONENT_ALIAS"] != "ui" {
 		t.Fatalf("event hooks and context were not applied to components: service=%#v ui=%#v", serviceApp, uiApp)
+	}
+	if serviceApp.HookEnvironment[core.SecretEnvironmentKey(registrySecret.ID, registrySecret.EnvironmentVariable)] != registrySecret.EncryptedValue {
+		t.Fatalf("component hook credential was not attached: %#v", serviceApp.HookEnvironment)
 	}
 	uiEvent := core.IncomingEvent{Provider: core.EventProviderGitHub, DeliveryID: "ui-delivery-1", Kind: core.EventKindPullRequestComment,
 		Action: "created", Repository: "org/ui", PullRequestNumber: 22, TrustedActor: true, Command: "/preview", ReceivedAt: now}
@@ -315,5 +322,47 @@ func TestLinkedReferenceParsingSupportsAliasShortAndFullRepository(t *testing.T)
 	links, err := parseLinks("with ui=#12, team/service-api=#34")
 	if err != nil || len(links) != 2 || links[0].number != 12 || links[1].number != 34 {
 		t.Fatalf("unexpected links: %#v err=%v", links, err)
+	}
+}
+
+func TestPreviewGroupsAreScopedToGitHubConnection(t *testing.T) {
+	ctx := context.Background()
+	data, err := store.Open(ctx, filepath.Join(t.TempDir(), "dispatch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+	if err := data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	_ = data.CreateProject(ctx, core.Project{ID: "p", Name: "p", CreatedAt: now})
+	_ = data.CreateServer(ctx, core.Server{ID: "s", Name: "s", Runtime: core.ServerRuntimeKubernetes, Kubernetes: &core.KubernetesServerConfig{KubeconfigPath: "/tmp/k"}, CreatedAt: now})
+	_ = data.CreateApp(ctx, core.App{ID: "a", ProjectID: "p", ServerID: "s", Name: "a", BuildType: core.BuildTypeHelm, HelmChart: "oci://chart/a", CreatedAt: now})
+	for _, id := range []string{"github-a", "github-b"} {
+		if err := data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: id, Name: id, WebURL: "https://" + id + ".example.com", APIURL: "https://" + id + ".example.com/api/v3", AppID: 1, InstallationID: 7, WebhookURL: "https://dispatch.example.com/hooks/" + id, EncryptedPrivateKey: "key", EncryptedWebhookSecret: "secret", State: "ready", CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	group := core.PreviewGroup{ID: "group-a", Name: "group-a", GitHubAppID: "github-a", Command: "/preview", Enabled: true, CreatedAt: now, UpdatedAt: now,
+		Components: []core.PreviewGroupComponent{{ID: "component-a", AppID: "a", Alias: "service", Repository: "platform/service", DefaultBranch: "main", Entrypoint: true}}}
+	if err := Validate(ctx, data, &group, "/preview"); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreatePreviewGroup(ctx, group); err != nil {
+		t.Fatal(err)
+	}
+	other := group
+	other.ID, other.Name, other.GitHubAppID = "group-b", "group-b", "github-b"
+	other.Components = []core.PreviewGroupComponent{{ID: "component-b", AppID: "a", Alias: "service", Repository: "platform/service", DefaultBranch: "main", Entrypoint: true}}
+	if err := Validate(ctx, data, &other, "/preview"); err != nil {
+		t.Fatalf("same command and repository should be allowed on another connector: %v", err)
+	}
+	if err := data.CreatePreviewGroup(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := data.MatchingPreviewGroups(ctx, core.EventProviderGitHub, "platform/service", "/preview", "github-a")
+	if err != nil || len(matches) != 1 || matches[0].ID != group.ID {
+		t.Fatalf("unexpected connector-scoped matches: %#v err=%v", matches, err)
 	}
 }

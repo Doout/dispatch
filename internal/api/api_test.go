@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -14,12 +17,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/githubapp"
+	relayservice "github.com/doout/dispatch/internal/relay"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -60,6 +66,19 @@ func TestHealthDoesNotRequireToken(t *testing.T) {
 	}
 }
 
+func TestStructuredHelmValuesEncodeAsOverrides(t *testing.T) {
+	encoded, err := encodeHelmValueOverrides(map[string]interface{}{
+		"previewId": "847",
+		"images":    map[string]interface{}{"backend": map[string]interface{}{"tag": "preview-847"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(encoded, "previewId: \"847\"") || !strings.Contains(encoded, "tag: preview-847") {
+		t.Fatalf("unexpected Helm values YAML: %s", encoded)
+	}
+}
+
 func TestSecretsAreWriteOnlyAndAttachToEventRules(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "master.key")
 	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
@@ -84,6 +103,9 @@ func TestSecretsAreWriteOnlyAndAttachToEventRules(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&secret); err != nil {
 		t.Fatal(err)
 	}
+	if secret.Type != core.SecretTypeText {
+		t.Fatalf("legacy create requests should default to text, got %q", secret.Type)
+	}
 
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/overview", nil))
@@ -103,6 +125,185 @@ func TestSecretsAreWriteOnlyAndAttachToEventRules(t *testing.T) {
 	}
 	if len(trigger.SecretIDs) != 1 || trigger.SecretIDs[0] != secret.ID {
 		t.Fatalf("secret binding was not returned: %#v", trigger)
+	}
+}
+
+func TestGeneratedSSHSecretReturnsPublicMetadataOnly(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, true, EventConfig{Vault: vault})
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	body := `{"name":"Global deploy key","type":"ssh_private_key","environmentVariable":"SSH_PRIVATE_KEY","generate":true}`
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("generate SSH secret: %d %s", response.Code, response.Body.String())
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("PRIVATE KEY")) || bytes.Contains(response.Body.Bytes(), []byte("encryptedValue")) {
+		t.Fatalf("private SSH material leaked in response: %s", response.Body.String())
+	}
+	var secret core.Secret
+	if err := json.NewDecoder(response.Body).Decode(&secret); err != nil {
+		t.Fatal(err)
+	}
+	if secret.Type != core.SecretTypeSSHPrivateKey || !strings.HasPrefix(secret.PublicValue, "ssh-ed25519 ") {
+		t.Fatalf("generated public key metadata missing: %#v", secret)
+	}
+}
+
+func TestRelayServerAndProviderNeutralWebhookLifecycle(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayStore, err := relayservice.OpenStore(context.Background(), filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relayStore.Close()
+	relayServer := httptest.NewServer(relayservice.NewServer(relayStore, "this-is-a-long-relay-token", "https://relay.example.test"))
+	defer relayServer.Close()
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{Vault: vault})
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]any{"name": "Public event relay", "runtime": "relay", "address": relayServer.URL, "relay": map[string]string{"accessToken": "this-is-a-long-relay-token"}})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/servers", bytes.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create relay: %d %s", response.Code, response.Body.String())
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("this-is-a-long-relay-token")) {
+		t.Fatal("relay access token leaked")
+	}
+	var server core.Server
+	if err := json.NewDecoder(response.Body).Decode(&server); err != nil {
+		t.Fatal(err)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/servers/"+server.ID+"/relay/verify", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("verify relay: %d %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/servers/"+server.ID+"/relay/webhooks", bytes.NewBufferString(`{"name":"Build events","provider":"build_system"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create relay webhook: %d %s", response.Code, response.Body.String())
+	}
+	var webhook core.RelayWebhook
+	if err := json.NewDecoder(response.Body).Decode(&webhook); err != nil {
+		t.Fatal(err)
+	}
+	if webhook.Provider != "build_system" || webhook.URL != "https://relay.example.test/hooks/"+webhook.RemoteID {
+		t.Fatalf("unexpected webhook: %#v", webhook)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/servers/"+server.ID+"/relay/webhooks/"+webhook.ID, nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete relay webhook: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestGitHubAppCredentialsAreWriteOnly(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{Vault: vault})
+	defer cleanup()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	body, _ := json.Marshal(map[string]any{
+		"name": "Engineering GitHub", "webUrl": "https://github.example.com", "appId": 42,
+		"privateKey": privateKey, "webhookSecret": "0123456789abcdef",
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/github-apps", bytes.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create GitHub App: %d %s", response.Code, response.Body.String())
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("PRIVATE KEY")) || bytes.Contains(response.Body.Bytes(), []byte("0123456789abcdef")) || bytes.Contains(response.Body.Bytes(), []byte("encrypted")) {
+		t.Fatalf("GitHub App credentials leaked in response: %s", response.Body.String())
+	}
+	var connection core.GitHubAppConnection
+	if err := json.NewDecoder(response.Body).Decode(&connection); err != nil {
+		t.Fatal(err)
+	}
+	if connection.APIURL != "https://github.example.com/api/v3" || connection.State != "needs_installation" || !connection.PrivateKeyConfigured || !connection.WebhookSecretConfigured {
+		t.Fatalf("unexpected GitHub App connection: %#v", connection)
+	}
+}
+
+func TestApplicationHooksStoreCredentialBindingsWithoutExposingValues(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, true, EventConfig{Vault: vault})
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(`{"name":"Build token","type":"api_token","environmentVariable":"BUILD_TOKEN","value":"hook-secret-value"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create hook secret: %d %s", response.Code, response.Body.String())
+	}
+	var secret core.Secret
+	if err := json.NewDecoder(response.Body).Decode(&secret); err != nil {
+		t.Fatal(err)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/overview", nil))
+	var overview core.Overview
+	if err := json.NewDecoder(response.Body).Decode(&overview); err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Apps) == 0 {
+		t.Fatal("expected a demo application")
+	}
+	body, _ := json.Marshal(map[string]any{"preDeployHook": "echo build", "secretIds": []string{secret.ID}})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPut, "/api/v1/apps/"+overview.Apps[0].ID+"/hooks", bytes.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("update application hooks: %d %s", response.Code, response.Body.String())
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("hook-secret-value")) || bytes.Contains(response.Body.Bytes(), []byte("encrypted")) {
+		t.Fatalf("hook credential leaked in response: %s", response.Body.String())
+	}
+	var app core.App
+	if err := json.NewDecoder(response.Body).Decode(&app); err != nil {
+		t.Fatal(err)
+	}
+	if app.PreDeployHook != "echo build" || len(app.HookSecretIDs) != 1 || app.HookSecretIDs[0] != secret.ID {
+		t.Fatalf("unexpected hook configuration: %#v", app)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/secrets/"+secret.ID, nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("delete bound hook secret: %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -141,7 +342,15 @@ func TestApplicationTemplateIsStoredWithoutDirectDeployment(t *testing.T) {
 }
 
 func TestPreviewGroupCRUDAndApplicationDeletionConflict(t *testing.T) {
-	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, true, EventConfig{Vault: vault})
 	defer cleanup()
 	kubeconfig := testKubeconfig(t, "preview", "preview")
 
@@ -177,9 +386,19 @@ func TestPreviewGroupCRUDAndApplicationDeletionConflict(t *testing.T) {
 		}
 		appIDs = append(appIDs, app.ID)
 	}
+	secretBody := bytes.NewBufferString(`{"name":"Group registry key","type":"registry_password","environmentVariable":"IBMCLOUD_API_KEY","value":"registry-secret"}`)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/secrets", secretBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create group hook secret: %d %s", response.Code, response.Body.String())
+	}
+	var secret core.Secret
+	if err := json.NewDecoder(response.Body).Decode(&secret); err != nil {
+		t.Fatal(err)
+	}
 
 	groupBody := map[string]any{"name": "full-stack", "command": "/preview", "components": []map[string]any{
-		{"appId": appIDs[0], "alias": "service", "repository": "org/service", "defaultBranch": "main", "entrypoint": false, "dependsOn": []string{}},
+		{"appId": appIDs[0], "alias": "service", "repository": "org/service", "defaultBranch": "main", "entrypoint": false, "dependsOn": []string{}, "secretIds": []string{secret.ID}},
 		{"appId": appIDs[1], "alias": "ui", "repository": "org/ui", "defaultBranch": "main", "entrypoint": true, "dependsOn": []string{"service"}, "bindings": []map[string]string{{"source": "service.url", "helmValuePath": "config.backendUrl"}}},
 	}}
 	encoded, _ := json.Marshal(groupBody)
@@ -191,6 +410,15 @@ func TestPreviewGroupCRUDAndApplicationDeletionConflict(t *testing.T) {
 	var group core.PreviewGroup
 	if err := json.NewDecoder(response.Body).Decode(&group); err != nil {
 		t.Fatal(err)
+	}
+	if len(group.Components[0].SecretIDs) != 1 || group.Components[0].SecretIDs[0] != secret.ID {
+		t.Fatalf("group hook credential was not saved: %#v", group.Components[0])
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/secrets/"+secret.ID, nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected grouped hook secret deletion conflict, got %d: %s", response.Code, response.Body.String())
 	}
 
 	response = httptest.NewRecorder()
@@ -641,6 +869,46 @@ func TestUndeployedApplicationCanBeDeletedBeforeServerAndProject(t *testing.T) {
 	}
 }
 
+func TestSourceAuthenticationMatchesRepositoryTransport(t *testing.T) {
+	for name, test := range map[string]struct {
+		repository, authType, credentialID string
+		valid                              bool
+	}{
+		"public HTTPS":   {repository: "https://github.com/example/charts.git", valid: true},
+		"embedded token": {repository: "https://token@github.com/example/charts.git"},
+		"public SSH":     {repository: "git@github.com:example/charts.git"},
+		"token HTTPS":    {repository: "https://github.com/example/charts.git", authType: deploy.SourceAuthGitHubToken, credentialID: "token", valid: true},
+		"key SSH":        {repository: "git@github.com:example/charts.git", authType: deploy.SourceAuthSSHKey, credentialID: "key", valid: true},
+		"token SSH":      {repository: "git@github.com:example/charts.git", authType: deploy.SourceAuthGitHubToken, credentialID: "token"},
+		"key HTTPS":      {repository: "https://github.com/example/charts.git", authType: deploy.SourceAuthSSHKey, credentialID: "key"},
+		"missing key":    {repository: "git@github.com:example/charts.git", authType: deploy.SourceAuthSSHKey},
+	} {
+		t.Run(name, func(t *testing.T) {
+			detail := validateSourceAuthentication(test.repository, test.authType, test.credentialID)
+			if (detail == "") != test.valid {
+				t.Fatalf("valid=%v detail=%q", test.valid, detail)
+			}
+		})
+	}
+}
+
+func TestGeneratedSSHSecretExposesOnlyDerivedPublicKey(t *testing.T) {
+	privateKey, publicKey, err := generateSSHKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(privateKey, "PRIVATE KEY") || strings.Contains(publicKey, "PRIVATE KEY") || !strings.HasPrefix(publicKey, "ssh-ed25519 ") {
+		t.Fatalf("unexpected generated key material: private=%q public=%q", privateKey, publicKey)
+	}
+	derived, err := sshPublicKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if derived != publicKey {
+		t.Fatalf("derived public key differs: generated=%q derived=%q", publicKey, derived)
+	}
+}
+
 func TestDeployedApplicationIsCleanedBeforeTransactionalDeletion(t *testing.T) {
 	ctx := context.Background()
 	data, err := store.Open(ctx, filepath.Join(t.TempDir(), "dispatch.db"))
@@ -1042,7 +1310,7 @@ func testHandlerWithDemo(t *testing.T, auth AuthConfig, seedDemo bool) (http.Han
 
 func testHandlerWithEventConfig(t *testing.T, auth AuthConfig, seedDemo bool, eventConfig EventConfig) (http.Handler, func()) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	data, err := store.Open(ctx, filepath.Join(t.TempDir(), "dispatch.db"))
 	if err != nil {
 		cancel()
@@ -1059,6 +1327,9 @@ func testHandlerWithEventConfig(t *testing.T, auth AuthConfig, seedDemo bool, ev
 			_ = data.Close()
 			t.Fatal(err)
 		}
+	}
+	if eventConfig.GitHubApps == nil && eventConfig.Vault != nil {
+		eventConfig.GitHubApps = githubapp.New(data, eventConfig.Vault)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := New(data, deploy.NewService(data, deploy.SimulationExecutor{Delay: time.Millisecond}), seedDemo, auth, logger, eventConfig)

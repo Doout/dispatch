@@ -131,8 +131,8 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		return errors.New("live Docker execution currently requires a local enrolled server")
 	}
 	directCompose := app.BuildType == core.BuildTypeCompose && strings.TrimSpace(app.ComposeContent) != ""
-	if !directCompose && !strings.HasPrefix(app.SourceRepo, "https://") && !strings.HasPrefix(app.SourceRepo, "file://") {
-		return errors.New("live Docker execution requires an HTTPS or file source repository")
+	if !directCompose && !validGitSourceForExecution(app) {
+		return errors.New("live Docker execution requires an HTTPS or file repository, or an SSH repository with a configured key")
 	}
 	workspace, err := os.MkdirTemp("", "dispatch-deploy-")
 	if err != nil {
@@ -153,7 +153,7 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if err := progress(core.DeploymentFetching, "Fetching exact repository branch "+app.Branch); err != nil {
 			return err
 		}
-		if err := e.command(ctx, nil, io.Discard, "git", "clone", "--depth", "1", "--branch", app.Branch, app.SourceRepo, workspace); err != nil {
+		if err := e.gitCommand(ctx, app, "clone", "--depth", "1", "--branch", app.Branch, app.SourceRepo, workspace); err != nil {
 			return fmt.Errorf("fetch source: %w", err)
 		}
 	}
@@ -237,15 +237,15 @@ func (e DockerExecutor) Cleanup(ctx context.Context, app core.App, server core.S
 				return fmt.Errorf("write compose definition: %w", err)
 			}
 		} else {
-			if !strings.HasPrefix(app.SourceRepo, "https://") && !strings.HasPrefix(app.SourceRepo, "file://") {
-				return errors.New("live Docker cleanup requires an HTTPS or file source repository")
+			if !validGitSourceForExecution(app) {
+				return errors.New("live Docker cleanup requires an HTTPS or file repository, or an SSH repository with a configured key")
 			}
 			args := []string{"clone", "--depth", "1"}
 			if app.Branch != "" {
 				args = append(args, "--branch", app.Branch)
 			}
 			args = append(args, app.SourceRepo, workspace)
-			if err := e.command(ctx, nil, io.Discard, "git", args...); err != nil {
+			if err := e.gitCommand(ctx, app, args...); err != nil {
 				return fmt.Errorf("fetch source for cleanup: %w", err)
 			}
 			composePath, err = within(workspace, app.ComposePath)
@@ -276,6 +276,20 @@ func (e DockerExecutor) command(ctx context.Context, stdin io.Reader, output io.
 	return command(ctx, stdin, output, name, args...)
 }
 
+func (e DockerExecutor) gitCommand(ctx context.Context, app core.App, args ...string) error {
+	if e.run != nil {
+		return e.run(ctx, nil, io.Discard, "git", args...)
+	}
+	return runGitForApp(ctx, app, args...)
+}
+
+func validGitSourceForExecution(app core.App) bool {
+	if strings.HasPrefix(app.SourceRepo, "https://") || strings.HasPrefix(app.SourceRepo, "file://") {
+		return true
+	}
+	return app.SourceAuthType == SourceAuthSSHKey && (strings.HasPrefix(app.SourceRepo, "ssh://") || strings.Contains(app.SourceRepo, "@"))
+}
+
 func (e DockerExecutor) commandWithOutput(ctx context.Context, name string, args ...string) error {
 	var output strings.Builder
 	err := e.command(ctx, nil, &output, name, args...)
@@ -302,7 +316,14 @@ func within(root, requested string) (string, error) {
 }
 
 func command(ctx context.Context, stdin io.Reader, output io.Writer, name string, args ...string) error {
+	return commandWithEnvironment(ctx, nil, stdin, output, name, args...)
+}
+
+func commandWithEnvironment(ctx context.Context, environment []string, stdin io.Reader, output io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if environment != nil {
+		cmd.Env = environment
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, output, output
 	return cmd.Run()
 }

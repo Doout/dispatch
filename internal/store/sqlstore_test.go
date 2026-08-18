@@ -75,6 +75,51 @@ func TestSQLiteAdminCredentialIsSingleUse(t *testing.T) {
 	}
 }
 
+func TestSQLiteGitHubAppConnectionRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "github-apps.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	if err := data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	item := core.GitHubAppConnection{
+		ID: "github-app-1", Name: "Engineering GitHub", WebURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3",
+		AppID: 42, ClientID: "Iv1.test", Slug: "dispatch-platform", RegistrationOwner: "platform", RegistrationOwnerType: "Organization",
+		InstallationID: 73, InstallationAccount: "platform",
+		WebhookURL: "https://dispatch.example/api/v1/events/github/apps/github-app-1", EncryptedPrivateKey: "private-ciphertext",
+		EncryptedWebhookSecret: "webhook-ciphertext", State: "ready", LastVerifiedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := data.CreateGitHubApp(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := data.GetGitHubApp(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != item.Name || stored.RegistrationOwner != "platform" || stored.RegistrationOwnerType != "Organization" || stored.InstallationID != item.InstallationID || !stored.PrivateKeyConfigured || !stored.WebhookSecretConfigured {
+		t.Fatalf("unexpected GitHub App connection: %#v", stored)
+	}
+	stored.InstallationAccount = "platform-tools"
+	stored.UpdatedAt = now.Add(time.Minute)
+	if err := data.UpdateGitHubApp(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+	items, err := data.ListGitHubApps(ctx)
+	if err != nil || len(items) != 1 || items[0].InstallationAccount != "platform-tools" {
+		t.Fatalf("unexpected GitHub App list: %#v, %v", items, err)
+	}
+	if err := data.DeleteGitHubApp(ctx, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := data.GetGitHubApp(ctx, item.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected deleted GitHub App to be missing, got %v", err)
+	}
+}
+
 func TestSQLiteAdminSessionsSurviveStoreReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "sessions.db")
@@ -184,7 +229,7 @@ func TestSQLiteApplicationTemplateRoundTrip(t *testing.T) {
 	now := time.Now().UTC()
 	project := core.Project{ID: "template-project", Name: "Templates", CreatedAt: now}
 	server := core.Server{ID: "template-server", Name: "Docker", Address: "local", Runtime: core.ServerRuntimeDocker, State: "ready", AgentMode: "local", CreatedAt: now}
-	app := core.App{ID: "template-app", ProjectID: project.ID, ServerID: server.ID, Name: "Preview service", BuildType: core.BuildTypeCompose, ComposeContent: "services:\n  app:\n    image: example/app", Template: true, State: "template", CreatedAt: now}
+	app := core.App{ID: "template-app", ProjectID: project.ID, ServerID: server.ID, Name: "Preview service", SourceRepo: "git@github.com:example/app.git", Branch: "main", SourceAuthType: "ssh_key", SourceCredentialID: "deploy-key", BuildType: core.BuildTypeCompose, ComposeContent: "services:\n  app:\n    image: example/app", Template: true, State: "template", CreatedAt: now}
 	if err := data.CreateProject(ctx, project); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +243,7 @@ func TestSQLiteApplicationTemplateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stored.Template || stored.State != "template" || stored.ComposeContent != app.ComposeContent {
+	if !stored.Template || stored.State != "template" || stored.ComposeContent != app.ComposeContent || stored.SourceAuthType != "ssh_key" || stored.SourceCredentialID != "deploy-key" {
 		t.Fatalf("unexpected stored template: %#v", stored)
 	}
 	stored.Name = "Updated template"
@@ -377,11 +422,15 @@ func TestSQLitePreviewEventLifecycleIsIdempotent(t *testing.T) {
 	if err := data.CreateApp(ctx, app); err != nil {
 		t.Fatal(err)
 	}
-	secret := core.Secret{ID: "secret-registry", Name: "Registry token", EnvironmentVariable: "REGISTRY_TOKEN", EncryptedValue: "encrypted-token", CreatedAt: now, UpdatedAt: now}
+	secret := core.Secret{ID: "secret-registry", Name: "Registry token", Type: core.SecretTypeRegistryPassword, EnvironmentVariable: "REGISTRY_TOKEN", PublicValue: "public-metadata", EncryptedValue: "encrypted-token", CreatedAt: now, UpdatedAt: now}
 	if err := data.CreateSecret(ctx, secret); err != nil {
 		t.Fatal(err)
 	}
-	trigger := core.EventTrigger{ID: "trigger-preview", AppID: app.ID, Provider: core.EventProviderGitHub, Repository: "acme/checkout", Command: "/preview", Enabled: true,
+	storedSecret, err := data.GetSecret(ctx, secret.ID)
+	if err != nil || storedSecret.Type != secret.Type || storedSecret.PublicValue != secret.PublicValue {
+		t.Fatalf("typed secret metadata was not persisted: %#v err=%v", storedSecret, err)
+	}
+	trigger := core.EventTrigger{ID: "trigger-preview", AppID: app.ID, GitHubAppID: "connector-a", Provider: core.EventProviderGitHub, Repository: "acme/checkout", Command: "/preview", Enabled: true,
 		PreDeployHook: "echo pre", PostDeployHook: "echo post", SecretIDs: []string{secret.ID}, CreatedAt: now, UpdatedAt: now}
 	storedTrigger, created, err := data.CreateEventTrigger(ctx, trigger)
 	if err != nil || !created || storedTrigger.ID != trigger.ID {
@@ -391,8 +440,14 @@ func TestSQLitePreviewEventLifecycleIsIdempotent(t *testing.T) {
 	if err != nil || created || storedTrigger.ID != trigger.ID {
 		t.Fatalf("repeated trigger creation must be idempotent: trigger=%#v created=%v err=%v", storedTrigger, created, err)
 	}
+	if matches, err := data.HasEventTrigger(ctx, core.EventProviderGitHub, "acme/checkout", "/preview", "connector-a"); err != nil || !matches {
+		t.Fatalf("expected trigger to match its connector: matches=%v err=%v", matches, err)
+	}
+	if matches, err := data.HasEventTrigger(ctx, core.EventProviderGitHub, "acme/checkout", "/preview", "connector-b"); err != nil || matches {
+		t.Fatalf("trigger must not match another connector: matches=%v err=%v", matches, err)
+	}
 
-	comment := core.IncomingEvent{ID: "event-comment", Provider: core.EventProviderGitHub, DeliveryID: "delivery-comment", Kind: core.EventKindPullRequestComment, Action: "created", Repository: "acme/checkout", PullRequestNumber: 17, HeadRef: "feature/cart", HeadSHA: "abc123", BaseRef: "main", Actor: "octo", ActorAssociation: "MEMBER", TrustedActor: true, Command: "/preview", SourceCommentID: "501", ReceivedAt: now}
+	comment := core.IncomingEvent{ID: "event-comment", Provider: core.EventProviderGitHub, ProviderConnectionID: "connector-a", DeliveryID: "delivery-comment", Kind: core.EventKindPullRequestComment, Action: "created", Repository: "acme/checkout", PullRequestNumber: 17, HeadRef: "feature/cart", HeadSHA: "abc123", BaseRef: "main", Actor: "octo", ActorAssociation: "MEMBER", TrustedActor: true, Command: "/preview", SourceCommentID: "501", ReceivedAt: now}
 	result, err := data.ProcessIncomingEvent(ctx, comment)
 	if err != nil || result.Duplicate || len(result.Previews) != 1 {
 		t.Fatalf("unexpected preview event result: %#v err=%v", result, err)
@@ -413,7 +468,7 @@ func TestSQLitePreviewEventLifecycleIsIdempotent(t *testing.T) {
 	}
 
 	closedAt := now.Add(time.Minute)
-	closed := core.IncomingEvent{ID: "event-close", Provider: core.EventProviderGitHub, DeliveryID: "delivery-close", Kind: core.EventKindPullRequest, Action: "closed", Repository: "acme/checkout", PullRequestNumber: 17, HeadRef: "feature/cart", HeadSHA: "def456", BaseRef: "main", Actor: "octo", ReceivedAt: closedAt}
+	closed := core.IncomingEvent{ID: "event-close", Provider: core.EventProviderGitHub, ProviderConnectionID: "connector-a", DeliveryID: "delivery-close", Kind: core.EventKindPullRequest, Action: "closed", Repository: "acme/checkout", PullRequestNumber: 17, HeadRef: "feature/cart", HeadSHA: "def456", BaseRef: "main", Actor: "octo", ReceivedAt: closedAt}
 	result, err = data.ProcessIncomingEvent(ctx, closed)
 	if err != nil || len(result.Previews) != 1 {
 		t.Fatalf("unexpected close result: %#v err=%v", result, err)

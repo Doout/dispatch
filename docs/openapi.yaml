@@ -89,11 +89,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, environmentVariable, value]
+              required: [name, type, environmentVariable]
               properties:
                 name: { type: string, maxLength: 80 }
+                type: { type: string, enum: [text, api_token, github_token, ssh_private_key, registry_password], default: text }
                 environmentVariable: { type: string, maxLength: 128 }
                 value: { type: string, maxLength: 65536, writeOnly: true }
+                generate: { type: boolean, description: Generates an Ed25519 key when type is ssh_private_key. The private key is never returned. }
       responses:
         "201": { description: Encrypted secret created; only metadata is returned. }
         "400": { $ref: "#/components/responses/Problem" }
@@ -113,11 +115,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, environmentVariable]
+              required: [name, type, environmentVariable]
               properties:
                 name: { type: string, maxLength: 80 }
+                type: { type: string, enum: [text, api_token, github_token, ssh_private_key, registry_password] }
                 environmentVariable: { type: string, maxLength: 128 }
                 value: { type: string, maxLength: 65536, writeOnly: true, description: Omit to retain the current value. }
+                generate: { type: boolean, description: Rotates an ssh_private_key with a newly generated Ed25519 key. }
       responses:
         "200": { description: Secret metadata updated. }
         "404": { $ref: "#/components/responses/Problem" }
@@ -126,6 +130,107 @@ paths:
       responses:
         "204": { description: Secret and future event-rule bindings deleted. }
         "404": { $ref: "#/components/responses/Problem" }
+  /github-apps:
+    get:
+      operationId: listGitHubApps
+      description: Lists GitHub App registrations without returning private keys or webhook secrets.
+      responses:
+        "200":
+          description: Configured GitHub App connections.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/GitHubAppConnection" } }
+    post:
+      operationId: createGitHubApp
+      description: Connects an existing GitHub.com or GitHub Enterprise Server App.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GitHubAppInput" }
+      responses:
+        "201": { description: GitHub App credentials encrypted and connection created. }
+        "400": { $ref: "#/components/responses/Problem" }
+  /github-apps/{githubAppId}:
+    parameters:
+      - $ref: "#/components/parameters/GitHubAppID"
+    put:
+      operationId: updateGitHubApp
+      description: Updates registration metadata, installation, or both write-only credentials.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitHubAppUpdateInput"
+      responses:
+        "200": { description: GitHub App connection updated. }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteGitHubApp
+      description: Removes encrypted credentials from Dispatch only. The GitHub-owned App registration is not deleted.
+      responses:
+        "204": { description: Unused GitHub App connection deleted. }
+        "409": { $ref: "#/components/responses/Problem" }
+  /github-apps/{githubAppId}/verify:
+    parameters:
+      - $ref: "#/components/parameters/GitHubAppID"
+    post:
+      operationId: verifyGitHubApp
+      description: Verifies the private key, installation, and installation repository access.
+      responses:
+        "200": { description: Registration and installation verified. }
+        "422": { $ref: "#/components/responses/Problem" }
+  /github-apps/{githubAppId}/installations:
+    parameters:
+      - $ref: "#/components/parameters/GitHubAppID"
+    get:
+      operationId: listGitHubAppInstallations
+      description: Lists installations visible to the configured App private key.
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /github-apps/{githubAppId}/repositories:
+    parameters:
+      - $ref: "#/components/parameters/GitHubAppID"
+    get:
+      operationId: listGitHubAppRepositories
+      description: Lists repositories selected for the GitHub App installation. The App webhook covers this repository set.
+      responses:
+        "200":
+          description: Repositories accessible to the installation token.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/GitHubRepository" } }
+        "422": { $ref: "#/components/responses/Problem" }
+  /github-apps/manifest:
+    post:
+      operationId: startGitHubAppManifest
+      description: Creates a one-hour registration request and returns the GitHub manifest form action and payload.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, webUrl, ownerType]
+              properties:
+                name: { type: string, maxLength: 34, description: Must be unique on the selected GitHub host. }
+                webUrl: { type: string, format: uri, example: "https://github.example.com" }
+                apiUrl: { type: string, format: uri, description: Derived as /api/v3 for Enterprise Server when omitted. }
+                ownerType: { type: string, enum: [personal, organization], description: Selects the GitHub settings account that owns the registration. }
+                owner: { type: string, description: Organization login. Required when ownerType is organization. }
+      responses:
+        "200": { description: GitHub App manifest form action and manifest payload. }
+  /github-apps/manifest/callback:
+    get:
+      operationId: completeGitHubAppManifest
+      security: []
+      description: One-time GitHub manifest callback that exchanges the code and stores encrypted App credentials.
+      parameters:
+        - { in: query, name: code, required: true, schema: { type: string } }
+        - { in: query, name: state, required: true, schema: { type: string } }
+      responses:
+        "303": { description: Redirects to the Connections page for installation. }
   /projects:
     get:
       operationId: listProjects
@@ -188,8 +293,9 @@ paths:
                 address:
                   type: string
                   description: Required for Docker. Kubernetes derives its connection from the selected kubeconfig source.
-                runtime: { type: string, enum: [docker, kubernetes, openshift] }
+                runtime: { type: string, enum: [docker, kubernetes, openshift, relay] }
                 kubernetes: { $ref: "#/components/schemas/KubernetesServerConfig" }
+                relay: { $ref: "#/components/schemas/RelayServerInput" }
                 agentMode:
                   type: string
                   description: Compatibility hint. Manually registered hosts use SSH bootstrap.
@@ -217,6 +323,7 @@ paths:
                   type: string
                   description: Required when updating a Docker server.
                 kubernetes: { $ref: "#/components/schemas/KubernetesServerConfig" }
+                relay: { $ref: "#/components/schemas/RelayServerInput" }
       responses:
         "200": { description: Server updated. }
         "404": { $ref: "#/components/responses/Problem" }
@@ -250,6 +357,76 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "502": { $ref: "#/components/responses/Problem" }
+  /servers/{serverId}/relay/verify:
+    parameters:
+      - $ref: "#/components/parameters/ServerID"
+    post:
+      operationId: verifyRelayServer
+      responses:
+        "200": { description: Relay connection and durable queue status verified. }
+
+  /relay/ssh/scan:
+    post:
+      summary: Read a relay node SSH host-key fingerprint
+      operationId: scanRelaySSHHost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host: { type: string }
+                port: { type: integer, minimum: 1, maximum: 65535, default: 22 }
+      responses:
+        "200":
+          description: Fingerprint presented by the SSH node.
+
+  /relay/ssh/install:
+    post:
+      summary: Install a relay on a verified node over SSH
+      operationId: installRelayOverSSH
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RelaySSHInstallInput" }
+      responses:
+        "200": { description: Relay systemd service installed and started. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+  /servers/{serverId}/relay/webhooks:
+    parameters:
+      - $ref: "#/components/parameters/ServerID"
+    get:
+      operationId: listRelayWebhooks
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+    post:
+      operationId: createRelayWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RelayWebhookInput" }
+      responses:
+        "201": { description: Provider-neutral public webhook endpoint created on the relay. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+  /servers/{serverId}/relay/webhooks/{webhookId}:
+    parameters:
+      - $ref: "#/components/parameters/ServerID"
+      - in: path
+        name: webhookId
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: deleteRelayWebhook
+      responses:
+        "204": { description: Webhook endpoint removed from Dispatch and the relay. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /apps:
     get:
       operationId: listApps
@@ -274,7 +451,14 @@ paths:
                   description: Saves a reusable definition that is instantiated by event rules or preview groups and cannot be deployed directly.
                 sourceRepo:
                   type: string
-                  description: HTTPS Git repository. Optional for Compose and Helm applications.
+                  description: HTTPS or SSH Git repository. For Helm, a relative helmChart path is loaded from this repository.
+                sourceAuthType:
+                  type: string
+                  enum: [github_app, github_token, ssh_key]
+                  description: Authentication transport for the attached GitHub App connection or write-only secret.
+                sourceCredentialId:
+                  type: string
+                  description: ID of a ready GitHub App connection or an encrypted secret containing a GitHub token or complete SSH private key.
                 composeContent:
                   type: string
                   maxLength: 524288
@@ -283,7 +467,7 @@ paths:
                 buildType: { type: string, enum: [dockerfile, compose, helm] }
                 helmChart:
                   type: string
-                  description: OCI or HTTPS chart reference, or a relative chart name when helmRepository is set.
+                  description: OCI or HTTPS chart reference, a relative chart name when helmRepository is set, or a relative path when sourceRepo is set.
                 helmVersion: { type: string }
                 helmRepository:
                   type: string
@@ -292,6 +476,11 @@ paths:
                 helmValues:
                   type: string
                   maxLength: 524288
+                  description: Raw YAML overrides. Mutually exclusive with helmValueOverrides.
+                helmValueOverrides:
+                  type: object
+                  additionalProperties: true
+                  description: Structured overrides encoded to YAML before storage. Mutually exclusive with helmValues.
                 helmNamespace: { type: string }
                 helmRelease: { type: string }
                 preDeployHook:
@@ -308,6 +497,49 @@ paths:
         "201": { description: Application specification created. }
         "400": { $ref: "#/components/responses/Problem" }
         "413": { $ref: "#/components/responses/Problem" }
+  /helm/inspect:
+    post:
+      operationId: inspectGitHelmSource
+      description: Makes a temporary sparse checkout and returns chart metadata, default values, schema metadata, and values profile files.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceRepo]
+              properties:
+                sourceRepo:
+                  type: string
+                  description: Git clone URL or GitHub-style browser URL ending in /tree/{branch}/{chartPath}.
+                branch: { type: string, default: main }
+                chartPath:
+                  type: string
+                  description: Relative chart directory. May be omitted when sourceRepo is a GitHub folder URL.
+                sourceAuthType: { type: string, enum: [github_app, github_token, ssh_key] }
+                sourceCredentialId: { type: string }
+      responses:
+        "200":
+          description: Inspected Helm chart and value defaults.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repository, branch, chartPath, chart, defaults, valuesYaml, profiles]
+                properties:
+                  repository: { type: string }
+                  branch: { type: string }
+                  chartPath: { type: string }
+                  chart: { type: object, additionalProperties: true }
+                  defaults: { type: object, additionalProperties: true }
+                  valuesYaml: { type: string }
+                  schema: { type: object, additionalProperties: true }
+                  profiles:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "504": { $ref: "#/components/responses/Problem" }
   /apps/{appId}:
     parameters:
       - $ref: "#/components/parameters/AppID"
@@ -318,6 +550,26 @@ paths:
         "204": { description: Application and dependent history deleted. }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /apps/{appId}/hooks:
+    put:
+      operationId: updateAppHooks
+      description: Replaces the scripts and write-only secret bindings used by manual deployments of an application.
+      parameters:
+        - $ref: "#/components/parameters/AppID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preDeployHook: { type: string, maxLength: 65536 }
+                postDeployHook: { type: string, maxLength: 65536 }
+                secretIds: { type: array, items: { type: string }, description: Write-only secrets exposed only to this application's hooks. }
+      responses:
+        "200": { description: Application hooks updated. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /apps/{appId}/event-triggers:
     post:
       operationId: createEventTrigger
@@ -332,6 +584,7 @@ paths:
               required: [repository]
               properties:
                 provider: { type: string, enum: [github], default: github }
+                githubAppId: { type: string, description: GitHub App connection that receives events for this repository. Omit only for the legacy shared webhook. }
                 repository: { type: string, description: Owner and repository name. }
                 command: { type: string, default: /preview }
                 enabled: { type: boolean, default: true }
@@ -357,6 +610,7 @@ paths:
             schema:
               type: object
               properties:
+                githubAppId: { type: string, description: Replaces the GitHub App connection used by future events when provided. }
                 command: { type: string, default: /preview }
                 enabled: { type: boolean }
                 preDeployHook: { type: string, maxLength: 65536 }
@@ -473,6 +727,17 @@ paths:
         "202": { description: Event accepted. }
         "401": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /events/github/apps/{githubAppId}:
+    post:
+      operationId: receiveGitHubAppEvent
+      security: []
+      description: Receives signed events for one stored GitHub App connection.
+      parameters:
+        - $ref: "#/components/parameters/GitHubAppID"
+      responses:
+        "202": { description: Event accepted. }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /apps/{appId}/cleanup:
     post:
       operationId: cleanupApplication
@@ -589,6 +854,11 @@ components:
       name: previewGroupRunId
       required: true
       schema: { type: string }
+    GitHubAppID:
+      in: path
+      name: githubAppId
+      required: true
+      schema: { type: string }
   responses:
     JSONList:
       description: JSON array.
@@ -601,6 +871,68 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    GitHubAppInput:
+      type: object
+      required: [name, webUrl, appId, privateKey, webhookSecret]
+      properties:
+        name: { type: string, maxLength: 80 }
+        webUrl: { type: string, format: uri, example: "https://github.example.com" }
+        apiUrl: { type: string, format: uri, description: Derived from webUrl when omitted. }
+        appId: { type: integer, format: int64 }
+        clientId: { type: string }
+        slug: { type: string }
+        registrationOwner: { type: string, description: Login of the account that owns the App registration. }
+        registrationOwnerType: { type: string, description: GitHub account type returned for the registration owner. }
+        installationId: { type: integer, format: int64 }
+        privateKey: { type: string, format: password, writeOnly: true, description: RSA PEM generated by GitHub. }
+        webhookSecret: { type: string, format: password, minLength: 16, writeOnly: true }
+        relayServerId: { type: string, description: Optional relay server used for durable outbound event delivery. }
+    GitHubAppConnection:
+      type: object
+      required: [id, name, webUrl, apiUrl, appId, webhookUrl, privateKeyConfigured, webhookSecretConfigured, state, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        webUrl: { type: string, format: uri }
+        apiUrl: { type: string, format: uri }
+        appId: { type: integer, format: int64 }
+        clientId: { type: string }
+        slug: { type: string }
+        installationId: { type: integer, format: int64 }
+        installationAccount: { type: string }
+        installationUrl: { type: string, format: uri, description: GitHub-provided settings URL for this installation. }
+        webhookUrl: { type: string, format: uri }
+        relayWebhookId: { type: string, description: Present when events are delivered through a relay. }
+        privateKeyConfigured: { type: boolean }
+        webhookSecretConfigured: { type: boolean }
+        state: { type: string, enum: [needs_installation, unverified, ready] }
+        lastVerifiedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    GitHubAppUpdateInput:
+      type: object
+      description: Every property is optional. Private key and webhook secret must be replaced together.
+      properties:
+        name: { type: string, maxLength: 80 }
+        webUrl: { type: string, format: uri }
+        apiUrl: { type: string, format: uri }
+        appId: { type: integer, format: int64 }
+        clientId: { type: string }
+        slug: { type: string }
+        installationId: { type: integer, format: int64 }
+        privateKey: { type: string, format: password, writeOnly: true }
+        webhookSecret: { type: string, format: password, minLength: 16, writeOnly: true }
+    GitHubRepository:
+      type: object
+      required: [id, fullName, name, owner, defaultBranch, private, webUrl]
+      properties:
+        id: { type: integer, format: int64 }
+        fullName: { type: string, example: platform/service }
+        name: { type: string, example: service }
+        owner: { type: string, example: platform }
+        defaultBranch: { type: string, example: main }
+        private: { type: boolean }
+        webUrl: { type: string, format: uri }
     KubernetesServerConfig:
       type: object
       properties:
@@ -648,7 +980,7 @@ components:
             connectedAt: { type: string, format: date-time }
     Overview:
       type: object
-      required: [demo, projects, servers, apps, deployments, previewGroups, previewGroupRuns]
+      required: [demo, projects, servers, apps, deployments, previewGroups, previewGroupRuns, githubApps]
       properties:
         demo: { type: boolean }
         projects: { type: array, items: { type: object } }
@@ -657,6 +989,50 @@ components:
         deployments: { type: array, items: { $ref: "#/components/schemas/Deployment" } }
         previewGroups: { type: array, items: { $ref: "#/components/schemas/PreviewGroup" } }
         previewGroupRuns: { type: array, items: { $ref: "#/components/schemas/PreviewGroupRun" } }
+        githubApps: { type: array, items: { $ref: "#/components/schemas/GitHubAppConnection" } }
+        relayWebhooks: { type: array, items: { $ref: "#/components/schemas/RelayWebhook" } }
+    RelayServerInput:
+      type: object
+      properties:
+        accessToken: { type: string, format: password, minLength: 24, writeOnly: true, description: Scoped bearer token configured on the relay node. }
+    RelaySSHInstallInput:
+      type: object
+      required: [host, user, authType, hostKeyFingerprint, relayUrl, relayToken]
+      properties:
+        host: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535, default: 22 }
+        user: { type: string }
+        authType: { type: string, enum: [password, private_key] }
+        password: { type: string, format: password, writeOnly: true }
+        privateKey: { type: string, format: password, writeOnly: true }
+        privateKeyPassword: { type: string, format: password, writeOnly: true }
+        sudoPassword: { type: string, format: password, writeOnly: true }
+        hostKeyFingerprint: { type: string, example: "SHA256:..." }
+        relayUrl: { type: string, format: uri }
+        relayToken: { type: string, format: password, minLength: 24, writeOnly: true }
+    RelayWebhookInput:
+      type: object
+      required: [name, provider]
+      properties:
+        name: { type: string, maxLength: 80 }
+        provider: { type: string, pattern: "^[a-z][a-z0-9_-]{0,31}$" }
+        providerConnectionId: { type: string, description: Provider adapter connection that verifies and normalizes deliveries. }
+    RelayWebhook:
+      type: object
+      required: [id, serverId, name, provider, remoteId, url, state, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        serverId: { type: string }
+        name: { type: string }
+        provider: { type: string }
+        providerConnectionId: { type: string }
+        remoteId: { type: string }
+        url: { type: string, format: uri }
+        state: { type: string }
+        lastDeliveryAt: { type: string, format: date-time }
+        lastError: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     PreviewGroupBinding:
       type: object
       required: [source, helmValuePath]
@@ -676,11 +1052,13 @@ components:
         bindings: { type: array, items: { $ref: "#/components/schemas/PreviewGroupBinding" } }
         preDeployHook: { type: string, maxLength: 65536 }
         postDeployHook: { type: string, maxLength: 65536 }
+        secretIds: { type: array, items: { type: string }, description: Write-only secrets exposed to this component's build hooks. }
     PreviewGroupInput:
       type: object
       required: [name, command, components]
       properties:
         name: { type: string, maxLength: 80 }
+        githubAppId: { type: string, description: GitHub App connection that receives events and can access every component repository. Omit only for the legacy shared webhook. }
         command: { type: string, default: /preview }
         enabled: { type: boolean, default: true }
         components: { type: array, minItems: 1, items: { $ref: "#/components/schemas/PreviewGroupComponentInput" } }

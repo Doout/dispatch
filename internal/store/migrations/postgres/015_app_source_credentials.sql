@@ -1,0 +1,2 @@
+ALTER TABLE apps ADD COLUMN source_auth_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE apps ADD COLUMN source_credential_id TEXT NOT NULL DEFAULT '';

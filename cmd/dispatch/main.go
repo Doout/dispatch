@@ -15,6 +15,7 @@ import (
 	"github.com/doout/dispatch/internal/config"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -49,6 +50,7 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 	}
+	githubApps := githubapp.New(data, vault)
 	local, err := data.ReconcileLocalDockerServer(ctx, dockerSocketAvailable(cfg.DockerSocket))
 	if err != nil {
 		return err
@@ -61,16 +63,19 @@ func run(logger *slog.Logger) error {
 		runtime := deploy.RuntimeExecutor{Default: deploy.DockerExecutor{}, Helm: deploy.HelmExecutor{}}
 		executor = deploy.HookExecutor{Next: runtime, Outputs: data, Vault: vault}
 	}
+	executor = deploy.SourceAuthExecutor{Next: executor, Secrets: data, Vault: vault, GitHubApps: githubApps}
 	deployments := deploy.NewService(data, executor)
-	server := &http.Server{
-		Addr: cfg.Addr, Handler: api.New(data, deployments, cfg.Demo, api.AuthConfig{
-			AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword,
-		}, logger, api.EventConfig{WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
-			GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault}),
-		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
-	}
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	controller := api.New(data, deployments, cfg.Demo, api.AuthConfig{
+		AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword,
+	}, logger, api.EventConfig{WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
+		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps})
+	go controller.RunRelayConsumers(shutdownCtx)
+	server := &http.Server{
+		Addr: cfg.Addr, Handler: controller,
+		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
+	}
 	go func() {
 		<-shutdownCtx.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
