@@ -1,0 +1,17 @@
+{
+  "name": "Dispatch",
+  "short_name": "Dispatch",
+  "description": "Deployment control",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#101b25",
+  "icons": [
+    {
+      "src": "/dispatch-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

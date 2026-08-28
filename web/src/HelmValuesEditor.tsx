@@ -1,10 +1,14 @@
-import { ArrowCounterClockwise, Code, MagnifyingGlass, SlidersHorizontal } from "@phosphor-icons/react";
+import Form from "@rjsf/core";
+import validator from "@rjsf/validator-ajv8";
+import { ADDITIONAL_PROPERTY_FLAG } from "@rjsf/utils";
+import type { ArrayFieldItemTemplateProps, ArrayFieldTemplateProps, FieldTemplateProps, ObjectFieldTemplateProps, RJSFSchema, UiSchema, WidgetProps } from "@rjsf/utils";
+import * as Switch from "@radix-ui/react-switch";
+import { ArrowCounterClockwise, ArrowDown, ArrowUp, Code, MagnifyingGlass, Plus, SlidersHorizontal, Trash } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { HelmChartInspection, HelmValue } from "./api";
 
 type HelmObject = Record<string, HelmValue>;
-type ValuePath = Array<string | number>;
-type SchemaNode = { description?: string; enum?: HelmValue[]; properties?: Record<string, SchemaNode>; items?: SchemaNode };
+type SchemaNode = RJSFSchema & { properties?: Record<string, SchemaNode>; items?: SchemaNode };
 const noDifference = Symbol("no-difference");
 
 const isObject = (value: HelmValue | undefined): value is HelmObject => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -37,40 +41,6 @@ export function helmValueOverrides(defaults: HelmObject, current: HelmObject): H
   return difference === noDifference ? {} : difference as HelmObject;
 }
 
-function valueAt(root: HelmValue | undefined, path: ValuePath): HelmValue | undefined {
-  return path.reduce<HelmValue | undefined>((value, segment) => {
-    if (Array.isArray(value) && typeof segment === "number") return value[segment];
-    if (isObject(value) && typeof segment === "string") return value[segment];
-    return undefined;
-  }, root);
-}
-
-function replaceAt(root: HelmObject, path: ValuePath, next: HelmValue): HelmObject {
-  const copy = cloneValue(root);
-  let cursor: HelmValue = copy;
-  path.forEach((segment, index) => {
-    if (index === path.length - 1) {
-      if (Array.isArray(cursor) && typeof segment === "number") cursor[segment] = next;
-      else if (isObject(cursor) && typeof segment === "string") cursor[segment] = next;
-      return;
-    }
-    cursor = Array.isArray(cursor) && typeof segment === "number" ? cursor[segment] : isObject(cursor) && typeof segment === "string" ? cursor[segment] : cursor;
-  });
-  return copy;
-}
-
-function schemaAt(schema: unknown, path: ValuePath): SchemaNode | undefined {
-  let current = schema as SchemaNode | undefined;
-  path.forEach((segment) => {
-    current = typeof segment === "number" ? current?.items : current?.properties?.[segment];
-  });
-  return current;
-}
-
-function formatPath(path: ValuePath) {
-  return path.reduce((label, segment) => typeof segment === "number" ? `${label}[${segment}]` : label ? `${label}.${segment}` : segment, "");
-}
-
 function humanize(value: string) {
   return value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[-_]+/g, " ").replace(/^./, (character) => character.toUpperCase());
 }
@@ -81,84 +51,170 @@ function leafCount(value: HelmValue): number {
   return 1;
 }
 
-function matchesValue(value: HelmValue, path: ValuePath, schema: SchemaNode | undefined, query: string): boolean {
-  if (!query) return true;
-  if (`${formatPath(path)} ${schema?.description ?? ""}`.toLowerCase().includes(query)) return true;
-  if (isObject(value)) return Object.entries(value).some(([key, child]) => matchesValue(child, [...path, key], schema?.properties?.[key], query));
-  if (Array.isArray(value)) return value.some((child, index) => matchesValue(child, [...path, index], schema?.items, query));
-  return String(value ?? "").toLowerCase().includes(query);
+function inferredSchema(value: HelmValue, title?: string): SchemaNode {
+  if (Array.isArray(value)) return { type: "array", title, items: value.length ? inferredSchema(value[0]) : {} };
+  if (isObject(value)) return {
+    type: "object",
+    title,
+    properties: Object.fromEntries(Object.entries(value).map(([key, child]) => [key, inferredSchema(child, humanize(key))])),
+    additionalProperties: true,
+  };
+  if (typeof value === "boolean") return { type: "boolean", title };
+  if (typeof value === "number") return { type: Number.isInteger(value) ? "integer" : "number", title };
+  if (value === null) return { type: ["string", "null"], title };
+  return { type: "string", title };
 }
 
-function JSONValueField({ value, onChange }: { value: HelmValue; onChange: (value: HelmValue) => void }) {
-  const [draft, setDraft] = useState(() => JSON.stringify(value, null, 2));
-  const [invalid, setInvalid] = useState(false);
-  useEffect(() => { setDraft(JSON.stringify(value, null, 2)); setInvalid(false); }, [value]);
-  return <div className="helm-json-field">
-    <textarea value={draft} spellCheck={false} aria-invalid={invalid} onChange={(event) => {
-      const next = event.target.value;
-      setDraft(next);
-      try {
-        onChange(JSON.parse(next) as HelmValue);
-        setInvalid(false);
-      } catch {
-        setInvalid(true);
-      }
-    }} />
-    {invalid && <small role="alert">Enter valid JSON before saving.</small>}
+function normalizedSchema(schema: SchemaNode | undefined, value: HelmValue, title: string): SchemaNode {
+  const inferred = inferredSchema(value, title);
+  if (!schema) return inferred;
+  const result: SchemaNode = { ...inferred, ...schema, title: schema.title || title };
+  if (isObject(value)) {
+    result.type = "object";
+    result.properties = Object.fromEntries(Object.entries(value).map(([key, child]) => [
+      key,
+      normalizedSchema(schema.properties?.[key], child, humanize(key)),
+    ]));
+    result.additionalProperties = schema.additionalProperties ?? true;
+  }
+  if (Array.isArray(value)) {
+    result.type = "array";
+    result.items = normalizedSchema(schema.items, value[0] ?? "", "Item");
+  }
+  return result;
+}
+
+function schemaForGroup(inspection: HelmChartInspection, key: string, value: HelmValue) {
+  const root = inspection.schema as SchemaNode | undefined;
+  return normalizedSchema(root?.properties?.[key], value, humanize(key));
+}
+
+function searchText(key: string, value: HelmValue, schema: SchemaNode | undefined): string {
+  const own = `${key} ${humanize(key)} ${schema?.title ?? ""} ${schema?.description ?? ""}`;
+  if (isObject(value)) return `${own} ${Object.entries(value).map(([childKey, child]) => searchText(childKey, child, schema?.properties?.[childKey])).join(" ")}`;
+  if (Array.isArray(value)) return `${own} ${value.map((child) => searchText(key, child, schema?.items)).join(" ")}`;
+  return `${own} ${String(value ?? "")}`;
+}
+
+function SwitchWidget({ id, value, disabled, readonly, onChange }: WidgetProps) {
+  const checked = Boolean(value);
+  return <div className="helm-switch-control">
+    <Switch.Root id={id} checked={checked} disabled={disabled || readonly} onCheckedChange={onChange}>
+      <Switch.Thumb />
+    </Switch.Root>
+    <label htmlFor={id}>{checked ? "Enabled" : "Disabled"}</label>
   </div>;
 }
 
-function HelmValueField({ path, value, baseline, schema, onChange }: { path: ValuePath; value: HelmValue; baseline: HelmValue | undefined; schema?: SchemaNode; onChange: (value: HelmValue) => void }) {
-  const name = typeof path[path.length - 1] === "string" ? humanize(path[path.length - 1] as string) : `Item ${Number(path[path.length - 1]) + 1}`;
-  const modified = !equalValue(value, baseline);
-  const reset = baseline === undefined ? undefined : () => onChange(cloneValue(baseline));
-  const field = (() => {
-    if (schema?.enum?.length) return <select value={String(value ?? "")} onChange={(event) => {
-      const selected = schema.enum?.find((item) => String(item) === event.target.value);
-      if (selected !== undefined) onChange(cloneValue(selected));
-    }}>{schema.enum.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}</select>;
-    if (typeof value === "boolean") return <label className="helm-boolean-control"><input type="checkbox" checked={value} onChange={(event) => onChange(event.target.checked)} /><span>{value ? "Enabled" : "Disabled"}</span></label>;
-    if (typeof value === "number") return <input type="number" value={value} onChange={(event) => event.target.value !== "" && onChange(Number(event.target.value))} />;
-    if (Array.isArray(value) || isObject(value)) return <JSONValueField value={value} onChange={onChange} />;
-    const text = value === null ? "" : String(value);
-    return text.includes("\n") ? <textarea value={text} onChange={(event) => onChange(event.target.value)} /> : <input value={text} onChange={(event) => onChange(event.target.value)} />;
-  })();
-  return <div className={`helm-value-field ${modified ? "modified" : ""}`}>
-    <div className="helm-value-label"><div><strong>{name}</strong><code>{formatPath(path)}</code>{schema?.description && <small>{schema.description}</small>}</div>{modified && reset && <button type="button" aria-label={`Reset ${formatPath(path)}`} title="Reset to loaded value" onClick={reset}><ArrowCounterClockwise size={14} /></button>}</div>
-    {field}
+function FieldTemplate({ id, fieldPathId, classNames, label, children, description, errors, help, hidden, required, schema, formData, disabled, readonly, onKeyRenameBlur, onRemoveProperty }: FieldTemplateProps) {
+  const path = fieldPathId.path.map(String).join(".");
+  const arrayItem = typeof fieldPathId.path.at(-1) === "number";
+  if (hidden) return <div hidden>{children}</div>;
+  if (ADDITIONAL_PROPERTY_FLAG in schema) return <div className="helm-additional-property">
+    <label><span>Key</span><input type="text" defaultValue={label} onBlur={onKeyRenameBlur} disabled={disabled || readonly} /></label>
+    <label><span>Value</span><span className="helm-additional-value">{children}</span></label>
+    <button type="button" title="Remove property" aria-label={`Remove ${label}`} disabled={disabled || readonly} onClick={onRemoveProperty}><Trash size={14} /></button>
+    {errors}
+  </div>;
+  if (id === "root" || schema.type === "object") return <div className={classNames}>{children}{errors}</div>;
+  if (schema.type === "array") return <section className="helm-composite-field"><header><div><strong>{label}</strong><code>{path}</code></div>{description}</header>{children}{errors}</section>;
+  if (arrayItem) return <div className="helm-array-value">{children}{errors}</div>;
+  const changed = Boolean((schema as SchemaNode)["x-dispatch-modified"]);
+  return <div className={`helm-schema-field ${changed ? "modified" : ""}`}>
+    <div className="helm-schema-label"><label htmlFor={id}>{label}{required && <span aria-hidden="true"> *</span>}</label><code>{path}</code></div>
+    {description}
+    {children}
+    {errors}{help}
+    {formData === undefined && <small className="helm-field-hint">Not set</small>}
   </div>;
 }
 
-function ValueTree({ value, baseline, path, schema, query, onChange }: { value: HelmValue; baseline: HelmValue | undefined; path: ValuePath; schema?: SchemaNode; query: string; onChange: (path: ValuePath, value: HelmValue) => void }) {
-  if (isObject(value) && Object.keys(value).length) return <div className="helm-value-tree">{Object.entries(value).filter(([key, child]) => matchesValue(child, [...path, key], schema?.properties?.[key], query)).map(([key, child]) => {
-    const childPath = [...path, key];
-    const childBaseline = valueAt(baseline, [key]);
-    const childSchema = schema?.properties?.[key];
-    if (isObject(child) && Object.keys(child).length) return <details className="helm-value-nested" open key={key}><summary><span>{humanize(key)}</span><code>{formatPath(childPath)}</code></summary><ValueTree value={child} baseline={childBaseline} path={childPath} schema={childSchema} query={query} onChange={onChange} /></details>;
-    return <HelmValueField key={key} path={childPath} value={child} baseline={childBaseline} schema={childSchema} onChange={(next) => onChange(childPath, next)} />;
-  })}</div>;
-  return <HelmValueField path={path} value={value} baseline={baseline} schema={schema} onChange={(next) => onChange(path, next)} />;
+function ObjectFieldTemplate({ title, description, properties, fieldPathId, schema, disabled, readonly, onAddProperty }: ObjectFieldTemplateProps) {
+  const root = fieldPathId.$id === "root";
+  return <section className={root ? "helm-schema-root" : "helm-object-group"}>
+    {!root && <header><div><strong>{title}</strong><code>{fieldPathId.path.join(".")}</code></div>{description}</header>}
+    <div className="helm-object-fields">{properties.filter((property) => !property.hidden).map((property) => <div key={property.name}>{property.content}</div>)}</div>
+    {!root && Boolean(schema.additionalProperties) && !disabled && !readonly && <button type="button" className="helm-property-add" onClick={onAddProperty}><Plus size={13} />Add property</button>}
+  </section>;
 }
 
-export function HelmValuesEditor({ inspection, values, baseline, selectedProfile, onProfileChange, onChange, onRawMode }: { inspection: HelmChartInspection; values: HelmObject; baseline: HelmObject; selectedProfile: string; onProfileChange: (path: string) => void; onChange: (values: HelmObject) => void; onRawMode: () => void }) {
+function ArrayFieldTemplate({ items, canAdd, onAddClick }: ArrayFieldTemplateProps) {
+  return <div className="helm-array-control">
+    {items.length ? <><div className="helm-array-list">{items}</div>{canAdd && <button type="button" className="helm-array-add" onClick={onAddClick}><Plus size={13} />Add item</button>}</> : <div className="helm-array-empty"><span>No items</span>{canAdd && <button type="button" onClick={onAddClick}><Plus size={13} />Add item</button>}</div>}
+  </div>;
+}
+
+function ArrayFieldItemTemplate({ children, buttonsProps, index, hasToolbar }: ArrayFieldItemTemplateProps) {
+  return <div className="helm-array-item">
+    <span className="helm-array-index">{index + 1}</span>
+    <div className="helm-array-item-value">{children}</div>
+    {hasToolbar && <div className="helm-array-actions">
+      {buttonsProps.hasMoveUp && <button type="button" title="Move up" aria-label={`Move item ${index + 1} up`} onClick={buttonsProps.onMoveUpItem}><ArrowUp size={14} /></button>}
+      {buttonsProps.hasMoveDown && <button type="button" title="Move down" aria-label={`Move item ${index + 1} down`} onClick={buttonsProps.onMoveDownItem}><ArrowDown size={14} /></button>}
+      {buttonsProps.hasRemove && <button type="button" title="Remove" aria-label={`Remove item ${index + 1}`} onClick={buttonsProps.onRemoveItem}><Trash size={14} /></button>}
+    </div>}
+  </div>;
+}
+
+function schemaWithChanges(schema: SchemaNode, baseline: HelmValue | undefined, value: HelmValue): SchemaNode {
+  const result = { ...schema, "x-dispatch-modified": !equalValue(baseline, value) };
+  if (isObject(value) && schema.properties) result.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, childSchema]) => [
+    key,
+    schemaWithChanges(childSchema, isObject(baseline) ? baseline[key] : undefined, value[key] ?? null),
+  ]));
+  return result;
+}
+
+const uiSchema: UiSchema = {
+  "ui:submitButtonOptions": { norender: true },
+};
+
+export function HelmValuesEditor({ inspection, values, baseline, selectedProfile, onProfileChange, onChange, onRawMode }: { inspection: HelmChartInspection; values: HelmObject; baseline: HelmObject; selectedProfile: string; onProfileChange: (path: string) => void; onChange: (values: HelmObject) => void; onRawMode?: () => void }) {
   const [search, setSearch] = useState("");
-  const query = search.trim().toLowerCase();
+  const [selectedGroup, setSelectedGroup] = useState(() => Object.keys(values)[0] ?? "");
   const overrides = useMemo(() => helmValueOverrides(inspection.defaults, values), [inspection.defaults, values]);
-  const hasUnsavedStructuredChanges = !equalValue(values, baseline);
+  const schemas = useMemo(() => Object.fromEntries(Object.entries(values).map(([key, value]) => [key, schemaForGroup(inspection, key, inspection.defaults[key] ?? (isObject(value) ? {} : value))])), [inspection, values]);
+  const query = search.trim().toLowerCase();
+  const groups = Object.entries(values).filter(([key, value]) => !query || searchText(key, value, schemas[key]).toLowerCase().includes(query));
+  const activeKey = groups.some(([key]) => key === selectedGroup) ? selectedGroup : groups[0]?.[0] ?? "";
+  const activeValue = values[activeKey];
+  const activeSchema = activeKey && activeValue !== undefined ? schemaWithChanges(schemas[activeKey], baseline[activeKey], activeValue) : undefined;
   const defaultCount = leafCount(inspection.defaults);
   const overrideCount = Object.keys(overrides).length ? leafCount(overrides) : 0;
-  const update = (path: ValuePath, value: HelmValue) => onChange(replaceAt(values, path, value));
-  const groups = Object.entries(values).filter(([key, value]) => matchesValue(value, [key], schemaAt(inspection.schema, [key]), query));
+  const hasUnsavedStructuredChanges = !equalValue(values, baseline);
+
+  useEffect(() => {
+    if (activeKey && activeKey !== selectedGroup) setSelectedGroup(activeKey);
+  }, [activeKey, selectedGroup]);
 
   return <section className="helm-values-workspace wide" aria-labelledby="helm-values-title">
-    <header className="helm-values-header"><div><span className="helm-values-icon"><SlidersHorizontal size={17} /></span><div><strong id="helm-values-title">Chart values</strong><small>{defaultCount} defaults loaded from {inspection.chart.name}</small></div></div><div><span>{overrideCount} overridden</span><button type="button" className="quiet-button" disabled={hasUnsavedStructuredChanges} title={hasUnsavedStructuredChanges ? "Reset structured changes before switching editors" : "Use raw YAML overrides"} onClick={onRawMode}><Code size={15} />Raw YAML</button></div></header>
-    <div className="helm-chart-summary"><div><strong>{inspection.chart.name}</strong><span>{inspection.chart.description || "Helm application chart"}</span></div><dl><div><dt>Chart</dt><dd>{inspection.chart.version || "Unknown"}</dd></div><div><dt>App</dt><dd>{inspection.chart.appVersion || "Unknown"}</dd></div><div><dt>Path</dt><dd>{inspection.chartPath}</dd></div></dl></div>
+    <header className="helm-values-header"><div><span className="helm-values-icon"><SlidersHorizontal size={17} /></span><div><strong id="helm-values-title">Chart values</strong><small>{defaultCount} values</small></div></div><div><span>{overrideCount} overridden</span>{onRawMode && <button type="button" className="quiet-button" disabled={hasUnsavedStructuredChanges} title={hasUnsavedStructuredChanges ? "Reset structured changes before switching editors" : "Use raw YAML overrides"} onClick={onRawMode}><Code size={15} />Raw YAML</button>}</div></header>
+    <div className="helm-chart-summary"><div><strong>{inspection.chart.name}</strong>{inspection.chart.description && <span>{inspection.chart.description}</span>}</div><dl><div><dt>Chart</dt><dd>{inspection.chart.version || "Unknown"}</dd></div><div><dt>App</dt><dd>{inspection.chart.appVersion || "Unknown"}</dd></div><div><dt>Path</dt><dd>{inspection.chartPath}</dd></div></dl></div>
     <div className="helm-values-toolbar">
       <label><span>Value profile</span><select value={selectedProfile} onChange={(event) => onProfileChange(event.target.value)}><option value="">Chart defaults</option>{inspection.profiles.map((profile) => <option value={profile.path} key={profile.path}>{humanize(profile.name)} ({profile.path})</option>)}</select></label>
-      <label className="helm-values-search"><span className="sr-only">Search chart values</span><MagnifyingGlass size={15} /><input type="search" placeholder="Search value paths" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      <label className="helm-values-search"><span className="sr-only">Search chart values</span><MagnifyingGlass size={15} /><input type="search" placeholder="Find a section or value" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <button type="button" className="quiet-button" disabled={equalValue(values, baseline)} onClick={() => onChange(cloneValue(baseline))}><ArrowCounterClockwise size={15} />Reset changes</button>
     </div>
-    <div className="helm-value-groups">{groups.map(([key, value]) => <details className="helm-value-group" open={Boolean(query) || groups.length < 6} key={key}><summary><div><strong>{humanize(key)}</strong><code>{key}</code></div><span>{leafCount(value)} value{leafCount(value) === 1 ? "" : "s"}</span></summary><ValueTree value={value} baseline={baseline[key]} path={[key]} schema={schemaAt(inspection.schema, [key])} query={query} onChange={update} /></details>)}</div>
-    {!groups.length && <div className="helm-values-empty">No values match “{search.trim()}”.</div>}
+    <div className="helm-values-layout">
+      <nav className="helm-section-nav" aria-label="Chart value sections">
+        <div className="helm-section-nav-title"><span>Sections</span><span>{groups.length}</span></div>
+        {groups.map(([key, value]) => {
+          const groupOverrides = isObject(overrides) ? overrides[key] : undefined;
+          const changedCount = groupOverrides === undefined ? 0 : leafCount(groupOverrides);
+          return <button type="button" className={activeKey === key ? "active" : ""} aria-current={activeKey === key ? "page" : undefined} key={key} onClick={() => setSelectedGroup(key)}>
+            <span><strong>{humanize(key)}</strong><code>{key}</code></span>
+            <span>{changedCount ? <em>{changedCount}</em> : null}<small>{leafCount(value)}</small></span>
+          </button>;
+        })}
+      </nav>
+      <div className="helm-section-editor">
+        {activeKey && activeSchema && activeValue !== undefined ? <>
+          <header><div><strong>{humanize(activeKey)}</strong><code>{activeKey}</code></div><span>{leafCount(activeValue)} value{leafCount(activeValue) === 1 ? "" : "s"}</span></header>
+          <Form schema={activeSchema} formData={activeValue} validator={validator} uiSchema={uiSchema} widgets={{ CheckboxWidget: SwitchWidget }} templates={{ FieldTemplate, ObjectFieldTemplate, ArrayFieldTemplate, ArrayFieldItemTemplate }} onChange={({ formData }) => onChange({ ...values, [activeKey]: formData as HelmValue })} liveValidate={false} showErrorList={false}>
+            <></>
+          </Form>
+        </> : <div className="helm-values-empty">No values match "{search.trim()}".</div>}
+      </div>
+    </div>
   </section>;
 }

@@ -51,7 +51,7 @@
       "kind": "input",
       "refersTo": "field",
       "description": "A compact source, target, or configuration field.",
-      "html": "<input class=\"ds-field\" value=\"https://github.com/doout/app.git\" aria-label=\"Repository URL\">",
+      "html": "<input class=\"ds-field\" value=\"https://github.com/example/app.git\" aria-label=\"Repository URL\">",
       "css": ".ds-field{width:100%;min-height:44px;padding:0 11px;color:#17212b;background:#fff;border:1px solid #aebbc5;border-radius:6px;font:400 13px Arial,sans-serif}.ds-field:focus{outline:0;border-color:#075dcc;box-shadow:0 0 0 3px rgba(7,93,204,.24)}"
     },
     {

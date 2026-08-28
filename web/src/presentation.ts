@@ -39,8 +39,34 @@ export function stageIndex(state: DeploymentState) {
 }
 
 export function groupDeployments(deployments: Deployment[]) {
-  return {
-    attention: deployments.filter((item) => item.state !== "succeeded" && item.state !== "cancelled"),
-    history: deployments.filter((item) => item.state === "succeeded" || item.state === "cancelled"),
-  };
+  const groups = { active: [] as Deployment[], failed: [] as Deployment[], latest: [] as Deployment[], history: [] as Deployment[] };
+  for (const cluster of clusterDeploymentsByApplication(deployments)) {
+    const [latest, ...earlier] = cluster.deployments;
+    if (!latest) continue;
+    if (!isTerminal(latest.state)) {
+      groups.active.push(latest);
+    } else if (latest.state === "failed") {
+      groups.failed.push(latest);
+    } else {
+      groups.latest.push(latest);
+    }
+    groups.history.push(...earlier);
+  }
+  return groups;
+}
+
+function isTerminal(state: DeploymentState) {
+  return state === "succeeded" || state === "failed" || state === "cancelled";
+}
+
+export function clusterDeploymentsByApplication(deployments: Deployment[]) {
+  const clusters = new Map<string, Deployment[]>();
+  for (const deployment of deployments) {
+    const key = deployment.appId || deployment.app?.id || deployment.id;
+    clusters.set(key, [...(clusters.get(key) ?? []), deployment]);
+  }
+  return [...clusters.entries()].map(([key, items]) => ({
+    key,
+    deployments: [...items].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
+  })).sort((left, right) => new Date(right.deployments[0].createdAt).getTime() - new Date(left.deployments[0].createdAt).getTime());
 }

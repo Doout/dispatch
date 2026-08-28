@@ -1,2 +1,4 @@
+minimumReleaseAgeExclude:
+  - '@testing-library/user-event@14.6.5'
 overrides:
   nanoid: 3.3.18

@@ -3,13 +3,13 @@ import { ArrowSquareOut, Broom, GitPullRequest, LinkSimple, PencilSimple, Plus, 
 import { api, App, GitHubRepository, Overview, PreviewGroup, PreviewGroupComponent, PreviewGroupRun } from "./api";
 import { relative, short } from "./presentation";
 
-type Props = { overview: Overview; onChanged: () => Promise<void> };
+type Props = { overview: Overview; onChanged: () => Promise<void>; embedded?: boolean; hideInventory?: boolean; requestedEdit?: PreviewGroup | "new" | null; onEditingChange?: (editing: boolean) => void };
 
 const blankComponent = (app?: App, entrypoint = false): PreviewGroupComponent => ({
   appId: app?.id ?? "", alias: "", repository: "", defaultBranch: "main", entrypoint, dependsOn: [], bindings: [], preDeployHook: "", postDeployHook: "", secretIds: [],
 });
 
-export function PreviewGroupsArea({ overview, onChanged }: Props) {
+export function PreviewGroupsArea({ overview, onChanged, embedded = false, hideInventory = false, requestedEdit = null, onEditingChange }: Props) {
   const helmApps = overview.apps.filter((app) => app.buildType === "helm" && ["kubernetes", "openshift"].includes(overview.servers.find((server) => server.id === app.serverId)?.runtime ?? ""));
   const readyConnections = overview.githubApps.filter((connection) => connection.installationId && connection.state !== "needs_installation");
   const [editing, setEditing] = useState<PreviewGroup | "new" | null>(null);
@@ -18,6 +18,15 @@ export function PreviewGroupsArea({ overview, onChanged }: Props) {
   const [confirmDelete, setConfirmDelete] = useState("");
   const [error, setError] = useState("");
   const selectedRun = overview.previewGroupRuns.find((run) => run.id === selectedRunID);
+
+  useEffect(() => {
+    onEditingChange?.(Boolean(editing));
+    return () => onEditingChange?.(false);
+  }, [editing, onEditingChange]);
+
+  useEffect(() => {
+    if (requestedEdit) setEditing(requestedEdit);
+  }, [requestedEdit]);
 
   async function removeGroup(group: PreviewGroup) {
     setError("");
@@ -37,15 +46,14 @@ export function PreviewGroupsArea({ overview, onChanged }: Props) {
     <RunDetail run={selectedRun} confirming={confirmCleanup === selectedRun.id} onClose={() => { setSelectedRunID(""); setConfirmCleanup(""); }} onCleanup={() => setConfirmCleanup(selectedRun.id)} onCancelCleanup={() => setConfirmCleanup("")} onConfirmCleanup={() => void cleanup(selectedRun)} />
   </div>;
 
+  if (hideInventory) return null;
+
   return <div className="preview-groups-area">
-    <div className="section-toolbar collection-toolbar">
-      <div><p>Deploy linked Helm sources as one preview environment.</p></div>
-      {helmApps.length > 0 && readyConnections.length > 0 && <button className="primary-button" onClick={() => setEditing("new")}><Plus size={16} weight="bold" />New group</button>}
-    </div>
+    {helmApps.length > 0 && readyConnections.length > 0 && <div className="section-toolbar collection-toolbar"><button className={embedded ? "quiet-button" : "primary-button"} onClick={() => setEditing("new")}><Plus size={16} weight="bold" />New group</button></div>}
     {error && <p className="form-error" role="alert">{error}</p>}
     {overview.previewGroups.length === 0 ? <section className="compact-empty">
       <LinkSimple size={24} />
-      <div><h3>{!helmApps.length ? "Helm applications required" : !readyConnections.length ? "GitHub connection required" : "No preview groups"}</h3><p>{!helmApps.length ? "Create a Helm application on a Kubernetes server first." : !readyConnections.length ? "Install a GitHub App on the repositories that should receive preview commands." : "Create a group to coordinate one or more application templates."}</p></div>
+      <div><h3>{!helmApps.length ? "Helm applications required" : !readyConnections.length ? "GitHub connection required" : "No preview groups"}</h3>{!helmApps.length ? <p>Create a Helm application first.</p> : !readyConnections.length ? <p>Install a GitHub App first.</p> : null}</div>
     </section> : <div className="resource-table-wrap"><table className="resource-table preview-group-table"><thead><tr><th>Group</th><th>Entrypoint</th><th>Components</th><th>Status</th><th>Active preview</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead><tbody>
       {overview.previewGroups.map((group) => {
         const run = overview.previewGroupRuns.find((item) => item.groupId === group.id && item.state !== "closed");
@@ -125,16 +133,16 @@ function PreviewGroupBuilder({ overview, helmApps, group, onCancel, onSaved }: {
   }
 
   return <section className="group-builder" aria-labelledby="preview-group-builder-title">
-    <header><div><h2 id="preview-group-builder-title">{group ? "Edit preview group" : "New preview group"}</h2><p>Components share one namespace. Dependencies deploy first.</p></div><button aria-label="Close preview group builder" onClick={onCancel}><X size={18} weight="bold" /></button></header>
+    <header><div><h2 id="preview-group-builder-title">{group ? "Edit preview group" : "New preview group"}</h2></div><button aria-label="Close preview group builder" onClick={onCancel}><X size={18} weight="bold" /></button></header>
     <form onSubmit={submit}>
       <div className="group-basics">
-        <label><span>Name</span><input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /><small>Shown in status comments and Dispatch.</small></label>
-        <label><span>GitHub connection</span><select required value={githubAppID} onChange={(event) => setGitHubAppID(event.target.value)}><option value="">Choose a connection</option>{readyConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name} ({connection.installationAccount || "installed"})</option>)}</select><small>Receives comments and reads every linked pull request.</small></label>
-        <label><span>Command</span><input required value={command} onChange={(event) => setCommand(event.target.value)} /><small>Starts the group from a trusted PR comment.</small></label>
+        <label><span>Name</span><input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label><span>GitHub connection</span><select required value={githubAppID} onChange={(event) => setGitHubAppID(event.target.value)}><option value="">Choose a connection</option>{readyConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name} ({connection.installationAccount || "installed"})</option>)}</select></label>
+        <label><span>Command</span><input required value={command} onChange={(event) => setCommand(event.target.value)} /></label>
         <label className="check-field"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Accept preview commands</span></label>
       </div>
       <div className="linked-command-guide"><GitPullRequest size={18} /><div><strong>Link pull requests in one comment</strong><p>Post <code>{command || "/preview"}</code> on a component PR. Add the other repositories with <code>with alias=#123</code>.</p>{components.length > 1 && <code className="command-example">{command || "/preview"} with {components.slice(1).map((component, index) => `${component.alias || `component-${index + 2}`}=#${123 + index}`).join(" ")}</code>}</div></div>
-      <div className="component-builder-head"><div><h3>Components</h3><p>Choose an existing Helm source for each repository.</p></div></div>
+      <div className="component-builder-head"><div><h3>Components</h3></div></div>
       <div className="component-builders">{components.map((component, index) => <ComponentBuilder key={component.id ?? index} index={index} component={component} components={components} helmApps={helmApps} repositories={repositories} repositoriesLoading={repositoriesLoading} onChange={(values) => change(index, values)} onEntrypoint={() => makeEntrypoint(index)} onRemove={() => removeComponent(index)} />)}</div>
       <button type="button" className="add-component-button" onClick={() => setComponents((current) => [...current, blankComponent(helmApps[0])])}><Plus size={14} />Add another component</button>
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -149,7 +157,7 @@ function ComponentBuilder({ index, component, components, helmApps, repositories
     <div className="component-fields">
       <label><span>Application template</span><select required value={component.appId} onChange={(event) => onChange({ appId: event.target.value })}>{helmApps.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}</select></label>
       <label><span>Alias</span><input required placeholder="service" value={component.alias} onChange={(event) => onChange({ alias: event.target.value })} /><small>Used in commands and output bindings.</small></label>
-      <label><span>Repository</span><select required value={component.repository} disabled={repositoriesLoading} onChange={(event) => { const repository = repositories.find((item) => item.fullName === event.target.value); const suggestedAlias = repository?.name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "").slice(0, 31); onChange({ repository: event.target.value, ...(repository?.defaultBranch ? { defaultBranch: repository.defaultBranch } : {}), ...(!component.alias && suggestedAlias ? { alias: suggestedAlias } : {}) }); }}><option value="">{repositoriesLoading ? "Loading repositories..." : "Choose a repository"}</option>{component.repository && !repositories.some((item) => item.fullName === component.repository) && <option value={component.repository}>{component.repository} (not currently installed)</option>}{repositories.map((repository) => <option key={repository.id} value={repository.fullName}>{repository.fullName}</option>)}</select><small>Only repositories installed for this connection are listed.</small></label>
+      <label><span>Repository</span><select required value={component.repository} disabled={repositoriesLoading} onChange={(event) => { const repository = repositories.find((item) => item.fullName === event.target.value); const suggestedAlias = repository?.name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "").slice(0, 31); onChange({ repository: event.target.value, ...(repository?.defaultBranch ? { defaultBranch: repository.defaultBranch } : {}), ...(!component.alias && suggestedAlias ? { alias: suggestedAlias } : {}) }); }}><option value="">{repositoriesLoading ? "Loading repositories..." : "Choose a repository"}</option>{component.repository && !repositories.some((item) => item.fullName === component.repository) && <option value={component.repository}>{component.repository} (not currently installed)</option>}{repositories.map((repository) => <option key={repository.id} value={repository.fullName}>{repository.fullName}</option>)}</select></label>
       <label><span>Default branch</span><input required value={component.defaultBranch} onChange={(event) => onChange({ defaultBranch: event.target.value })} /></label>
     </div>
     <div className="component-options">
@@ -174,10 +182,10 @@ function RunDetail({ run, confirming, onClose, onCleanup, onCancelCleanup, onCon
   return <section className="run-detail" aria-labelledby="run-detail-title"><header><div><h2 id="run-detail-title">{run.group?.name ?? "Preview run"}</h2><p><code>{run.namespace}</code> · attempt {run.attempt}</p></div><button aria-label="Close run details" onClick={onClose}><X size={18} weight="bold" /></button></header>
     <div className="run-summary"><Status state={run.state} />{run.entrypointUrl && <a href={run.entrypointUrl} target="_blank" rel="noreferrer">Open preview<ArrowSquareOut size={14} /></a>}<span>{relative(run.updatedAt)}</span></div>
     {run.message && <p className="run-message">{run.message}</p>}
-    <div className="run-components">{run.group?.components.map((definition) => { const source = sourceByAlias.get(definition.alias); const execution = run.components.find((item) => item.alias === definition.alias); return <article key={definition.alias}><div><strong>{definition.alias}</strong><Status state={execution?.state ?? "pending"} /></div><dl><div><dt>Source</dt><dd>{source?.pullRequest ? <><GitPullRequest size={13} />PR #{source.pullRequest}</> : source?.headRef ?? definition.defaultBranch}</dd></div><div><dt>Revision</dt><dd><code>{short(source?.sha, 12)}</code></dd></div><div><dt>Release</dt><dd><code>{execution?.outputs?.release ?? "Pending"}</code></dd></div></dl>{execution?.outputs && <details><summary>Outputs</summary><dl className="output-list">{Object.entries(execution.outputs).map(([key, value]) => <div key={key}><dt>{key}</dt><dd title={value}>{value}</dd></div>)}</dl></details>}{execution?.deploymentId && <details><summary>Deployment log</summary><div className="component-log" role="log">{logs[definition.alias]?.length ? logs[definition.alias].map((entry) => <div key={entry.id} className={entry.level}><time>{new Date(entry.createdAt).toLocaleTimeString([], { hour12: false })}</time><span>{entry.message}</span></div>) : <p>Log is loading.</p>}</div></details>}</article>; })}</div>
+    <div className="run-components">{run.group?.components.map((definition) => { const source = sourceByAlias.get(definition.alias); const execution = run.components.find((item) => item.alias === definition.alias); return <article key={definition.alias}><div><strong>{definition.alias}</strong><Status state={execution?.state ?? "pending"} /></div><dl><div><dt>Source</dt><dd>{source?.pullRequest ? <><GitPullRequest size={13} />PR #{source.pullRequest}</> : source?.headRef ?? definition.defaultBranch}</dd></div><div><dt>Revision</dt><dd><code>{short(source?.sha, 12)}</code></dd></div><div><dt>Release</dt><dd><code>{execution?.outputs?.release ?? "Pending"}</code></dd></div></dl>{execution?.outputs && <details><summary>Outputs</summary><dl className="output-list">{Object.entries(execution.outputs).map(([key, value]) => <div key={key}><dt>{key}</dt><dd title={value}>{value}</dd></div>)}</dl></details>}{execution?.deploymentId && <details><summary>Deployment log</summary><div className="component-log" role="log">{logs[definition.alias]?.length ? logs[definition.alias].map((entry) => <div key={entry.id} className={entry.level}><time>{new Date(entry.createdAt).toLocaleTimeString([], { hour12: false })}</time><span>{entry.message}</span></div>) : <p>Loading log.</p>}</div></details>}</article>; })}</div>
     {run.attempts.length > 0 && <details className="attempt-history"><summary>Attempt history</summary><ol>{run.attempts.map((attempt) => <li key={attempt.id}><span>Attempt {attempt.sequence}</span><Status state={attempt.state} /><time dateTime={attempt.createdAt}>{relative(attempt.createdAt)}</time><small>{attempt.message}</small></li>)}</ol></details>}
     {run.state !== "closed" && !confirming && <div className="run-actions"><button className="danger-button" onClick={onCleanup}><Broom size={15} />Clean up preview</button></div>}
-    {confirming && <ConfirmBar title="Clean up this preview?" body="Every release and the shared namespace will be removed. Linked PRs will receive the final status." confirmLabel="Clean up" danger onCancel={onCancelCleanup} onConfirm={onConfirmCleanup} />}
+    {confirming && <ConfirmBar title="Clean up this preview?" body="Cleanup deletes every release and the shared namespace. Dispatch then posts the final status to linked PRs." confirmLabel="Clean up" danger onCancel={onCancelCleanup} onConfirm={onConfirmCleanup} />}
   </section>;
 }
 
