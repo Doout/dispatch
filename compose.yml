@@ -30,6 +30,7 @@ services:
       DISPATCH_GITHUB_API_URL: ${DISPATCH_GITHUB_API_URL:-https://api.github.com}
       DISPATCH_GITHUB_TOKEN: ${DISPATCH_GITHUB_TOKEN:-}
       DISPATCH_GIT_TOKEN: ${DISPATCH_GIT_TOKEN:-}
+      DISPATCH_REPOSITORY_CACHE: /data/repositories
       DISPATCH_HOOK_REGISTRY: ${DISPATCH_HOOK_REGISTRY:-}
       DISPATCH_HOOK_REGISTRY_USERNAME: ${DISPATCH_HOOK_REGISTRY_USERNAME:-}
       DISPATCH_HOOK_REGISTRY_PASSWORD: ${DISPATCH_HOOK_REGISTRY_PASSWORD:-}
@@ -43,7 +44,7 @@ services:
       - ${DISPATCH_KUBECONFIG_DIR:-./kubeconfigs}:/kubeconfigs:ro
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dispatch.rule=Host(`dispatch.h.sshlab.top`)"
+      - "traefik.http.routers.dispatch.rule=Host(`${DISPATCH_HOST:-dispatch.localhost}`)"
       - "traefik.http.routers.dispatch.tls=true"
       - "traefik.http.routers.dispatch.tls.certresolver=letsencrypt"
       - "traefik.http.services.dispatch.loadbalancer.server.port=8080"
