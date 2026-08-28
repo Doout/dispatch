@@ -12,6 +12,7 @@ Dispatch is a lightweight, self-hosted deployment control plane for personal inf
 - Dockerfile, Compose, and Helm application specifications.
 - Direct Compose deployments from definitions pasted into the console.
 - Reusable application templates for event-driven previews and preview groups.
+- Repository-managed Applications and Pipelines with selective job reuse and staged promotion.
 - Kubernetes targets backed by stored or controller-mounted kubeconfig files.
 - Managed OpenShift targets bootstrapped from temporary login credentials.
 - A responsive deployment-dispatch console embedded into the Go binary.
@@ -22,7 +23,19 @@ Applications can use an HTTPS or SSH Git repository, or a Compose definition pas
 
 Secrets are typed as text, API tokens, GitHub tokens, SSH private keys, or registry passwords. Values can be pasted or loaded from a text credential file up to 64 KiB. For SSH, Dispatch can generate a reusable global Ed25519 deploy key: the private key is encrypted immediately and never returned, while its public key remains available in the console for copying to GitHub.
 
+Secrets can also remain in IBM Cloud Secrets Manager. Add an IBM Cloud connection under **Connections**, then create an external reference on the **Secrets** page using the provider secret UUID and an optional dot-separated value field. Dispatch stores the IBM Cloud API key encrypted, exchanges it for a cached IAM token, and retrieves the current secret only when a checkout, hook, or SSH operation needs it. External values are not copied into the Dispatch database or returned by its API. Private endpoints can route through an outbound edge node in the VPC; no inbound node port is required. See [Edge nodes and private routes](docs/private-networks.md).
+
+Private Dispatch installations can deploy a Laneway Connector from **Connections**. Create the one-time Connector invite on the Laneway control plane, paste it into Dispatch, and select **Deploy here**. Dispatch runs the Connector through its mounted Docker socket and does not store the bootstrap command.
+
 Helm applications accept OCI chart references, chart names from HTTPS Helm repositories, or relative chart directories from a Git source repository. A Git-backed source can start from a clone URL plus chart directory, or a GitHub browser URL such as `/tree/main/helm/platform`; Dispatch splits the folder URL into its repository, branch, and chart path. Before saving, the console can make a credential-scoped temporary sparse checkout and inspect `Chart.yaml`, `values.yaml`, an optional `values.schema.json`, and `values-*.yaml` profiles. The structured editor infers controls when no schema exists, supports searching nested paths, and persists only values that differ from the chart defaults. Raw YAML remains available for advanced overrides. Deployments and cleanup run through Helm's embedded Go SDK, so the controller does not require a `helm` binary. Private OCI access uses the standard Helm registry configuration. HTTPS Helm repositories can use `HELM_REPOSITORY_USERNAME` and `HELM_REPOSITORY_PASSWORD`; these values remain environment-only credentials.
+
+## Repository-managed applications
+
+Dispatch imports strict `dispatch/v1alpha1` YAML or JSON from GitHub. An Application may watch several repositories. When one changes, Dispatch reruns jobs that declare that source and reuses complete outputs from matching jobs. Each run pins exact commits before it starts.
+
+Stages deploy the pinned revision in order. They can run Pipeline checks or wait for approval. Scripts may live in any declared source repository. Jobs bind secrets by `secretRef` and write JSON or dotenv to `DISPATCH_OUTPUT_FILE`.
+
+Add a GitHub configuration from the **Applications** page. The default uses webhooks and polling. Push events start a sync, while polling catches missed events and works with private controllers. Imports start paused. See [Repository configuration](docs/application-config.md) for the schema and promotion example.
 
 ## Pull request previews
 
@@ -36,12 +49,12 @@ When a Git provider cannot reach the controller, run `dispatch-relay` on a publi
 
 The relay is provider-neutral. Each endpoint stores the original request method, selected headers, body, and receipt time before returning `202 Accepted`. Dispatch leases the oldest pending delivery and acknowledges it only after provider signature verification and durable local event processing. If Dispatch disconnects before acknowledgement, the lease expires and the same delivery is replayed. Invalid signatures and unsupported provider adapters are retained as dead deliveries instead of blocking the live queue.
 
-The **Add server → Webhook relay** form supports two installation paths:
+The **Add server → Webhook relay** form supports two installation methods:
 
 - **Run a command** generates a copyable command for the relay node.
-- **Install over SSH** verifies the node host-key fingerprint, transfers the correct Linux AMD64 or ARM64 binary, and installs the service without storing the SSH credential.
+- **Install over SSH** verifies the node host-key fingerprint and connects with a saved SSH key, pasted key, or password. Saved keys stay encrypted in Dispatch.
 
-Both paths install a hardened systemd service, persistent SQLite storage, and automatic HTTPS. Point the relay hostname at the node and allow inbound TCP ports 80 and 443 before installing. The generated relay access token is encrypted when the server is saved and is never returned by the API.
+Both methods install a systemd service by default. Select **Run with Docker Compose** to use a persistent container instead. Re-running either Docker installation path pulls the configured image, or rebuilds from the controller binary, then recreates the container without deleting queued events. Docker Compose stores data under `/var/lib/dispatch-relay`. Point the relay hostname at the node and allow inbound TCP ports 80 and 443 before installing. The generated relay access token is encrypted when the server is saved and is never returned by the API.
 
 Build and run the public node separately:
 
@@ -68,7 +81,7 @@ When the command appears on the first line of a pull request comment from a repo
 
 Preview URLs may contain `{pr}`, `{branch}`, and `{sha}` placeholders. Hooks run with Bash and receive `DISPATCH_APP_ID`, `DISPATCH_APP_NAME`, `DISPATCH_REVISION`, `DISPATCH_SOURCE_REPOSITORY`, `DISPATCH_SOURCE_BRANCH`, `DISPATCH_SERVER_NAME`, `DISPATCH_DEPLOYMENT_URL`, `DISPATCH_PREVIEW_TAG`, `DISPATCH_VALUES_FILE`, and `DISPATCH_OUTPUT_FILE`. The preview tag is also passed as the script's first positional argument, so a pull request such as `#847` receives `preview-847` as both `$1` and `$DISPATCH_PREVIEW_TAG`.
 
-Hooks do not inherit controller credentials. Variables deliberately prefixed with `DISPATCH_HOOK_` are passed through for build-specific credentials. Operators can also add write-only values on the **Secrets** page and attach them to an application event rule under **Events → Hooks**. Attached values are encrypted at rest, snapshotted as ciphertext for the event attempt, and decrypted only into that hook process under the configured environment-variable name. Secret storage requires `DISPATCH_MASTER_KEY_FILE`.
+Hooks do not inherit controller credentials. Variables deliberately prefixed with `DISPATCH_HOOK_` are passed through for build-specific credentials. Operators can also add write-only values on the **Secrets** page and attach them to an application event rule under **Events → Hooks**. Local values are encrypted at rest; external references are resolved from their provider only when the hook starts. Both are exposed only to that process under the configured environment-variable name. Secret storage requires `DISPATCH_MASTER_KEY_FILE`.
 
 An attached `GIT_TOKEN` or `GITHUB_TOKEN` is also used for the event hook's HTTPS source checkout, allowing private GitHub repositories without granting that token to other rules. An attached `SSH_PRIVATE_KEY` is written to an isolated temporary file and configures Git for the duration of the build. Preview group components can attach their own credential set from the Events hook editor.
 
@@ -149,6 +162,7 @@ Open <http://localhost:8080>. Set `DISPATCH_DEMO=true` to load clearly labeled l
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DISPATCH_ADDR` | `127.0.0.1:8080` | Controller listen address |
+| `DISPATCH_HOST` | `dispatch.localhost` | Hostname used by the Compose Traefik route |
 | `DATABASE_URL` | `dispatch.db` | SQLite path or PostgreSQL URL |
 | `DISPATCH_EXECUTOR` | `simulation` | `simulation` or explicitly enabled `docker` |
 | `DISPATCH_DEMO` | `false` | Seed local demo records when the store is empty |
@@ -166,6 +180,7 @@ Open <http://localhost:8080>. Set `DISPATCH_DEMO=true` to load clearly labeled l
 | `DISPATCH_GITHUB_API_URL` | `https://api.github.com` | Provider API base used for pull request lookup and comments |
 | `DISPATCH_GITHUB_TOKEN` | none | Provider token used for pull request lookup and status comments |
 | `DISPATCH_GIT_TOKEN` | none | Optional bearer token for private source checkout before hooks |
+| `DISPATCH_REPOSITORY_CACHE` | `repository-cache` | Credential-scoped repository mirrors used to create isolated run worktrees |
 | `DISPATCH_HOOK_*` | none | Explicitly scoped variables exposed to pre/post hooks |
 
 The relay process has its own configuration:

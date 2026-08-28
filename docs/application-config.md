@@ -1,0 +1,159 @@
+# Repository configuration
+
+Dispatch can load applications and pipelines from YAML or JSON in a GitHub repository. Add the repository from **Applications > Add > GitHub configuration**. The default path is `.dispatch`.
+
+An import reads every `.yaml`, `.yml`, and `.json` file below that path. Parsing is strict. Unknown fields, invalid references, and duplicate resource names reject the new revision while the last valid configuration remains active.
+
+Imported resources start paused. Activate an Application to create its first immutable revision. Activate a Pipeline before an Application references it as a stage check.
+
+## Application
+
+```yaml
+apiVersion: dispatch/v1alpha1
+kind: Application
+metadata:
+  name: storefront
+spec:
+  sources:
+    service:
+      repository: example/storefront-api
+      branch: main
+    ui:
+      repository: example/storefront-web
+      branch: main
+    chart:
+      repository: example/deployment-config
+      branch: main
+      path: charts/storefront
+
+  jobs:
+    build-service:
+      runFrom: service
+      run: ./scripts/build-image.sh
+      secrets:
+        REGISTRY_HOST:
+          secretRef: registry-host
+        REGISTRY_USERNAME:
+          secretRef: registry-username
+        REGISTRY_PASSWORD:
+          secretRef: registry-password
+      outputs: [imageRepository, imageTag]
+
+    build-ui:
+      runFrom: chart
+      sources: [ui]
+      run: ./scripts/build-ui.sh "{{ sources.ui.path }}"
+      secrets:
+        REGISTRY_HOST:
+          secretRef: registry-host
+        REGISTRY_USERNAME:
+          secretRef: registry-username
+        REGISTRY_PASSWORD:
+          secretRef: registry-password
+      outputs: [imageRepository, imageTag]
+
+  deployments:
+    storefront:
+      helm:
+        sourceRef: chart
+        namespace: storefront-dev
+        releaseName: storefront
+        values:
+          environment: development
+        bindings:
+          backend.image.repository:
+            outputRef: build-service.imageRepository
+          backend.image.tag:
+            outputRef: build-service.imageTag
+          ui.image.repository:
+            outputRef: build-ui.imageRepository
+          ui.image.tag:
+            outputRef: build-ui.imageTag
+
+  stages:
+    - name: development
+      targetRef: development
+      deploy: [storefront]
+      url: https://storefront-dev.example.com
+      checks:
+        e2e:
+          pipelineRef: storefront-e2e
+          with:
+            base-url: "{{ stage.url }}"
+
+    - name: staging
+      targetRef: staging
+      deploy: [storefront]
+      url: https://storefront-staging.example.com
+      checks:
+        e2e:
+          pipelineRef: storefront-e2e
+          with:
+            base-url: "{{ stage.url }}"
+
+    - name: production
+      targetRef: production
+      deploy: [storefront]
+      approval: required
+
+  finally:
+    publish-result:
+      runFrom: chart
+      run: ./scripts/publish-result.sh
+```
+
+`runFrom` selects the repository that contains the script. `sources` adds other repositories that the command needs. Runtime templates expose `path`, `commit`, and `branch` for every declared source.
+
+Application jobs default to `reuse: onInputMatch`. Their fingerprint covers the job definition, declared source revisions, and inputs. If only the service repository changes, `build-ui` reuses its latest successful result. A first run, a missing declared output, or a changed input runs the job again. Set `reuse: never` when a job must always execute. Pipeline and `finally` jobs always run.
+
+Jobs receive `DISPATCH_OUTPUT_FILE` and `GITHUB_OUTPUT`. Write either JSON:
+
+```json
+{"imageRepository":"registry.example.com/storefront/api","imageTag":"sha-123"}
+```
+
+or dotenv:
+
+```text
+imageRepository=registry.example.com/storefront/api
+imageTag=sha-123
+```
+
+Dispatch keeps only names declared under `outputs`. It resolves secrets when the job starts and passes them only to that process.
+
+Every run snapshots the exact commit for every source. Stages deploy that same revision in order. A failed deployment or check stops promotion. `approval: required` pauses before the stage deploys.
+
+## Pipeline
+
+```yaml
+apiVersion: dispatch/v1alpha1
+kind: Pipeline
+metadata:
+  name: storefront-e2e
+spec:
+  inputs:
+    base-url:
+      required: true
+  sources:
+    tests:
+      repository: example/storefront-tests
+      branch: main
+  jobs:
+    test:
+      runFrom: tests
+      run: ./scripts/e2e.sh "{{ inputs.base-url }}"
+  finally:
+    upload-results:
+      runFrom: tests
+      run: ./scripts/upload-results.sh
+```
+
+A stage check runs a named active Pipeline and waits for it. Pipeline `finally` jobs run after the normal job set whether the normal job set succeeds or fails.
+
+## Event delivery
+
+The default update mode is webhook plus polling. Dispatch updates the GitHub App webhook URL and processes `push` deliveries. Its poller also compares the configuration branch and every referenced source branch. A private controller or missed webhook can still detect changes.
+
+The GitHub App registration must subscribe to `push` and grant read access to repository contents. Commit status publishing also needs write access to commit statuses. The Dispatch manifest requests both settings. Update existing registrations in GitHub if they lack either permission.
+
+Polling checks each imported source at its configured interval, with a minimum of 30 seconds. Webhook-only and polling-only modes are available when required.

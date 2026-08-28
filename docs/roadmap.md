@@ -2,7 +2,7 @@
 
 Dispatch grows by completing one operational loop at a time. The public core stays provider-neutral; environment-specific automation remains behind versioned contracts.
 
-## Milestone 1 — deployment spine
+## Milestone 1: deployment spine
 
 - [x] Single Go controller with embedded React console
 - [x] SQLite WAL default and PostgreSQL-compatible store
@@ -15,15 +15,15 @@ Dispatch grows by completing one operational loop at a time. The public core sta
 - [ ] Traefik route creation and certificate verification
 - [ ] Rollback and destructive-action confirmation flows
 
-## Milestone 2 — source automation
+## Milestone 2: source automation
 
-- GitHub App authentication scoped to `doout`
+- GitHub App authentication scoped to selected repositories
 - Signed webhook ingestion with delivery deduplication
 - Repository installation and branch selection
 - Pull-request preview policy, create/update lifecycle, and teardown on close
 - Check-run status and deployment links posted back to GitHub
 
-## Milestone 3 — private infrastructure providers
+## Milestone 3: private infrastructure providers
 
 - Provider registration and encrypted credential records
 - Conformance-tested mock sidecar
@@ -31,7 +31,7 @@ Dispatch grows by completing one operational loop at a time. The public core sta
 - Private provider image and configuration kept outside this repository
 - SSH bootstrap as an explicit enrollment/recovery operation
 
-## Milestone 4 — runtime depth
+## Milestone 4: runtime depth
 
 - Health policies, domain routing, wildcard TLS, rollback, and retention
 - Volumes, managed backup jobs, and restore verification

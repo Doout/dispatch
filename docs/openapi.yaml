@@ -93,9 +93,13 @@ paths:
               properties:
                 name: { type: string, maxLength: 80 }
                 type: { type: string, enum: [text, api_token, github_token, ssh_private_key, registry_password], default: text }
+                source: { type: string, enum: [local, external], default: local }
                 environmentVariable: { type: string, maxLength: 128 }
                 value: { type: string, maxLength: 65536, writeOnly: true }
                 generate: { type: boolean, description: Generates an Ed25519 key when type is ssh_private_key. The private key is never returned. }
+                externalStoreId: { type: string, description: Required when source is external. }
+                externalSecretId: { type: string, maxLength: 2048, description: Provider secret ID. Required when source is external. }
+                externalField: { type: string, maxLength: 256, description: Optional dot-separated field selected from a structured provider value. }
       responses:
         "201": { description: Encrypted secret created; only metadata is returned. }
         "400": { $ref: "#/components/responses/Problem" }
@@ -119,9 +123,13 @@ paths:
               properties:
                 name: { type: string, maxLength: 80 }
                 type: { type: string, enum: [text, api_token, github_token, ssh_private_key, registry_password] }
+                source: { type: string, enum: [local, external] }
                 environmentVariable: { type: string, maxLength: 128 }
                 value: { type: string, maxLength: 65536, writeOnly: true, description: Omit to retain the current value. }
                 generate: { type: boolean, description: Rotates an ssh_private_key with a newly generated Ed25519 key. }
+                externalStoreId: { type: string }
+                externalSecretId: { type: string, maxLength: 2048 }
+                externalField: { type: string, maxLength: 256 }
       responses:
         "200": { description: Secret metadata updated. }
         "404": { $ref: "#/components/responses/Problem" }
@@ -130,6 +138,106 @@ paths:
       responses:
         "204": { description: Secret and future event-rule bindings deleted. }
         "404": { $ref: "#/components/responses/Problem" }
+  /secret-stores:
+    get:
+      operationId: listSecretStores
+      description: Lists external secret manager connections without provider credentials.
+      responses:
+        "200":
+          description: External secret stores.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SecretStore" } }
+    post:
+      operationId: createSecretStore
+      description: Verifies and stores an encrypted external secret manager connection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SecretStoreInput" }
+      responses:
+        "201": { description: Secret store connected. }
+        "400": { $ref: "#/components/responses/Problem" }
+  /secret-stores/{secretStoreId}:
+    parameters:
+      - { in: path, name: secretStoreId, required: true, schema: { type: string } }
+    put:
+      operationId: updateSecretStore
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SecretStoreInput" }
+      responses:
+        "200": { description: Secret store updated. }
+    delete:
+      operationId: deleteSecretStore
+      responses:
+        "204": { description: Unused secret store deleted. }
+        "409": { $ref: "#/components/responses/Problem" }
+  /secret-stores/{secretStoreId}/verify:
+    parameters:
+      - { in: path, name: secretStoreId, required: true, schema: { type: string } }
+    post:
+      operationId: verifySecretStore
+      responses:
+        "200": { description: Provider authentication and access verified. }
+        "502": { $ref: "#/components/responses/Problem" }
+  /private-networks:
+    get:
+      operationId: listEdgeNodes
+      responses:
+        "200":
+          description: Edge nodes, managed Laneway Connectors, and legacy Laneway routes.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/EdgeNode" } }
+    post:
+      operationId: createPrivateNetwork
+      description: Creates an edge node or Laneway connection. Edge credentials are returned once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 80 }
+                driver: { type: string, enum: [dispatch_agent, laneway_connector, laneway], default: dispatch_agent }
+                socketPath: { type: string, description: Used only by a legacy Laneway route. }
+                authority: { type: string, format: uri, description: Laneway control-plane HTTPS origin used by a managed Connector. }
+                route: { type: string, description: Private Dispatch IP or CIDR published through the managed Connector. }
+      responses:
+        "201": { description: Private network connection created. }
+  /private-networks/{edgeNodeId}/install-connector:
+    parameters:
+      - { in: path, name: edgeNodeId, required: true, schema: { type: string } }
+    post:
+      operationId: installLanewayConnector
+      description: Consumes a one-time Laneway Connector bootstrap and deploys the Connector through the controller Docker socket. The command is not stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bootstrapCommand]
+              properties:
+                bootstrapCommand: { type: string, writeOnly: true, maxLength: 4096 }
+      responses:
+        "200": { description: Connector started. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+  /private-networks/{edgeNodeId}/rotate-token:
+    parameters:
+      - { in: path, name: edgeNodeId, required: true, schema: { type: string } }
+    post:
+      operationId: rotateEdgeNodeToken
+      description: Invalidates the prior edge credential and returns a replacement token once.
+      responses:
+        "200": { description: Edge node token rotated. }
   /github-apps:
     get:
       operationId: listGitHubApps
@@ -231,6 +339,126 @@ paths:
         - { in: query, name: state, required: true, schema: { type: string } }
       responses:
         "303": { description: Redirects to the Connections page for installation. }
+  /config-sources:
+    get:
+      operationId: listConfigSources
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+    post:
+      operationId: createConfigSource
+      description: Imports strict Dispatch YAML or JSON from a GitHub repository and configures its update mode.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfigSourceInput" }
+      responses:
+        "201": { description: Configuration source created and its first sync attempted. }
+        "400": { $ref: "#/components/responses/Problem" }
+  /config-sources/{configSourceId}:
+    parameters:
+      - { in: path, name: configSourceId, required: true, schema: { type: string } }
+    put:
+      operationId: updateConfigSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfigSourceInput" }
+      responses:
+        "200": { description: Configuration source updated and synced. }
+    delete:
+      operationId: deleteConfigSource
+      responses:
+        "204": { description: Configuration source and imported resources deleted. }
+  /config-sources/{configSourceId}/sync:
+    parameters:
+      - { in: path, name: configSourceId, required: true, schema: { type: string } }
+    post:
+      operationId: syncConfigSource
+      responses:
+        "200": { description: Configuration synced. }
+        "422": { $ref: "#/components/responses/Problem" }
+  /workflow/resources:
+    get:
+      operationId: listWorkflowResources
+      parameters:
+        - { in: query, name: configSourceId, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/resources/{resourceId}/topology:
+    get:
+      operationId: getWorkflowTopology
+      parameters:
+        - { in: path, name: resourceId, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Parsed workflow relationships.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkflowTopology" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /workflow/resources/{resourceId}/activate:
+    post:
+      operationId: activateWorkflowResource
+      parameters:
+        - { in: path, name: resourceId, required: true, schema: { type: string } }
+      responses:
+        "202": { description: Resource activated. Applications also queue their first revision. }
+  /workflow/resources/{resourceId}/deactivate:
+    post:
+      operationId: deactivateWorkflowResource
+      parameters:
+        - { in: path, name: resourceId, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Resource paused. }
+  /workflow/resources/{resourceId}/runs:
+    post:
+      operationId: runWorkflowResource
+      parameters:
+        - { in: path, name: resourceId, required: true, schema: { type: string } }
+      responses:
+        "202": { description: Application revision queued. }
+  /workflow/revisions:
+    get:
+      operationId: listWorkflowRevisions
+      parameters:
+        - { in: query, name: resourceId, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/revisions/{revisionId}/jobs:
+    get:
+      operationId: listWorkflowJobs
+      parameters:
+        - { in: path, name: revisionId, required: true, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/revisions/{revisionId}/stages:
+    get:
+      operationId: listWorkflowStages
+      parameters:
+        - { in: path, name: revisionId, required: true, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/stages/{stageId}/approve:
+    post:
+      operationId: approveWorkflowStage
+      parameters:
+        - { in: path, name: stageId, required: true, schema: { type: string } }
+      responses:
+        "202": { description: Stage approved and promotion resumed. }
+  /workflow/validate:
+    post:
+      operationId: validateWorkflowDocument
+      requestBody:
+        required: true
+        content:
+          application/yaml: { schema: { type: string, maxLength: 1048576 } }
+          application/json: { schema: {} }
+      responses:
+        "200": { description: Parsed and defaulted resources. }
+        "422": { $ref: "#/components/responses/Problem" }
   /projects:
     get:
       operationId: listProjects
@@ -393,7 +621,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/RelaySSHInstallInput" }
       responses:
-        "200": { description: Relay systemd service installed and started. }
+        "200": { description: Relay installed through systemd or Docker Compose. }
         "404": { $ref: "#/components/responses/Problem" }
         "502": { $ref: "#/components/responses/Problem" }
   /servers/{serverId}/relay/webhooks:
@@ -570,6 +798,51 @@ paths:
         "200": { description: Application hooks updated. }
         "400": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /apps/{appId}/helm-values:
+    parameters:
+      - $ref: "#/components/parameters/AppID"
+    get:
+      operationId: getAppHelmValues
+      description: Loads a saved Helm source and returns its chart defaults, schema, profiles, and configured overrides to an authenticated operator.
+      responses:
+        "200":
+          description: Helm chart configuration loaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chart, defaults, profiles, overrides]
+                properties:
+                  repository: { type: string }
+                  branch: { type: string }
+                  chartPath: { type: string }
+                  chart: { type: object, additionalProperties: true }
+                  defaults: { type: object, additionalProperties: true }
+                  valuesYaml: { type: string }
+                  schema: { type: object, additionalProperties: true }
+                  profiles: { type: array, items: { type: object, additionalProperties: true } }
+                  overrides: { type: object, additionalProperties: true }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "504": { $ref: "#/components/responses/Problem" }
+    put:
+      operationId: updateAppHelmValues
+      description: Replaces the structured Helm overrides saved for a Helm source.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [overrides]
+              properties:
+                overrides: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Helm overrides updated. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /apps/{appId}/event-triggers:
     post:
       operationId: createEventTrigger
@@ -871,6 +1144,125 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    ConfigSourceInput:
+      type: object
+      required: [projectId, githubAppId, name, repository, branch, path, syncMode, pollIntervalSeconds]
+      properties:
+        projectId: { type: string }
+        githubAppId: { type: string }
+        name: { type: string, maxLength: 80 }
+        repository: { type: string, description: GitHub owner/name accessible to the selected installation. }
+        branch: { type: string, default: main }
+        path: { type: string, default: .dispatch }
+        syncMode: { type: string, enum: [webhook_poll, webhook, poll], default: webhook_poll }
+        pollIntervalSeconds: { type: integer, minimum: 30, maximum: 86400, default: 300 }
+    ConfigSource:
+      allOf:
+        - $ref: "#/components/schemas/ConfigSourceInput"
+        - type: object
+          required: [id, active, state, createdAt, updatedAt]
+          properties:
+            id: { type: string }
+            active: { type: boolean }
+            state: { type: string, enum: [syncing, ready, degraded, invalid] }
+            lastSeenSha: { type: string }
+            lastSyncedAt: { type: string, format: date-time }
+            lastPolledAt: { type: string, format: date-time }
+            lastError: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    WorkflowResource:
+      type: object
+      required: [id, configSourceId, apiVersion, kind, name, path, document, specDigest, configSha, active, state, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        configSourceId: { type: string }
+        apiVersion: { type: string, const: dispatch/v1alpha1 }
+        kind: { type: string, enum: [Application, Pipeline] }
+        name: { type: string }
+        path: { type: string }
+        document: { type: string, description: Canonical YAML with defaults applied. }
+        specDigest: { type: string }
+        configSha: { type: string }
+        active: { type: boolean }
+        state: { type: string, enum: [ready, paused, invalid] }
+        lastError: { type: string }
+        sourceCount: { type: integer }
+        jobCount: { type: integer }
+        stageNames: { type: array, items: { type: string } }
+        targetRefs: { type: array, items: { type: string } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    WorkflowTopology:
+      type: object
+      required: [columns, nodes, edges]
+      properties:
+        columns:
+          type: array
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id: { type: string }
+              label: { type: string }
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, column, kind, label]
+            properties:
+              id: { type: string }
+              column: { type: string }
+              kind: { type: string }
+              label: { type: string }
+              detail: { type: string }
+              metadata: { type: object, additionalProperties: { type: string } }
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to, kind]
+            properties:
+              from: { type: string }
+              to: { type: string }
+              kind: { type: string }
+    SecretStoreInput:
+      type: object
+      required: [name, provider, serviceUrl]
+      properties:
+        name: { type: string, maxLength: 80 }
+        provider: { type: string, enum: [ibm_cloud_secrets_manager] }
+        serviceUrl: { type: string, format: uri }
+        iamUrl: { type: string, format: uri, default: "https://iam.cloud.ibm.com" }
+        apiKey: { type: string, format: password, writeOnly: true, description: Required when creating; omit from updates to retain it. }
+        privateNetworkId: { type: string, description: Optional edge node used for provider requests. }
+    SecretStore:
+      type: object
+      required: [id, name, provider, config, credentialsConfigured, state, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        provider: { type: string }
+        config: { type: object, additionalProperties: { type: string } }
+        credentialsConfigured: { type: boolean }
+        state: { type: string, enum: [ready, error] }
+        lastVerifiedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    EdgeNode:
+      type: object
+      required: [id, name, driver, config, details, state, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        driver: { type: string, enum: [dispatch_agent, laneway_connector, laneway] }
+        config: { type: object, additionalProperties: { type: string } }
+        details: { type: object, additionalProperties: { type: string } }
+        enrollmentToken: { type: string, writeOnly: true, description: Returned only on create or rotation. }
+        state: { type: string, enum: [waiting, ready, offline, error, unverified] }
+        lastVerifiedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     GitHubAppInput:
       type: object
       required: [name, webUrl, appId, privateKey, webhookSecret]
@@ -886,10 +1278,12 @@ components:
         installationId: { type: integer, format: int64 }
         privateKey: { type: string, format: password, writeOnly: true, description: RSA PEM generated by GitHub. }
         webhookSecret: { type: string, format: password, minLength: 16, writeOnly: true }
+        eventDelivery: { type: string, enum: [none, direct, relay], default: direct }
         relayServerId: { type: string, description: Optional relay server used for durable outbound event delivery. }
+        privateNetworkId: { type: string, description: Optional edge node used for GitHub API requests. }
     GitHubAppConnection:
       type: object
-      required: [id, name, webUrl, apiUrl, appId, webhookUrl, privateKeyConfigured, webhookSecretConfigured, state, createdAt, updatedAt]
+      required: [id, name, webUrl, apiUrl, appId, privateKeyConfigured, webhookSecretConfigured, state, createdAt, updatedAt]
       properties:
         id: { type: string }
         name: { type: string }
@@ -901,8 +1295,9 @@ components:
         installationId: { type: integer, format: int64 }
         installationAccount: { type: string }
         installationUrl: { type: string, format: uri, description: GitHub-provided settings URL for this installation. }
-        webhookUrl: { type: string, format: uri }
+        webhookUrl: { type: string, format: uri, description: Present when webhook delivery is enabled. }
         relayWebhookId: { type: string, description: Present when events are delivered through a relay. }
+        privateNetworkId: { type: string, description: Edge node used for GitHub API requests. }
         privateKeyConfigured: { type: boolean }
         webhookSecretConfigured: { type: boolean }
         state: { type: string, enum: [needs_installation, unverified, ready] }
@@ -922,6 +1317,7 @@ components:
         installationId: { type: integer, format: int64 }
         privateKey: { type: string, format: password, writeOnly: true }
         webhookSecret: { type: string, format: password, minLength: 16, writeOnly: true }
+        privateNetworkId: { type: string, description: Edge node used for GitHub API requests. Set to an empty string for direct access. }
     GitHubRepository:
       type: object
       required: [id, fullName, name, owner, defaultBranch, private, webUrl]
@@ -980,7 +1376,7 @@ components:
             connectedAt: { type: string, format: date-time }
     Overview:
       type: object
-      required: [demo, projects, servers, apps, deployments, previewGroups, previewGroupRuns, githubApps]
+      required: [demo, projects, servers, apps, deployments, previewGroups, previewGroupRuns, githubApps, configSources, workflowResources, workflowRevisions, workflowStageRuns]
       properties:
         demo: { type: boolean }
         projects: { type: array, items: { type: object } }
@@ -989,8 +1385,13 @@ components:
         deployments: { type: array, items: { $ref: "#/components/schemas/Deployment" } }
         previewGroups: { type: array, items: { $ref: "#/components/schemas/PreviewGroup" } }
         previewGroupRuns: { type: array, items: { $ref: "#/components/schemas/PreviewGroupRun" } }
+        secretStores: { type: array, items: { $ref: "#/components/schemas/SecretStore" } }
         githubApps: { type: array, items: { $ref: "#/components/schemas/GitHubAppConnection" } }
         relayWebhooks: { type: array, items: { $ref: "#/components/schemas/RelayWebhook" } }
+        configSources: { type: array, items: { $ref: "#/components/schemas/ConfigSource" } }
+        workflowResources: { type: array, items: { $ref: "#/components/schemas/WorkflowResource" } }
+        workflowRevisions: { type: array, items: { type: object } }
+        workflowStageRuns: { type: array, items: { type: object } }
     RelayServerInput:
       type: object
       properties:
@@ -1005,11 +1406,14 @@ components:
         authType: { type: string, enum: [password, private_key] }
         password: { type: string, format: password, writeOnly: true }
         privateKey: { type: string, format: password, writeOnly: true }
+        secretId: { type: string, description: ID of a saved SSH private key. Replaces privateKey when set. }
         privateKeyPassword: { type: string, format: password, writeOnly: true }
         sudoPassword: { type: string, format: password, writeOnly: true }
         hostKeyFingerprint: { type: string, example: "SHA256:..." }
         relayUrl: { type: string, format: uri }
         relayToken: { type: string, format: password, minLength: 24, writeOnly: true }
+        installMode: { type: string, enum: [systemd, docker], default: systemd }
+        relayImage: { type: string, description: Optional container image used when installMode is docker. }
     RelayWebhookInput:
       type: object
       required: [name, provider]
