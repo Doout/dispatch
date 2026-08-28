@@ -27,6 +27,10 @@ type githubAppTokenSource interface {
 	InstallationToken(context.Context, string) (string, error)
 }
 
+type SecretResolver interface {
+	Resolve(context.Context, string) ([]byte, error)
+}
+
 // SourceAuthExecutor resolves one application-scoped source credential just
 // before execution. Plaintext exists only in the in-memory App copy passed to
 // the executor chain.
@@ -34,6 +38,7 @@ type SourceAuthExecutor struct {
 	Next       Executor
 	Secrets    secretReader
 	Vault      *secretcrypto.Vault
+	Resolver   SecretResolver
 	GitHubApps githubAppTokenSource
 }
 
@@ -74,7 +79,7 @@ func (e SourceAuthExecutor) Resolve(ctx context.Context, app core.App) (core.App
 		app.SourceCredential = token
 		return app, nil
 	}
-	if e.Secrets == nil || e.Vault == nil {
+	if e.Secrets == nil || (e.Resolver == nil && e.Vault == nil) {
 		return app, errors.New("source credential storage is not configured")
 	}
 	secret, err := e.Secrets.GetSecret(ctx, app.SourceCredentialID)
@@ -84,10 +89,16 @@ func (e SourceAuthExecutor) Resolve(ctx context.Context, app core.App) (core.App
 	if err := ValidateSourceCredentialType(app.SourceAuthType, secret.Type); err != nil {
 		return app, err
 	}
-	plaintext, err := e.Vault.Decrypt("secret:"+secret.ID, secret.EncryptedValue)
-	if err != nil {
-		return app, fmt.Errorf("decrypt source credential: %w", err)
+	var plaintext []byte
+	if e.Resolver != nil {
+		plaintext, err = e.Resolver.Resolve(ctx, secret.ID)
+	} else {
+		plaintext, err = e.Vault.Decrypt("secret:"+secret.ID, secret.EncryptedValue)
 	}
+	if err != nil {
+		return app, fmt.Errorf("resolve source credential: %w", err)
+	}
+	defer clear(plaintext)
 	app.SourceCredential = string(plaintext)
 	return app, nil
 }
@@ -114,7 +125,7 @@ func ValidateSourceCredentialType(authType string, secretType core.SecretType) e
 	}
 }
 
-func prepareGitEnvironment(app core.App) ([]string, func(), error) {
+func PrepareGitEnvironment(app core.App) ([]string, func(), error) {
 	environment := append([]string{}, os.Environ()...)
 	environment = append(environment, "GIT_TERMINAL_PROMPT=0")
 	credential := strings.TrimSpace(app.SourceCredential)
@@ -167,7 +178,7 @@ func prepareGitEnvironment(app core.App) ([]string, func(), error) {
 }
 
 func runGitForApp(ctx context.Context, app core.App, args ...string) error {
-	environment, cleanup, err := prepareGitEnvironment(app)
+	environment, cleanup, err := PrepareGitEnvironment(app)
 	if err != nil {
 		return err
 	}

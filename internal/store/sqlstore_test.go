@@ -120,6 +120,108 @@ func TestSQLiteGitHubAppConnectionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSQLiteWorkflowRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "workflows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	if err := data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	project := core.Project{ID: "project-workflow", Name: "Workflow", CreatedAt: now}
+	connection := core.GitHubAppConnection{ID: "github-workflow", Name: "Workflow GitHub", WebURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3", AppID: 41, InstallationID: 42, WebhookURL: "https://dispatch.example/api/v1/events/github/apps/github-workflow", EncryptedPrivateKey: "key", EncryptedWebhookSecret: "secret", State: "ready", CreatedAt: now, UpdatedAt: now}
+	if err := data.CreateProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreateGitHubApp(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	source := core.ConfigSource{ID: "config-workflow", ProjectID: project.ID, GitHubAppID: connection.ID, Name: "Workflow config", Repository: "owner/config", Branch: "main", Path: ".dispatch", SyncMode: core.ConfigSyncWebhookPoll, PollIntervalSeconds: 300, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now}
+	if err := data.CreateConfigSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	resource := core.WorkflowResource{ID: "resource-workflow", ConfigSourceID: source.ID, APIVersion: "dispatch/v1alpha1", Kind: "Application", Name: "test", Path: ".dispatch/test.yaml", Document: "kind: Application", SpecDigest: "sha256:spec", ConfigSHA: "config-sha", Active: true, State: "ready", CreatedAt: now, UpdatedAt: now}
+	if err := data.CreateWorkflowResource(ctx, resource); err != nil {
+		t.Fatal(err)
+	}
+	revision := core.WorkflowRevision{ID: "revision-workflow", ResourceID: resource.ID, ConfigSHA: resource.ConfigSHA, SpecDigest: resource.SpecDigest, State: "running", Trigger: "test", Sources: map[string]core.WorkflowSourceRevision{"app": {Alias: "app", Repository: "owner/app", Branch: "main", CommitSHA: "abc"}}, Outputs: map[string]map[string]string{}, CreatedAt: now}
+	if err := data.CreateWorkflowRevision(ctx, revision); err != nil {
+		t.Fatal(err)
+	}
+	job := core.WorkflowJobResult{ID: "job-workflow", ResourceID: resource.ID, RevisionID: revision.ID, JobName: "build", Fingerprint: "sha256:job", State: "succeeded", Sources: revision.Sources, Outputs: map[string]string{"image": "registry/app"}, Log: "build complete", CreatedAt: now}
+	if err := data.CreateWorkflowJobResult(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	stage := core.WorkflowStageRun{ID: "stage-workflow", RevisionID: revision.ID, StageName: "development", TargetRef: "dev", State: "awaiting_approval", Approval: "required", DeploymentIDs: []string{}, CheckRuns: map[string]string{}, CreatedAt: now}
+	if err := data.CreateWorkflowStageRun(ctx, stage); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := data.ListWorkflowJobResults(ctx, revision.ID)
+	if err != nil || len(jobs) != 1 || jobs[0].Log != job.Log || jobs[0].Outputs["image"] != "registry/app" {
+		t.Fatalf("unexpected workflow jobs: %#v err=%v", jobs, err)
+	}
+	stages, err := data.ListWorkflowStageRuns(ctx, revision.ID)
+	if err != nil || len(stages) != 1 || stages[0].State != "awaiting_approval" {
+		t.Fatalf("unexpected workflow stages: %#v err=%v", stages, err)
+	}
+	if err := data.DeleteConfigSource(ctx, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := data.GetWorkflowResource(ctx, resource.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("workflow resources were not deleted with the source: %v", err)
+	}
+}
+
+func TestSQLiteConfigSourceUsesSavedRepositoryCredential(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "repository-credentials.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	if err := data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	project := core.Project{ID: "credential-project", Name: "Credential project", CreatedAt: now}
+	credential := core.Secret{
+		ID: "repository-key", Name: "Repository key", Type: core.SecretTypeSSHPrivateKey, Source: core.SecretSourceLocal,
+		EnvironmentVariable: "SSH_PRIVATE_KEY", EncryptedValue: "ciphertext", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := data.CreateProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreateSecret(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	source := core.ConfigSource{
+		ID: "credential-config", ProjectID: project.ID, CredentialSecretID: credential.ID, Name: "Repository configuration",
+		Repository: "git@example.test:owner/config.git", Branch: "main", Path: "deployment", SyncMode: core.ConfigSyncPoll,
+		PollIntervalSeconds: 60, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := data.CreateConfigSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := data.GetConfigSource(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.GitHubAppID != "" || stored.CredentialSecretID != credential.ID || stored.SyncMode != core.ConfigSyncPoll {
+		t.Fatalf("unexpected repository credential source: %#v", stored)
+	}
+	stored.Name = "Updated repository configuration"
+	if err := data.UpdateConfigSource(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+	items, err := data.ListConfigSources(ctx)
+	if err != nil || len(items) != 1 || items[0].CredentialSecretID != credential.ID || items[0].Name != stored.Name {
+		t.Fatalf("unexpected repository credential source list: %#v err=%v", items, err)
+	}
+}
+
 func TestSQLiteAdminSessionsSurviveStoreReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "sessions.db")

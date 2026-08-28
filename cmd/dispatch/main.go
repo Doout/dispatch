@@ -15,7 +15,9 @@ import (
 	"github.com/doout/dispatch/internal/config"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -51,6 +53,10 @@ func run(logger *slog.Logger) error {
 		}
 	}
 	githubApps := githubapp.New(data, vault)
+	secretResolver := secretvalue.New(data, vault)
+	edgeBroker := edge.New(data, vault)
+	githubApps.Edge = edgeBroker
+	secretResolver.Edge = edgeBroker
 	local, err := data.ReconcileLocalDockerServer(ctx, dockerSocketAvailable(cfg.DockerSocket))
 	if err != nil {
 		return err
@@ -61,17 +67,20 @@ func run(logger *slog.Logger) error {
 	var executor deploy.Executor = deploy.SimulationExecutor{}
 	if cfg.Executor == "docker" {
 		runtime := deploy.RuntimeExecutor{Default: deploy.DockerExecutor{}, Helm: deploy.HelmExecutor{}}
-		executor = deploy.HookExecutor{Next: runtime, Outputs: data, Vault: vault}
+		snapshots := deploy.SnapshotExecutor{Next: runtime, Store: data}
+		executor = deploy.HookExecutor{Next: snapshots, Outputs: data, Vault: vault, Resolver: secretResolver}
 	}
-	executor = deploy.SourceAuthExecutor{Next: executor, Secrets: data, Vault: vault, GitHubApps: githubApps}
+	executor = deploy.SourceAuthExecutor{Next: executor, Secrets: data, Vault: vault, Resolver: secretResolver, GitHubApps: githubApps}
 	deployments := deploy.NewService(data, executor)
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	controller := api.New(data, deployments, cfg.Demo, api.AuthConfig{
 		AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword,
 	}, logger, api.EventConfig{WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
-		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps})
+		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps, SecretResolver: secretResolver,
+		Edge: edgeBroker, RepositoryCache: cfg.RepositoryCache})
 	go controller.RunRelayConsumers(shutdownCtx)
+	go controller.RunWorkflowPoller(shutdownCtx)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: controller,
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,

@@ -25,14 +25,17 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/events"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/groups"
 	"github.com/doout/dispatch/internal/kubeconfig"
 	"github.com/doout/dispatch/internal/openshift"
 	"github.com/doout/dispatch/internal/provider"
+	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/ui"
+	workflowservice "github.com/doout/dispatch/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/oklog/ulid/v2"
@@ -48,12 +51,15 @@ type AuthConfig struct {
 }
 
 type EventConfig struct {
-	WebhookSecret  string
-	DefaultCommand string
-	GitHubAPIURL   string
-	GitHubToken    string
-	Vault          *secretcrypto.Vault
-	GitHubApps     *githubapp.Manager
+	WebhookSecret   string
+	DefaultCommand  string
+	GitHubAPIURL    string
+	GitHubToken     string
+	Vault           *secretcrypto.Vault
+	GitHubApps      *githubapp.Manager
+	SecretResolver  *secretvalue.Resolver
+	Edge            *edge.Broker
+	RepositoryCache string
 }
 
 type githubEventServices struct {
@@ -71,12 +77,15 @@ type API struct {
 	events         *events.Service
 	groups         *groups.Service
 	eventConfig    EventConfig
+	secretResolver *secretvalue.Resolver
+	edge           *edge.Broker
 	openShift      *openshift.Bootstrapper
 	lifecycle      events.Lifecycle
 	githubMu       sync.Mutex
 	githubServices map[string]githubEventServices
 	manifestMu     sync.Mutex
 	manifestStates map[string]githubAppManifestState
+	workflows      *workflowservice.Service
 
 	sessionMu sync.RWMutex
 	sessions  map[string]time.Time
@@ -89,6 +98,18 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		if eventConfig.DefaultCommand == "" {
 			eventConfig.DefaultCommand = "/preview"
 		}
+	}
+	if eventConfig.Edge == nil && eventConfig.Vault != nil {
+		eventConfig.Edge = edge.New(data, eventConfig.Vault)
+	}
+	if eventConfig.GitHubApps != nil && eventConfig.GitHubApps.Edge == nil {
+		eventConfig.GitHubApps.Edge = eventConfig.Edge
+	}
+	if eventConfig.SecretResolver == nil && eventConfig.Vault != nil {
+		eventConfig.SecretResolver = secretvalue.New(data, eventConfig.Vault)
+	}
+	if eventConfig.SecretResolver != nil && eventConfig.SecretResolver.Edge == nil {
+		eventConfig.SecretResolver.Edge = eventConfig.Edge
 	}
 	var resolver events.PullRequestResolver
 	var groupResolver groups.Resolver
@@ -107,8 +128,9 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 				return value
 			}
 			return nil
-		}(), nil), eventConfig: eventConfig, openShift: openshift.New(), lifecycle: lifecycle,
-		githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState)}
+		}(), nil), eventConfig: eventConfig, secretResolver: eventConfig.SecretResolver, openShift: openshift.New(), lifecycle: lifecycle,
+		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState)}
+	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
 	r.Use(a.logRequest)
@@ -117,6 +139,8 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	})
 	r.Get("/relay/install.sh", a.relayInstallScript)
 	r.Get("/relay/bin/{platform}", a.relayBinary)
+	r.Get("/edge/install.sh", a.edgeInstallScript)
+	r.Get("/edge/bin/{platform}", a.edgeBinary)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/auth/status", a.authStatus)
 		r.Post("/auth/setup", a.setupAdmin)
@@ -124,6 +148,8 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		r.Post("/events/github", a.githubWebhook)
 		r.Post("/events/github/apps/{id}", a.githubAppWebhook)
 		r.Get("/github-apps/manifest/callback", a.completeGitHubAppManifest)
+		r.Get("/edge/nodes/{id}/jobs/next", a.leaseEdgeJob)
+		r.Post("/edge/nodes/{id}/jobs/{jobId}/complete", a.completeEdgeJob)
 		r.Group(func(r chi.Router) {
 			r.Use(a.authorize)
 			r.Get("/overview", a.overview)
@@ -131,6 +157,18 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Post("/secrets", a.createSecret)
 			r.Put("/secrets/{id}", a.updateSecret)
 			r.Delete("/secrets/{id}", a.deleteSecret)
+			r.Get("/secret-stores", a.listSecretStores)
+			r.Post("/secret-stores", a.createSecretStore)
+			r.Put("/secret-stores/{id}", a.updateSecretStore)
+			r.Post("/secret-stores/{id}/verify", a.verifySecretStore)
+			r.Delete("/secret-stores/{id}", a.deleteSecretStore)
+			r.Get("/private-networks", a.listPrivateNetworks)
+			r.Post("/private-networks", a.createPrivateNetwork)
+			r.Put("/private-networks/{id}", a.updatePrivateNetwork)
+			r.Post("/private-networks/{id}/verify", a.verifyPrivateNetwork)
+			r.Post("/private-networks/{id}/rotate-token", a.rotateEdgeToken)
+			r.Post("/private-networks/{id}/install-connector", a.installLanewayConnector)
+			r.Delete("/private-networks/{id}", a.deletePrivateNetwork)
 			r.Get("/github-apps", a.listGitHubApps)
 			r.Post("/github-apps", a.createGitHubApp)
 			r.Put("/github-apps/{id}", a.updateGitHubApp)
@@ -139,6 +177,22 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Get("/github-apps/{id}/installations", a.listGitHubAppInstallations)
 			r.Get("/github-apps/{id}/repositories", a.listGitHubAppRepositories)
 			r.Post("/github-apps/manifest", a.startGitHubAppManifest)
+			r.Get("/config-sources", a.listConfigSources)
+			r.Post("/config-sources", a.createConfigSource)
+			r.Put("/config-sources/{id}", a.updateConfigSource)
+			r.Post("/config-sources/{id}/sync", a.syncConfigSource)
+			r.Delete("/config-sources/{id}", a.deleteConfigSource)
+			r.Get("/workflow/resources", a.listWorkflowResources)
+			r.Get("/workflow/resources/{id}/topology", a.getWorkflowTopology)
+			r.Post("/workflow/resources/{id}/activate", a.activateWorkflowResource)
+			r.Post("/workflow/resources/{id}/deactivate", a.deactivateWorkflowResource)
+			r.Post("/workflow/resources/{id}/runs", a.runWorkflowResource)
+			r.Get("/workflow/revisions", a.listWorkflowRevisions)
+			r.Get("/workflow/revisions/{id}", a.getWorkflowRevision)
+			r.Get("/workflow/revisions/{id}/jobs", a.listWorkflowJobs)
+			r.Get("/workflow/revisions/{id}/stages", a.listWorkflowStages)
+			r.Post("/workflow/stages/{id}/approve", a.approveWorkflowStage)
+			r.Post("/workflow/validate", a.validateWorkflowDocument)
 			r.Get("/projects", a.listProjects)
 			r.Post("/projects", a.createProject)
 			r.Put("/projects/{id}", a.updateProject)
@@ -157,6 +211,8 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Get("/apps", a.listApps)
 			r.Post("/helm/inspect", a.inspectHelmSource)
 			r.Post("/apps", a.createApp)
+			r.Get("/apps/{id}/helm-values", a.getAppHelmValues)
+			r.Put("/apps/{id}/helm-values", a.updateAppHelmValues)
 			r.Put("/apps/{id}/hooks", a.updateAppHooks)
 			r.Delete("/apps/{id}", a.deleteApp)
 			r.Get("/event-triggers", a.listEventTriggers)
@@ -175,9 +231,12 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Post("/apps/{id}/cleanup", a.cleanupApp)
 			r.Get("/deployments", a.listDeployments)
 			r.Get("/deployments/{id}", a.getDeployment)
+			r.Get("/deployments/{id}/topology", a.getDeploymentTopology)
+			r.Get("/deployments/{id}/manifests", a.getDeploymentManifests)
 			r.Get("/deployments/{id}/logs", a.getDeploymentLogs)
 			r.Post("/deployments/{id}/cancel", a.cancelDeployment)
 			r.Get("/deployments/{id}/events", a.deploymentEvents)
+			r.Get("/servers/{id}/topology", a.getServerTopology)
 			r.Post("/apps/{id}/deployments", a.startDeployment)
 			r.Get("/contracts/provider", a.providerContract)
 			r.Get("/contracts/runtime", a.runtimeContract)
@@ -425,6 +484,16 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	secretStores, err := a.store.ListSecretStores(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	privateNetworks, err := a.store.ListPrivateNetworks(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
 	githubApps, err := a.store.ListGitHubApps(r.Context())
 	if err != nil {
 		a.internal(w, err)
@@ -435,16 +504,73 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	configSources, err := a.store.ListConfigSources(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	workflowResources, err := a.store.ListWorkflowResources(r.Context(), "")
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	currentWorkflowResources := workflowResources[:0]
+	for _, resource := range workflowResources {
+		if resource.State != "removed" {
+			currentWorkflowResources = append(currentWorkflowResources, resource)
+		}
+	}
+	workflowResources = currentWorkflowResources
+	for index := range workflowResources {
+		documents, parseErr := workflowservice.Parse(workflowResources[index].Path, []byte(workflowResources[index].Document))
+		if parseErr != nil || len(documents) != 1 {
+			continue
+		}
+		if documents[0].Spec != nil {
+			workflowResources[index].SourceCount = len(documents[0].Spec.Sources)
+			workflowResources[index].JobCount = len(documents[0].Spec.Jobs)
+			for _, stage := range documents[0].Spec.Stages {
+				workflowResources[index].StageNames = append(workflowResources[index].StageNames, stage.Name)
+				if !slices.Contains(workflowResources[index].TargetRefs, stage.TargetRef) {
+					workflowResources[index].TargetRefs = append(workflowResources[index].TargetRefs, stage.TargetRef)
+				}
+			}
+		} else if documents[0].Pipeline != nil {
+			workflowResources[index].SourceCount = len(documents[0].Pipeline.Sources)
+			workflowResources[index].JobCount = len(documents[0].Pipeline.Jobs)
+		}
+	}
+	workflowRevisions, err := a.store.ListWorkflowRevisions(r.Context(), "", 100)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	workflowStageRuns, err := a.store.ListWorkflowStageRuns(r.Context(), "")
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, core.Overview{Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
-		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets, GitHubApps: githubApps, RelayWebhooks: relayWebhooks})
+		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets, SecretStores: secretStores, PrivateNetworks: privateNetworks, GitHubApps: githubApps, RelayWebhooks: relayWebhooks,
+		ConfigSources: configSources, WorkflowResources: workflowResources, WorkflowRevisions: workflowRevisions, WorkflowStageRuns: workflowStageRuns})
+}
+
+func (a *API) RunWorkflowPoller(ctx context.Context) {
+	if a.workflows != nil {
+		a.workflows.RunPoller(ctx)
+	}
 }
 
 type secretRequest struct {
 	Name                string  `json:"name"`
 	Type                string  `json:"type"`
+	Source              string  `json:"source"`
 	EnvironmentVariable string  `json:"environmentVariable"`
 	Value               *string `json:"value"`
 	Generate            bool    `json:"generate"`
+	ExternalStoreID     string  `json:"externalStoreId"`
+	ExternalSecretID    string  `json:"externalSecretId"`
+	ExternalField       string  `json:"externalField"`
 }
 
 var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
@@ -481,6 +607,33 @@ func normalizeSecretType(value string) core.SecretType {
 		return core.SecretTypeText
 	}
 	return core.SecretType(strings.TrimSpace(value))
+}
+
+func normalizeSecretSource(value string) core.SecretSource {
+	if strings.TrimSpace(value) == "" {
+		return core.SecretSourceLocal
+	}
+	return core.SecretSource(strings.TrimSpace(value))
+}
+
+func (a *API) validateExternalSecret(ctx context.Context, input secretRequest) string {
+	if strings.TrimSpace(input.ExternalStoreID) == "" {
+		return "Choose a secret store."
+	}
+	if strings.TrimSpace(input.ExternalSecretID) == "" || len(input.ExternalSecretID) > 2048 {
+		return "Enter the secret ID from the provider."
+	}
+	if len(input.ExternalField) > 256 {
+		return "Keep the value field under 256 characters."
+	}
+	item, err := a.store.GetSecretStore(ctx, strings.TrimSpace(input.ExternalStoreID))
+	if err != nil {
+		return "Choose an available secret store."
+	}
+	if item.State != "ready" {
+		return "Verify the secret store before using it."
+	}
+	return ""
 }
 
 func generateSSHKey() (privateKey, publicKey string, err error) {
@@ -535,8 +688,9 @@ func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Name, input.EnvironmentVariable = strings.TrimSpace(input.Name), strings.TrimSpace(input.EnvironmentVariable)
 	secretType := normalizeSecretType(input.Type)
+	secretSource := normalizeSecretSource(input.Source)
 	if input.Generate {
-		if secretType != core.SecretTypeSSHPrivateKey {
+		if secretSource != core.SecretSourceLocal || secretType != core.SecretTypeSSHPrivateKey {
 			problem(w, http.StatusBadRequest, "Invalid secret", "Only SSH private keys can be generated.")
 			return
 		}
@@ -547,21 +701,40 @@ func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
 		}
 		input.Value = &privateKey
 	}
-	if detail := validateSecretInput(input.Name, secretType, input.EnvironmentVariable, input.Value, true); detail != "" {
+	if secretSource != core.SecretSourceLocal && secretSource != core.SecretSourceExternal {
+		problem(w, http.StatusBadRequest, "Invalid secret", "Choose local or external storage.")
+		return
+	}
+	if detail := validateSecretInput(input.Name, secretType, input.EnvironmentVariable, input.Value, secretSource == core.SecretSourceLocal); detail != "" {
 		problem(w, http.StatusBadRequest, "Invalid secret", detail)
 		return
 	}
+	if secretSource == core.SecretSourceExternal {
+		if input.Value != nil && *input.Value != "" {
+			problem(w, http.StatusBadRequest, "Invalid secret", "External secret references do not accept a local value.")
+			return
+		}
+		if detail := a.validateExternalSecret(r.Context(), input); detail != "" {
+			problem(w, http.StatusBadRequest, "Invalid secret", detail)
+			return
+		}
+	}
 	now := time.Now().UTC()
-	item := core.Secret{ID: ulid.Make().String(), Name: input.Name, Type: secretType, EnvironmentVariable: input.EnvironmentVariable, CreatedAt: now, UpdatedAt: now}
-	if item.Type == core.SecretTypeSSHPrivateKey {
+	item := core.Secret{ID: ulid.Make().String(), Name: input.Name, Type: secretType, Source: secretSource, EnvironmentVariable: input.EnvironmentVariable,
+		ExternalStoreID: strings.TrimSpace(input.ExternalStoreID), ExternalSecretID: strings.TrimSpace(input.ExternalSecretID), ExternalField: strings.TrimSpace(input.ExternalField), CreatedAt: now, UpdatedAt: now}
+	if item.Source == core.SecretSourceLocal && item.Type == core.SecretTypeSSHPrivateKey {
 		item.PublicValue, _ = sshPublicKey(*input.Value)
 	}
-	encrypted, err := a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
-	if err != nil {
-		a.internal(w, err)
-		return
+	if item.Source == core.SecretSourceLocal {
+		encrypted, err := a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		item.EncryptedValue = encrypted
+	} else {
+		item.EncryptedValue = ""
 	}
-	item.EncryptedValue = encrypted
 	if err := a.store.CreateSecret(r.Context(), item); err != nil {
 		a.internal(w, err)
 		return
@@ -588,8 +761,15 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(input.Type) != "" {
 		secretType = normalizeSecretType(input.Type)
 	}
+	secretSource := item.Source
+	if secretSource == "" {
+		secretSource = core.SecretSourceLocal
+	}
+	if strings.TrimSpace(input.Source) != "" {
+		secretSource = normalizeSecretSource(input.Source)
+	}
 	if input.Generate {
-		if secretType != core.SecretTypeSSHPrivateKey {
+		if secretSource != core.SecretSourceLocal || secretType != core.SecretTypeSSHPrivateKey {
 			problem(w, http.StatusBadRequest, "Invalid secret", "Only SSH private keys can be generated.")
 			return
 		}
@@ -600,9 +780,17 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 		}
 		input.Value = &privateKey
 	}
+	if secretSource != core.SecretSourceLocal && secretSource != core.SecretSourceExternal {
+		problem(w, http.StatusBadRequest, "Invalid secret", "Choose local or external storage.")
+		return
+	}
 	validationValue := input.Value
-	if (validationValue == nil || *validationValue == "") && secretType != item.Type {
-		plaintext, decryptErr := a.eventConfig.Vault.Decrypt("secret:"+item.ID, item.EncryptedValue)
+	if secretSource == core.SecretSourceLocal && (validationValue == nil || *validationValue == "") && (secretType != item.Type || item.Source == core.SecretSourceExternal) {
+		if item.Source == core.SecretSourceExternal {
+			problem(w, http.StatusBadRequest, "Invalid secret", "Enter a value when moving an external secret into Dispatch.")
+			return
+		}
+		plaintext, decryptErr := a.secretResolver.Resolve(r.Context(), item.ID)
 		if decryptErr != nil {
 			a.internal(w, decryptErr)
 			return
@@ -614,15 +802,24 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Invalid secret", detail)
 		return
 	}
-	item.Name, item.Type, item.EnvironmentVariable, item.UpdatedAt = input.Name, secretType, input.EnvironmentVariable, time.Now().UTC()
-	if input.Value != nil && *input.Value != "" {
+	if secretSource == core.SecretSourceExternal {
+		if detail := a.validateExternalSecret(r.Context(), input); detail != "" {
+			problem(w, http.StatusBadRequest, "Invalid secret", detail)
+			return
+		}
+	}
+	item.Name, item.Type, item.Source, item.EnvironmentVariable, item.UpdatedAt = input.Name, secretType, secretSource, input.EnvironmentVariable, time.Now().UTC()
+	if secretSource == core.SecretSourceLocal && input.Value != nil && *input.Value != "" {
 		item.EncryptedValue, err = a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
 		if err != nil {
 			a.internal(w, err)
 			return
 		}
 	}
-	if item.Type == core.SecretTypeSSHPrivateKey {
+	if secretSource == core.SecretSourceExternal {
+		item.EncryptedValue, item.PublicValue = "", ""
+		item.ExternalStoreID, item.ExternalSecretID, item.ExternalField = strings.TrimSpace(input.ExternalStoreID), strings.TrimSpace(input.ExternalSecretID), strings.TrimSpace(input.ExternalField)
+	} else if item.Type == core.SecretTypeSSHPrivateKey {
 		value := validationValue
 		if input.Value != nil && *input.Value != "" {
 			value = input.Value
@@ -632,6 +829,9 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		item.PublicValue = ""
+	}
+	if secretSource == core.SecretSourceLocal {
+		item.ExternalStoreID, item.ExternalSecretID, item.ExternalField = "", "", ""
 	}
 	if err := a.store.UpdateSecret(r.Context(), item); err != nil {
 		a.notFoundOrInternal(w, err, "Secret")
@@ -1630,7 +1830,7 @@ func (a *API) inspectHelmSource(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		resolved, err := (deploy.SourceAuthExecutor{Secrets: a.store, Vault: a.eventConfig.Vault, GitHubApps: a.eventConfig.GitHubApps}).Resolve(r.Context(), app)
+		resolved, err := (deploy.SourceAuthExecutor{Secrets: a.store, Vault: a.eventConfig.Vault, Resolver: a.secretResolver, GitHubApps: a.eventConfig.GitHubApps}).Resolve(r.Context(), app)
 		if err != nil {
 			problem(w, http.StatusBadRequest, "Repository credential unavailable", err.Error())
 			return
@@ -1663,6 +1863,83 @@ func encodeHelmValueOverrides(values map[string]interface{}) (string, error) {
 		return "", errors.New("structured Helm values exceed 512 KB")
 	}
 	return string(encoded), nil
+}
+
+type appHelmValuesResponse struct {
+	deploy.HelmChartInspection
+	Overrides map[string]interface{} `json:"overrides"`
+}
+
+func (a *API) getAppHelmValues(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.GetApp(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Application")
+		return
+	}
+	if item.BuildType != core.BuildTypeHelm {
+		problem(w, http.StatusConflict, "Helm values unavailable", "This application does not deploy a Helm chart.")
+		return
+	}
+	item.SourceRepo = deploy.RepositoryForSourceAuth(item.SourceRepo, item.SourceAuthType)
+	resolved, err := (deploy.SourceAuthExecutor{Secrets: a.store, Vault: a.eventConfig.Vault, Resolver: a.secretResolver, GitHubApps: a.eventConfig.GitHubApps}).Resolve(r.Context(), item)
+	if err != nil {
+		problem(w, http.StatusBadRequest, "Repository credential unavailable", err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	inspection, err := deploy.InspectHelmSource(ctx, resolved)
+	if err != nil {
+		status := http.StatusUnprocessableEntity
+		if errors.Is(err, context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		}
+		problem(w, status, "Helm chart could not be loaded", err.Error())
+		return
+	}
+	overrides := map[string]interface{}{}
+	if strings.TrimSpace(item.HelmValues) != "" {
+		if err := yaml.Unmarshal([]byte(item.HelmValues), &overrides); err != nil {
+			problem(w, http.StatusUnprocessableEntity, "Saved Helm values are invalid", err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, appHelmValuesResponse{HelmChartInspection: inspection, Overrides: overrides})
+}
+
+type updateAppHelmValuesRequest struct {
+	Overrides map[string]interface{} `json:"overrides"`
+}
+
+func (a *API) updateAppHelmValues(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.GetApp(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Application")
+		return
+	}
+	if item.BuildType != core.BuildTypeHelm {
+		problem(w, http.StatusConflict, "Helm values unavailable", "This application does not deploy a Helm chart.")
+		return
+	}
+	if item.Generated {
+		problem(w, http.StatusConflict, "Generated application cannot be edited", "Update values on its Helm source or preview group instead.")
+		return
+	}
+	var input updateAppHelmValuesRequest
+	if !decode(w, r, &input) {
+		return
+	}
+	encoded, err := encodeHelmValueOverrides(input.Overrides)
+	if err != nil {
+		problem(w, http.StatusBadRequest, "Helm values unavailable", err.Error())
+		return
+	}
+	item.HelmValues = encoded
+	if err := a.store.UpdateApp(r.Context(), item); err != nil {
+		a.notFoundOrInternal(w, err, "Application")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"overrides": input.Overrides})
 }
 
 func validateSourceAuthentication(repository, authType, credentialID string) string {

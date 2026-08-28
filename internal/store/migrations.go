@@ -48,21 +48,44 @@ func (s *SQLStore) Migrate(ctx context.Context) error {
 		if applied > 0 {
 			continue
 		}
+		foreignKeysOff := !s.postgres && strings.Contains(string(contents), "-- dispatch:foreign-keys-off")
+		if foreignKeysOff {
+			if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+				return fmt.Errorf("disable foreign keys for migration %s: %w", version, err)
+			}
+		}
 
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
+			if foreignKeysOff {
+				_, _ = s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+			}
 			return fmt.Errorf("begin migration %s: %w", version, err)
 		}
 		if _, err := tx.ExecContext(ctx, string(contents)); err != nil {
 			_ = tx.Rollback()
+			if foreignKeysOff {
+				_, _ = s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+			}
 			return fmt.Errorf("apply migration %s: %w", version, err)
 		}
 		if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO schema_migrations(version, applied_at) VALUES(?, CURRENT_TIMESTAMP)`), version); err != nil {
 			_ = tx.Rollback()
+			if foreignKeysOff {
+				_, _ = s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+			}
 			return fmt.Errorf("record migration %s: %w", version, err)
 		}
 		if err := tx.Commit(); err != nil {
+			if foreignKeysOff {
+				_, _ = s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+			}
 			return fmt.Errorf("commit migration %s: %w", version, err)
+		}
+		if foreignKeysOff {
+			if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+				return fmt.Errorf("restore foreign keys after migration %s: %w", version, err)
+			}
 		}
 	}
 	return nil

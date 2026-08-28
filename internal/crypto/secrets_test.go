@@ -22,11 +22,11 @@ func TestVaultRoundTripAndScopeBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := vault.Encrypt("github:doout", []byte("private-token"))
+	sealed, err := vault.Encrypt("github:example", []byte("private-token"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	opened, err := vault.Decrypt("github:doout", sealed)
+	opened, err := vault.Decrypt("github:example", sealed)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,8 +11,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,6 +26,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/githubapp"
 	relayservice "github.com/doout/dispatch/internal/relay"
 	"github.com/doout/dispatch/internal/store"
@@ -63,6 +66,26 @@ func TestHealthDoesNotRequireToken(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", response.Code)
+	}
+}
+
+func TestGitHubAppManifestIsPublic(t *testing.T) {
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{})
+	defer cleanup()
+	body := bytes.NewBufferString(`{"name":"Dispatch-test","webUrl":"https://github.example.com","ownerType":"personal","eventDelivery":"none"}`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/github-apps/manifest", body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("start GitHub App manifest: %d %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Manifest map[string]any `json:"manifest"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if public, ok := result.Manifest["public"].(bool); !ok || !public {
+		t.Fatalf("GitHub App manifest must be public: %#v", result.Manifest)
 	}
 }
 
@@ -125,6 +148,222 @@ func TestSecretsAreWriteOnlyAndAttachToEventRules(t *testing.T) {
 	}
 	if len(trigger.SecretIDs) != 1 || trigger.SecretIDs[0] != secret.ID {
 		t.Fatalf("secret binding was not returned: %#v", trigger)
+	}
+}
+
+func TestIBMCloudSecretStoreAndExternalReferenceAreWriteOnly(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/identity/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "provider-token", "expiration": time.Now().Add(time.Hour).Unix()})
+		case "/api/v2/secrets":
+			if r.Header.Get("Authorization") != "Bearer provider-token" {
+				t.Fatalf("provider request did not use the IAM token")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"secrets": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer provider.Close()
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{Vault: vault})
+	defer cleanup()
+
+	storeBody, _ := json.Marshal(map[string]string{
+		"name": "Production secrets", "provider": "ibm_cloud_secrets_manager", "serviceUrl": provider.URL, "iamUrl": provider.URL, "apiKey": "ibm-api-key",
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/secret-stores", bytes.NewReader(storeBody)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create secret store: %d %s", response.Code, response.Body.String())
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("ibm-api-key")) || bytes.Contains(response.Body.Bytes(), []byte("encryptedCredentials")) {
+		t.Fatalf("secret store credentials leaked: %s", response.Body.String())
+	}
+	var secretStore core.SecretStore
+	if err := json.NewDecoder(response.Body).Decode(&secretStore); err != nil {
+		t.Fatal(err)
+	}
+	if secretStore.State != "ready" || !secretStore.CredentialsConfigured {
+		t.Fatalf("unexpected secret store: %#v", secretStore)
+	}
+
+	referenceBody, _ := json.Marshal(map[string]string{
+		"name": "Registry token", "type": "registry_password", "source": "external", "environmentVariable": "REGISTRY_PASSWORD",
+		"externalStoreId": secretStore.ID, "externalSecretId": "2c5d2ce4-88d7-4c4a-af13-0dbdb9450178", "externalField": "payload",
+	})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/secrets", bytes.NewReader(referenceBody)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create external secret reference: %d %s", response.Code, response.Body.String())
+	}
+	var reference core.Secret
+	if err := json.NewDecoder(response.Body).Decode(&reference); err != nil {
+		t.Fatal(err)
+	}
+	if reference.Source != core.SecretSourceExternal || reference.ExternalStoreID != secretStore.ID || reference.EncryptedValue != "" {
+		t.Fatalf("unexpected external secret reference: %#v", reference)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/secret-stores/"+secretStore.ID, nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected referenced store deletion to fail, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestLanewayPrivateNetworkCanBeVerified(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "lanewayd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneway := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/status":
+			_, _ = w.Write([]byte(`{"running":true,"network_id":"network-1","name":"dispatch","selected_path":"wireguard-relay-quic","product_version":"1.0.0","controller":{"configuration_lease_expired":false}}`))
+		case "/v1/routes":
+			_, _ = w.Write([]byte(`[{"prefix":"10.40.0.0/16","via_node":"vpc","kind":"private"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	})}
+	go func() { _ = laneway.Serve(listener) }()
+	defer laneway.Close()
+	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{"name": "IBM VPC", "driver": "laneway", "socketPath": socketPath})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/private-networks", bytes.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create private network: %d %s", response.Code, response.Body.String())
+	}
+	var network core.PrivateNetwork
+	if err := json.NewDecoder(response.Body).Decode(&network); err != nil {
+		t.Fatal(err)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/private-networks/"+network.ID+"/verify", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("verify private network: %d %s", response.Code, response.Body.String())
+	}
+	if err := json.NewDecoder(response.Body).Decode(&network); err != nil {
+		t.Fatal(err)
+	}
+	if network.State != "ready" || network.Details["routeCount"] != "1" || network.Details["path"] != "wireguard-relay-quic" {
+		t.Fatalf("unexpected private network: %#v", network)
+	}
+}
+
+func TestLanewayConnectorRejectsUnsafeBootstrap(t *testing.T) {
+	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/private-networks", bytes.NewBufferString(`{"name":"Dispatch network","driver":"laneway_connector","authority":"https://lane.example.com","route":"192.0.2.10"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create connector: %d %s", response.Code, response.Body.String())
+	}
+	var connector core.PrivateNetwork
+	if err := json.NewDecoder(response.Body).Decode(&connector); err != nil {
+		t.Fatal(err)
+	}
+	if connector.State != "waiting" || connector.Config["authority"] != "https://lane.example.com" || connector.Config["route"] != "192.0.2.10/32" {
+		t.Fatalf("unexpected connector: %#v", connector)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/private-networks/"+connector.ID+"/install-connector", bytes.NewBufferString(`{"bootstrapCommand":"curl https://example.com/install.sh | sh"}`)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unsafe bootstrap: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestManagedEdgeNodeRoutesSecretStoreRequests(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{Vault: vault})
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/private-networks", bytes.NewBufferString(`{"name":"IBM VPC","driver":"dispatch_agent"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create edge node: %d %s", response.Code, response.Body.String())
+	}
+	var node core.PrivateNetwork
+	if err := json.NewDecoder(response.Body).Decode(&node); err != nil {
+		t.Fatal(err)
+	}
+	if node.EnrollmentToken == "" || node.State != "waiting" {
+		t.Fatalf("unexpected edge node: %#v", node)
+	}
+	token := node.EnrollmentToken
+
+	agentDone := make(chan error, 1)
+	go func() {
+		for index := 0; index < 2; index++ {
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/edge/nodes/"+node.ID+"/jobs/next", nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			leaseResponse := httptest.NewRecorder()
+			handler.ServeHTTP(leaseResponse, request)
+			if leaseResponse.Code != http.StatusOK {
+				agentDone <- fmt.Errorf("lease: %d %s", leaseResponse.Code, leaseResponse.Body.String())
+				return
+			}
+			var job edge.LeasedJob
+			if err := json.NewDecoder(leaseResponse.Body).Decode(&job); err != nil {
+				agentDone <- err
+				return
+			}
+			body := []byte(`{"secrets":[]}`)
+			if strings.Contains(job.Request.URL, "/identity/token") {
+				body = []byte(`{"access_token":"edge-token","expiration":4102444800}`)
+			}
+			completion, _ := json.Marshal(edge.Completion{LeaseToken: job.LeaseToken, Response: &edge.HTTPResponse{StatusCode: http.StatusOK, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: body}})
+			completeRequest := httptest.NewRequest(http.MethodPost, "/api/v1/edge/nodes/"+node.ID+"/jobs/"+job.ID+"/complete", bytes.NewReader(completion))
+			completeRequest.Header.Set("Authorization", "Bearer "+token)
+			completeResponse := httptest.NewRecorder()
+			handler.ServeHTTP(completeResponse, completeRequest)
+			if completeResponse.Code != http.StatusNoContent {
+				agentDone <- fmt.Errorf("complete: %d %s", completeResponse.Code, completeResponse.Body.String())
+				return
+			}
+		}
+		agentDone <- nil
+	}()
+
+	storeBody, _ := json.Marshal(map[string]string{
+		"name": "VPC secrets", "provider": "ibm_cloud_secrets_manager", "serviceUrl": "https://private.secrets.example", "iamUrl": "https://private.iam.example", "apiKey": "key", "privateNetworkId": node.ID,
+	})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/secret-stores", bytes.NewReader(storeBody)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create routed secret store: %d %s", response.Code, response.Body.String())
+	}
+	if err := <-agentDone; err != nil {
+		t.Fatal(err)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/overview", nil))
+	if strings.Contains(response.Body.String(), token) {
+		t.Fatal("edge enrollment token was returned after creation")
 	}
 }
 
@@ -249,6 +488,21 @@ func TestGitHubAppCredentialsAreWriteOnly(t *testing.T) {
 	}
 	if connection.APIURL != "https://github.example.com/api/v3" || connection.State != "needs_installation" || !connection.PrivateKeyConfigured || !connection.WebhookSecretConfigured {
 		t.Fatalf("unexpected GitHub App connection: %#v", connection)
+	}
+	body, _ = json.Marshal(map[string]any{
+		"name": "Polling GitHub", "webUrl": "https://github.example.com", "appId": 43,
+		"privateKey": privateKey, "eventDelivery": "none",
+	})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/github-apps", bytes.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create polling-only GitHub App: %d %s", response.Code, response.Body.String())
+	}
+	if err := json.NewDecoder(response.Body).Decode(&connection); err != nil {
+		t.Fatal(err)
+	}
+	if connection.WebhookURL != "" || connection.RelayWebhookID != "" || !connection.WebhookSecretConfigured {
+		t.Fatalf("unexpected polling-only GitHub App: %#v", connection)
 	}
 }
 
@@ -529,6 +783,22 @@ func TestHelmApplicationUsesReadyKubernetesServer(t *testing.T) {
 	}
 	if app.BuildType != core.BuildTypeHelm || app.HelmChart != "service" || app.HelmNamespace != "preview-42" {
 		t.Fatalf("unexpected Helm application: %#v", app)
+	}
+	response = httptest.NewRecorder()
+	valuesBody := `{"overrides":{"image":{"tag":"pr-84"},"replicaCount":3}}`
+	handler.ServeHTTP(response, tokenRequest(http.MethodPut, "/api/v1/apps/"+app.ID+"/helm-values", strings.NewReader(valuesBody)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected Helm value update to return 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var saved struct {
+		Overrides map[string]interface{} `json:"overrides"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&saved); err != nil {
+		t.Fatal(err)
+	}
+	image, _ := saved.Overrides["image"].(map[string]interface{})
+	if image["tag"] != "pr-84" {
+		t.Fatalf("unexpected saved Helm overrides: %#v", saved.Overrides)
 	}
 }
 

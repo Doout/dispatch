@@ -30,6 +30,7 @@ type HookExecutor struct {
 		UpdateDeploymentOutputs(context.Context, string, map[string]string) error
 	}
 	Vault    *secretcrypto.Vault
+	Resolver SecretResolver
 	runHook  hookRunFunc
 	checkout checkoutFunc
 }
@@ -51,7 +52,7 @@ func (e HookExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 		return err
 	}
 	defer os.RemoveAll(credentialDirectory)
-	resolvedApp, err := resolveHookSecrets(app, e.Vault)
+	resolvedApp, err := resolveHookSecrets(ctx, app, e.Resolver, e.Vault)
 	if err != nil {
 		return err
 	}
@@ -169,7 +170,7 @@ func (e HookExecutor) persistHookOutputs(ctx context.Context, deploymentID strin
 	return nil
 }
 
-func resolveHookSecrets(app core.App, vault *secretcrypto.Vault) (core.App, error) {
+func resolveHookSecrets(ctx context.Context, app core.App, resolver SecretResolver, vault *secretcrypto.Vault) (core.App, error) {
 	if len(app.HookEnvironment) == 0 {
 		return app, nil
 	}
@@ -180,11 +181,18 @@ func resolveHookSecrets(app core.App, vault *secretcrypto.Vault) (core.App, erro
 			resolved[key] = value
 			continue
 		}
-		plaintext, err := vault.Decrypt("secret:"+id, value)
+		var plaintext []byte
+		var err error
+		if resolver != nil {
+			plaintext, err = resolver.Resolve(ctx, id)
+		} else {
+			plaintext, err = vault.Decrypt("secret:"+id, value)
+		}
 		if err != nil {
-			return app, fmt.Errorf("decrypt hook secret %s: %w", environmentVariable, err)
+			return app, fmt.Errorf("resolve hook secret %s: %w", environmentVariable, err)
 		}
 		resolved[resolvedSecretPrefix+environmentVariable] = string(plaintext)
+		clear(plaintext)
 	}
 	app.HookEnvironment = resolved
 	return app, nil

@@ -186,6 +186,36 @@ func newSDKHelmClient(server core.Server, namespace, workspace string) (helmClie
 	return &sdkHelmClient{configuration: configuration, registry: registryClient, settings: settings}, nil
 }
 
+// HelmReleaseManifest returns the rendered YAML stored with an installed release.
+func HelmReleaseManifest(ctx context.Context, server core.Server, namespace, release string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	prepared, cleanup, err := prepareKubernetesServer(server)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	workspace, err := os.MkdirTemp("", "dispatch-helm-inspect-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(workspace)
+	client, err := newSDKHelmClient(prepared, namespace, workspace)
+	if err != nil {
+		return "", err
+	}
+	sdk, ok := client.(*sdkHelmClient)
+	if !ok {
+		return "", errors.New("Helm release inspection is unavailable")
+	}
+	installed, err := action.NewGet(sdk.configuration).Run(release)
+	if err != nil {
+		return "", err
+	}
+	return installed.Manifest, nil
+}
+
 func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app core.App, values map[string]interface{}) error {
 	chartOptions := action.ChartPathOptions{
 		RepoURL: app.HelmRepository,

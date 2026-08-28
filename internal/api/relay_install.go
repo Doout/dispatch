@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doout/dispatch/internal/core"
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/ssh"
 )
@@ -32,15 +33,17 @@ if [ "${#DISPATCH_RELAY_TOKEN}" -lt 24 ] || [ "${#DISPATCH_RELAY_TOKEN}" -gt 256
   echo "Relay token must contain 24-256 characters" >&2
   exit 1
 fi
-command -v systemctl >/dev/null 2>&1 || { echo "systemd is required" >&2; exit 1; }
-command -v useradd >/dev/null 2>&1 || { echo "useradd is required" >&2; exit 1; }
 
 install_root=/usr/local/bin
 state_root=/var/lib/dispatch-relay
 config_root=/etc/dispatch-relay
 binary_path=${DISPATCH_RELAY_BINARY_PATH:-}
+install_mode=${DISPATCH_RELAY_INSTALL_MODE:-systemd}
 
-if [ -z "$binary_path" ]; then
+download_binary() {
+  if [ -n "$binary_path" ]; then
+    return
+  fi
   : "${DISPATCH_RELAY_DOWNLOAD_BASE:?DISPATCH_RELAY_DOWNLOAD_BASE is required}"
   command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
   machine=$(uname -m)
@@ -52,7 +55,81 @@ if [ -z "$binary_path" ]; then
   binary_path=$(mktemp)
   trap 'rm -f "$binary_path"' EXIT
   curl -fsSL "${DISPATCH_RELAY_DOWNLOAD_BASE%/}/relay/bin/linux-$machine" -o "$binary_path"
+}
+
+if [ "$install_mode" = docker ]; then
+  command -v docker >/dev/null 2>&1 || { echo "Docker is required" >&2; exit 1; }
+  docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 1; }
+
+  relay_root=${DISPATCH_RELAY_DOCKER_ROOT:-/opt/dispatch-relay}
+  relay_image=${DISPATCH_RELAY_IMAGE:-dispatch-relay:local}
+  case "$relay_image" in *[!A-Za-z0-9._/:@-]*) echo "Relay image contains unsupported characters" >&2; exit 1 ;; esac
+
+  install -d -m 0755 "$relay_root" "$config_root"
+  install -d -m 0750 "$state_root"
+  chown -R 65532:65532 "$state_root"
+
+  if [ -z "${DISPATCH_RELAY_IMAGE:-}" ]; then
+    download_binary
+    image_root="$relay_root/image"
+    install -d -m 0755 "$image_root"
+    install -m 0755 "$binary_path" "$image_root/dispatch-relay"
+    cat > "$image_root/Containerfile" <<'EOF'
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates
+COPY dispatch-relay /usr/local/bin/dispatch-relay
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/dispatch-relay"]
+EOF
+    docker build --pull -f "$image_root/Containerfile" -t "$relay_image" "$image_root"
+  else
+    docker pull "$relay_image"
+  fi
+
+  cat > "$config_root/relay.env" <<EOF
+DISPATCH_RELAY_ADDR=:443
+DISPATCH_RELAY_PUBLIC_URL=$DISPATCH_RELAY_PUBLIC_URL
+DISPATCH_RELAY_TOKEN=$DISPATCH_RELAY_TOKEN
+DISPATCH_RELAY_TLS_MODE=auto
+DISPATCH_RELAY_ACME_CACHE=/data/acme
+DATABASE_URL=/data/relay.db
+EOF
+  chmod 0600 "$config_root/relay.env"
+
+  cat > "$relay_root/compose.yaml" <<EOF
+services:
+  relay:
+    image: $relay_image
+    restart: unless-stopped
+    env_file:
+      - $config_root/relay.env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - $state_root:/data
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+EOF
+  docker compose -f "$relay_root/compose.yaml" up -d --remove-orphans
+  docker compose -f "$relay_root/compose.yaml" ps
+  echo "Relay installed with Docker Compose. Re-run this command to update it."
+  exit 0
 fi
+
+if [ "$install_mode" != systemd ]; then
+  echo "DISPATCH_RELAY_INSTALL_MODE must be systemd or docker" >&2
+  exit 1
+fi
+
+command -v systemctl >/dev/null 2>&1 || { echo "systemd is required" >&2; exit 1; }
+command -v useradd >/dev/null 2>&1 || { echo "useradd is required" >&2; exit 1; }
+download_binary
 
 install -d -m 0755 "$install_root" "$config_root"
 install -d -m 0750 "$state_root"
@@ -116,14 +193,18 @@ type relaySSHInstallRequest struct {
 	AuthType           string `json:"authType"`
 	Password           string `json:"password"`
 	PrivateKey         string `json:"privateKey"`
+	SecretID           string `json:"secretId"`
 	PrivateKeyPassword string `json:"privateKeyPassword"`
 	SudoPassword       string `json:"sudoPassword"`
 	HostKeyFingerprint string `json:"hostKeyFingerprint"`
 	RelayURL           string `json:"relayUrl"`
 	RelayToken         string `json:"relayToken"`
+	InstallMode        string `json:"installMode"`
+	RelayImage         string `json:"relayImage"`
 }
 
 var relayInstallTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{24,256}$`)
+var relayInstallImagePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]*$`)
 
 func (a *API) relayInstallScript(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
@@ -224,7 +305,12 @@ func (a *API) installRelayOverSSH(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Relay token invalid", "Use 24-256 letters, numbers, underscores, or hyphens.")
 		return
 	}
-	auth, err := relaySSHAuth(input)
+	input.InstallMode, input.RelayImage, detail = relayInstallOptions(input.InstallMode, input.RelayImage)
+	if detail != "" {
+		problem(w, http.StatusBadRequest, "Relay runtime invalid", detail)
+		return
+	}
+	auth, err := a.relaySSHAuth(r.Context(), input)
 	if err != nil {
 		problem(w, http.StatusBadRequest, "SSH credential invalid", err.Error())
 		return
@@ -271,6 +357,34 @@ func (a *API) installRelayOverSSH(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _, _ = runSSHCommand(client, "rm -f "+shellQuote(temporaryPath), nil) }()
 
+	command, stdin := relaySSHInstallerInvocation(input, relayURL, temporaryPath)
+	output, err := runSSHCommand(client, command, strings.NewReader(stdin))
+	if err != nil {
+		problem(w, http.StatusBadGateway, "Relay installation failed", strings.TrimSpace(string(output))+"\n"+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "installed", "output": strings.TrimSpace(string(output))})
+}
+
+func relayInstallOptions(mode, image string) (string, string, string) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	image = strings.TrimSpace(image)
+	if mode == "" {
+		mode = "systemd"
+	}
+	if mode != "systemd" && mode != "docker" {
+		return "", "", "Choose systemd or Docker Compose."
+	}
+	if image != "" && mode != "docker" {
+		return "", "", "A container image can only be used with Docker Compose."
+	}
+	if len(image) > 512 || image != "" && !relayInstallImagePattern.MatchString(image) {
+		return "", "", "Enter a valid container image reference."
+	}
+	return mode, image, ""
+}
+
+func relaySSHInstallerInvocation(input relaySSHInstallRequest, relayURL, temporaryPath string) (string, string) {
 	sudo := "sudo -n"
 	stdin := relayInstaller
 	if input.User == "root" {
@@ -279,16 +393,18 @@ func (a *API) installRelayOverSSH(w http.ResponseWriter, r *http.Request) {
 		sudo = "sudo -S -p ''"
 		stdin = input.SudoPassword + "\n" + stdin
 	}
-	command := strings.TrimSpace(sudo + " env " +
-		"DISPATCH_RELAY_PUBLIC_URL=" + shellQuote(relayURL) + " " +
-		"DISPATCH_RELAY_TOKEN=" + shellQuote(input.RelayToken) + " " +
-		"DISPATCH_RELAY_BINARY_PATH=" + shellQuote(temporaryPath) + " sh -s")
-	output, err := runSSHCommand(client, command, strings.NewReader(stdin))
-	if err != nil {
-		problem(w, http.StatusBadGateway, "Relay installation failed", strings.TrimSpace(string(output))+"\n"+err.Error())
-		return
+	environment := []string{
+		"DISPATCH_RELAY_PUBLIC_URL=" + shellQuote(relayURL),
+		"DISPATCH_RELAY_TOKEN=" + shellQuote(input.RelayToken),
+		"DISPATCH_RELAY_BINARY_PATH=" + shellQuote(temporaryPath),
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "installed", "output": strings.TrimSpace(string(output))})
+	if input.InstallMode == "docker" {
+		environment = append(environment, "DISPATCH_RELAY_INSTALL_MODE='docker'")
+		if input.RelayImage != "" {
+			environment = append(environment, "DISPATCH_RELAY_IMAGE="+shellQuote(input.RelayImage))
+		}
+	}
+	return strings.TrimSpace(sudo + " env " + strings.Join(environment, " ") + " sh -s"), stdin
 }
 
 func relaySSHAddress(host string, port int) (string, string) {
@@ -305,7 +421,38 @@ func relaySSHAddress(host string, port int) (string, string) {
 	return net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(port)), ""
 }
 
-func relaySSHAuth(input relaySSHInstallRequest) (ssh.AuthMethod, error) {
+func (a *API) relaySSHAuth(ctx context.Context, input relaySSHInstallRequest) (ssh.AuthMethod, error) {
+	input.SecretID = strings.TrimSpace(input.SecretID)
+	if input.SecretID != "" {
+		if input.Password != "" || input.PrivateKey != "" {
+			return nil, errors.New("choose a saved SSH key or enter a credential")
+		}
+		if a.secretResolver == nil {
+			return nil, errors.New("encrypted secret storage is not configured")
+		}
+		secret, err := a.store.GetSecret(ctx, input.SecretID)
+		if err != nil {
+			return nil, errors.New("saved SSH key not found")
+		}
+		if secret.Type != core.SecretTypeSSHPrivateKey {
+			return nil, errors.New("choose a saved SSH private key")
+		}
+		plaintext, err := a.secretResolver.Resolve(ctx, secret.ID)
+		if err != nil {
+			return nil, errors.New("saved SSH key could not be resolved")
+		}
+		defer func() {
+			for index := range plaintext {
+				plaintext[index] = 0
+			}
+		}()
+		input.AuthType = "private_key"
+		input.PrivateKey = string(plaintext)
+	}
+	return relaySSHAuthInput(input)
+}
+
+func relaySSHAuthInput(input relaySSHInstallRequest) (ssh.AuthMethod, error) {
 	switch strings.ToLower(strings.TrimSpace(input.AuthType)) {
 	case "password":
 		if input.Password == "" {

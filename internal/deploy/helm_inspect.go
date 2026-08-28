@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,7 +14,10 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"gopkg.in/yaml.v3"
+	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/registry"
 )
 
 const maxInspectedHelmFileBytes = 2 * 1024 * 1024
@@ -42,6 +46,61 @@ type HelmChartInspection struct {
 	ValuesYAML string                 `json:"valuesYaml"`
 	Schema     interface{}            `json:"schema,omitempty"`
 	Profiles   []HelmValuesProfile    `json:"profiles"`
+}
+
+// InspectHelmSource loads chart metadata and defaults from any supported Helm
+// origin. Git sources retain profile discovery from files in the chart folder.
+func InspectHelmSource(ctx context.Context, app core.App) (HelmChartInspection, error) {
+	if gitBackedHelmChart(app) {
+		return InspectGitHelmSource(ctx, app)
+	}
+	if strings.TrimSpace(app.HelmChart) == "" {
+		return HelmChartInspection{}, errors.New("Helm chart is required")
+	}
+	workspace, err := os.MkdirTemp("", "dispatch-helm-inspect-")
+	if err != nil {
+		return HelmChartInspection{}, err
+	}
+	defer os.RemoveAll(workspace)
+	settings := cli.New()
+	settings.RepositoryConfig = filepath.Join(workspace, "repositories.yaml")
+	settings.RepositoryCache = filepath.Join(workspace, "repository-cache")
+	registryClient, err := registry.NewClient(
+		registry.ClientOptEnableCache(true),
+		registry.ClientOptWriter(io.Discard),
+		registry.ClientOptCredentialsFile(settings.RegistryConfig),
+	)
+	if err != nil {
+		return HelmChartInspection{}, fmt.Errorf("initialize registry client: %w", err)
+	}
+	options := action.ChartPathOptions{RepoURL: app.HelmRepository, Version: app.HelmVersion}
+	if app.HelmRepository != "" {
+		options.Username = os.Getenv("HELM_REPOSITORY_USERNAME")
+		options.Password = os.Getenv("HELM_REPOSITORY_PASSWORD")
+	}
+	locator := action.NewInstall(new(action.Configuration))
+	locator.ChartPathOptions = options
+	locator.SetRegistryClient(registryClient)
+	if err := ctx.Err(); err != nil {
+		return HelmChartInspection{}, err
+	}
+	chartPath, err := locator.LocateChart(app.HelmChart, settings)
+	if err != nil {
+		return HelmChartInspection{}, fmt.Errorf("resolve chart: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return HelmChartInspection{}, err
+	}
+	loaded, err := loader.Load(chartPath)
+	if err != nil {
+		return HelmChartInspection{}, fmt.Errorf("load Helm chart: %w", err)
+	}
+	valuesYAML, err := yaml.Marshal(loaded.Values)
+	if err != nil {
+		return HelmChartInspection{}, fmt.Errorf("encode chart defaults: %w", err)
+	}
+	return inspectionFromChart(app.HelmRepository, "", app.HelmChart, loaded.Metadata.Name, loaded.Metadata.Description,
+		loaded.Metadata.Version, loaded.Metadata.AppVersion, loaded.Metadata.Type, loaded.Values, string(valuesYAML), loaded.Schema, nil)
 }
 
 // NormalizeGitHelmSource accepts either a clone URL plus chart path or a
@@ -138,27 +197,35 @@ func InspectGitHelmSource(ctx context.Context, app core.App) (HelmChartInspectio
 		return HelmChartInspection{}, fmt.Errorf("read chart defaults: %w", err)
 	}
 
-	var schema interface{}
-	if len(loaded.Schema) > 0 {
-		if len(loaded.Schema) > maxInspectedHelmFileBytes {
-			return HelmChartInspection{}, errors.New("values schema exceeds 2 MB")
-		}
-		if err := json.Unmarshal(loaded.Schema, &schema); err != nil {
-			return HelmChartInspection{}, fmt.Errorf("parse values schema: %w", err)
-		}
-	}
 	profiles, err := inspectHelmProfiles(resolvedChartPath)
 	if err != nil {
 		return HelmChartInspection{}, err
 	}
 	metadata := loaded.Metadata
-	if loaded.Values == nil {
-		loaded.Values = map[string]interface{}{}
+	return inspectionFromChart(app.SourceRepo, app.Branch, app.HelmChart, metadata.Name, metadata.Description,
+		metadata.Version, metadata.AppVersion, metadata.Type, loaded.Values, valuesYAML, loaded.Schema, profiles)
+}
+
+func inspectionFromChart(repository, branch, chartPath, name, description, version, appVersion, chartType string, defaults map[string]interface{}, valuesYAML string, rawSchema []byte, profiles []HelmValuesProfile) (HelmChartInspection, error) {
+	var schema interface{}
+	if len(rawSchema) > 0 {
+		if len(rawSchema) > maxInspectedHelmFileBytes {
+			return HelmChartInspection{}, errors.New("values schema exceeds 2 MB")
+		}
+		if err := json.Unmarshal(rawSchema, &schema); err != nil {
+			return HelmChartInspection{}, fmt.Errorf("parse values schema: %w", err)
+		}
+	}
+	if defaults == nil {
+		defaults = map[string]interface{}{}
+	}
+	if profiles == nil {
+		profiles = []HelmValuesProfile{}
 	}
 	return HelmChartInspection{
-		Repository: app.SourceRepo, Branch: app.Branch, ChartPath: app.HelmChart,
-		Chart:    HelmChartMetadata{Name: metadata.Name, Description: metadata.Description, Version: metadata.Version, AppVersion: metadata.AppVersion, Type: metadata.Type},
-		Defaults: loaded.Values, ValuesYAML: valuesYAML, Schema: schema, Profiles: profiles,
+		Repository: repository, Branch: branch, ChartPath: chartPath,
+		Chart:    HelmChartMetadata{Name: name, Description: description, Version: version, AppVersion: appVersion, Type: chartType},
+		Defaults: defaults, ValuesYAML: valuesYAML, Schema: schema, Profiles: profiles,
 	}, nil
 }
 

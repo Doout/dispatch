@@ -26,11 +26,50 @@ type Store interface {
 	DeleteSecret(context.Context, string) error
 	ListSecrets(context.Context) ([]core.Secret, error)
 	GetSecret(context.Context, string) (core.Secret, error)
+	CreateSecretStore(context.Context, core.SecretStore) error
+	UpdateSecretStore(context.Context, core.SecretStore) error
+	DeleteSecretStore(context.Context, string) error
+	ListSecretStores(context.Context) ([]core.SecretStore, error)
+	GetSecretStore(context.Context, string) (core.SecretStore, error)
+	CreatePrivateNetwork(context.Context, core.PrivateNetwork) error
+	UpdatePrivateNetwork(context.Context, core.PrivateNetwork) error
+	DeletePrivateNetwork(context.Context, string) error
+	ListPrivateNetworks(context.Context) ([]core.PrivateNetwork, error)
+	GetPrivateNetwork(context.Context, string) (core.PrivateNetwork, error)
+	CreateEdgeJob(context.Context, core.EdgeJob) error
+	LeaseEdgeJob(context.Context, string, time.Time, time.Duration) (*core.EdgeJob, error)
+	CompleteEdgeJob(context.Context, string, string, string, string, string, time.Time) error
+	GetEdgeJob(context.Context, string) (core.EdgeJob, error)
+	DeleteEdgeJob(context.Context, string) error
 	CreateGitHubApp(context.Context, core.GitHubAppConnection) error
 	UpdateGitHubApp(context.Context, core.GitHubAppConnection) error
 	DeleteGitHubApp(context.Context, string) error
 	ListGitHubApps(context.Context) ([]core.GitHubAppConnection, error)
 	GetGitHubApp(context.Context, string) (core.GitHubAppConnection, error)
+	CreateConfigSource(context.Context, core.ConfigSource) error
+	UpdateConfigSource(context.Context, core.ConfigSource) error
+	DeleteConfigSource(context.Context, string) error
+	GetConfigSource(context.Context, string) (core.ConfigSource, error)
+	ListConfigSources(context.Context) ([]core.ConfigSource, error)
+	CreateWorkflowResource(context.Context, core.WorkflowResource) error
+	UpdateWorkflowResource(context.Context, core.WorkflowResource) error
+	GetWorkflowResource(context.Context, string) (core.WorkflowResource, error)
+	ListWorkflowResources(context.Context, string) ([]core.WorkflowResource, error)
+	ReplaceWorkflowResources(context.Context, core.ConfigSource, []core.WorkflowResource) error
+	CreateWorkflowEvent(context.Context, core.WorkflowEvent) (bool, error)
+	UpdateWorkflowEvent(context.Context, core.WorkflowEvent) error
+	CreateWorkflowRevision(context.Context, core.WorkflowRevision) error
+	UpdateWorkflowRevision(context.Context, core.WorkflowRevision) error
+	GetWorkflowRevision(context.Context, string) (core.WorkflowRevision, error)
+	ListWorkflowRevisions(context.Context, string, int) ([]core.WorkflowRevision, error)
+	CreateWorkflowJobResult(context.Context, core.WorkflowJobResult) error
+	UpdateWorkflowJobResult(context.Context, core.WorkflowJobResult) error
+	FindWorkflowJobResult(context.Context, string, string, string) (core.WorkflowJobResult, error)
+	ListWorkflowJobResults(context.Context, string) ([]core.WorkflowJobResult, error)
+	CreateWorkflowStageRun(context.Context, core.WorkflowStageRun) error
+	UpdateWorkflowStageRun(context.Context, core.WorkflowStageRun) error
+	GetWorkflowStageRun(context.Context, string) (core.WorkflowStageRun, error)
+	ListWorkflowStageRuns(context.Context, string) ([]core.WorkflowStageRun, error)
 
 	CreateProject(context.Context, core.Project) error
 	UpdateProject(context.Context, core.Project) error
@@ -61,6 +100,7 @@ type Store interface {
 	CreateDeployment(context.Context, core.Deployment) error
 	UpdateDeployment(context.Context, core.Deployment) error
 	UpdateDeploymentOutputs(context.Context, string, map[string]string) error
+	UpdateDeploymentSnapshot(context.Context, string, core.DeploymentSnapshot) error
 	GetDeployment(context.Context, string) (core.Deployment, error)
 	ListDeployments(context.Context, int) ([]core.Deployment, error)
 	ActiveDeploymentForApp(context.Context, string) (*core.Deployment, error)

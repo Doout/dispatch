@@ -137,8 +137,12 @@ func (s *SQLStore) CreateSecret(ctx context.Context, secret core.Secret) error {
 	if secret.Type == "" {
 		secret.Type = core.SecretTypeText
 	}
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO secrets(id,name,secret_type,environment_variable,public_value,encrypted_value,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`),
-		secret.ID, secret.Name, secret.Type, secret.EnvironmentVariable, secret.PublicValue, secret.EncryptedValue, stamp(secret.CreatedAt), stamp(secret.UpdatedAt))
+	if secret.Source == "" {
+		secret.Source = core.SecretSourceLocal
+	}
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO secrets(id,name,secret_type,secret_source,environment_variable,public_value,encrypted_value,external_store_id,external_secret_id,external_field,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`),
+		secret.ID, secret.Name, secret.Type, secret.Source, secret.EnvironmentVariable, secret.PublicValue, secret.EncryptedValue,
+		nullString(secret.ExternalStoreID), secret.ExternalSecretID, secret.ExternalField, stamp(secret.CreatedAt), stamp(secret.UpdatedAt))
 	return err
 }
 
@@ -146,8 +150,12 @@ func (s *SQLStore) UpdateSecret(ctx context.Context, secret core.Secret) error {
 	if secret.Type == "" {
 		secret.Type = core.SecretTypeText
 	}
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE secrets SET name=?,secret_type=?,environment_variable=?,public_value=?,encrypted_value=?,updated_at=? WHERE id=?`),
-		secret.Name, secret.Type, secret.EnvironmentVariable, secret.PublicValue, secret.EncryptedValue, stamp(secret.UpdatedAt), secret.ID)
+	if secret.Source == "" {
+		secret.Source = core.SecretSourceLocal
+	}
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE secrets SET name=?,secret_type=?,secret_source=?,environment_variable=?,public_value=?,encrypted_value=?,external_store_id=?,external_secret_id=?,external_field=?,updated_at=? WHERE id=?`),
+		secret.Name, secret.Type, secret.Source, secret.EnvironmentVariable, secret.PublicValue, secret.EncryptedValue,
+		nullString(secret.ExternalStoreID), secret.ExternalSecretID, secret.ExternalField, stamp(secret.UpdatedAt), secret.ID)
 	return changed(result, err)
 }
 
@@ -157,7 +165,7 @@ func (s *SQLStore) DeleteSecret(ctx context.Context, id string) error {
 }
 
 func (s *SQLStore) ListSecrets(ctx context.Context) ([]core.Secret, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,secret_type,environment_variable,public_value,encrypted_value,created_at,updated_at FROM secrets ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,secret_type,secret_source,environment_variable,public_value,encrypted_value,external_store_id,external_secret_id,external_field,created_at,updated_at FROM secrets ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +182,7 @@ func (s *SQLStore) ListSecrets(ctx context.Context) ([]core.Secret, error) {
 }
 
 func (s *SQLStore) GetSecret(ctx context.Context, id string) (core.Secret, error) {
-	item, err := scanSecret(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,secret_type,environment_variable,public_value,encrypted_value,created_at,updated_at FROM secrets WHERE id=?`), id))
+	item, err := scanSecret(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,secret_type,secret_source,environment_variable,public_value,encrypted_value,external_store_id,external_secret_id,external_field,created_at,updated_at FROM secrets WHERE id=?`), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -183,28 +191,246 @@ func (s *SQLStore) GetSecret(ctx context.Context, id string) (core.Secret, error
 
 func scanSecret(row scanner) (core.Secret, error) {
 	var item core.Secret
+	var externalStoreID sql.NullString
 	var created, updated string
-	err := row.Scan(&item.ID, &item.Name, &item.Type, &item.EnvironmentVariable, &item.PublicValue, &item.EncryptedValue, &created, &updated)
+	err := row.Scan(&item.ID, &item.Name, &item.Type, &item.Source, &item.EnvironmentVariable, &item.PublicValue, &item.EncryptedValue,
+		&externalStoreID, &item.ExternalSecretID, &item.ExternalField, &created, &updated)
+	item.ExternalStoreID = externalStoreID.String
 	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
 	return item, err
+}
+
+func (s *SQLStore) CreateSecretStore(ctx context.Context, item core.SecretStore) error {
+	config, err := json.Marshal(item.Config)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO secret_stores(id,name,provider,config,encrypted_credentials,state,last_verified_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.Name, item.Provider, string(config), item.EncryptedCredentials, item.State, nullTime(item.LastVerifiedAt), stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	return err
+}
+
+func (s *SQLStore) UpdateSecretStore(ctx context.Context, item core.SecretStore) error {
+	config, err := json.Marshal(item.Config)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE secret_stores SET name=?,provider=?,config=?,encrypted_credentials=?,state=?,last_verified_at=?,updated_at=? WHERE id=?`),
+		item.Name, item.Provider, string(config), item.EncryptedCredentials, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ID)
+	return changed(result, err)
+}
+
+func (s *SQLStore) DeleteSecretStore(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM secret_stores WHERE id=?`), id)
+	return changed(result, err)
+}
+
+func (s *SQLStore) ListSecretStores(ctx context.Context) ([]core.SecretStore, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,provider,config,encrypted_credentials,state,last_verified_at,created_at,updated_at FROM secret_stores ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.SecretStore{}
+	for rows.Next() {
+		item, err := scanSecretStore(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLStore) GetSecretStore(ctx context.Context, id string) (core.SecretStore, error) {
+	item, err := scanSecretStore(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,provider,config,encrypted_credentials,state,last_verified_at,created_at,updated_at FROM secret_stores WHERE id=?`), id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	return item, err
+}
+
+func scanSecretStore(row scanner) (core.SecretStore, error) {
+	var item core.SecretStore
+	var config, created, updated string
+	var verified sql.NullString
+	err := row.Scan(&item.ID, &item.Name, &item.Provider, &config, &item.EncryptedCredentials, &item.State, &verified, &created, &updated)
+	if err != nil {
+		return item, err
+	}
+	if err := json.Unmarshal([]byte(config), &item.Config); err != nil {
+		return item, err
+	}
+	item.CredentialsConfigured = item.EncryptedCredentials != ""
+	item.LastVerifiedAt = parseNullTime(verified)
+	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
+	return item, nil
+}
+
+func (s *SQLStore) CreatePrivateNetwork(ctx context.Context, item core.PrivateNetwork) error {
+	config, err := json.Marshal(item.Config)
+	if err != nil {
+		return err
+	}
+	details, err := json.Marshal(item.Details)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO private_networks(id,name,driver,config,details,token_hash,state,last_verified_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.Name, item.Driver, string(config), string(details), item.TokenHash, item.State, nullTime(item.LastVerifiedAt), stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	return err
+}
+
+func (s *SQLStore) UpdatePrivateNetwork(ctx context.Context, item core.PrivateNetwork) error {
+	config, err := json.Marshal(item.Config)
+	if err != nil {
+		return err
+	}
+	details, err := json.Marshal(item.Details)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE private_networks SET name=?,driver=?,config=?,details=?,token_hash=?,state=?,last_verified_at=?,updated_at=? WHERE id=?`),
+		item.Name, item.Driver, string(config), string(details), item.TokenHash, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ID)
+	return changed(result, err)
+}
+
+func (s *SQLStore) DeletePrivateNetwork(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM private_networks WHERE id=?`), id)
+	return changed(result, err)
+}
+
+func (s *SQLStore) ListPrivateNetworks(ctx context.Context) ([]core.PrivateNetwork, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,driver,config,details,token_hash,state,last_verified_at,created_at,updated_at FROM private_networks ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.PrivateNetwork{}
+	for rows.Next() {
+		item, err := scanPrivateNetwork(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLStore) GetPrivateNetwork(ctx context.Context, id string) (core.PrivateNetwork, error) {
+	item, err := scanPrivateNetwork(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,driver,config,details,token_hash,state,last_verified_at,created_at,updated_at FROM private_networks WHERE id=?`), id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	return item, err
+}
+
+func scanPrivateNetwork(row scanner) (core.PrivateNetwork, error) {
+	var item core.PrivateNetwork
+	var config, details, created, updated string
+	var verified sql.NullString
+	err := row.Scan(&item.ID, &item.Name, &item.Driver, &config, &details, &item.TokenHash, &item.State, &verified, &created, &updated)
+	if err != nil {
+		return item, err
+	}
+	if err := json.Unmarshal([]byte(config), &item.Config); err != nil {
+		return item, err
+	}
+	if err := json.Unmarshal([]byte(details), &item.Details); err != nil {
+		return item, err
+	}
+	item.LastVerifiedAt = parseNullTime(verified)
+	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
+	return item, nil
+}
+
+func (s *SQLStore) CreateEdgeJob(ctx context.Context, item core.EdgeJob) error {
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO edge_jobs(id,private_network_id,state,attempt,lease_token,lease_until,encrypted_request,encrypted_response,error,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.PrivateNetworkID, item.State, item.Attempt, item.LeaseToken, nullTime(item.LeaseUntil), item.EncryptedRequest, item.EncryptedResponse, item.Error, stamp(item.ExpiresAt), stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	return err
+}
+
+func (s *SQLStore) LeaseEdgeJob(ctx context.Context, networkID string, now time.Time, duration time.Duration) (*core.EdgeJob, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	query := `SELECT id,private_network_id,state,attempt,lease_token,lease_until,encrypted_request,encrypted_response,error,expires_at,created_at,updated_at FROM edge_jobs WHERE private_network_id=? AND expires_at>? AND (state='pending' OR (state='leased' AND lease_until<?)) ORDER BY created_at LIMIT 1`
+	if s.postgres {
+		query += ` FOR UPDATE SKIP LOCKED`
+	}
+	item, err := scanEdgeJob(tx.QueryRowContext(ctx, s.q(query), networkID, stamp(now), stamp(now)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	item.Attempt++
+	item.LeaseToken = ulid.Make().String()
+	leaseUntil := now.Add(duration)
+	item.LeaseUntil, item.State, item.UpdatedAt = &leaseUntil, "leased", now
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE edge_jobs SET state='leased',attempt=?,lease_token=?,lease_until=?,updated_at=? WHERE id=?`), item.Attempt, item.LeaseToken, stamp(leaseUntil), stamp(now), item.ID)
+	if err != nil {
+		return nil, err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return nil, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *SQLStore) CompleteEdgeJob(ctx context.Context, id, leaseToken, state, encryptedResponse, detail string, now time.Time) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE edge_jobs SET state=?,lease_token='',lease_until=NULL,encrypted_response=?,error=?,updated_at=? WHERE id=? AND lease_token=? AND state='leased'`), state, encryptedResponse, detail, stamp(now), id, leaseToken)
+	return changed(result, err)
+}
+
+func (s *SQLStore) GetEdgeJob(ctx context.Context, id string) (core.EdgeJob, error) {
+	item, err := scanEdgeJob(s.db.QueryRowContext(ctx, s.q(`SELECT id,private_network_id,state,attempt,lease_token,lease_until,encrypted_request,encrypted_response,error,expires_at,created_at,updated_at FROM edge_jobs WHERE id=?`), id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	return item, err
+}
+
+func (s *SQLStore) DeleteEdgeJob(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM edge_jobs WHERE id=?`), id)
+	return changed(result, err)
+}
+
+func scanEdgeJob(row scanner) (core.EdgeJob, error) {
+	var item core.EdgeJob
+	var lease sql.NullString
+	var expires, created, updated string
+	err := row.Scan(&item.ID, &item.PrivateNetworkID, &item.State, &item.Attempt, &item.LeaseToken, &lease, &item.EncryptedRequest, &item.EncryptedResponse, &item.Error, &expires, &created, &updated)
+	if err != nil {
+		return item, err
+	}
+	item.LeaseUntil = parseNullTime(lease)
+	item.ExpiresAt, item.CreatedAt, item.UpdatedAt = parseTime(expires), parseTime(created), parseTime(updated)
+	return item, nil
 }
 
 func (s *SQLStore) CreateGitHubApp(ctx context.Context, item core.GitHubAppConnection) error {
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO github_apps(
 		id,name,web_url,api_url,app_id,client_id,slug,registration_owner,registration_owner_type,installation_id,installation_account,installation_url,webhook_url,
-		relay_webhook_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.Name, item.WebURL, item.APIURL, item.AppID,
+		relay_webhook_id,private_network_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.Name, item.WebURL, item.APIURL, item.AppID,
 		item.ClientID, item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL,
-		item.RelayWebhookID, item.EncryptedPrivateKey, item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt),
+		item.RelayWebhookID, item.PrivateNetworkID, item.EncryptedPrivateKey, item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt),
 		stamp(item.CreatedAt), stamp(item.UpdatedAt))
 	return err
 }
 
 func (s *SQLStore) UpdateGitHubApp(ctx context.Context, item core.GitHubAppConnection) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE github_apps SET name=?,web_url=?,api_url=?,app_id=?,client_id=?,slug=?,
-		registration_owner=?,registration_owner_type=?,installation_id=?,installation_account=?,installation_url=?,webhook_url=?,relay_webhook_id=?,encrypted_private_key=?,encrypted_webhook_secret=?,state=?,
+		registration_owner=?,registration_owner_type=?,installation_id=?,installation_account=?,installation_url=?,webhook_url=?,relay_webhook_id=?,private_network_id=?,encrypted_private_key=?,encrypted_webhook_secret=?,state=?,
 		last_verified_at=?,updated_at=? WHERE id=?`), item.Name, item.WebURL, item.APIURL, item.AppID, item.ClientID,
-		item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL, item.RelayWebhookID, item.EncryptedPrivateKey,
+		item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL, item.RelayWebhookID, item.PrivateNetworkID, item.EncryptedPrivateKey,
 		item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ID)
 	return changed(result, err)
 }
@@ -215,7 +441,7 @@ func (s *SQLStore) DeleteGitHubApp(ctx context.Context, id string) error {
 }
 
 const githubAppSelect = `SELECT id,name,web_url,api_url,app_id,client_id,slug,registration_owner,registration_owner_type,installation_id,installation_account,installation_url,webhook_url,
-	relay_webhook_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at FROM github_apps`
+	relay_webhook_id,private_network_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at FROM github_apps`
 
 func (s *SQLStore) ListGitHubApps(ctx context.Context) ([]core.GitHubAppConnection, error) {
 	rows, err := s.db.QueryContext(ctx, githubAppSelect+` ORDER BY name`)
@@ -247,7 +473,7 @@ func scanGitHubApp(row scanner) (core.GitHubAppConnection, error) {
 	var verified sql.NullString
 	var created, updated string
 	err := row.Scan(&item.ID, &item.Name, &item.WebURL, &item.APIURL, &item.AppID, &item.ClientID, &item.Slug,
-		&item.RegistrationOwner, &item.RegistrationOwnerType, &item.InstallationID, &item.InstallationAccount, &item.InstallationURL, &item.WebhookURL, &item.RelayWebhookID, &item.EncryptedPrivateKey,
+		&item.RegistrationOwner, &item.RegistrationOwnerType, &item.InstallationID, &item.InstallationAccount, &item.InstallationURL, &item.WebhookURL, &item.RelayWebhookID, &item.PrivateNetworkID, &item.EncryptedPrivateKey,
 		&item.EncryptedWebhookSecret, &item.State, &verified, &created, &updated)
 	item.PrivateKeyConfigured = item.EncryptedPrivateKey != ""
 	item.WebhookSecretConfigured = item.EncryptedWebhookSecret != ""
@@ -712,11 +938,12 @@ func scanApp(row scanner) (core.App, error) {
 
 func (s *SQLStore) CreateDeployment(ctx context.Context, deployment core.Deployment) error {
 	outputs, _ := json.Marshal(deployment.Outputs)
+	snapshot, _ := json.Marshal(deployment.Snapshot)
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO deployments(
-        id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?)`), deployment.ID, deployment.AppID, deployment.CommitSHA,
+        id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`), deployment.ID, deployment.AppID, deployment.CommitSHA,
 		deployment.SpecDigest, string(deployment.State), deployment.Message, stamp(deployment.CreatedAt),
-		nullTime(deployment.StartedAt), nullTime(deployment.FinishedAt), nullTime(deployment.LeaseUntil), string(outputs))
+		nullTime(deployment.StartedAt), nullTime(deployment.FinishedAt), nullTime(deployment.LeaseUntil), string(outputs), string(snapshot))
 	return err
 }
 
@@ -732,9 +959,14 @@ func (s *SQLStore) UpdateDeploymentOutputs(ctx context.Context, id string, outpu
 	return changed(result, err)
 }
 
+func (s *SQLStore) UpdateDeploymentSnapshot(ctx context.Context, id string, snapshot core.DeploymentSnapshot) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE deployments SET spec_snapshot=? WHERE id=?`), jsonText(snapshot), id)
+	return changed(result, err)
+}
+
 func (s *SQLStore) GetDeployment(ctx context.Context, id string) (core.Deployment, error) {
 	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
-        started_at,finished_at,lease_until,outputs FROM deployments WHERE id=?`), id)
+        started_at,finished_at,lease_until,outputs,spec_snapshot FROM deployments WHERE id=?`), id)
 	item, err := scanDeployment(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
@@ -750,7 +982,7 @@ func (s *SQLStore) ListDeployments(ctx context.Context, limit int) ([]core.Deplo
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
-        started_at,finished_at,lease_until,outputs FROM deployments ORDER BY created_at DESC LIMIT ?`), limit)
+        started_at,finished_at,lease_until,outputs,spec_snapshot FROM deployments ORDER BY created_at DESC LIMIT ?`), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -781,7 +1013,7 @@ func (s *SQLStore) ListDeployments(ctx context.Context, limit int) ([]core.Deplo
 
 func (s *SQLStore) ActiveDeploymentForApp(ctx context.Context, appID string) (*core.Deployment, error) {
 	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
-        started_at,finished_at,lease_until,outputs FROM deployments WHERE app_id=? AND state NOT IN ('succeeded','failed','cancelled')
+        started_at,finished_at,lease_until,outputs,spec_snapshot FROM deployments WHERE app_id=? AND state NOT IN ('succeeded','failed','cancelled')
         ORDER BY created_at DESC LIMIT 1`), appID)
 	item, err := scanDeployment(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -810,15 +1042,16 @@ func scanDeployment(row scanner) (core.Deployment, error) {
 	var item core.Deployment
 	var state, created string
 	var started, finished, lease sql.NullString
-	var outputs string
+	var outputs, snapshot string
 	err := row.Scan(&item.ID, &item.AppID, &item.CommitSHA, &item.SpecDigest, &state, &item.Message,
-		&created, &started, &finished, &lease, &outputs)
+		&created, &started, &finished, &lease, &outputs, &snapshot)
 	item.State = core.DeploymentState(state)
 	item.CreatedAt = parseTime(created)
 	item.StartedAt = parseNullTime(started)
 	item.FinishedAt = parseNullTime(finished)
 	item.LeaseUntil = parseNullTime(lease)
 	_ = json.Unmarshal([]byte(outputs), &item.Outputs)
+	_ = json.Unmarshal([]byte(snapshot), &item.Snapshot)
 	return item, err
 }
 
@@ -1339,9 +1572,9 @@ func (s *SQLStore) SeedDemo(ctx context.Context) error {
 		return err
 	}
 	apps := []core.App{
-		{ID: newID(), ProjectID: project.ID, ServerID: server.ID, Name: "checkout-api", SourceRepo: "github.com/doout/checkout-api", Branch: "main", BuildType: core.BuildTypeDockerfile, ContextPath: ".", DockerfilePath: "Dockerfile", ContainerPort: 8080, Domain: "checkout.demo.internal", State: "attention", CreatedAt: now.Add(-22 * time.Hour)},
-		{ID: newID(), ProjectID: project.ID, ServerID: server.ID, Name: "catalog-web", SourceRepo: "github.com/doout/catalog-web", Branch: "main", BuildType: core.BuildTypeDockerfile, ContextPath: ".", DockerfilePath: "Dockerfile", ContainerPort: 3000, Domain: "catalog.demo.internal", State: "deploying", CreatedAt: now.Add(-20 * time.Hour)},
-		{ID: newID(), ProjectID: project.ID, ServerID: server.ID, Name: "payments-worker", SourceRepo: "github.com/doout/payments-worker", Branch: "main", BuildType: core.BuildTypeCompose, ContextPath: ".", ComposePath: "compose.yml", State: "live", CreatedAt: now.Add(-18 * time.Hour)},
+		{ID: newID(), ProjectID: project.ID, ServerID: server.ID, Name: "checkout-api", SourceRepo: "github.com/example/checkout-api", Branch: "main", BuildType: core.BuildTypeDockerfile, ContextPath: ".", DockerfilePath: "Dockerfile", ContainerPort: 8080, Domain: "checkout.demo.example", State: "attention", CreatedAt: now.Add(-22 * time.Hour)},
+		{ID: newID(), ProjectID: project.ID, ServerID: server.ID, Name: "catalog-web", SourceRepo: "github.com/example/catalog-web", Branch: "main", BuildType: core.BuildTypeDockerfile, ContextPath: ".", DockerfilePath: "Dockerfile", ContainerPort: 3000, Domain: "catalog.demo.example", State: "deploying", CreatedAt: now.Add(-20 * time.Hour)},
+		{ID: newID(), ProjectID: project.ID, ServerID: server.ID, Name: "payments-worker", SourceRepo: "github.com/example/payments-worker", Branch: "main", BuildType: core.BuildTypeCompose, ContextPath: ".", ComposePath: "compose.yml", State: "live", CreatedAt: now.Add(-18 * time.Hour)},
 	}
 	for _, app := range apps {
 		if err := s.CreateApp(ctx, app); err != nil {

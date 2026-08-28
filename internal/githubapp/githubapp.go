@@ -16,16 +16,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/edge"
 )
 
 type Store interface {
 	GetGitHubApp(context.Context, string) (core.GitHubAppConnection, error)
+	GetPrivateNetwork(context.Context, string) (core.PrivateNetwork, error)
 }
 
 type cachedToken struct {
@@ -37,6 +40,7 @@ type Manager struct {
 	Store  Store
 	Vault  *secretcrypto.Vault
 	Client *http.Client
+	Edge   *edge.Broker
 
 	mu     sync.Mutex
 	tokens map[string]cachedToken
@@ -71,6 +75,11 @@ type Repository struct {
 	WebURL        string `json:"webUrl"`
 }
 
+type RepositoryFile struct {
+	Path     string `json:"path"`
+	Contents []byte `json:"-"`
+}
+
 type Verification struct {
 	Slug                  string `json:"slug"`
 	ClientID              string `json:"clientId"`
@@ -80,6 +89,7 @@ type Verification struct {
 	InstallationURL       string `json:"installationUrl"`
 	RepositorySelection   string `json:"repositorySelection"`
 	RepositoryCount       int    `json:"repositoryCount"`
+	PushSubscribed        bool   `json:"pushSubscribed"`
 }
 
 func New(store Store, vault *secretcrypto.Vault) *Manager {
@@ -216,7 +226,7 @@ func (m *Manager) InstallationToken(ctx context.Context, id string) (string, err
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
-	if err := m.request(ctx, http.MethodPost, endpoint, jwt, nil, &response); err != nil {
+	if err := m.request(ctx, http.MethodPost, endpoint, jwt, nil, &response, connection.PrivateNetworkID); err != nil {
 		return "", fmt.Errorf("create GitHub App installation token: %w", err)
 	}
 	if response.Token == "" {
@@ -245,7 +255,7 @@ func (m *Manager) ListInstallations(ctx context.Context, id string) ([]Installat
 		} `json:"account"`
 	}
 	endpoint := strings.TrimRight(connection.APIURL, "/") + "/app/installations?per_page=100"
-	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &response); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &response, connection.PrivateNetworkID); err != nil {
 		return nil, err
 	}
 	items := make([]Installation, 0, len(response))
@@ -280,7 +290,7 @@ func (m *Manager) ListRepositories(ctx context.Context, id string) ([]Repository
 			} `json:"repositories"`
 		}
 		endpoint := fmt.Sprintf("%s/installation/repositories?per_page=100&page=%d", strings.TrimRight(connection.APIURL, "/"), page)
-		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response); err != nil {
+		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
 			return nil, fmt.Errorf("list installation repositories: %w", err)
 		}
 		for _, repository := range response.Repositories {
@@ -292,6 +302,160 @@ func (m *Manager) ListRepositories(ctx context.Context, id string) ([]Repository
 		}
 	}
 	return items, nil
+}
+
+// RepositoryHead resolves a branch to an immutable commit. Both webhook and
+// polling reconciliation use this method so they produce the same snapshots.
+func (m *Manager) RepositoryHead(ctx context.Context, id, repository, branch string) (string, error) {
+	connection, err := m.Store.GetGitHubApp(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	token, err := m.InstallationToken(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	repository, err = repositoryPath(repository)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(branch) == "" {
+		branch = "main"
+	}
+	var response struct {
+		SHA string `json:"sha"`
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/commits/%s", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(branch))
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
+		return "", fmt.Errorf("resolve %s branch %s: %w", repository, branch, err)
+	}
+	if strings.TrimSpace(response.SHA) == "" {
+		return "", errors.New("GitHub returned an empty commit")
+	}
+	return response.SHA, nil
+}
+
+// RepositoryFiles returns YAML or JSON configuration files at an immutable
+// revision. path may identify one file or a directory prefix.
+func (m *Manager) RepositoryFiles(ctx context.Context, id, repository, revision, path string) ([]RepositoryFile, error) {
+	connection, err := m.Store.GetGitHubApp(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	token, err := m.InstallationToken(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	repository, err = repositoryPath(repository)
+	if err != nil {
+		return nil, err
+	}
+	path = strings.Trim(strings.TrimSpace(path), "/")
+	if path == "" {
+		path = ".dispatch"
+	}
+	var tree struct {
+		Truncated bool `json:"truncated"`
+		Tree      []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+			SHA  string `json:"sha"`
+			Size int64  `json:"size"`
+		} `json:"tree"`
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/git/trees/%s?recursive=1", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(revision))
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &tree, connection.PrivateNetworkID); err != nil {
+		return nil, fmt.Errorf("list configuration files: %w", err)
+	}
+	if tree.Truncated {
+		return nil, errors.New("repository tree is too large to inspect; configure a narrower path")
+	}
+	type blob struct{ path, sha string }
+	blobs := []blob{}
+	for _, entry := range tree.Tree {
+		if entry.Type != "blob" || !configurationPath(path, entry.Path) {
+			continue
+		}
+		if entry.Size > 1<<20 {
+			return nil, fmt.Errorf("configuration file %s exceeds 1 MiB", entry.Path)
+		}
+		blobs = append(blobs, blob{path: entry.Path, sha: entry.SHA})
+	}
+	if len(blobs) == 0 {
+		return nil, fmt.Errorf("no YAML or JSON configuration files found at %s", path)
+	}
+	if len(blobs) > 64 {
+		return nil, errors.New("configuration path contains more than 64 YAML or JSON files")
+	}
+	items := make([]RepositoryFile, 0, len(blobs))
+	for _, item := range blobs {
+		var response struct {
+			Encoding string `json:"encoding"`
+			Content  string `json:"content"`
+			Size     int64  `json:"size"`
+		}
+		endpoint := fmt.Sprintf("%s/repos/%s/git/blobs/%s", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(item.sha))
+		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
+			return nil, fmt.Errorf("load configuration file %s: %w", item.path, err)
+		}
+		if response.Encoding != "base64" || response.Size > 1<<20 {
+			return nil, fmt.Errorf("configuration file %s has an unsupported encoding or size", item.path)
+		}
+		contents, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(response.Content, "\n", ""))
+		if err != nil {
+			return nil, fmt.Errorf("decode configuration file %s: %w", item.path, err)
+		}
+		items = append(items, RepositoryFile{Path: item.path, Contents: contents})
+	}
+	return items, nil
+}
+
+func (m *Manager) SetCommitStatus(ctx context.Context, id, repository, revision, state, description, targetURL string) error {
+	connection, err := m.Store.GetGitHubApp(ctx, id)
+	if err != nil {
+		return err
+	}
+	token, err := m.InstallationToken(ctx, id)
+	if err != nil {
+		return err
+	}
+	repository, err = repositoryPath(repository)
+	if err != nil {
+		return err
+	}
+	payload := map[string]string{
+		"state":       state,
+		"context":     "Dispatch/deployment",
+		"description": description,
+	}
+	if strings.TrimSpace(targetURL) != "" {
+		payload["target_url"] = targetURL
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/statuses/%s", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(revision))
+	if err := m.request(ctx, http.MethodPost, endpoint, token, payload, nil, connection.PrivateNetworkID); err != nil {
+		return fmt.Errorf("publish commit status: %w", err)
+	}
+	return nil
+}
+
+func repositoryPath(repository string) (string, error) {
+	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	if parsed, err := url.Parse(repository); err == nil && parsed.Host != "" {
+		repository = strings.TrimSuffix(strings.Trim(parsed.Path, "/"), ".git")
+	}
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.Contains(repository, "..") {
+		return "", errors.New("repository must use owner/name")
+	}
+	return url.PathEscape(parts[0]) + "/" + url.PathEscape(strings.TrimSuffix(parts[1], ".git")), nil
+}
+
+func configurationPath(root, candidate string) bool {
+	lower := strings.ToLower(candidate)
+	if !strings.HasSuffix(lower, ".yaml") && !strings.HasSuffix(lower, ".yml") && !strings.HasSuffix(lower, ".json") {
+		return false
+	}
+	return candidate == root || strings.HasPrefix(candidate, strings.TrimRight(root, "/")+"/")
 }
 
 func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
@@ -311,14 +475,16 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 			Login string `json:"login"`
 			Type  string `json:"type"`
 		} `json:"owner"`
+		Events []string `json:"events"`
 	}
-	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/app", jwt, nil, &app); err != nil {
+	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/app", jwt, nil, &app, connection.PrivateNetworkID); err != nil {
 		return Verification{}, fmt.Errorf("verify GitHub App registration: %w", err)
 	}
 	if app.ID != connection.AppID {
 		return Verification{}, fmt.Errorf("private key belongs to GitHub App %d, not %d", app.ID, connection.AppID)
 	}
 	result := Verification{Slug: app.Slug, ClientID: app.ClientID, RegistrationOwner: app.Owner.Login, RegistrationOwnerType: app.Owner.Type}
+	result.PushSubscribed = slices.Contains(app.Events, "push")
 	if connection.InstallationID < 1 {
 		return result, nil
 	}
@@ -331,7 +497,7 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 		} `json:"account"`
 	}
 	endpoint := fmt.Sprintf("%s/app/installations/%d", strings.TrimRight(connection.APIURL, "/"), connection.InstallationID)
-	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &installation); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &installation, connection.PrivateNetworkID); err != nil {
 		return Verification{}, fmt.Errorf("verify GitHub App installation: %w", err)
 	}
 	if installation.ID != connection.InstallationID {
@@ -347,14 +513,46 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	var repositories struct {
 		Total int `json:"total_count"`
 	}
-	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/installation/repositories?per_page=1", token, nil, &repositories); err != nil {
+	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/installation/repositories?per_page=1", token, nil, &repositories, connection.PrivateNetworkID); err != nil {
 		return Verification{}, fmt.Errorf("verify installation repository access: %w", err)
 	}
 	result.RepositoryCount = repositories.Total
 	return result, nil
 }
 
-func (m *Manager) ConvertManifest(ctx context.Context, apiURL, code string) (ManifestConversion, error) {
+// EnsureWebhookConfig makes the registered GitHub App deliver to the route
+// owned by this connection. Event subscriptions remain part of the App
+// registration; App manifests created by Dispatch include push events.
+func (m *Manager) EnsureWebhookConfig(ctx context.Context, id string) error {
+	connection, err := m.Store.GetGitHubApp(ctx, id)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(connection.WebhookURL) == "" {
+		return errors.New("webhook delivery is disabled for this GitHub App")
+	}
+	jwt, err := m.appJWT(connection)
+	if err != nil {
+		return err
+	}
+	secret, err := m.WebhookSecret(ctx, id)
+	if err != nil {
+		return err
+	}
+	payload := map[string]string{
+		"url":          connection.WebhookURL,
+		"content_type": "json",
+		"secret":       secret,
+		"insecure_ssl": "0",
+	}
+	endpoint := strings.TrimRight(connection.APIURL, "/") + "/app/hook/config"
+	if err := m.request(ctx, http.MethodPatch, endpoint, jwt, payload, nil, connection.PrivateNetworkID); err != nil {
+		return fmt.Errorf("configure GitHub App webhook: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) ConvertManifest(ctx context.Context, apiURL, code string, privateNetworkID ...string) (ManifestConversion, error) {
 	endpoint := strings.TrimRight(strings.TrimSpace(apiURL), "/") + "/app-manifests/" + url.PathEscape(strings.TrimSpace(code)) + "/conversions"
 	var result struct {
 		ID            int64  `json:"id"`
@@ -368,10 +566,10 @@ func (m *Manager) ConvertManifest(ctx context.Context, apiURL, code string) (Man
 			Type  string `json:"type"`
 		} `json:"owner"`
 	}
-	if err := m.request(ctx, http.MethodPost, endpoint, "", nil, &result); err != nil {
+	if err := m.request(ctx, http.MethodPost, endpoint, "", nil, &result, privateNetworkID...); err != nil {
 		return ManifestConversion{}, err
 	}
-	if result.ID < 1 || result.PEM == "" || result.WebhookSecret == "" {
+	if result.ID < 1 || result.PEM == "" {
 		return ManifestConversion{}, errors.New("GitHub returned an incomplete App manifest conversion")
 	}
 	return ManifestConversion{AppID: result.ID, ClientID: result.ClientID, Name: result.Name, Slug: result.Slug,
@@ -405,7 +603,7 @@ func (m *Manager) appJWT(connection core.GitHubAppConnection) (string, error) {
 
 func rawURL(value []byte) string { return base64.RawURLEncoding.EncodeToString(value) }
 
-func (m *Manager) request(ctx context.Context, method, endpoint, token string, body interface{}, output interface{}) error {
+func (m *Manager) request(ctx context.Context, method, endpoint, token string, body interface{}, output interface{}, privateNetworkID ...string) error {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -425,11 +623,23 @@ func (m *Manager) request(ctx context.Context, method, endpoint, token string, b
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := m.Client
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+	var response *http.Response
+	if len(privateNetworkID) > 0 && strings.TrimSpace(privateNetworkID[0]) != "" {
+		if m.Store == nil || m.Edge == nil {
+			return errors.New("GitHub edge routing is not configured")
+		}
+		network, loadErr := m.Store.GetPrivateNetwork(ctx, strings.TrimSpace(privateNetworkID[0]))
+		if loadErr != nil {
+			return fmt.Errorf("load GitHub network route: %w", loadErr)
+		}
+		response, err = m.Edge.Do(ctx, network, request)
+	} else {
+		client := m.Client
+		if client == nil {
+			client = &http.Client{Timeout: 15 * time.Second}
+		}
+		response, err = client.Do(request)
 	}
-	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}

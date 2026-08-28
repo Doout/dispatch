@@ -126,7 +126,7 @@ type App struct {
 	// application. It is persisted for asynchronous execution but never exposed.
 	HelmGroupValues string            `json:"-"`
 	HookEnvironment map[string]string `json:"-"`
-	Generated       bool              `json:"-"`
+	Generated       bool              `json:"generated,omitempty"`
 	Template        bool              `json:"template"`
 	HelmNamespace   string            `json:"helmNamespace,omitempty"`
 	HelmRelease     string            `json:"helmRelease,omitempty"`
@@ -189,19 +189,30 @@ func (s DeploymentState) Terminal() bool {
 }
 
 type Deployment struct {
-	ID         string            `json:"id"`
-	AppID      string            `json:"appId"`
-	CommitSHA  string            `json:"commitSha"`
-	SpecDigest string            `json:"specDigest"`
-	State      DeploymentState   `json:"state"`
-	Message    string            `json:"message"`
-	CreatedAt  time.Time         `json:"createdAt"`
-	StartedAt  *time.Time        `json:"startedAt,omitempty"`
-	FinishedAt *time.Time        `json:"finishedAt,omitempty"`
-	LeaseUntil *time.Time        `json:"leaseUntil,omitempty"`
-	Outputs    map[string]string `json:"outputs,omitempty"`
-	App        *App              `json:"app,omitempty"`
-	Server     *Server           `json:"server,omitempty"`
+	ID         string             `json:"id"`
+	AppID      string             `json:"appId"`
+	CommitSHA  string             `json:"commitSha"`
+	SpecDigest string             `json:"specDigest"`
+	State      DeploymentState    `json:"state"`
+	Message    string             `json:"message"`
+	CreatedAt  time.Time          `json:"createdAt"`
+	StartedAt  *time.Time         `json:"startedAt,omitempty"`
+	FinishedAt *time.Time         `json:"finishedAt,omitempty"`
+	LeaseUntil *time.Time         `json:"leaseUntil,omitempty"`
+	Outputs    map[string]string  `json:"outputs,omitempty"`
+	Snapshot   DeploymentSnapshot `json:"-"`
+	App        *App               `json:"app,omitempty"`
+	Server     *Server            `json:"server,omitempty"`
+}
+
+type DeploymentSnapshot struct {
+	TargetID   string         `json:"targetId,omitempty"`
+	TargetName string         `json:"targetName,omitempty"`
+	Runtime    string         `json:"runtime,omitempty"`
+	Namespace  string         `json:"namespace,omitempty"`
+	Release    string         `json:"release,omitempty"`
+	Chart      string         `json:"chart,omitempty"`
+	Values     map[string]any `json:"values,omitempty"`
 }
 
 type PreviewGroupState string
@@ -363,6 +374,7 @@ type GitHubAppConnection struct {
 	InstallationURL         string     `json:"installationUrl,omitempty"`
 	WebhookURL              string     `json:"webhookUrl"`
 	RelayWebhookID          string     `json:"relayWebhookId,omitempty"`
+	PrivateNetworkID        string     `json:"privateNetworkId,omitempty"`
 	PrivateKeyConfigured    bool       `json:"privateKeyConfigured"`
 	WebhookSecretConfigured bool       `json:"webhookSecretConfigured"`
 	EncryptedPrivateKey     string     `json:"-"`
@@ -376,14 +388,75 @@ type GitHubAppConnection struct {
 // Secret is write-only except for its identifying metadata. EncryptedValue is
 // persisted by the store but is never serialized to API clients.
 type Secret struct {
-	ID                  string     `json:"id"`
-	Name                string     `json:"name"`
-	Type                SecretType `json:"type"`
-	EnvironmentVariable string     `json:"environmentVariable"`
-	PublicValue         string     `json:"publicValue,omitempty"`
-	EncryptedValue      string     `json:"-"`
-	CreatedAt           time.Time  `json:"createdAt"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	ID                  string       `json:"id"`
+	Name                string       `json:"name"`
+	Type                SecretType   `json:"type"`
+	Source              SecretSource `json:"source"`
+	EnvironmentVariable string       `json:"environmentVariable"`
+	PublicValue         string       `json:"publicValue,omitempty"`
+	ExternalStoreID     string       `json:"externalStoreId,omitempty"`
+	ExternalSecretID    string       `json:"externalSecretId,omitempty"`
+	ExternalField       string       `json:"externalField,omitempty"`
+	EncryptedValue      string       `json:"-"`
+	CreatedAt           time.Time    `json:"createdAt"`
+	UpdatedAt           time.Time    `json:"updatedAt"`
+}
+
+type SecretSource string
+
+const (
+	SecretSourceLocal    SecretSource = "local"
+	SecretSourceExternal SecretSource = "external"
+)
+
+// SecretStore is a provider-neutral connection to an external secret manager.
+// Config contains non-sensitive provider settings. EncryptedCredentials is
+// persisted but never serialized.
+type SecretStore struct {
+	ID                    string            `json:"id"`
+	Name                  string            `json:"name"`
+	Provider              string            `json:"provider"`
+	Config                map[string]string `json:"config"`
+	CredentialsConfigured bool              `json:"credentialsConfigured"`
+	EncryptedCredentials  string            `json:"-"`
+	State                 string            `json:"state"`
+	LastVerifiedAt        *time.Time        `json:"lastVerifiedAt,omitempty"`
+	CreatedAt             time.Time         `json:"createdAt"`
+	UpdatedAt             time.Time         `json:"updatedAt"`
+}
+
+// PrivateNetwork is an outbound network path. A dispatch_agent path is backed
+// by an edge node that polls the controller; a laneway path is backed by a
+// daemon socket mounted into the controller. Details are safe to return.
+type PrivateNetwork struct {
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Driver          string            `json:"driver"`
+	Config          map[string]string `json:"config"`
+	Details         map[string]string `json:"details"`
+	TokenHash       string            `json:"-"`
+	EnrollmentToken string            `json:"enrollmentToken,omitempty"`
+	State           string            `json:"state"`
+	LastVerifiedAt  *time.Time        `json:"lastVerifiedAt,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
+}
+
+// EdgeJob is a short-lived, encrypted HTTP exchange between Dispatch and an
+// outbound edge node. Request and response contents are never serialized.
+type EdgeJob struct {
+	ID                string     `json:"id"`
+	PrivateNetworkID  string     `json:"privateNetworkId"`
+	State             string     `json:"state"`
+	Attempt           int        `json:"attempt"`
+	LeaseToken        string     `json:"-"`
+	LeaseUntil        *time.Time `json:"-"`
+	EncryptedRequest  string     `json:"-"`
+	EncryptedResponse string     `json:"-"`
+	Error             string     `json:"-"`
+	ExpiresAt         time.Time  `json:"expiresAt"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
 }
 
 type SecretType string
@@ -527,6 +600,12 @@ type Overview struct {
 	PreviewGroups           []PreviewGroup        `json:"previewGroups"`
 	PreviewGroupRuns        []PreviewGroupRun     `json:"previewGroupRuns"`
 	Secrets                 []Secret              `json:"secrets"`
+	SecretStores            []SecretStore         `json:"secretStores"`
+	PrivateNetworks         []PrivateNetwork      `json:"privateNetworks"`
 	GitHubApps              []GitHubAppConnection `json:"githubApps"`
 	RelayWebhooks           []RelayWebhook        `json:"relayWebhooks"`
+	ConfigSources           []ConfigSource        `json:"configSources"`
+	WorkflowResources       []WorkflowResource    `json:"workflowResources"`
+	WorkflowRevisions       []WorkflowRevision    `json:"workflowRevisions"`
+	WorkflowStageRuns       []WorkflowStageRun    `json:"workflowStageRuns"`
 }

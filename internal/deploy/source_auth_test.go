@@ -59,7 +59,7 @@ func TestSourceAuthExecutorDecryptsCredentialOnlyForExecution(t *testing.T) {
 }
 
 func TestSSHCredentialIsMaterializedPrivatelyAndRemoved(t *testing.T) {
-	environment, cleanup, err := prepareGitEnvironment(core.App{SourceAuthType: SourceAuthSSHKey, SourceCredential: "PRIVATE KEY"})
+	environment, cleanup, err := PrepareGitEnvironment(core.App{SourceAuthType: SourceAuthSSHKey, SourceCredential: "PRIVATE KEY"})
 	if err != nil {
 		t.Fatal(err)
 	}

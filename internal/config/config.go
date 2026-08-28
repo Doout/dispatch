@@ -7,36 +7,38 @@ import (
 )
 
 type Config struct {
-	Addr           string
-	DatabaseURL    string
-	Executor       string
-	Demo           bool
-	AdminToken     string
-	AdminUsername  string
-	AdminPassword  string
-	MasterKeyFile  string
-	DockerSocket   string
-	WebhookSecret  string
-	PreviewCommand string
-	GitHubAPIURL   string
-	GitHubToken    string
+	Addr            string
+	DatabaseURL     string
+	Executor        string
+	Demo            bool
+	AdminToken      string
+	AdminUsername   string
+	AdminPassword   string
+	MasterKeyFile   string
+	DockerSocket    string
+	WebhookSecret   string
+	PreviewCommand  string
+	GitHubAPIURL    string
+	GitHubToken     string
+	RepositoryCache string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:           env("DISPATCH_ADDR", "127.0.0.1:8080"),
-		DatabaseURL:    env("DATABASE_URL", "dispatch.db"),
-		Executor:       env("DISPATCH_EXECUTOR", "simulation"),
-		Demo:           strings.EqualFold(os.Getenv("DISPATCH_DEMO"), "true"),
-		AdminToken:     os.Getenv("DISPATCH_ADMIN_TOKEN"),
-		AdminUsername:  strings.TrimSpace(os.Getenv("DISPATCH_ADMIN_USERNAME")),
-		AdminPassword:  os.Getenv("DISPATCH_ADMIN_PASSWORD"),
-		MasterKeyFile:  os.Getenv("DISPATCH_MASTER_KEY_FILE"),
-		DockerSocket:   env("DISPATCH_DOCKER_SOCKET", "/var/run/docker.sock"),
-		WebhookSecret:  os.Getenv("DISPATCH_GITHUB_WEBHOOK_SECRET"),
-		PreviewCommand: env("DISPATCH_PREVIEW_COMMAND", "/preview"),
-		GitHubAPIURL:   env("DISPATCH_GITHUB_API_URL", "https://api.github.com"),
-		GitHubToken:    os.Getenv("DISPATCH_GITHUB_TOKEN"),
+		Addr:            env("DISPATCH_ADDR", "127.0.0.1:8080"),
+		DatabaseURL:     env("DATABASE_URL", "dispatch.db"),
+		Executor:        env("DISPATCH_EXECUTOR", "simulation"),
+		Demo:            strings.EqualFold(os.Getenv("DISPATCH_DEMO"), "true"),
+		AdminToken:      os.Getenv("DISPATCH_ADMIN_TOKEN"),
+		AdminUsername:   strings.TrimSpace(os.Getenv("DISPATCH_ADMIN_USERNAME")),
+		AdminPassword:   os.Getenv("DISPATCH_ADMIN_PASSWORD"),
+		MasterKeyFile:   os.Getenv("DISPATCH_MASTER_KEY_FILE"),
+		DockerSocket:    env("DISPATCH_DOCKER_SOCKET", "/var/run/docker.sock"),
+		WebhookSecret:   os.Getenv("DISPATCH_GITHUB_WEBHOOK_SECRET"),
+		PreviewCommand:  env("DISPATCH_PREVIEW_COMMAND", "/preview"),
+		GitHubAPIURL:    env("DISPATCH_GITHUB_API_URL", "https://api.github.com"),
+		GitHubToken:     os.Getenv("DISPATCH_GITHUB_TOKEN"),
+		RepositoryCache: env("DISPATCH_REPOSITORY_CACHE", "repository-cache"),
 	}
 	if cfg.Executor != "simulation" && cfg.Executor != "docker" {
 		return Config{}, errors.New("DISPATCH_EXECUTOR must be simulation or docker")

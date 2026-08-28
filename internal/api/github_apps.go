@@ -23,28 +23,31 @@ import (
 )
 
 type githubAppRequest struct {
-	Name           string `json:"name"`
-	WebURL         string `json:"webUrl"`
-	APIURL         string `json:"apiUrl"`
-	AppID          int64  `json:"appId"`
-	ClientID       string `json:"clientId"`
-	Slug           string `json:"slug"`
-	InstallationID int64  `json:"installationId"`
-	PrivateKey     string `json:"privateKey"`
-	WebhookSecret  string `json:"webhookSecret"`
-	RelayServerID  string `json:"relayServerId"`
+	Name             string `json:"name"`
+	WebURL           string `json:"webUrl"`
+	APIURL           string `json:"apiUrl"`
+	AppID            int64  `json:"appId"`
+	ClientID         string `json:"clientId"`
+	Slug             string `json:"slug"`
+	InstallationID   int64  `json:"installationId"`
+	PrivateKey       string `json:"privateKey"`
+	WebhookSecret    string `json:"webhookSecret"`
+	EventDelivery    string `json:"eventDelivery"`
+	RelayServerID    string `json:"relayServerId"`
+	PrivateNetworkID string `json:"privateNetworkId"`
 }
 
 type githubAppUpdateRequest struct {
-	Name           *string `json:"name"`
-	WebURL         *string `json:"webUrl"`
-	APIURL         *string `json:"apiUrl"`
-	AppID          *int64  `json:"appId"`
-	ClientID       *string `json:"clientId"`
-	Slug           *string `json:"slug"`
-	InstallationID *int64  `json:"installationId"`
-	PrivateKey     *string `json:"privateKey"`
-	WebhookSecret  *string `json:"webhookSecret"`
+	Name             *string `json:"name"`
+	WebURL           *string `json:"webUrl"`
+	APIURL           *string `json:"apiUrl"`
+	AppID            *int64  `json:"appId"`
+	ClientID         *string `json:"clientId"`
+	Slug             *string `json:"slug"`
+	InstallationID   *int64  `json:"installationId"`
+	PrivateKey       *string `json:"privateKey"`
+	WebhookSecret    *string `json:"webhookSecret"`
+	PrivateNetworkID *string `json:"privateNetworkId"`
 }
 
 type githubAppManifestState struct {
@@ -56,6 +59,7 @@ type githubAppManifestState struct {
 	RegistrationOwnerType string
 	WebhookURL            string
 	RelayWebhookID        string
+	PrivateNetworkID      string
 	ExpiresAt             time.Time
 }
 
@@ -89,15 +93,36 @@ func (a *API) createGitHubApp(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Invalid GitHub address", err.Error())
 		return
 	}
+	input.PrivateNetworkID = strings.TrimSpace(input.PrivateNetworkID)
+	if err := a.validateEdgeRoute(r.Context(), input.PrivateNetworkID); err != nil {
+		problem(w, http.StatusBadRequest, "Invalid network route", err.Error())
+		return
+	}
 	id := ulid.Make().String()
+	delivery, err := githubAppEventDelivery(input.EventDelivery, input.RelayServerID)
+	if err != nil {
+		problem(w, http.StatusBadRequest, "Invalid event delivery", err.Error())
+		return
+	}
+	if delivery == "none" && strings.TrimSpace(input.WebhookSecret) == "" {
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			a.internal(w, err)
+			return
+		}
+		input.WebhookSecret = base64.RawURLEncoding.EncodeToString(secret)
+	}
 	privateKey, webhookSecret, err := a.eventConfig.GitHubApps.EncryptCredentials(id, input.PrivateKey, input.WebhookSecret)
 	if err != nil {
 		problem(w, http.StatusBadRequest, "Invalid GitHub App credentials", err.Error())
 		return
 	}
-	webhookURL := externalOrigin(r) + "/api/v1/events/github/apps/" + id
+	webhookURL := ""
 	relayWebhookID := ""
-	if strings.TrimSpace(input.RelayServerID) != "" {
+	if delivery == "direct" {
+		webhookURL = externalOrigin(r) + "/api/v1/events/github/apps/" + id
+	}
+	if delivery == "relay" {
 		relayServer, relayErr := a.store.GetServer(r.Context(), strings.TrimSpace(input.RelayServerID))
 		if relayErr != nil {
 			a.notFoundOrInternal(w, relayErr, "Relay server")
@@ -114,7 +139,7 @@ func (a *API) createGitHubApp(w http.ResponseWriter, r *http.Request) {
 	item := core.GitHubAppConnection{
 		ID: id, Name: input.Name, WebURL: webURL, APIURL: apiURL, AppID: input.AppID,
 		ClientID: strings.TrimSpace(input.ClientID), Slug: strings.TrimSpace(input.Slug), InstallationID: input.InstallationID,
-		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID,
+		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID,
 		EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret, CreatedAt: now, UpdatedAt: now,
 	}
 	item.State = githubapp.State(item)
@@ -177,6 +202,14 @@ func (a *API) updateGitHubApp(w http.ResponseWriter, r *http.Request) {
 		item.InstallationID = *input.InstallationID
 		item.InstallationAccount = ""
 		item.InstallationURL = ""
+		item.LastVerifiedAt = nil
+	}
+	if input.PrivateNetworkID != nil {
+		item.PrivateNetworkID = strings.TrimSpace(*input.PrivateNetworkID)
+		if err := a.validateEdgeRoute(r.Context(), item.PrivateNetworkID); err != nil {
+			problem(w, http.StatusBadRequest, "Invalid network route", err.Error())
+			return
+		}
 		item.LastVerifiedAt = nil
 	}
 	if input.PrivateKey != nil || input.WebhookSecret != nil {
@@ -353,12 +386,14 @@ func (a *API) githubRepositoryAccess(ctx context.Context, id string) (map[string
 }
 
 type startManifestRequest struct {
-	Name          string `json:"name"`
-	WebURL        string `json:"webUrl"`
-	APIURL        string `json:"apiUrl"`
-	OwnerType     string `json:"ownerType"`
-	Owner         string `json:"owner"`
-	RelayServerID string `json:"relayServerId"`
+	Name             string `json:"name"`
+	WebURL           string `json:"webUrl"`
+	APIURL           string `json:"apiUrl"`
+	OwnerType        string `json:"ownerType"`
+	Owner            string `json:"owner"`
+	EventDelivery    string `json:"eventDelivery"`
+	RelayServerID    string `json:"relayServerId"`
+	PrivateNetworkID string `json:"privateNetworkId"`
 }
 
 func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
@@ -387,6 +422,16 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Invalid GitHub address", err.Error())
 		return
 	}
+	input.PrivateNetworkID = strings.TrimSpace(input.PrivateNetworkID)
+	if err := a.validateEdgeRoute(r.Context(), input.PrivateNetworkID); err != nil {
+		problem(w, http.StatusBadRequest, "Invalid network route", err.Error())
+		return
+	}
+	delivery, err := githubAppEventDelivery(input.EventDelivery, input.RelayServerID)
+	if err != nil {
+		problem(w, http.StatusBadRequest, "Invalid event delivery", err.Error())
+		return
+	}
 	random := make([]byte, 32)
 	if _, err := rand.Read(random); err != nil {
 		a.internal(w, err)
@@ -395,9 +440,12 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	state := base64.RawURLEncoding.EncodeToString(random)
 	connectionID := ulid.Make().String()
 	origin := externalOrigin(r)
-	webhookURL := origin + "/api/v1/events/github/apps/" + connectionID
+	webhookURL := ""
 	relayWebhookID := ""
-	if strings.TrimSpace(input.RelayServerID) != "" {
+	if delivery == "direct" {
+		webhookURL = origin + "/api/v1/events/github/apps/" + connectionID
+	}
+	if delivery == "relay" {
 		relayServer, relayErr := a.store.GetServer(r.Context(), strings.TrimSpace(input.RelayServerID))
 		if relayErr != nil {
 			a.notFoundOrInternal(w, relayErr, "Relay server")
@@ -419,15 +467,17 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	manifest := map[string]interface{}{
 		"name":                     input.Name,
 		"url":                      origin,
-		"description":              "Builds and deploys pull request environments through Dispatch.",
-		"hook_attributes":          map[string]interface{}{"url": webhookURL, "active": true},
+		"description":              "Provides repository access for Dispatch.",
 		"redirect_url":             callbackURL,
 		"setup_url":                setupURL,
 		"setup_on_update":          true,
-		"public":                   false,
+		"public":                   true,
 		"request_oauth_on_install": false,
-		"default_permissions":      map[string]string{"contents": "read", "issues": "write", "pull_requests": "read", "metadata": "read"},
-		"default_events":           []string{"issue_comment", "pull_request"},
+		"default_permissions":      map[string]string{"contents": "read", "issues": "write", "pull_requests": "read", "metadata": "read", "statuses": "write"},
+	}
+	if delivery != "none" {
+		manifest["hook_attributes"] = map[string]interface{}{"url": webhookURL, "active": true}
+		manifest["default_events"] = []string{"issue_comment", "pull_request", "push"}
 	}
 	a.manifestMu.Lock()
 	for pendingState, pending := range a.manifestStates {
@@ -437,9 +487,26 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	a.manifestStates[state] = githubAppManifestState{ConnectionID: connectionID, Name: input.Name, WebURL: webURL,
 		APIURL: apiURL, RegistrationOwner: input.Owner, RegistrationOwnerType: input.OwnerType,
-		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, ExpiresAt: time.Now().UTC().Add(time.Hour)}
+		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID, ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	a.manifestMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"action": action, "manifest": manifest})
+}
+
+func githubAppEventDelivery(value, relayServerID string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		if strings.TrimSpace(relayServerID) != "" {
+			return "relay", nil
+		}
+		return "direct", nil
+	}
+	if value != "none" && value != "direct" && value != "relay" {
+		return "", errors.New("choose no webhook, direct webhook, or webhook relay")
+	}
+	if value == "relay" && strings.TrimSpace(relayServerID) == "" {
+		return "", errors.New("choose a relay server")
+	}
+	return value, nil
 }
 
 func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
@@ -457,10 +524,22 @@ func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) 
 		redirect("error", "The GitHub App setup expired. Start again from Connections.")
 		return
 	}
-	conversion, err := a.eventConfig.GitHubApps.ConvertManifest(r.Context(), pending.APIURL, code)
+	conversion, err := a.eventConfig.GitHubApps.ConvertManifest(r.Context(), pending.APIURL, code, pending.PrivateNetworkID)
 	if err != nil {
 		redirect("error", err.Error())
 		return
+	}
+	if strings.TrimSpace(conversion.WebhookSecret) == "" {
+		if pending.WebhookURL != "" {
+			redirect("error", "GitHub did not return a webhook secret.")
+			return
+		}
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			redirect("error", "Could not prepare the polling connection.")
+			return
+		}
+		conversion.WebhookSecret = base64.RawURLEncoding.EncodeToString(secret)
 	}
 	privateKey, webhookSecret, err := a.eventConfig.GitHubApps.EncryptCredentials(pending.ConnectionID, conversion.PrivateKey, conversion.WebhookSecret)
 	if err != nil {
@@ -475,7 +554,7 @@ func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) 
 	item := core.GitHubAppConnection{
 		ID: pending.ConnectionID, Name: name, WebURL: pending.WebURL, APIURL: pending.APIURL, AppID: conversion.AppID,
 		ClientID: conversion.ClientID, Slug: conversion.Slug, RegistrationOwner: conversion.RegistrationOwner,
-		RegistrationOwnerType: conversion.RegistrationOwnerType, WebhookURL: pending.WebhookURL, RelayWebhookID: pending.RelayWebhookID,
+		RegistrationOwnerType: conversion.RegistrationOwnerType, WebhookURL: pending.WebhookURL, RelayWebhookID: pending.RelayWebhookID, PrivateNetworkID: pending.PrivateNetworkID,
 		EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret, State: "needs_installation",
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -490,6 +569,20 @@ func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	http.Redirect(w, r, "/?view=connections&githubAppCreated="+url.QueryEscape(item.ID), http.StatusSeeOther)
+}
+
+func (a *API) validateEdgeRoute(ctx context.Context, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	network, err := a.store.GetPrivateNetwork(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return errors.New("choose an existing edge node")
+	}
+	if network.Driver != "dispatch_agent" {
+		return errors.New("GitHub connections require a managed edge node")
+	}
+	return nil
 }
 
 func externalOrigin(r *http.Request) string {
@@ -590,6 +683,19 @@ func (a *API) processGitHubWebhook(w http.ResponseWriter, r *http.Request, secre
 			problem(w, http.StatusForbidden, "Unexpected GitHub App installation", "The event does not belong to this connection's installation.")
 			return
 		}
+	}
+	if r.Header.Get("X-GitHub-Event") == "push" {
+		if connectionID == "" || a.workflows == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		created, err := a.workflows.HandlePush(r.Context(), connectionID, r.Header.Get("X-GitHub-Delivery"), body)
+		if err != nil {
+			problem(w, http.StatusBadRequest, "Invalid push event", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]int{"queued": created})
+		return
 	}
 	event, err := events.ParseGitHubEvent(r.Header.Get("X-GitHub-Event"), r.Header.Get("X-GitHub-Delivery"), body, time.Now().UTC())
 	if errors.Is(err, events.ErrEventUnsupported) {

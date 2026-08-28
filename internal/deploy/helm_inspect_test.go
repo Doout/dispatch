@@ -59,3 +59,25 @@ func TestInspectGitHelmSourceLoadsDefaultsSchemaAndProfiles(t *testing.T) {
 		t.Fatalf("schema or profile missing: %#v", inspection)
 	}
 }
+
+func TestInspectHelmSourceLoadsLocalPackagedOriginDefaults(t *testing.T) {
+	chartPath := filepath.Join(t.TempDir(), "service")
+	if err := os.MkdirAll(chartPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"Chart.yaml":  "apiVersion: v2\nname: service\nversion: 2.0.0\nappVersion: 8.1.0\n",
+		"values.yaml": "replicaCount: 2\nimage:\n  repository: example/service\n  tag: stable\n",
+	} {
+		if err := os.WriteFile(filepath.Join(chartPath, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inspection, err := InspectHelmSource(context.Background(), core.App{HelmChart: chartPath, BuildType: core.BuildTypeHelm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Chart.Name != "service" || inspection.Chart.Version != "2.0.0" || inspection.Defaults["replicaCount"] != float64(2) && inspection.Defaults["replicaCount"] != 2 {
+		t.Fatalf("unexpected inspection: %#v", inspection)
+	}
+}
