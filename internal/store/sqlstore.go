@@ -276,8 +276,8 @@ func (s *SQLStore) CreatePrivateNetwork(ctx context.Context, item core.PrivateNe
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO private_networks(id,name,driver,config,details,token_hash,state,last_verified_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`),
-		item.ID, item.Name, item.Driver, string(config), string(details), item.TokenHash, item.State, nullTime(item.LastVerifiedAt), stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO private_networks(id,name,driver,config,details,token_hash,encrypted_credentials,state,last_verified_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.Name, item.Driver, string(config), string(details), item.TokenHash, item.EncryptedCredentials, item.State, nullTime(item.LastVerifiedAt), stamp(item.CreatedAt), stamp(item.UpdatedAt))
 	return err
 }
 
@@ -290,8 +290,8 @@ func (s *SQLStore) UpdatePrivateNetwork(ctx context.Context, item core.PrivateNe
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE private_networks SET name=?,driver=?,config=?,details=?,token_hash=?,state=?,last_verified_at=?,updated_at=? WHERE id=?`),
-		item.Name, item.Driver, string(config), string(details), item.TokenHash, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ID)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE private_networks SET name=?,driver=?,config=?,details=?,token_hash=?,encrypted_credentials=?,state=?,last_verified_at=?,updated_at=? WHERE id=?`),
+		item.Name, item.Driver, string(config), string(details), item.TokenHash, item.EncryptedCredentials, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ID)
 	return changed(result, err)
 }
 
@@ -301,7 +301,7 @@ func (s *SQLStore) DeletePrivateNetwork(ctx context.Context, id string) error {
 }
 
 func (s *SQLStore) ListPrivateNetworks(ctx context.Context) ([]core.PrivateNetwork, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,driver,config,details,token_hash,state,last_verified_at,created_at,updated_at FROM private_networks ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,driver,config,details,token_hash,encrypted_credentials,state,last_verified_at,created_at,updated_at FROM private_networks ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +318,7 @@ func (s *SQLStore) ListPrivateNetworks(ctx context.Context) ([]core.PrivateNetwo
 }
 
 func (s *SQLStore) GetPrivateNetwork(ctx context.Context, id string) (core.PrivateNetwork, error) {
-	item, err := scanPrivateNetwork(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,driver,config,details,token_hash,state,last_verified_at,created_at,updated_at FROM private_networks WHERE id=?`), id))
+	item, err := scanPrivateNetwork(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,driver,config,details,token_hash,encrypted_credentials,state,last_verified_at,created_at,updated_at FROM private_networks WHERE id=?`), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -329,7 +329,7 @@ func scanPrivateNetwork(row scanner) (core.PrivateNetwork, error) {
 	var item core.PrivateNetwork
 	var config, details, created, updated string
 	var verified sql.NullString
-	err := row.Scan(&item.ID, &item.Name, &item.Driver, &config, &details, &item.TokenHash, &item.State, &verified, &created, &updated)
+	err := row.Scan(&item.ID, &item.Name, &item.Driver, &config, &details, &item.TokenHash, &item.EncryptedCredentials, &item.State, &verified, &created, &updated)
 	if err != nil {
 		return item, err
 	}
@@ -339,6 +339,7 @@ func scanPrivateNetwork(row scanner) (core.PrivateNetwork, error) {
 	if err := json.Unmarshal([]byte(details), &item.Details); err != nil {
 		return item, err
 	}
+	item.CredentialsConfigured = item.EncryptedCredentials != ""
 	item.LastVerifiedAt = parseNullTime(verified)
 	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
 	return item, nil

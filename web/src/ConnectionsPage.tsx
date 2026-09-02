@@ -35,6 +35,7 @@ import { relative } from "./presentation";
 import { StatusLabel, TableIconAction } from "./ResourceTable";
 import { readSecretTextFile } from "./fileUploads";
 import { useDialogFocus } from "./useDialogFocus";
+import { LanewayNetworksSection } from "./LanewayNetworksSection";
 
 function githubAPIFor(webURL: string) {
   try {
@@ -83,6 +84,7 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
   const [creatingSecretStore, setCreatingSecretStore] = useState(false);
   const [editingSecretStore, setEditingSecretStore] = useState<SecretStore | null>(null);
 	const [creatingPrivateNetwork, setCreatingPrivateNetwork] = useState(false);
+	const [creatingLanewayNetwork, setCreatingLanewayNetwork] = useState(false);
 	const [editingPrivateNetwork, setEditingPrivateNetwork] = useState<PrivateNetwork | null>(null);
 	const [privateNetworkDriver, setPrivateNetworkDriver] = useState<"dispatch_agent" | "laneway_connector">("dispatch_agent");
   const [editing, setEditing] = useState<GitHubAppConnection | null>(null);
@@ -305,20 +307,23 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
   }
 
   const secretStores = overview.secretStores ?? [];
-	const privateNetworks = overview.privateNetworks ?? [];
-  const hasConnections = overview.githubApps.length + secretStores.length + privateNetworks.length > 0;
+	const allPrivateNetworks = overview.privateNetworks ?? [];
+	const lanewayNetworks = allPrivateNetworks.filter((network) => network.driver === "laneway_network");
+	const privateNetworks = allPrivateNetworks.filter((network) => network.driver !== "laneway_network");
+	const hasConnections = overview.githubApps.length + secretStores.length + allPrivateNetworks.length > 0;
   const closeEditor = () => {
     if (creating) reset();
     setCreatingSecretStore(false);
     setEditingSecretStore(null);
 		setCreatingPrivateNetwork(false);
 		setEditingPrivateNetwork(null);
-  };
+		setCreatingLanewayNetwork(false);
+	};
 
   return <div className="page-layout connections-page">
-	<PageHeader view="connections" trailing={creating || creatingSecretStore || creatingPrivateNetwork
+	<PageHeader view="connections" trailing={creating || creatingSecretStore || creatingPrivateNetwork || creatingLanewayNetwork
       ? <button type="button" className="quiet-button" onClick={closeEditor}><X size={16} weight="bold" />Cancel</button>
-			: <ConnectionAddMenu onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} />} />
+			: <ConnectionAddMenu onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />} />
     {notice && <div className="connection-notice" role="status"><CheckCircle size={18} weight="fill" /><span>{notice}</span><button aria-label="Dismiss message" onClick={() => onNotice("")}><X size={15} /></button></div>}
     {error && <p className="form-error connection-error" role="alert">{error}</p>}
     {creating ? <section className="inline-create connection-editor" aria-labelledby="connection-editor-title">
@@ -364,7 +369,7 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
         {method === "manifest" && !editing && <div className="manifest-summary"><LockSimple size={18} /><p>Contents and pull requests: read. Issue comments: write.</p></div>}
         <div className="connection-actions"><button type="button" className="quiet-button" onClick={reset}>Cancel</button><button className="primary-button" disabled={!!busyID || !name.trim() || !webURL.trim() || !apiURL.trim() || (!editing && eventDelivery === "relay" && !relayServerID) || (method === "manifest" && !editing && (!ownerType || (ownerType === "organization" && !owner.trim()))) || ((method === "manual" || !!editing) && (!appID || (!editing && (!privateKey.trim() || (eventDelivery !== "none" && !webhookSecret.trim()))))) }>{busyID ? "Working..." : method === "manifest" && !editing ? "Continue to GitHub" : editing ? "Save connection" : "Add connection"}</button></div>
       </form>
-	</section> : creatingSecretStore ? <SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={privateNetworks} creating editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} /> : creatingPrivateNetwork ? <PrivateNetworksSection networks={privateNetworks} stores={secretStores} githubApps={overview.githubApps} creating editing={editingPrivateNetwork} initialDriver={privateNetworkDriver} onCreatingChange={setCreatingPrivateNetwork} onEditingChange={setEditingPrivateNetwork} onChanged={onChanged} /> : hasConnections ? <div className="connections-inventory">
+	</section> : creatingSecretStore ? <SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={allPrivateNetworks} creating editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} /> : creatingPrivateNetwork ? <PrivateNetworksSection networks={privateNetworks} stores={secretStores} githubApps={overview.githubApps} creating editing={editingPrivateNetwork} initialDriver={privateNetworkDriver} onCreatingChange={setCreatingPrivateNetwork} onEditingChange={setEditingPrivateNetwork} onChanged={onChanged} /> : creatingLanewayNetwork ? <LanewayNetworksSection networks={lanewayNetworks} creating onCreatingChange={setCreatingLanewayNetwork} onChanged={onChanged} /> : hasConnections ? <div className="connections-inventory">
       <section className="connection-provider-group" aria-labelledby="github-connections-title">
         <header className="connection-provider-header"><span className="connection-provider-icon github"><GithubLogo size={19} weight="fill" /></span><div><h2 id="github-connections-title">GitHub Apps</h2><span>Repositories and events</span></div><strong>{overview.githubApps.length}</strong></header>
         {overview.githubApps.length ? <div className="connection-list">{overview.githubApps.map((connection) => {
@@ -396,13 +401,14 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
       </section>;
     })}</div> : <div className="connection-provider-empty">No GitHub Apps</div>}
       </section>
-		<SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={privateNetworks} creating={false} editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} />
+		<SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={allPrivateNetworks} creating={false} editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} />
+		<LanewayNetworksSection networks={lanewayNetworks} creating={false} onCreatingChange={setCreatingLanewayNetwork} onChanged={onChanged} />
 		<PrivateNetworksSection networks={privateNetworks} stores={secretStores} githubApps={overview.githubApps} creating={false} editing={editingPrivateNetwork} initialDriver={privateNetworkDriver} onCreatingChange={setCreatingPrivateNetwork} onEditingChange={setEditingPrivateNetwork} onChanged={onChanged} />
-	</div> : <ConnectionsEmpty onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} />}
+	</div> : <ConnectionsEmpty onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />}
   </div>;
 }
 
-function ConnectionAddMenu({ onGitHub, onSecretStore, onPrivateNetwork }: { onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void }) {
+function ConnectionAddMenu({ onGitHub, onSecretStore, onPrivateNetwork, onLanewayNetwork }: { onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void; onLanewayNetwork: () => void }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild><button className="primary-button add-resource-menu" type="button"><Plus size={16} weight="bold" />Add connection</button></DropdownMenu.Trigger>
     <DropdownMenu.Portal><DropdownMenu.Content className="action-menu-list add-resource-options" align="end" sideOffset={6} collisionPadding={12}>
@@ -412,12 +418,12 @@ function ConnectionAddMenu({ onGitHub, onSecretStore, onPrivateNetwork }: { onGi
       <DropdownMenu.Separator className="action-menu-separator" />
       <DropdownMenu.Label className="add-resource-group-label">Network</DropdownMenu.Label>
 		<DropdownMenu.Item className="action-menu-item" onSelect={() => onPrivateNetwork("dispatch_agent")}><PlugsConnected size={17} /><span><strong>Edge node</strong><small>Private service access</small></span></DropdownMenu.Item>
-		<DropdownMenu.Item className="action-menu-item" onSelect={() => onPrivateNetwork("laneway_connector")}><PlugsConnected size={17} /><span><strong>Laneway Connector</strong><small>Private Dispatch access</small></span></DropdownMenu.Item>
+		<DropdownMenu.Item className="action-menu-item" onSelect={onLanewayNetwork}><PlugsConnected size={17} /><span><strong>Laneway network</strong><small>Shared private network</small></span></DropdownMenu.Item>
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;
 }
 
-function ConnectionsEmpty({ onGitHub, onSecretStore, onPrivateNetwork }: { onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void }) {
+function ConnectionsEmpty({ onGitHub, onSecretStore, onPrivateNetwork, onLanewayNetwork }: { onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void; onLanewayNetwork: () => void }) {
   return <section className="connections-empty" aria-labelledby="connections-empty-title">
 		<header className="connections-empty-head"><span><PlugsConnected size={20} /></span><div><h2 id="connections-empty-title">No connections</h2><p>Add a provider or edge route.</p></div></header>
 		<div className="connection-empty-groups">
@@ -427,7 +433,7 @@ function ConnectionsEmpty({ onGitHub, onSecretStore, onPrivateNetwork }: { onGit
 			</div></section>
 			<section className="connection-empty-group" aria-labelledby="network-connections-title"><h3 id="network-connections-title">Network</h3><div>
 				<button type="button" onClick={() => onPrivateNetwork("dispatch_agent")}><span className="connection-provider-icon network"><PlugsConnected size={18} /></span><span><strong>Edge node</strong><small>Private service access</small></span><ArrowRight size={15} /></button>
-				<button type="button" onClick={() => onPrivateNetwork("laneway_connector")}><span className="connection-provider-icon network"><PlugsConnected size={18} /></span><span><strong>Laneway Connector</strong><small>Private Dispatch access</small></span><ArrowRight size={15} /></button>
+				<button type="button" onClick={onLanewayNetwork}><span className="connection-provider-icon network"><PlugsConnected size={18} /></span><span><strong>Laneway network</strong><small>Shared private network</small></span><ArrowRight size={15} /></button>
 			</div></section>
 		</div>
   </section>;
@@ -520,7 +526,7 @@ function SecretStoresSection({ stores, secrets, networks, creating, editing, onC
         <label className="secret-store-api-key"><span>IBM Cloud API key</span><input type="password" value={apiKey} onChange={(event) => setAPIKey(event.target.value)} placeholder={editing ? "Leave blank to keep the key" : "API key"} required={!editing} autoComplete="new-password" /></label>
       </div>
 		<div className="secret-store-access">
-			<label><span>Route</span><select value={privateNetworkID} onChange={(event) => { setPrivateNetworkID(event.target.value); if (!event.target.value) { setServiceAddress(""); setIAMAddress(""); } }}><option value="">Direct</option>{networks.filter((network) => network.driver !== "laneway_connector").map((network) => <option key={network.id} value={network.id}>{network.driver === "dispatch_agent" ? "Edge · " : "Laneway · "}{network.name}{network.state === "ready" ? "" : ` (${network.state})`}</option>)}</select></label>
+			<label><span>Route</span><select value={privateNetworkID} onChange={(event) => { setPrivateNetworkID(event.target.value); if (!event.target.value) { setServiceAddress(""); setIAMAddress(""); } }}><option value="">Direct</option>{networks.filter((network) => network.driver === "dispatch_agent" || network.driver === "laneway").map((network) => <option key={network.id} value={network.id}>{network.driver === "dispatch_agent" ? "Edge · " : "Laneway · "}{network.name}{network.state === "ready" ? "" : ` (${network.state})`}</option>)}</select></label>
 			{networks.find((network) => network.id === privateNetworkID)?.driver === "laneway" && <><label><span>Secrets Manager IP</span><input value={serviceAddress} onChange={(event) => setServiceAddress(event.target.value)} placeholder="192.0.2.20" inputMode="decimal" spellCheck={false} /></label><label><span>IAM IP</span><input value={iamAddress} onChange={(event) => setIAMAddress(event.target.value)} placeholder="Optional" inputMode="decimal" spellCheck={false} /></label></>}
 		</div>
       <details className="connection-advanced"><summary>IAM endpoint</summary><label><span>IAM URL</span><input type="url" value={iamURL} onChange={(event) => setIAMURL(event.target.value)} required spellCheck={false} /></label></details>

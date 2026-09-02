@@ -65,14 +65,15 @@ describe("connections page", () => {
     expect(screen.getByText("Outbound only")).toBeTruthy();
   });
 
-  it("opens the managed Laneway Connector flow", () => {
+  it("opens the Laneway network authorization flow", () => {
     render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Laneway Connector/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Laneway network/ }));
 
-    expect(screen.getByRole("heading", { name: "Add Laneway Connector" })).toBeTruthy();
-    expect(screen.getByLabelText("Laneway URL")).toBeTruthy();
-    expect(screen.getByText("Managed here")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Connect Laneway" })).toBeTruthy();
+    expect(screen.getByPlaceholderText("Production network")).toBeTruthy();
+    expect(screen.getByPlaceholderText("https://lane.example.com")).toBeTruthy();
+    expect(screen.getByText("Scoped access")).toBeTruthy();
   });
 
   it("allows polling without a webhook and opens relay setup", () => {

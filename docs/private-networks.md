@@ -5,9 +5,20 @@ does not open an inbound port. A connection can use **Direct** or a named edge
 node; IBM Cloud Secrets Manager is the first connection that supports this
 route binding.
 
-When Dispatch itself is private, add a **Laneway Connector** from Connections.
-The Connector runs on the Dispatch host and publishes only the routes approved
-in Laneway. Edge hosts can then reach the private controller through Laneway.
+Connect a **Laneway network** when Dispatch needs to manage nodes and routes in
+Laneway. The Laneway authorization screen creates or selects one network and
+returns a revocable credential scoped to that network. See
+[Laneway integration contract](laneway-integration.md).
+
+When Dispatch itself is private, a **Laneway Connector** can publish its
+approved controller route. The Connector and the network connection solve
+different directions: the network connection lets Dispatch call Laneway, while
+the Connector lets Laneway nodes reach Dispatch.
+
+The management connection is not a data-plane route by itself. Dispatch must
+also run an enrolled Laneway node before provider or repository traffic can use
+that network. The authorization handoff defines the network-bound bootstrap
+change needed to make that enrollment automatic.
 
 ## Connect private Dispatch to Laneway
 

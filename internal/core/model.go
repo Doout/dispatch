@@ -429,17 +429,19 @@ type SecretStore struct {
 // by an edge node that polls the controller; a laneway path is backed by a
 // daemon socket mounted into the controller. Details are safe to return.
 type PrivateNetwork struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Driver          string            `json:"driver"`
-	Config          map[string]string `json:"config"`
-	Details         map[string]string `json:"details"`
-	TokenHash       string            `json:"-"`
-	EnrollmentToken string            `json:"enrollmentToken,omitempty"`
-	State           string            `json:"state"`
-	LastVerifiedAt  *time.Time        `json:"lastVerifiedAt,omitempty"`
-	CreatedAt       time.Time         `json:"createdAt"`
-	UpdatedAt       time.Time         `json:"updatedAt"`
+	ID                    string            `json:"id"`
+	Name                  string            `json:"name"`
+	Driver                string            `json:"driver"`
+	Config                map[string]string `json:"config"`
+	Details               map[string]string `json:"details"`
+	TokenHash             string            `json:"-"`
+	EnrollmentToken       string            `json:"enrollmentToken,omitempty"`
+	CredentialsConfigured bool              `json:"credentialsConfigured"`
+	EncryptedCredentials  string            `json:"-"`
+	State                 string            `json:"state"`
+	LastVerifiedAt        *time.Time        `json:"lastVerifiedAt,omitempty"`
+	CreatedAt             time.Time         `json:"createdAt"`
+	UpdatedAt             time.Time         `json:"updatedAt"`
 }
 
 // EdgeJob is a short-lived, encrypted HTTP exchange between Dispatch and an

@@ -85,6 +85,8 @@ type API struct {
 	githubServices map[string]githubEventServices
 	manifestMu     sync.Mutex
 	manifestStates map[string]githubAppManifestState
+	lanewayMu      sync.Mutex
+	lanewayStates  map[string]lanewayAuthorizationState
 	workflows      *workflowservice.Service
 
 	sessionMu sync.RWMutex
@@ -129,7 +131,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			}
 			return nil
 		}(), nil), eventConfig: eventConfig, secretResolver: eventConfig.SecretResolver, openShift: openshift.New(), lifecycle: lifecycle,
-		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState)}
+		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState), lanewayStates: make(map[string]lanewayAuthorizationState)}
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
@@ -148,6 +150,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		r.Post("/events/github", a.githubWebhook)
 		r.Post("/events/github/apps/{id}", a.githubAppWebhook)
 		r.Get("/github-apps/manifest/callback", a.completeGitHubAppManifest)
+		r.Get("/laneway-networks/callback", a.completeLanewayAuthorization)
 		r.Get("/edge/nodes/{id}/jobs/next", a.leaseEdgeJob)
 		r.Post("/edge/nodes/{id}/jobs/{jobId}/complete", a.completeEdgeJob)
 		r.Group(func(r chi.Router) {
@@ -169,6 +172,10 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Post("/private-networks/{id}/rotate-token", a.rotateEdgeToken)
 			r.Post("/private-networks/{id}/install-connector", a.installLanewayConnector)
 			r.Delete("/private-networks/{id}", a.deletePrivateNetwork)
+			r.Post("/laneway-networks/authorize", a.startLanewayAuthorization)
+			r.Get("/laneway-networks/{id}/inventory", a.getLanewayInventory)
+			r.Post("/laneway-networks/{id}/node-installers", a.createLanewayNodeInstaller)
+			r.Post("/laneway-networks/{id}/routes", a.createLanewayRoute)
 			r.Get("/github-apps", a.listGitHubApps)
 			r.Post("/github-apps", a.createGitHubApp)
 			r.Put("/github-apps/{id}", a.updateGitHubApp)

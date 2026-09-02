@@ -112,7 +112,7 @@ export default function DispatchApp() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const connectionCallback = params.has("githubAppSetup") || params.has("githubAppCreated") || params.has("githubAppStatus") || params.has("installation_id");
+    const connectionCallback = params.has("githubAppSetup") || params.has("githubAppCreated") || params.has("githubAppStatus") || params.has("lanewayStatus") || params.has("installation_id");
     const canonicalPath = routePath(readRoute());
     const currentPath = `${window.location.pathname}${window.location.search}`;
     window.history.replaceState({ ...(window.history.state ?? {}), dispatchRoute: true, scrollTop: currentPageScroll() }, "", !connectionCallback && currentPath !== canonicalPath ? canonicalPath : window.location.href);
@@ -141,7 +141,12 @@ export default function DispatchApp() {
     const installationID = Number(params.get("installation_id") || "0");
     const createdID = params.get("githubAppCreated");
     const callbackStatus = params.get("githubAppStatus");
-    if (setupID && installationID > 0) {
+    const lanewayStatus = params.get("lanewayStatus");
+    if (lanewayStatus) {
+      navigateRoute({ view: "connections" }, { replace: true });
+      setConnectionNotice(lanewayStatus === "connected" ? "Laneway network connected." : params.get("detail") || "Laneway connection failed.");
+      void load(true);
+    } else if (setupID && installationID > 0) {
       navigateRoute({ view: "connections" }, { replace: true });
       void (async () => {
         try {

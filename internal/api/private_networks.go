@@ -12,6 +12,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/edge"
+	"github.com/doout/dispatch/internal/laneway"
 	"github.com/doout/dispatch/internal/privateaccess"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
@@ -58,6 +59,10 @@ func (a *API) createPrivateNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.store.CreatePrivateNetwork(r.Context(), item); err != nil {
 		a.internal(w, err)
+		return
+	}
+	if item.Driver == laneway.DriverNetwork {
+		a.verifyLanewayNetwork(w, r, item)
 		return
 	}
 	writeJSON(w, http.StatusCreated, item)

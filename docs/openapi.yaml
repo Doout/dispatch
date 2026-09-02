@@ -238,6 +238,105 @@ paths:
       description: Invalidates the prior edge credential and returns a replacement token once.
       responses:
         "200": { description: Edge node token rotated. }
+  /laneway-networks/authorize:
+    post:
+      operationId: startLanewayNetworkAuthorization
+      description: Starts browser authorization for one network-scoped Laneway connection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, authority]
+              properties:
+                name: { type: string, maxLength: 80 }
+                authority: { type: string, format: uri, description: Laneway HTTPS origin. }
+      responses:
+        "200":
+          description: URL for the Laneway consent screen.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorizationUrl]
+                properties:
+                  authorizationUrl: { type: string, format: uri }
+        "400": { $ref: "#/components/responses/Problem" }
+  /laneway-networks/callback:
+    get:
+      operationId: completeLanewayNetworkAuthorization
+      security: []
+      parameters:
+        - { in: query, name: code, required: false, schema: { type: string } }
+        - { in: query, name: state, required: true, schema: { type: string } }
+        - { in: query, name: error_description, required: false, schema: { type: string } }
+      responses:
+        "303": { description: Returns to Connections with the authorization result. }
+  /laneway-networks/{privateNetworkId}/inventory:
+    parameters:
+      - { in: path, name: privateNetworkId, required: true, schema: { type: string } }
+    get:
+      operationId: getLanewayNetworkInventory
+      responses:
+        "200":
+          description: Current network, node, endpoint, and route inventory from Laneway.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LanewayInventory" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+  /laneway-networks/{privateNetworkId}/node-installers:
+    parameters:
+      - { in: path, name: privateNetworkId, required: true, schema: { type: string } }
+    post:
+      operationId: createLanewayNodeInstaller
+      description: Creates a short-lived, one-time installer for a node in the connected Laneway network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, kind, installMode]
+              properties:
+                name: { type: string, maxLength: 253 }
+                kind: { type: string, enum: [node, connector, exit] }
+                installMode: { type: string, enum: [docker_compose, systemd] }
+      responses:
+        "201":
+          description: Installer command. Dispatch does not store this response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LanewayNodeInstaller" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+  /laneway-networks/{privateNetworkId}/routes:
+    parameters:
+      - { in: path, name: privateNetworkId, required: true, schema: { type: string } }
+    post:
+      operationId: createLanewayRoute
+      description: Assigns a network prefix to a node in the connected Laneway network.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nodeId, prefix, mode]
+              properties:
+                nodeId: { type: string }
+                prefix: { type: string }
+                mode: { type: string, enum: [nat, routed] }
+                metric: { type: integer, minimum: 0, maximum: 1000000, default: 100 }
+      responses:
+        "201":
+          description: Route assigned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LanewayRoute" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
   /github-apps:
     get:
       operationId: listGitHubApps
@@ -1255,14 +1354,86 @@ components:
       properties:
         id: { type: string }
         name: { type: string }
-        driver: { type: string, enum: [dispatch_agent, laneway_connector, laneway] }
+        driver: { type: string, enum: [dispatch_agent, laneway_connector, laneway, laneway_network] }
         config: { type: object, additionalProperties: { type: string } }
         details: { type: object, additionalProperties: { type: string } }
         enrollmentToken: { type: string, writeOnly: true, description: Returned only on create or rotation. }
+        credentialsConfigured: { type: boolean, description: True for a connected Laneway network. }
         state: { type: string, enum: [waiting, ready, offline, error, unverified] }
         lastVerifiedAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    LanewayInventory:
+      type: object
+      required: [network, nodes, endpointStatuses, routes]
+      properties:
+        network:
+          type: object
+          required: [network_id, name, ipv4_pool, configuration_epoch]
+          properties:
+            network_id: { type: string }
+            name: { type: string }
+            ipv4_pool: { type: string }
+            ipv6_pool: { type: string }
+            configuration_epoch: { type: integer, format: int64 }
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [node_id, network_id, name, enrollment_class]
+            properties:
+              node_id: { type: string }
+              network_id: { type: string }
+              name: { type: string }
+              ipv4_address: { type: string }
+              ipv6_address: { type: string }
+              enrollment_class: { type: string }
+              enabled_capabilities: { type: integer, format: int64 }
+              revoked_at_unix_seconds: { type: integer, format: int64 }
+        endpointStatuses:
+          type: array
+          items:
+            type: object
+            required: [node_id, network_id, node_name, freshness]
+            properties:
+              node_id: { type: string }
+              network_id: { type: string }
+              node_name: { type: string }
+              freshness: { type: string }
+              last_reported_at_unix_seconds: { type: integer, format: int64 }
+        routes:
+          type: array
+          items:
+            type: object
+            required: [route_id, network_id, node_id, prefix, kind, mode, metric, state]
+            properties:
+              route_id: { type: string }
+              network_id: { type: string }
+              node_id: { type: string }
+              prefix: { type: string }
+              kind: { type: string }
+              mode: { type: string }
+              metric: { type: integer }
+              state: { type: string }
+    LanewayNodeInstaller:
+      type: object
+      required: [installation_id, command, expires_at_unix_seconds]
+      properties:
+        installation_id: { type: string }
+        command: { type: string, writeOnly: true }
+        expires_at_unix_seconds: { type: integer, format: int64 }
+    LanewayRoute:
+      type: object
+      required: [route_id, network_id, node_id, prefix, kind, mode, metric, state]
+      properties:
+        route_id: { type: string }
+        network_id: { type: string }
+        node_id: { type: string }
+        prefix: { type: string }
+        kind: { type: string }
+        mode: { type: string }
+        metric: { type: integer }
+        state: { type: string }
     GitHubAppInput:
       type: object
       required: [name, webUrl, appId, privateKey, webhookSecret]
