@@ -11,10 +11,14 @@ import (
 	"testing"
 )
 
-func TestAuthorizeURLUsesPKCEAndRepeatedPermissions(t *testing.T) {
-	value, err := AuthorizeURL("https://lane.example.com/base", AuthorizationRequest{
-		ApplicationName: "Dispatch", ApplicationURL: "https://dispatch.example.com", RedirectURI: "https://dispatch.example.com/api/v1/laneway-networks/callback",
-		State: "state", CodeChallenge: "challenge", Permissions: []string{"network.read", "node.read"},
+func TestGenericApplicationAndAuthorizationURLs(t *testing.T) {
+	action, err := NewApplicationAction("https://lane.example.com/base")
+	if err != nil || action != "https://lane.example.com/base/applications/new" {
+		t.Fatalf("unexpected application action: %s %v", action, err)
+	}
+	value, err := AuthorizationURL("https://lane.example.com/base", OAuthAuthorizationRequest{
+		ClientID: "client-1", RedirectURI: "https://client.example.com/api/v1/laneway-networks/callback",
+		State: "state", CodeChallenge: "challenge", Scopes: []string{"network.read", "node.read"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -23,11 +27,46 @@ func TestAuthorizeURLUsesPKCEAndRepeatedPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Path != "/base/integrations/dispatch/authorize" || parsed.Query().Get("code_challenge_method") != "S256" {
+	if parsed.Path != "/base/oauth/authorize" || parsed.Query().Get("code_challenge_method") != "S256" {
 		t.Fatalf("unexpected URL: %s", value)
 	}
-	if got := parsed.Query()["permission"]; len(got) != 2 || got[0] != "network.read" || got[1] != "node.read" {
-		t.Fatalf("unexpected permissions: %#v", got)
+	if parsed.Query().Get("client_id") != "client-1" || parsed.Query().Get("scope") != "network.read node.read" {
+		t.Fatalf("unexpected query: %#v", parsed.Query())
+	}
+}
+
+func TestApplicationRegistrationAndOAuthTokenExchange(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/application-registrations/exchange":
+			if r.Header.Get("Authorization") != "" {
+				t.Fatal("application registration exchange must not use client credentials")
+			}
+			_ = json.NewEncoder(w).Encode(ApplicationRegistration{ApplicationID: "app-1", ClientID: "client-1", ClientSecret: "secret-1", Name: "Example client"})
+		case "/oauth/token":
+			clientID, clientSecret, ok := r.BasicAuth()
+			if !ok || clientID != "client-1" || clientSecret != "secret-1" {
+				t.Fatalf("unexpected client authentication: %q %q", clientID, clientSecret)
+			}
+			if err := r.ParseForm(); err != nil || r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code_verifier") != "verifier" {
+				t.Fatalf("unexpected token request: %#v %v", r.Form, err)
+			}
+			_, _ = io.WriteString(w, `{"access_token":"access","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh","scope":"network.read","installation":{"installation_id":"install-1","application_id":"app-1","network":{"network_id":"network-1","name":"Production"}}}`)
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := Client{Authority: server.URL, HTTPClient: server.Client()}
+	registration, err := client.ExchangeApplicationRegistration(context.Background(), ApplicationRegistrationRequest{Code: "register", CodeVerifier: "verifier"})
+	if err != nil || registration.ClientID != "client-1" {
+		t.Fatalf("registration: %#v %v", registration, err)
+	}
+	token, err := client.ExchangeOAuthCode(context.Background(), registration.ClientID, registration.ClientSecret, OAuthTokenRequest{Code: "authorize", CodeVerifier: "verifier", RedirectURI: "https://client.example.com/callback"})
+	if err != nil || token.Installation.Network.ID != "network-1" || token.RefreshToken != "refresh" {
+		t.Fatalf("token: %#v %v", token, err)
 	}
 }
 

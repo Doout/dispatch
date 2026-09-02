@@ -1,74 +1,43 @@
-# Laneway integration contract
+# Laneway application integration
 
-Dispatch connects to Laneway as a network-scoped automation client. A Laneway
-administrator creates or selects one network during authorization. Dispatch
-then receives a revocable token that can manage nodes and routes only in that
-network.
+Laneway exposes applications and network installations. It does not contain
+Dispatch-specific routes, models, scopes, or UI. Dispatch is one client of the
+generic protocol and supplies its name in the application manifest.
 
-This keeps ownership clear:
+The model has two parts:
 
-- Laneway owns networks, node enrollment, routes, and route approval.
-- Dispatch stores the selected network identity and an encrypted scoped token.
-- A Dispatch owner can inspect that network from **Connections**.
-- Access between two Laneway networks requires approval from the destination
-  network. Connecting Dispatch never grants access to another network.
+- An application registration identifies a client, its exact callback URLs,
+  and the maximum scopes it may request.
+- An application installation grants that application access to one Laneway
+  network. One application can have several installations.
 
-## Authorization flow
+Laneway owns networks, node enrollment, routes, consent, and revocation.
+Dispatch stores the application identity, network installation identity, and
+encrypted credentials returned by Laneway. Connecting one network does not
+grant access to any other network.
 
-Dispatch opens this browser URL:
+## Register an application
 
-```text
-GET /integrations/dispatch/authorize
-    ?application_name=Dispatch
-    &application_url=https%3A%2F%2Fdispatch.example.com
-    &redirect_uri=https%3A%2F%2Fdispatch.example.com%2Fapi%2Fv1%2Flaneway-networks%2Fcallback
-    &state=...
-    &code_challenge=...
-    &code_challenge_method=S256
-    &permission=network.read
-    &permission=node.read
-    &permission=node.manage
-    &permission=enrollment.issue
-    &permission=route.read
-    &permission=route.manage
-```
-
-Laneway must require an authenticated administrator and show a consent page.
-The administrator can select an existing network or create one, review the
-requested permissions, and approve or cancel. Approval returns a single-use
-code to the exact callback URL:
-
-```text
-HTTP/1.1 303 See Other
-Location: <redirect_uri>?code=<one-time-code>&state=<state>
-```
-
-The code must expire within ten minutes and be bound to the callback URL,
-selected network, requested permissions, and PKCE challenge. It must be
-invalidated on first exchange, including a failed exchange.
-
-Dispatch exchanges the code from its backend:
+Dispatch submits an application manifest to Laneway:
 
 ```http
-POST /v1/integrations/dispatch/token
-Content-Type: application/json
+POST /applications/new
+Content-Type: application/x-www-form-urlencoded
 
-{
-  "code": "one-time-code",
-  "code_verifier": "pkce-verifier",
-  "redirect_uri": "https://dispatch.example.com/api/v1/laneway-networks/callback"
-}
+manifest=<json>&state=<state>&code_challenge=<challenge>&code_challenge_method=S256
 ```
 
-Laneway returns a service access token and the selected network:
+The decoded manifest is:
 
 ```json
 {
-  "access_token": "lnw_spat_v1_...",
-  "token_type": "Bearer",
-  "expires_at_unix_seconds": 0,
-  "principal_id": "...",
-  "permissions": [
+  "name": "Dispatch",
+  "homepage_uri": "https://client.example.com",
+  "setup_uri": "https://client.example.com/api/v1/laneway-applications/setup",
+  "redirect_uris": [
+    "https://client.example.com/api/v1/laneway-networks/callback"
+  ],
+  "scopes": [
     "network.read",
     "node.read",
     "node.manage",
@@ -76,42 +45,116 @@ Laneway returns a service access token and the selected network:
     "route.read",
     "route.manage"
   ],
-  "network": {
-    "network_id": "...",
-    "name": "Production",
-    "ipv4_pool": "10.42.0.0/16",
-    "ipv6_pool": "",
-    "configuration_epoch": 1
+  "token_endpoint_auth_method": "client_secret_basic"
+}
+```
+
+Laneway requires an authenticated administrator, shows the application name,
+callbacks, and requested scopes, then asks for approval. Approval redirects to
+the exact `setup_uri` with a single-use code and the original state.
+
+Dispatch exchanges that code from its backend:
+
+```http
+POST /v1/application-registrations/exchange
+Content-Type: application/json
+
+{
+  "code": "one-time-code",
+  "code_verifier": "pkce-verifier"
+}
+```
+
+The response contains the client secret once:
+
+```json
+{
+  "application_id": "app_...",
+  "client_id": "client_...",
+  "client_secret": "secret_...",
+  "name": "Dispatch"
+}
+```
+
+The code must expire within ten minutes. It must be bound to the manifest,
+setup URI, state, and PKCE challenge, and invalidated on its first exchange.
+The exchange response must use `Cache-Control: no-store`.
+
+## Install the application into a network
+
+After registration, or when reusing an application registered with the same
+Laneway authority, Dispatch starts a standard OAuth authorization code flow:
+
+```text
+GET /oauth/authorize
+    ?response_type=code
+    &client_id=client_...
+    &redirect_uri=https%3A%2F%2Fclient.example.com%2Fapi%2Fv1%2Flaneway-networks%2Fcallback
+    &scope=network.read%20node.read%20node.manage%20enrollment.issue%20route.read%20route.manage
+    &state=...
+    &code_challenge=...
+    &code_challenge_method=S256
+```
+
+Laneway asks an administrator to select or create one network and approve the
+requested scopes. Approval returns a single-use authorization code to the
+registered callback URL.
+
+Dispatch exchanges the code with HTTP Basic client authentication:
+
+```http
+POST /oauth/token
+Authorization: Basic base64(client_id:client_secret)
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=...&code_verifier=...&redirect_uri=...
+```
+
+Laneway returns the network installation and rotating credentials:
+
+```json
+{
+  "access_token": "access_...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "refresh_...",
+  "scope": "network.read node.read node.manage enrollment.issue route.read route.manage",
+  "installation": {
+    "installation_id": "installation_...",
+    "application_id": "app_...",
+    "network": {
+      "network_id": "network_...",
+      "name": "Production",
+      "ipv4_pool": "10.42.0.0/16",
+      "ipv6_pool": "",
+      "configuration_epoch": 1
+    }
   }
 }
 ```
 
-The service principal must have `all_networks=false` and exactly one
-`network_id`. Its name should identify the Dispatch instance. Laneway should
-show the principal on the selected network and let an administrator revoke it.
+Access tokens should expire after one hour. Refresh tokens should rotate on
+use and expire after 30 to 90 days. Revoking an installation invalidates its
+access and refresh tokens without affecting other installations.
 
-## API used after authorization
+Each installation can use an existing service principal with
+`all_networks=false` and exactly one network ID. The application and
+installation remain generic Laneway resources.
 
-Dispatch uses the returned token as a bearer credential with Laneway's current
-management API:
+## Network management API
+
+Dispatch uses the installation access token with these existing Laneway APIs:
 
 - `GET /v1/admin/networks/{network_id}`
 - `GET /v1/admin/networks/{network_id}/nodes?limit=500`
 - `GET /v1/admin/networks/{network_id}/endpoint-statuses?limit=500`
 - `GET /v1/admin/networks/{network_id}/routes?limit=500`
-- `POST /v1/admin/enrollment-tokens`
 - `POST /v1/admin/networks/{network_id}/node-installers`
 - `POST /v1/admin/routes/assign`
-- `POST /v1/admin/routes/{route_id}/approve`
-- `POST /v1/admin/routes/{route_id}/withdraw`
 
-Dispatch reads the network inventory, requests one-time node installers, and
-assigns routes. The installer response is shown once and is not stored by
-Dispatch:
+The node installer endpoint accepts:
 
-```http
-POST /v1/admin/networks/{network_id}/node-installers
-
+```json
 {
   "name": "vpc-node",
   "kind": "exit",
@@ -119,68 +162,51 @@ POST /v1/admin/networks/{network_id}/node-installers
 }
 ```
 
-Laneway returns:
-
-```json
-{
-  "installation_id": "...",
-  "command": "docker compose ...",
-  "expires_at_unix_seconds": 1780000000
-}
-```
-
 `kind` is `node`, `connector`, or `exit`. `install_mode` is
-`docker_compose` or `systemd`. The command must contain a short-lived,
-single-use enrollment credential bound to the selected network and requested
-node role.
-
-`bootstrap_bundle.create` is intentionally not requested. Laneway's current
-bootstrap bundle is global rather than network-bound. The network-bound node
-installer above is the safe replacement.
+`docker_compose` or `systemd`. The response contains a short-lived, single-use
+command bound to the selected network and node role. Dispatch shows the
+command once and does not store it.
 
 ## Cross-network access
 
-Laneway needs a separate request and approval object for routes between
-networks. Do not add the destination network to the Dispatch service
-principal. A minimal contract is:
+Network linking is separate from application installation. A client with
+access to one network cannot grant itself access to another network. A source
+network can request a link, but an administrator for the destination network
+must approve it.
 
 ```http
 POST /v1/admin/network-links
 
 {
-  "source_network_id": "dispatch-network",
-  "destination_network_id": "services-network",
+  "source_network_id": "network_a",
+  "destination_network_id": "network_b",
   "prefixes": ["10.70.0.0/16"],
   "reason": "Reach deployment services"
 }
 ```
 
-The source-network token may create and read the request. An administrator of
-the destination network must approve or reject it. Approval creates only the
-requested routes and ACL rules. Revocation removes them as one operation.
-
-Recommended operations:
-
-- `network_link.request`, scoped to the source network
-- `network_link.read`, scoped to either participating network
-- `network_link.approve`, scoped to the destination network
-- `network_link.revoke`, scoped to either participating network
-
-Every state change should record the actor, both network IDs, prefixes, reason,
-and resulting configuration epochs in the audit log.
+Approval creates only the requested routes and access rules. Revocation removes
+them as one operation. Audit records must include the actor, both network IDs,
+prefixes, reason, and resulting configuration epochs.
 
 ## Laneway implementation handoff
 
-1. Add the authorization and code-exchange endpoints above.
-2. Reuse the existing service-principal and access-token storage. Do not create
-   a parallel credential type.
-3. Add a table for short-lived authorization codes containing only a hash of
-   the code plus the bound request fields.
-4. Add the consent screen to the Laneway web app with network selection and
-   network creation.
-5. Add the network-bound node-installer endpoint. Reuse enrollment tokens, but
-   return only a generated command and never persist the plaintext token.
-6. Add tests for callback allowlisting, PKCE mismatch, expiry, replay,
-   cancellation, one-network scope, and token revocation.
-7. Add the cross-network link object only after the base authorization flow is
-   stable. Keep destination approval mandatory.
+1. Add generic `Application` and `ApplicationInstallation` resources. Do not
+   add product-named resource types or endpoints.
+2. Add `POST /applications/new` and the application registration consent UI.
+3. Add `POST /v1/application-registrations/exchange`. Store only a hash of
+   each one-time code.
+4. Add `/oauth/authorize`, `/oauth/token`, and `/oauth/revoke` using exact
+   redirect URI matching, PKCE, HTTP Basic client authentication, and rotating
+   refresh tokens.
+5. Let an administrator select or create one network during installation.
+6. Back each installation with a one-network service principal. Reuse the
+   current principal and access-token storage instead of creating a parallel
+   permission system.
+7. Add the network-bound node installer endpoint if it is not already present.
+8. Reject expired tokens during authentication and clean them with a bounded,
+   indexed maintenance query. Avoid deleting expired tokens in an unbounded
+   insert-path transaction.
+9. Test redirect allowlisting, PKCE mismatch, expiry, replay, cancellation,
+   one-network scope, refresh rotation, installation revocation, and multiple
+   installations for one application.

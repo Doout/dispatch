@@ -241,7 +241,7 @@ paths:
   /laneway-networks/authorize:
     post:
       operationId: startLanewayNetworkAuthorization
-      description: Starts browser authorization for one network-scoped Laneway connection.
+      description: Registers or reuses a generic Laneway application, then starts authorization for one network installation.
       requestBody:
         required: true
         content:
@@ -254,15 +254,31 @@ paths:
                 authority: { type: string, format: uri, description: Laneway HTTPS origin. }
       responses:
         "200":
-          description: URL for the Laneway consent screen.
+          description: Browser handoff for application registration or network authorization.
           content:
             application/json:
               schema:
                 type: object
-                required: [authorizationUrl]
+                required: [method, action]
                 properties:
-                  authorizationUrl: { type: string, format: uri }
+                  method: { type: string, enum: [post, redirect] }
+                  action: { type: string, format: uri }
+                  fields:
+                    type: object
+                    additionalProperties: { type: string }
         "400": { $ref: "#/components/responses/Problem" }
+  /laneway-applications/setup:
+    get:
+      operationId: completeLanewayApplicationRegistration
+      description: Exchanges a generic Laneway application registration code, then starts network authorization.
+      security: []
+      parameters:
+        - { in: query, name: code, required: false, schema: { type: string } }
+        - { in: query, name: state, required: true, schema: { type: string } }
+        - { in: query, name: error, required: false, schema: { type: string } }
+        - { in: query, name: error_description, required: false, schema: { type: string } }
+      responses:
+        "303": { description: Opens Laneway network authorization or returns to Connections with an error. }
   /laneway-networks/callback:
     get:
       operationId: completeLanewayNetworkAuthorization
@@ -270,6 +286,7 @@ paths:
       parameters:
         - { in: query, name: code, required: false, schema: { type: string } }
         - { in: query, name: state, required: true, schema: { type: string } }
+        - { in: query, name: error, required: false, schema: { type: string } }
         - { in: query, name: error_description, required: false, schema: { type: string } }
       responses:
         "303": { description: Returns to Connections with the authorization result. }

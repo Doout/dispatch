@@ -25,20 +25,30 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var exchanged bool
+	var registrationExchanged, tokenExchanged bool
 	lanewayServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
-		case http.MethodPost + " /v1/integrations/dispatch/token":
+		case http.MethodPost + " /v1/application-registrations/exchange":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Contains(body, []byte(`"code":"authorization-code"`)) || !bytes.Contains(body, []byte(`"code_verifier":"`)) {
-				t.Fatalf("unexpected token exchange: %s", body)
+			if !bytes.Contains(body, []byte(`"code":"registration-code"`)) || !bytes.Contains(body, []byte(`"code_verifier":"`)) {
+				t.Fatalf("unexpected registration exchange: %s", body)
 			}
-			exchanged = true
-			_, _ = io.WriteString(w, `{"access_token":"lnw_spat_v1_secret","token_type":"Bearer","principal_id":"principal-1","permissions":["network.read","node.read","route.read"],"network":{"network_id":"network-1","name":"Production","ipv4_pool":"10.42.0.0/16","configuration_epoch":4}}`)
+			registrationExchanged = true
+			_, _ = io.WriteString(w, `{"application_id":"application-1","client_id":"client-1","client_secret":"client-secret","name":"Dispatch"}`)
+		case http.MethodPost + " /oauth/token":
+			clientID, clientSecret, ok := r.BasicAuth()
+			if !ok || clientID != "client-1" || clientSecret != "client-secret" {
+				t.Fatalf("unexpected OAuth client authentication: %q %q", clientID, clientSecret)
+			}
+			if err := r.ParseForm(); err != nil || r.Form.Get("code") != "authorization-code" || r.Form.Get("code_verifier") == "" {
+				t.Fatalf("unexpected OAuth token exchange: %#v %v", r.Form, err)
+			}
+			tokenExchanged = true
+			_, _ = io.WriteString(w, `{"access_token":"lnw_access_secret","token_type":"Bearer","expires_in":3600,"refresh_token":"lnw_refresh_secret","scope":"network.read node.read route.read","installation":{"installation_id":"installation-1","application_id":"application-1","network":{"network_id":"network-1","name":"Production","ipv4_pool":"10.42.0.0/16","configuration_epoch":4}}}`)
 		case http.MethodGet + " /v1/admin/networks/network-1":
 			assertLanewayBearer(t, r)
 			_, _ = io.WriteString(w, `{"network_id":"network-1","name":"Production","ipv4_pool":"10.42.0.0/16","configuration_epoch":5}`)
@@ -84,23 +94,36 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 		t.Fatalf("start Laneway authorization: %d %s", response.Code, response.Body.String())
 	}
 	var start struct {
-		AuthorizationURL string `json:"authorizationUrl"`
+		Method string            `json:"method"`
+		Action string            `json:"action"`
+		Fields map[string]string `json:"fields"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&start); err != nil {
 		t.Fatal(err)
 	}
-	authorizationURL, err := url.Parse(start.AuthorizationURL)
+	registrationURL, err := url.Parse(start.Action)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorizationURL.Path != "/integrations/dispatch/authorize" || authorizationURL.Query().Get("code_challenge_method") != "S256" || authorizationURL.Query().Get("state") == "" {
-		t.Fatalf("unexpected authorization URL: %s", start.AuthorizationURL)
+	if start.Method != "post" || registrationURL.Path != "/applications/new" || start.Fields["state"] == "" || !strings.Contains(start.Fields["manifest"], `"name":"Dispatch"`) || strings.Contains(start.Action, "dispatch") {
+		t.Fatalf("unexpected application registration: %#v", start)
+	}
+
+	response = httptest.NewRecorder()
+	setupCallback := "/api/v1/laneway-applications/setup?state=" + url.QueryEscape(start.Fields["state"]) + "&code=registration-code"
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, setupCallback, nil))
+	if response.Code != http.StatusSeeOther || !registrationExchanged {
+		t.Fatalf("complete Laneway application registration: %d %s %s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	authorizationURL, err := url.Parse(response.Header().Get("Location"))
+	if err != nil || authorizationURL.Path != "/oauth/authorize" || authorizationURL.Query().Get("client_id") != "client-1" || authorizationURL.Query().Get("state") == "" {
+		t.Fatalf("unexpected network authorization URL: %s %v", response.Header().Get("Location"), err)
 	}
 
 	response = httptest.NewRecorder()
 	callback := "/api/v1/laneway-networks/callback?state=" + url.QueryEscape(authorizationURL.Query().Get("state")) + "&code=authorization-code"
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, callback, nil))
-	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "lanewayStatus=connected") || !exchanged {
+	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "lanewayStatus=connected") || !tokenExchanged {
 		t.Fatalf("complete Laneway authorization: %d %s %s", response.Code, response.Header().Get("Location"), response.Body.String())
 	}
 
@@ -109,7 +132,7 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"driver":"laneway_network"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"credentialsConfigured":true`)) {
 		t.Fatalf("saved Laneway network: %d %s", response.Code, response.Body.String())
 	}
-	if bytes.Contains(response.Body.Bytes(), []byte("lnw_spat_v1_secret")) || bytes.Contains(response.Body.Bytes(), []byte("encryptedCredentials")) {
+	if bytes.Contains(response.Body.Bytes(), []byte("lnw_access_secret")) || bytes.Contains(response.Body.Bytes(), []byte("lnw_refresh_secret")) || bytes.Contains(response.Body.Bytes(), []byte("client-secret")) || bytes.Contains(response.Body.Bytes(), []byte("encryptedCredentials")) {
 		t.Fatalf("Laneway credential leaked: %s", response.Body.String())
 	}
 	var networks []struct {
@@ -120,6 +143,19 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	}
 	if len(networks) != 1 {
 		t.Fatalf("expected one Laneway network, got %d", len(networks))
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/laneway-networks/authorize", strings.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("reuse Laneway application: %d %s", response.Code, response.Body.String())
+	}
+	var reused lanewayAuthorizationStart
+	if err := json.NewDecoder(response.Body).Decode(&reused); err != nil {
+		t.Fatal(err)
+	}
+	if reused.Method != "redirect" || !strings.Contains(reused.Action, "/oauth/authorize") || reused.Fields != nil {
+		t.Fatalf("expected reusable application authorization, got %#v", reused)
 	}
 
 	response = httptest.NewRecorder()
@@ -143,7 +179,7 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 
 func assertLanewayBearer(t *testing.T, r *http.Request) {
 	t.Helper()
-	if got := r.Header.Get("Authorization"); got != "Bearer lnw_spat_v1_secret" {
+	if got := r.Header.Get("Authorization"); got != "Bearer lnw_access_secret" {
 		t.Fatalf("unexpected Laneway authorization: %q", got)
 	}
 }

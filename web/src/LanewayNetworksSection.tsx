@@ -38,7 +38,22 @@ export function LanewayNetworksSection({
     setError("");
     try {
       const response = await api.startLanewayNetworkAuthorization({ name, authority });
-      window.location.assign(response.authorizationUrl);
+      if (response.method === "redirect") {
+        window.location.assign(response.action);
+        return;
+      }
+      const form = document.createElement("form");
+      form.method = "post";
+      form.action = response.action;
+      Object.entries(response.fields || {}).forEach(([fieldName, value]) => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = fieldName;
+        input.value = value;
+        form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
     } catch (cause) {
       setError((cause as Error).message);
       setBusyID("");
@@ -99,12 +114,12 @@ export function LanewayNetworksSection({
       <header><div><h2 id="laneway-network-editor-title">Connect Laneway</h2></div></header>
       {error && <p className="form-error" role="alert">{error}</p>}
       <form className="laneway-network-form" onSubmit={connect}>
-        <div className="private-network-provider"><span><PlugsConnected size={19} /></span><div><strong>Laneway network</strong><small>Create or choose a network in Laneway.</small></div></div>
+        <div className="private-network-provider"><span><PlugsConnected size={19} /></span><div><strong>Laneway network</strong><small>Authorize this application, then choose a network.</small></div></div>
         <div className="private-network-grid">
           <label><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Production network" required maxLength={80} /></label>
           <label><span>Laneway URL</span><input type="url" value={authority} onChange={(event) => setAuthority(event.target.value)} placeholder="https://lane.example.com" required spellCheck={false} /></label>
         </div>
-        <div className="laneway-access-summary"><span>Dispatch receives access to one network.</span><strong>Scoped access</strong></div>
+        <div className="laneway-access-summary"><span>Each connection is limited to one network.</span><strong>Scoped access</strong></div>
         <div className="connection-actions"><button type="button" className="quiet-button" onClick={() => onCreatingChange(false)}>Cancel</button><button type="submit" className="primary-button" disabled={busyID === "connect" || !name.trim() || !authority.trim()}>{busyID === "connect" ? "Opening Laneway..." : "Continue to Laneway"}</button></div>
       </form>
     </section>;

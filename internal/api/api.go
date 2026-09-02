@@ -150,6 +150,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		r.Post("/events/github", a.githubWebhook)
 		r.Post("/events/github/apps/{id}", a.githubAppWebhook)
 		r.Get("/github-apps/manifest/callback", a.completeGitHubAppManifest)
+		r.Get("/laneway-applications/setup", a.completeLanewayApplicationRegistration)
 		r.Get("/laneway-networks/callback", a.completeLanewayAuthorization)
 		r.Get("/edge/nodes/{id}/jobs/next", a.leaseEdgeJob)
 		r.Post("/edge/nodes/{id}/jobs/{jobId}/complete", a.completeEdgeJob)
