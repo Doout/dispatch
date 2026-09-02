@@ -249,9 +249,46 @@ func TestSQLiteAdminSessionsSurviveStoreReopen(t *testing.T) {
 	if err != nil || !valid {
 		t.Fatalf("persisted session was not valid: valid=%v err=%v", valid, err)
 	}
-	valid, err = data.AdminSessionValid(ctx, "hashed-token", now.Add(2*time.Hour))
+	if err := data.DeleteSession(ctx, "hashed-token"); err != nil {
+		t.Fatal(err)
+	}
+	valid, err = data.AdminSessionValid(ctx, "hashed-token", now.Add(time.Minute))
+	if err != nil || valid {
+		t.Fatalf("deleted session remained valid: valid=%v err=%v", valid, err)
+	}
+	if err := data.CreateAdminSession(ctx, "expiring-token", now.Add(time.Hour), now); err != nil {
+		t.Fatal(err)
+	}
+	valid, err = data.AdminSessionValid(ctx, "expiring-token", now.Add(2*time.Hour))
 	if err != nil || valid {
 		t.Fatalf("expired session remained valid: valid=%v err=%v", valid, err)
+	}
+}
+
+func TestUserSessionCannotFallBackToControllerOwner(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "user-sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	if err := data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	user := core.User{ID: "member", Username: "member", DisplayName: "Member", PasswordHash: "hash", SystemRole: core.UserRoleMember, State: core.UserStateActive, CreatedAt: now, UpdatedAt: now}
+	if err := data.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreateUserSession(ctx, "member-token", user.ID, now.Add(time.Hour), now); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := data.AdminSessionValid(ctx, "member-token", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if valid {
+		t.Fatal("user-bound session was accepted as a controller session")
 	}
 }
 

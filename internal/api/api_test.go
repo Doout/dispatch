@@ -59,6 +59,331 @@ func TestOverviewRequiresConfiguredToken(t *testing.T) {
 	}
 }
 
+func TestProjectRoleFiltersOverviewAndBlocksControllerWrites(t *testing.T) {
+	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/overview", nil))
+	var ownerOverview core.Overview
+	if err := json.NewDecoder(response.Body).Decode(&ownerOverview); err != nil {
+		t.Fatal(err)
+	}
+	if len(ownerOverview.Projects) < 1 {
+		t.Fatalf("expected demo projects, got %d", len(ownerOverview.Projects))
+	}
+	projectID := ownerOverview.Projects[0].ID
+
+	userBody := bytes.NewBufferString(`{"username":"release-viewer","displayName":"Release Viewer","password":"a-valid-password-123","systemRole":"member","state":"active"}`)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/users", userBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create user: %d %s", response.Code, response.Body.String())
+	}
+	var user core.User
+	if err := json.NewDecoder(response.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+	grantBody, _ := json.Marshal(map[string]string{"principalType": "user", "principalId": user.ID, "projectId": projectID, "role": "viewer"})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/role-assignments", bytes.NewReader(grantBody)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("grant project access: %d %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"release-viewer","password":"a-valid-password-123"}`)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", response.Code, response.Body.String())
+	}
+	var login map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&login); err != nil {
+		t.Fatal(err)
+	}
+	memberRequest := func(method, target string, body io.Reader) *http.Request {
+		request := httptest.NewRequest(method, target, body)
+		request.Header.Set("Authorization", "Bearer "+login["token"])
+		return request
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, memberRequest(http.MethodGet, "/api/v1/overview", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("member overview: %d %s", response.Code, response.Body.String())
+	}
+	var memberOverview core.Overview
+	if err := json.NewDecoder(response.Body).Decode(&memberOverview); err != nil {
+		t.Fatal(err)
+	}
+	if len(memberOverview.Projects) != 1 || memberOverview.Projects[0].ID != projectID {
+		t.Fatalf("unexpected project visibility: %#v", memberOverview.Projects)
+	}
+	permissions := memberOverview.ProjectPermissions[projectID]
+	if len(permissions) != 1 || permissions[0] != core.PermissionProjectView {
+		t.Fatalf("unexpected viewer permissions: %#v", permissions)
+	}
+	if len(memberOverview.Secrets) != 0 || len(memberOverview.GitHubApps) != 0 {
+		t.Fatal("controller credentials were visible to a project member")
+	}
+	if memberOverview.Secrets == nil || memberOverview.SecretStores == nil || memberOverview.PrivateNetworks == nil || memberOverview.GitHubApps == nil || memberOverview.RelayWebhooks == nil {
+		t.Fatal("restricted controller collections must be encoded as empty arrays")
+	}
+	appID := ""
+	for _, app := range ownerOverview.Apps {
+		if app.ProjectID == projectID {
+			appID = app.ID
+			break
+		}
+	}
+	if appID == "" {
+		t.Fatal("expected an application in the visible project")
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, memberRequest(http.MethodPost, "/api/v1/apps/"+appID+"/deployments", nil))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected viewer deployment to be forbidden, got %d: %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, memberRequest(http.MethodPost, "/api/v1/projects", bytes.NewBufferString(`{"name":"Blocked"}`)))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected project creation to be forbidden, got %d: %s", response.Code, response.Body.String())
+	}
+
+	if len(ownerOverview.Servers) == 0 {
+		t.Fatal("expected a server in the owner overview")
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, memberRequest(http.MethodPut, "/api/v1/servers/"+ownerOverview.Servers[0].ID, bytes.NewBufferString(`{"name":"blocked"}`)))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected server editing to be forbidden, got %d: %s", response.Code, response.Body.String())
+	}
+
+	disableBody := bytes.NewBufferString(`{"state":"disabled"}`)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPut, "/api/v1/users/"+user.ID, disableBody))
+	if response.Code != http.StatusOK {
+		t.Fatalf("disable user: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, memberRequest(http.MethodGet, "/api/v1/overview", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected a disabled user's session to stop immediately, got %d", response.Code)
+	}
+}
+
+func TestControllerOwnerCanImpersonateActiveUser(t *testing.T) {
+	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
+	defer cleanup()
+
+	userBody := bytes.NewBufferString(`{"username":"permission-tester","displayName":"Permission Tester","password":"a-valid-password-123","systemRole":"member","state":"active"}`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/users", userBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create user: %d %s", response.Code, response.Body.String())
+	}
+	var user core.User
+	if err := json.NewDecoder(response.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+
+	request := tokenRequest(http.MethodGet, "/api/v1/overview", nil)
+	request.Header.Set(impersonateUserHeader, user.ID)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("impersonated overview: %d %s", response.Code, response.Body.String())
+	}
+	var overview core.Overview
+	if err := json.NewDecoder(response.Body).Decode(&overview); err != nil {
+		t.Fatal(err)
+	}
+	if overview.Identity.ID != user.ID || overview.Identity.SystemRole != core.UserRoleMember {
+		t.Fatalf("expected member identity, got %#v", overview.Identity)
+	}
+	if overview.Impersonator == nil || overview.Impersonator.ID != "controller-owner" {
+		t.Fatalf("expected controller owner as impersonator, got %#v", overview.Impersonator)
+	}
+	if len(overview.Projects) != 0 {
+		t.Fatalf("expected target user's project visibility, got %d projects", len(overview.Projects))
+	}
+
+	request = tokenRequest(http.MethodGet, "/api/v1/access", nil)
+	request.Header.Set(impersonateUserHeader, user.ID)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected target user's access policy, got %d: %s", response.Code, response.Body.String())
+	}
+
+	request = tokenRequest(http.MethodPut, "/api/v1/auth/password", nil)
+	request.Header.Set(impersonateUserHeader, user.ID)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected credential changes to be blocked, got %d: %s", response.Code, response.Body.String())
+	}
+
+	disableBody := bytes.NewBufferString(`{"state":"disabled"}`)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPut, "/api/v1/users/"+user.ID, disableBody))
+	if response.Code != http.StatusOK {
+		t.Fatalf("disable user: %d %s", response.Code, response.Body.String())
+	}
+	request = tokenRequest(http.MethodGet, "/api/v1/overview", nil)
+	request.Header.Set(impersonateUserHeader, user.ID)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected inactive user to be rejected, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMemberCannotImpersonateAnotherUser(t *testing.T) {
+	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
+	defer cleanup()
+
+	userBody := bytes.NewBufferString(`{"username":"regular-member","displayName":"Regular Member","password":"a-valid-password-123","systemRole":"member","state":"active"}`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/users", userBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create user: %d %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"regular-member","password":"a-valid-password-123"}`)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", response.Code, response.Body.String())
+	}
+	var login map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&login); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/overview", nil)
+	request.Header.Set("Authorization", "Bearer "+login["token"])
+	request.Header.Set(impersonateUserHeader, "another-user")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected impersonation to be forbidden, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestUsersCanOnlyChangeTheirOwnPassword(t *testing.T) {
+	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/users", bytes.NewBufferString(`{"username":"password-owner","displayName":"Password Owner","password":"original-password-123","systemRole":"member","state":"active"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create user: %d %s", response.Code, response.Body.String())
+	}
+	var user core.User
+	if err := json.NewDecoder(response.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPut, "/api/v1/users/"+user.ID, bytes.NewBufferString(`{"password":"owner-forced-password-123"}`)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected owner password update to be rejected, got %d: %s", response.Code, response.Body.String())
+	}
+
+	login := func(password string) (int, string) {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"password-owner","password":"`+password+`"}`)))
+		var result map[string]string
+		_ = json.NewDecoder(response.Body).Decode(&result)
+		return response.Code, result["token"]
+	}
+	status, token := login("original-password-123")
+	if status != http.StatusOK || token == "" {
+		t.Fatalf("login with original password: %d", status)
+	}
+
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/auth/password", bytes.NewBufferString(`{"currentPassword":"wrong-password","newPassword":"replacement-password-123"}`))
+	request.Header.Set("Authorization", "Bearer "+token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected the current password to be required, got %d", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/api/v1/auth/password", bytes.NewBufferString(`{"currentPassword":"original-password-123","newPassword":"replacement-password-123"}`))
+	request.Header.Set("Authorization", "Bearer "+token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("change password: %d %s", response.Code, response.Body.String())
+	}
+	if status, _ := login("original-password-123"); status != http.StatusUnauthorized {
+		t.Fatalf("expected old password to fail, got %d", status)
+	}
+	if status, _ := login("replacement-password-123"); status != http.StatusOK {
+		t.Fatalf("expected new password to work, got %d", status)
+	}
+}
+
+func TestTeamRoleGrantsProjectAccess(t *testing.T) {
+	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/overview", nil))
+	var ownerOverview core.Overview
+	if err := json.NewDecoder(response.Body).Decode(&ownerOverview); err != nil {
+		t.Fatal(err)
+	}
+	projectID := ownerOverview.Projects[0].ID
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/users", bytes.NewBufferString(`{"username":"team-viewer","displayName":"Team Viewer","password":"a-valid-password-123","systemRole":"member","state":"active"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create user: %d %s", response.Code, response.Body.String())
+	}
+	var user core.User
+	if err := json.NewDecoder(response.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+	teamBody, _ := json.Marshal(map[string]any{"name": "Release", "memberIds": []string{user.ID}})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/teams", bytes.NewReader(teamBody)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create team: %d %s", response.Code, response.Body.String())
+	}
+	var team core.Team
+	if err := json.NewDecoder(response.Body).Decode(&team); err != nil {
+		t.Fatal(err)
+	}
+	grantBody, _ := json.Marshal(map[string]string{"principalType": "team", "principalId": team.ID, "projectId": projectID, "role": "viewer"})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/role-assignments", bytes.NewReader(grantBody)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("grant team access: %d %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"team-viewer","password":"a-valid-password-123"}`)))
+	var login map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&login); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/overview", nil)
+	request.Header.Set("Authorization", "Bearer "+login["token"])
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("team member overview: %d %s", response.Code, response.Body.String())
+	}
+	var memberOverview core.Overview
+	if err := json.NewDecoder(response.Body).Decode(&memberOverview); err != nil {
+		t.Fatal(err)
+	}
+	if len(memberOverview.Projects) != 1 || memberOverview.Projects[0].ID != projectID {
+		t.Fatalf("team grant did not expose its project: %#v", memberOverview.Projects)
+	}
+}
+
 func TestHealthDoesNotRequireToken(t *testing.T) {
 	handler, cleanup := testHandler(t, AuthConfig{AdminToken: "secret"})
 	defer cleanup()
@@ -1434,6 +1759,22 @@ func TestFirstRunSetupSupportsBasicAuthentication(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected session token to authenticate, got %d", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	request.Header.Set("Authorization", "Bearer "+session.Token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected logout to return 204, got %d: %s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/overview", nil)
+	request.Header.Set("Authorization", "Bearer "+session.Token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected logout to revoke the session, got %d", response.Code)
 	}
 
 	response = httptest.NewRecorder()

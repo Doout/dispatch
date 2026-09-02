@@ -49,6 +49,7 @@ type Manager struct {
 type ManifestConversion struct {
 	AppID                 int64
 	ClientID              string
+	ClientSecret          string
 	Name                  string
 	Slug                  string
 	RegistrationOwner     string
@@ -557,6 +558,7 @@ func (m *Manager) ConvertManifest(ctx context.Context, apiURL, code string, priv
 	var result struct {
 		ID            int64  `json:"id"`
 		ClientID      string `json:"client_id"`
+		ClientSecret  string `json:"client_secret"`
 		Name          string `json:"name"`
 		Slug          string `json:"slug"`
 		PEM           string `json:"pem"`
@@ -572,7 +574,7 @@ func (m *Manager) ConvertManifest(ctx context.Context, apiURL, code string, priv
 	if result.ID < 1 || result.PEM == "" {
 		return ManifestConversion{}, errors.New("GitHub returned an incomplete App manifest conversion")
 	}
-	return ManifestConversion{AppID: result.ID, ClientID: result.ClientID, Name: result.Name, Slug: result.Slug,
+	return ManifestConversion{AppID: result.ID, ClientID: result.ClientID, ClientSecret: result.ClientSecret, Name: result.Name, Slug: result.Slug,
 		RegistrationOwner: result.Owner.Login, RegistrationOwnerType: result.Owner.Type,
 		PrivateKey: result.PEM, WebhookSecret: result.WebhookSecret}, nil
 }

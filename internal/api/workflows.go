@@ -29,12 +29,34 @@ type configSourceRequest struct {
 
 func (a *API) listConfigSources(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListConfigSources(r.Context())
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visible, err := a.visibleProjectIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	filtered := items[:0]
+	member := currentIdentity(r.Context()).SystemRole != core.UserRoleOwner
+	for _, item := range items {
+		if visible[item.ProjectID] {
+			if member {
+				item = redactConfigSourceCredentials(item)
+			}
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (a *API) createConfigSource(w http.ResponseWriter, r *http.Request) {
 	var input configSourceRequest
 	if !decode(w, r, &input) {
+		return
+	}
+	if !a.requireProject(w, r, core.PermissionProjectConfigure, strings.TrimSpace(input.ProjectID)) {
 		return
 	}
 	item, detail := a.configSourceFromRequest(r, core.ConfigSource{ID: ulid.Make().String(), CreatedAt: time.Now().UTC()}, input)
@@ -65,6 +87,13 @@ func (a *API) updateConfigSource(w http.ResponseWriter, r *http.Request) {
 	var input configSourceRequest
 	if !decode(w, r, &input) {
 		return
+	}
+	if !a.requireProject(w, r, core.PermissionProjectConfigure, strings.TrimSpace(input.ProjectID)) {
+		return
+	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
+		input.GitHubAppID = item.GitHubAppID
+		input.CredentialSecretID = item.CredentialSecretID
 	}
 	item, detail := a.configSourceFromRequest(r, item, input)
 	if detail != "" {
@@ -180,6 +209,33 @@ func (a *API) deleteConfigSource(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listWorkflowResources(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListWorkflowResources(r.Context(), strings.TrimSpace(r.URL.Query().Get("configSourceId")))
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visibleProjects, err := a.visibleProjectIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	sources, err := a.store.ListConfigSources(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visibleSources := map[string]bool{}
+	for _, source := range sources {
+		if visibleProjects[source.ProjectID] {
+			visibleSources[source.ID] = true
+		}
+	}
+	visibleItems := items[:0]
+	for _, item := range items {
+		if visibleSources[item.ConfigSourceID] {
+			visibleItems = append(visibleItems, item)
+		}
+	}
+	items = visibleItems
 	if err == nil && r.URL.Query().Get("includeRemoved") != "true" {
 		current := items[:0]
 		for _, item := range items {
@@ -235,7 +291,44 @@ func (a *API) runWorkflowResource(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listWorkflowRevisions(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListWorkflowRevisions(r.Context(), strings.TrimSpace(r.URL.Query().Get("resourceId")), 100)
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visibleProjects, err := a.visibleProjectIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	sources, err := a.store.ListConfigSources(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visibleSources := map[string]bool{}
+	for _, source := range sources {
+		if visibleProjects[source.ProjectID] {
+			visibleSources[source.ID] = true
+		}
+	}
+	resources, err := a.store.ListWorkflowResources(r.Context(), "")
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visibleResources := map[string]bool{}
+	for _, resource := range resources {
+		if visibleSources[resource.ConfigSourceID] {
+			visibleResources[resource.ID] = true
+		}
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if visibleResources[item.ResourceID] {
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (a *API) getWorkflowRevision(w http.ResponseWriter, r *http.Request) {

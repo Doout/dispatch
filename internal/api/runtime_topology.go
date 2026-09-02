@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
@@ -17,10 +18,13 @@ import (
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -89,6 +93,28 @@ type deploymentManifestsResponse struct {
 	Origin    deploymentManifestOrigin `json:"origin"`
 	Manifests []deploymentManifest     `json:"manifests"`
 	Warning   string                   `json:"warning,omitempty"`
+}
+
+type deploymentResourceLog struct {
+	Container string `json:"container"`
+	Content   string `json:"content,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type deploymentResourceEvent struct {
+	Type     string `json:"type"`
+	Reason   string `json:"reason"`
+	Message  string `json:"message"`
+	Count    int32  `json:"count"`
+	LastSeen string `json:"lastSeen"`
+}
+
+type deploymentResourceResponse struct {
+	Manifest deploymentManifest        `json:"manifest"`
+	Loggable bool                      `json:"loggable"`
+	Logs     []deploymentResourceLog   `json:"logs"`
+	Events   []deploymentResourceEvent `json:"events"`
+	Warning  string                    `json:"warning,omitempty"`
 }
 
 func (a *API) getDeploymentTopology(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +197,71 @@ func (a *API) getDeploymentManifests(w http.ResponseWriter, r *http.Request) {
 		for _, object := range objects {
 			result.Manifests = append(result.Manifests, encodeDeploymentManifest(object))
 		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) getDeploymentResource(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.GetDeployment(r.Context(), chi.URLParam(r, "id"))
+	if errors.Is(err, store.ErrNotFound) {
+		problem(w, http.StatusNotFound, "Deployment not found", "The deployment record does not exist.")
+		return
+	}
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	if item.Server.Kubernetes == nil {
+		problem(w, http.StatusBadRequest, "Live resource unavailable", "Resource inspection requires a Kubernetes or OpenShift target.")
+		return
+	}
+
+	kindName := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "kind")))
+	name := strings.TrimSpace(chi.URLParam(r, "name"))
+	requestedKind, ok := inspectedResourceKind(kindName)
+	if !ok || name == "" {
+		problem(w, http.StatusBadRequest, "Invalid resource", "Choose a resource from the deployment topology.")
+		return
+	}
+	namespace, release := deploymentRuntimeNames(item)
+	objects, err := listKubernetesReleaseObjects(r.Context(), *item.Server, namespace, release)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	var selected *unstructured.Unstructured
+	for _, object := range objects {
+		kind, supported := inspectedKind(object)
+		if supported && kind.kind == requestedKind.kind && object.GetName() == name {
+			selected = object
+			break
+		}
+	}
+	if selected == nil {
+		problem(w, http.StatusNotFound, "Resource not found", "The resource is no longer part of this release.")
+		return
+	}
+
+	result := deploymentResourceResponse{Manifest: encodeDeploymentManifest(selected), Loggable: kindName == "pod", Logs: []deploymentResourceLog{}, Events: []deploymentResourceEvent{}}
+	config, cleanup, err := kubernetesRESTConfig(*item.Server)
+	if err != nil {
+		result.Warning = err.Error()
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	defer cleanup()
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		result.Warning = err.Error()
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	result.Events, err = kubernetesObjectEvents(r.Context(), client, namespace, string(selected.GetUID()))
+	if err != nil {
+		result.Warning = "Events are unavailable: " + err.Error()
+	}
+	if result.Loggable {
+		result.Logs = kubernetesPodLogs(r.Context(), client, namespace, selected)
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -304,6 +395,26 @@ func (a *API) getServerTopology(w http.ResponseWriter, r *http.Request) {
 			latest[deployment.AppID] = deployment
 		}
 	}
+	knownApps := make(map[string]struct{}, len(apps))
+	for _, app := range apps {
+		knownApps[app.ID] = struct{}{}
+	}
+	for _, deployment := range latest {
+		if deployment.App == nil || deployment.Server == nil || deployment.Server.ID != server.ID || deployment.App.Template {
+			continue
+		}
+		if _, ok := knownApps[deployment.App.ID]; ok {
+			continue
+		}
+		apps = append(apps, *deployment.App)
+		knownApps[deployment.App.ID] = struct{}{}
+	}
+	sort.Slice(apps, func(i, j int) bool {
+		if apps[i].Name == apps[j].Name {
+			return apps[i].ID < apps[j].ID
+		}
+		return apps[i].Name < apps[j].Name
+	})
 	graph := runtimeTopology{Columns: []topologyColumn{{"target", "Target"}, {"namespace", "Namespaces"}, {"release", "Releases"}}}
 	root := "target:" + server.ID
 	graph.Nodes = append(graph.Nodes, topologyNode{ID: root, Column: "target", Kind: "target", Label: server.Name, Detail: string(server.Runtime), State: string(server.State)})
@@ -339,6 +450,7 @@ func (a *API) getServerTopology(w http.ResponseWriter, r *http.Request) {
 		graph.Nodes = append(graph.Nodes, node)
 		graph.Edges = append(graph.Edges, topologyEdge{namespaceID, node.ID, "deploys"})
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, graph)
 }
 
@@ -361,6 +473,15 @@ var inspectedKinds = []resourceKind{
 	{"access", "ingress", schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}},
 	{"access", "route", schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"}},
 	{"access", "pvc", schema.GroupVersionResource{Version: "v1", Resource: "persistentvolumeclaims"}},
+}
+
+func inspectedResourceKind(name string) (resourceKind, bool) {
+	for _, kind := range inspectedKinds {
+		if kind.kind == name {
+			return kind, true
+		}
+	}
+	return resourceKind{}, false
 }
 
 func inspectKubernetesRelease(ctx context.Context, server core.Server, namespace, release string) (runtimeTopology, error) {
@@ -426,21 +547,34 @@ func inspectKubernetesRelease(ctx context.Context, server core.Server, namespace
 }
 
 func listKubernetesReleaseObjects(ctx context.Context, server core.Server, namespace, release string) ([]*unstructured.Unstructured, error) {
-	prepared, cleanup, err := kubeconfig.Prepare(*server.Kubernetes)
+	config, cleanup, err := kubernetesRESTConfig(server)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
-	rules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: prepared.KubeconfigPath}
-	overrides := &clientcmd.ConfigOverrides{CurrentContext: prepared.Context}
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides).ClientConfig()
-	if err != nil {
-		return nil, err
-	}
 	client, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return nil, err
 	}
+	return listKubernetesReleaseObjectsWithClient(ctx, client, namespace, release), nil
+}
+
+func kubernetesRESTConfig(server core.Server) (*rest.Config, func(), error) {
+	prepared, cleanup, err := kubeconfig.Prepare(*server.Kubernetes)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	rules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: prepared.KubeconfigPath}
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: prepared.Context}
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides).ClientConfig()
+	if err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	return config, cleanup, nil
+}
+
+func listKubernetesReleaseObjectsWithClient(ctx context.Context, client dynamic.Interface, namespace, release string) []*unstructured.Unstructured {
 	objects := []*unstructured.Unstructured{}
 	for _, kind := range inspectedKinds {
 		list, listErr := client.Resource(kind.gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
@@ -467,7 +601,61 @@ func listKubernetesReleaseObjects(ctx context.Context, server core.Server, names
 		}
 		return objects[i].GetKind() < objects[j].GetKind()
 	})
-	return objects, nil
+	return objects
+}
+
+func kubernetesPodLogs(ctx context.Context, client kubernetes.Interface, namespace string, object *unstructured.Unstructured) []deploymentResourceLog {
+	containers := []string{}
+	seen := map[string]bool{}
+	for _, field := range []string{"initContainers", "containers", "ephemeralContainers"} {
+		items, _, _ := unstructured.NestedSlice(object.Object, "spec", field)
+		for _, raw := range items {
+			container, _ := raw.(map[string]any)
+			name, _, _ := unstructured.NestedString(container, "name")
+			if name != "" && !seen[name] {
+				seen[name] = true
+				containers = append(containers, name)
+			}
+		}
+	}
+	tailLines := int64(500)
+	logs := make([]deploymentResourceLog, 0, len(containers))
+	for _, container := range containers {
+		content, err := client.CoreV1().Pods(namespace).GetLogs(object.GetName(), &corev1.PodLogOptions{Container: container, TailLines: &tailLines, Timestamps: true}).DoRaw(ctx)
+		entry := deploymentResourceLog{Container: container, Content: string(content)}
+		if err != nil {
+			entry.Content = ""
+			entry.Error = err.Error()
+		}
+		logs = append(logs, entry)
+	}
+	return logs
+}
+
+func kubernetesObjectEvents(ctx context.Context, client kubernetes.Interface, namespace, uid string) ([]deploymentResourceEvent, error) {
+	items, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "involvedObject.uid=" + uid})
+	if err != nil {
+		return nil, err
+	}
+	events := make([]deploymentResourceEvent, 0, len(items.Items))
+	for _, item := range items.Items {
+		events = append(events, deploymentResourceEvent{Type: item.Type, Reason: item.Reason, Message: item.Message, Count: item.Count, LastSeen: kubernetesEventTime(item).Format(time.RFC3339)})
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].LastSeen > events[j].LastSeen })
+	return events, nil
+}
+
+func kubernetesEventTime(event corev1.Event) time.Time {
+	if !event.LastTimestamp.IsZero() {
+		return event.LastTimestamp.Time
+	}
+	if !event.EventTime.IsZero() {
+		return event.EventTime.Time
+	}
+	if !event.FirstTimestamp.IsZero() {
+		return event.FirstTimestamp.Time
+	}
+	return event.CreationTimestamp.Time
 }
 
 func inspectedKind(object *unstructured.Unstructured) (resourceKind, bool) {

@@ -19,8 +19,41 @@ type Store interface {
 	SeedDemo(context.Context) error
 	GetAdminCredential(context.Context) (AdminCredential, error)
 	CreateAdminCredential(context.Context, AdminCredential) error
+	CreateInitialOwner(context.Context, AdminCredential, core.User) error
 	CreateAdminSession(context.Context, string, time.Time, time.Time) error
+	CreateUserSession(context.Context, string, string, time.Time, time.Time) error
+	DeleteSession(context.Context, string) error
 	AdminSessionValid(context.Context, string, time.Time) (bool, error)
+	SessionUser(context.Context, string, time.Time) (core.User, error)
+	CreateUser(context.Context, core.User) error
+	UpdateUser(context.Context, core.User) error
+	DeleteUser(context.Context, string) error
+	MergeUsers(context.Context, string, string) error
+	GetUser(context.Context, string) (core.User, error)
+	GetUserByUsername(context.Context, string) (core.User, error)
+	GetUserByEmail(context.Context, string) (core.User, error)
+	ListUsers(context.Context) ([]core.User, error)
+	CountOwners(context.Context) (int, error)
+	CreateAuthProvider(context.Context, core.AuthProvider) error
+	UpdateAuthProvider(context.Context, core.AuthProvider) error
+	DeleteAuthProvider(context.Context, string) error
+	GetAuthProvider(context.Context, string) (core.AuthProvider, error)
+	ListAuthProviders(context.Context) ([]core.AuthProvider, error)
+	GetExternalIdentity(context.Context, string, string) (core.ExternalIdentity, error)
+	FindExternalIdentitiesByLogin(context.Context, string) ([]core.ExternalIdentity, error)
+	ListExternalIdentities(context.Context) ([]core.ExternalIdentity, error)
+	UpsertExternalIdentity(context.Context, core.ExternalIdentity) error
+	DeleteExternalIdentity(context.Context, string, string) error
+	CreateTeam(context.Context, core.Team) error
+	UpdateTeam(context.Context, core.Team) error
+	DeleteTeam(context.Context, string) error
+	GetTeam(context.Context, string) (core.Team, error)
+	ListTeams(context.Context) ([]core.Team, error)
+	ReplaceTeamMembers(context.Context, string, []core.TeamMember) error
+	ListTeamMembers(context.Context) ([]core.TeamMember, error)
+	UpsertRoleAssignment(context.Context, core.RoleAssignment) error
+	DeleteRoleAssignment(context.Context, string) error
+	ListRoleAssignments(context.Context) ([]core.RoleAssignment, error)
 	CreateSecret(context.Context, core.Secret) error
 	UpdateSecret(context.Context, core.Secret) error
 	DeleteSecret(context.Context, string) error

@@ -594,23 +594,26 @@ type EventResult struct {
 }
 
 type Overview struct {
-	Demo                    bool                  `json:"demo"`
-	SecretStorageConfigured bool                  `json:"secretStorageConfigured"`
-	Projects                []Project             `json:"projects"`
-	Servers                 []Server              `json:"servers"`
-	Apps                    []App                 `json:"apps"`
-	Deployments             []Deployment          `json:"deployments"`
-	EventTriggers           []EventTrigger        `json:"eventTriggers"`
-	Previews                []PreviewEnvironment  `json:"previews"`
-	PreviewGroups           []PreviewGroup        `json:"previewGroups"`
-	PreviewGroupRuns        []PreviewGroupRun     `json:"previewGroupRuns"`
-	Secrets                 []Secret              `json:"secrets"`
-	SecretStores            []SecretStore         `json:"secretStores"`
-	PrivateNetworks         []PrivateNetwork      `json:"privateNetworks"`
-	GitHubApps              []GitHubAppConnection `json:"githubApps"`
-	RelayWebhooks           []RelayWebhook        `json:"relayWebhooks"`
-	ConfigSources           []ConfigSource        `json:"configSources"`
-	WorkflowResources       []WorkflowResource    `json:"workflowResources"`
-	WorkflowRevisions       []WorkflowRevision    `json:"workflowRevisions"`
-	WorkflowStageRuns       []WorkflowStageRun    `json:"workflowStageRuns"`
+	Demo                    bool                    `json:"demo"`
+	SecretStorageConfigured bool                    `json:"secretStorageConfigured"`
+	Identity                Identity                `json:"identity"`
+	Impersonator            *Identity               `json:"impersonator,omitempty"`
+	ProjectPermissions      map[string][]Permission `json:"projectPermissions"`
+	Projects                []Project               `json:"projects"`
+	Servers                 []Server                `json:"servers"`
+	Apps                    []App                   `json:"apps"`
+	Deployments             []Deployment            `json:"deployments"`
+	EventTriggers           []EventTrigger          `json:"eventTriggers"`
+	Previews                []PreviewEnvironment    `json:"previews"`
+	PreviewGroups           []PreviewGroup          `json:"previewGroups"`
+	PreviewGroupRuns        []PreviewGroupRun       `json:"previewGroupRuns"`
+	Secrets                 []Secret                `json:"secrets"`
+	SecretStores            []SecretStore           `json:"secretStores"`
+	PrivateNetworks         []PrivateNetwork        `json:"privateNetworks"`
+	GitHubApps              []GitHubAppConnection   `json:"githubApps"`
+	RelayWebhooks           []RelayWebhook          `json:"relayWebhooks"`
+	ConfigSources           []ConfigSource          `json:"configSources"`
+	WorkflowResources       []WorkflowResource      `json:"workflowResources"`
+	WorkflowRevisions       []WorkflowRevision      `json:"workflowRevisions"`
+	WorkflowStageRuns       []WorkflowStageRun      `json:"workflowStageRuns"`
 }

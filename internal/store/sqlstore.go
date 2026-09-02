@@ -19,6 +19,7 @@ import (
 var (
 	ErrNotFound           = errors.New("not found")
 	ErrAlreadyExists      = errors.New("already exists")
+	ErrIdentityConflict   = errors.New("identity provider already linked")
 	ErrEventTriggerActive = errors.New("event trigger has active previews")
 	ErrAppActive          = errors.New("application has an active deployment")
 	ErrAppPreviewGroup    = errors.New("application belongs to a preview group")
@@ -127,9 +128,14 @@ func (s *SQLStore) CreateAdminSession(ctx context.Context, tokenHash string, exp
 	return tx.Commit()
 }
 
+func (s *SQLStore) DeleteSession(ctx context.Context, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx, s.q(`DELETE FROM admin_sessions WHERE token_hash=?`), tokenHash)
+	return err
+}
+
 func (s *SQLStore) AdminSessionValid(ctx context.Context, tokenHash string, now time.Time) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM admin_sessions WHERE token_hash=? AND expires_at>?`), tokenHash, stamp(now)).Scan(&count)
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM admin_sessions WHERE token_hash=? AND expires_at>? AND user_id IS NULL`), tokenHash, stamp(now)).Scan(&count)
 	return count == 1, err
 }
 

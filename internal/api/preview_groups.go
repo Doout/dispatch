@@ -23,7 +23,38 @@ type previewGroupRequest struct {
 
 func (a *API) listPreviewGroups(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListPreviewGroups(r.Context())
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visible, err := a.visibleAppIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	filtered := items[:0]
+	member := currentIdentity(r.Context()).SystemRole != core.UserRoleOwner
+	for _, item := range items {
+		if previewGroupAppsVisible(item, visible) {
+			if member {
+				item = redactPreviewGroupCredentials(item)
+			}
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
+}
+
+func previewGroupAppsVisible(group core.PreviewGroup, visible map[string]bool) bool {
+	if len(group.Components) == 0 {
+		return false
+	}
+	for _, component := range group.Components {
+		if !visible[component.AppID] {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *API) getPreviewGroup(w http.ResponseWriter, r *http.Request) {
@@ -31,6 +62,9 @@ func (a *API) getPreviewGroup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.notFoundOrInternal(w, err, "Preview group")
 		return
+	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
+		item = redactPreviewGroupCredentials(item)
 	}
 	writeJSON(w, http.StatusOK, item)
 }
@@ -47,6 +81,12 @@ func (a *API) createPreviewGroup(w http.ResponseWriter, r *http.Request) {
 		item.Enabled = *input.Enabled
 	}
 	preparePreviewGroupComponents(&item)
+	if !a.requireApps(w, r, core.PermissionProjectConfigure, previewGroupAppIDs(item)) {
+		return
+	}
+	if !a.requireCredentialOwner(w, r, item.GitHubAppID != "" || previewGroupUsesSecrets(item)) {
+		return
+	}
 	if err := groups.Validate(r.Context(), a.store, &item, a.eventConfig.DefaultCommand); err != nil {
 		previewGroupProblem(w, err)
 		return
@@ -77,6 +117,12 @@ func (a *API) updatePreviewGroup(w http.ResponseWriter, r *http.Request) {
 		existing.Enabled = *input.Enabled
 	}
 	preparePreviewGroupComponents(&existing)
+	if !a.requireApps(w, r, core.PermissionProjectConfigure, previewGroupAppIDs(existing)) {
+		return
+	}
+	if !a.requireCredentialOwner(w, r, existing.GitHubAppID != "" || previewGroupUsesSecrets(existing)) {
+		return
+	}
 	if err := groups.Validate(r.Context(), a.store, &existing, a.eventConfig.DefaultCommand); err != nil {
 		previewGroupProblem(w, err)
 		return
@@ -90,6 +136,15 @@ func (a *API) updatePreviewGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, existing)
+}
+
+func previewGroupUsesSecrets(group core.PreviewGroup) bool {
+	for _, component := range group.Components {
+		if len(component.SecretIDs) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func preparePreviewGroupComponents(group *core.PreviewGroup) {
@@ -131,7 +186,35 @@ func (a *API) deletePreviewGroup(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listPreviewGroupRuns(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListPreviewGroupRuns(r.Context(), strings.TrimSpace(r.URL.Query().Get("groupId")))
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	groups, err := a.store.ListPreviewGroups(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visibleApps, err := a.visibleAppIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visibleGroups := map[string]bool{}
+	for _, group := range groups {
+		visibleGroups[group.ID] = previewGroupAppsVisible(group, visibleApps)
+	}
+	filtered := items[:0]
+	member := currentIdentity(r.Context()).SystemRole != core.UserRoleOwner
+	for _, item := range items {
+		if visibleGroups[item.GroupID] {
+			if member {
+				item = redactPreviewGroupRunCredentials(item)
+			}
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (a *API) getPreviewGroupRun(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +222,9 @@ func (a *API) getPreviewGroupRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.notFoundOrInternal(w, err, "Preview group run")
 		return
+	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
+		item = redactPreviewGroupRunCredentials(item)
 	}
 	writeJSON(w, http.StatusOK, item)
 }
@@ -157,6 +243,9 @@ func (a *API) cleanupPreviewGroupRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.internal(w, err)
 		return
+	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
+		item = redactPreviewGroupRunCredentials(item)
 	}
 	writeJSON(w, http.StatusOK, item)
 }

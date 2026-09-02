@@ -74,7 +74,7 @@ func TestConvertManifestReturnsRegistrationOwner(t *testing.T) {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":42,"client_id":"Iv1.test","name":"Dispatch-a1b2c3d4","slug":"dispatch-a1b2c3d4","pem":"private-key","webhook_secret":"0123456789abcdef","owner":{"login":"platform","type":"Organization"}}`))
+		_, _ = w.Write([]byte(`{"id":42,"client_id":"Iv1.test","client_secret":"generated-secret","name":"Dispatch-a1b2c3d4","slug":"dispatch-a1b2c3d4","pem":"private-key","webhook_secret":"0123456789abcdef","owner":{"login":"platform","type":"Organization"}}`))
 	}))
 	defer server.Close()
 
@@ -82,7 +82,7 @@ func TestConvertManifestReturnsRegistrationOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.AppID != 42 || result.RegistrationOwner != "platform" || result.RegistrationOwnerType != "Organization" {
+	if result.AppID != 42 || result.ClientSecret != "generated-secret" || result.RegistrationOwner != "platform" || result.RegistrationOwnerType != "Organization" {
 		t.Fatalf("unexpected manifest conversion: %#v", result)
 	}
 }

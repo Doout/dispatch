@@ -69,27 +69,36 @@ type githubEventServices struct {
 }
 
 type API struct {
-	handler        http.Handler
-	store          store.Store
-	deploy         *deploy.Service
-	demo           bool
-	auth           AuthConfig
-	logger         *slog.Logger
-	events         *events.Service
-	groups         *groups.Service
-	eventConfig    EventConfig
-	secretResolver *secretvalue.Resolver
-	edge           *edge.Broker
-	openShift      *openshift.Bootstrapper
-	lifecycle      events.Lifecycle
-	githubMu       sync.Mutex
-	githubServices map[string]githubEventServices
-	manifestMu     sync.Mutex
-	manifestStates map[string]githubAppManifestState
-	workflows      *workflowservice.Service
+	handler            http.Handler
+	store              store.Store
+	deploy             *deploy.Service
+	demo               bool
+	auth               AuthConfig
+	logger             *slog.Logger
+	events             *events.Service
+	groups             *groups.Service
+	eventConfig        EventConfig
+	secretResolver     *secretvalue.Resolver
+	edge               *edge.Broker
+	openShift          *openshift.Bootstrapper
+	lifecycle          events.Lifecycle
+	githubMu           sync.Mutex
+	githubServices     map[string]githubEventServices
+	manifestMu         sync.Mutex
+	manifestStates     map[string]githubAppManifestState
+	authManifestStates map[string]authProviderManifestState
+	workflows          *workflowservice.Service
 
-	sessionMu sync.RWMutex
-	sessions  map[string]time.Time
+	sessionMu   sync.RWMutex
+	sessions    map[string]sessionState
+	oauthMu     sync.Mutex
+	oauthStates map[string]oauthState
+	oauthCodes  map[string]oauthCode
+}
+
+type sessionState struct {
+	expires  time.Time
+	identity core.Identity
 }
 
 func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConfig, logger *slog.Logger, eventConfigs ...EventConfig) *API {
@@ -123,14 +132,14 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		notifier = events.GitHubNotifier{BaseURL: eventConfig.GitHubAPIURL, Token: eventConfig.GitHubToken}
 	}
 	lifecycle := events.DeploymentLifecycle{Store: data, Deployments: deployments}
-	a := &API{store: data, deploy: deployments, demo: demo, auth: auth, logger: logger, sessions: make(map[string]time.Time),
+	a := &API{store: data, deploy: deployments, demo: demo, auth: auth, logger: logger, sessions: make(map[string]sessionState), oauthStates: make(map[string]oauthState), oauthCodes: make(map[string]oauthCode),
 		events: events.New(data, resolver, lifecycle, notifier), groups: groups.New(data, deployments, groupResolver, func() groups.Notifier {
 			if value, ok := notifier.(groups.Notifier); ok {
 				return value
 			}
 			return nil
 		}(), nil), eventConfig: eventConfig, secretResolver: eventConfig.SecretResolver, openShift: openshift.New(), lifecycle: lifecycle,
-		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState)}
+		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState), authManifestStates: make(map[string]authProviderManifestState)}
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
@@ -146,6 +155,12 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		r.Get("/auth/status", a.authStatus)
 		r.Post("/auth/setup", a.setupAdmin)
 		r.Post("/auth/login", a.login)
+		r.Get("/auth/providers", a.publicAuthProviders)
+		r.Post("/auth/discover", a.discoverAuth)
+		r.Post("/auth/providers/{id}/start", a.startOAuth)
+		r.Get("/auth/callback", a.completeOAuth)
+		r.Get("/auth/providers/manifest/callback", a.completeAuthProviderManifest)
+		r.Post("/auth/exchange", a.exchangeOAuthCode)
 		r.Post("/events/github", a.githubWebhook)
 		r.Post("/events/github/apps/{id}", a.githubAppWebhook)
 		r.Get("/github-apps/manifest/callback", a.completeGitHubAppManifest)
@@ -155,96 +170,120 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		r.Post("/edge/nodes/{id}/jobs/{jobId}/complete", a.completeEdgeJob)
 		r.Group(func(r chi.Router) {
 			r.Use(a.authorize)
+			r.Get("/auth/me", a.authMe)
+			r.Post("/auth/logout", a.logout)
+			r.Put("/auth/password", a.directUserOnly(a.changePassword))
+			r.Get("/auth/profile", a.accountProfile)
+			r.Get("/auth/links", a.accountAuthLinks)
+			r.Post("/auth/providers/{id}/link", a.directUserOnly(a.startOAuthLink))
+			r.Delete("/auth/providers/{id}/link", a.directUserOnly(a.unlinkAuthProvider))
+			r.Get("/access", a.accessOverview)
+			r.Post("/auth/providers", a.ownerOnly(a.createAuthProvider))
+			r.Post("/auth/providers/manifest", a.ownerOnly(a.startAuthProviderManifest))
+			r.Put("/auth/providers/{id}", a.ownerOnly(a.updateAuthProvider))
+			r.Post("/auth/providers/{id}/verify", a.ownerOnly(a.verifyAuthProvider))
+			r.Delete("/auth/providers/{id}", a.ownerOnly(a.deleteAuthProvider))
+			r.Post("/users", a.createUser)
+			r.Put("/users/{id}", a.updateUser)
+			r.Delete("/users/{id}", a.deleteUser)
+			r.Get("/users/{id}/profile", a.ownerOnly(a.userProfile))
+			r.Post("/users/{id}/merge", a.ownerOnly(a.mergeUser))
+			r.Post("/teams", a.createTeam)
+			r.Put("/teams/{id}", a.updateTeam)
+			r.Delete("/teams/{id}", a.deleteTeam)
+			r.Post("/role-assignments", a.upsertRoleAssignment)
+			r.Delete("/role-assignments/{id}", a.deleteRoleAssignment)
 			r.Get("/overview", a.overview)
-			r.Get("/secrets", a.listSecrets)
-			r.Post("/secrets", a.createSecret)
-			r.Put("/secrets/{id}", a.updateSecret)
-			r.Delete("/secrets/{id}", a.deleteSecret)
-			r.Get("/secret-stores", a.listSecretStores)
-			r.Post("/secret-stores", a.createSecretStore)
-			r.Put("/secret-stores/{id}", a.updateSecretStore)
-			r.Post("/secret-stores/{id}/verify", a.verifySecretStore)
-			r.Delete("/secret-stores/{id}", a.deleteSecretStore)
-			r.Get("/private-networks", a.listPrivateNetworks)
-			r.Post("/private-networks", a.createPrivateNetwork)
-			r.Put("/private-networks/{id}", a.updatePrivateNetwork)
-			r.Post("/private-networks/{id}/verify", a.verifyPrivateNetwork)
-			r.Post("/private-networks/{id}/rotate-token", a.rotateEdgeToken)
-			r.Post("/private-networks/{id}/install-connector", a.installLanewayConnector)
-			r.Delete("/private-networks/{id}", a.deletePrivateNetwork)
-			r.Post("/laneway-networks/authorize", a.startLanewayAuthorization)
-			r.Get("/laneway-networks/{id}/inventory", a.getLanewayInventory)
-			r.Post("/laneway-networks/{id}/node-installers", a.createLanewayNodeInstaller)
-			r.Post("/laneway-networks/{id}/routes", a.createLanewayRoute)
-			r.Get("/github-apps", a.listGitHubApps)
-			r.Post("/github-apps", a.createGitHubApp)
-			r.Put("/github-apps/{id}", a.updateGitHubApp)
-			r.Delete("/github-apps/{id}", a.deleteGitHubApp)
-			r.Post("/github-apps/{id}/verify", a.verifyGitHubApp)
-			r.Get("/github-apps/{id}/installations", a.listGitHubAppInstallations)
-			r.Get("/github-apps/{id}/repositories", a.listGitHubAppRepositories)
-			r.Post("/github-apps/manifest", a.startGitHubAppManifest)
+			r.Get("/secrets", a.ownerOnly(a.listSecrets))
+			r.Post("/secrets", a.ownerOnly(a.createSecret))
+			r.Put("/secrets/{id}", a.ownerOnly(a.updateSecret))
+			r.Delete("/secrets/{id}", a.ownerOnly(a.deleteSecret))
+			r.Get("/secret-stores", a.ownerOnly(a.listSecretStores))
+			r.Post("/secret-stores", a.ownerOnly(a.createSecretStore))
+			r.Put("/secret-stores/{id}", a.ownerOnly(a.updateSecretStore))
+			r.Post("/secret-stores/{id}/verify", a.ownerOnly(a.verifySecretStore))
+			r.Delete("/secret-stores/{id}", a.ownerOnly(a.deleteSecretStore))
+			r.Get("/private-networks", a.ownerOnly(a.listPrivateNetworks))
+			r.Post("/private-networks", a.ownerOnly(a.createPrivateNetwork))
+			r.Put("/private-networks/{id}", a.ownerOnly(a.updatePrivateNetwork))
+			r.Post("/private-networks/{id}/verify", a.ownerOnly(a.verifyPrivateNetwork))
+			r.Post("/private-networks/{id}/rotate-token", a.ownerOnly(a.rotateEdgeToken))
+			r.Post("/private-networks/{id}/install-connector", a.ownerOnly(a.installLanewayConnector))
+			r.Delete("/private-networks/{id}", a.ownerOnly(a.deletePrivateNetwork))
+			r.Post("/laneway-networks/authorize", a.ownerOnly(a.startLanewayAuthorization))
+			r.Get("/laneway-networks/{id}/inventory", a.ownerOnly(a.getLanewayInventory))
+			r.Post("/laneway-networks/{id}/node-installers", a.ownerOnly(a.createLanewayNodeInstaller))
+			r.Post("/laneway-networks/{id}/routes", a.ownerOnly(a.createLanewayRoute))
+			r.Get("/github-apps", a.ownerOnly(a.listGitHubApps))
+			r.Post("/github-apps", a.ownerOnly(a.createGitHubApp))
+			r.Put("/github-apps/{id}", a.ownerOnly(a.updateGitHubApp))
+			r.Delete("/github-apps/{id}", a.ownerOnly(a.deleteGitHubApp))
+			r.Post("/github-apps/{id}/verify", a.ownerOnly(a.verifyGitHubApp))
+			r.Get("/github-apps/{id}/installations", a.ownerOnly(a.listGitHubAppInstallations))
+			r.Get("/github-apps/{id}/repositories", a.ownerOnly(a.listGitHubAppRepositories))
+			r.Post("/github-apps/manifest", a.ownerOnly(a.startGitHubAppManifest))
 			r.Get("/config-sources", a.listConfigSources)
-			r.Post("/config-sources", a.createConfigSource)
-			r.Put("/config-sources/{id}", a.updateConfigSource)
-			r.Post("/config-sources/{id}/sync", a.syncConfigSource)
-			r.Delete("/config-sources/{id}", a.deleteConfigSource)
+			r.Post("/config-sources", a.ownerOnly(a.createConfigSource))
+			r.Put("/config-sources/{id}", a.configSourcePermission(core.PermissionProjectConfigure, a.updateConfigSource))
+			r.Post("/config-sources/{id}/sync", a.configSourcePermission(core.PermissionProjectConfigure, a.syncConfigSource))
+			r.Delete("/config-sources/{id}", a.configSourcePermission(core.PermissionProjectConfigure, a.deleteConfigSource))
 			r.Get("/workflow/resources", a.listWorkflowResources)
-			r.Get("/workflow/resources/{id}/topology", a.getWorkflowTopology)
-			r.Post("/workflow/resources/{id}/activate", a.activateWorkflowResource)
-			r.Post("/workflow/resources/{id}/deactivate", a.deactivateWorkflowResource)
-			r.Post("/workflow/resources/{id}/runs", a.runWorkflowResource)
+			r.Get("/workflow/resources/{id}/topology", a.workflowResourcePermission(core.PermissionProjectView, a.getWorkflowTopology))
+			r.Post("/workflow/resources/{id}/activate", a.workflowResourcePermission(core.PermissionProjectConfigure, a.activateWorkflowResource))
+			r.Post("/workflow/resources/{id}/deactivate", a.workflowResourcePermission(core.PermissionProjectConfigure, a.deactivateWorkflowResource))
+			r.Post("/workflow/resources/{id}/runs", a.workflowResourcePermission(core.PermissionDeploymentRun, a.runWorkflowResource))
 			r.Get("/workflow/revisions", a.listWorkflowRevisions)
-			r.Get("/workflow/revisions/{id}", a.getWorkflowRevision)
-			r.Get("/workflow/revisions/{id}/jobs", a.listWorkflowJobs)
-			r.Get("/workflow/revisions/{id}/stages", a.listWorkflowStages)
-			r.Post("/workflow/stages/{id}/approve", a.approveWorkflowStage)
+			r.Get("/workflow/revisions/{id}", a.workflowRevisionPermission(core.PermissionProjectView, a.getWorkflowRevision))
+			r.Get("/workflow/revisions/{id}/jobs", a.workflowRevisionPermission(core.PermissionProjectView, a.listWorkflowJobs))
+			r.Get("/workflow/revisions/{id}/stages", a.workflowRevisionPermission(core.PermissionProjectView, a.listWorkflowStages))
+			r.Post("/workflow/stages/{id}/approve", a.workflowStagePermission(core.PermissionStageApprove, a.approveWorkflowStage))
 			r.Post("/workflow/validate", a.validateWorkflowDocument)
 			r.Get("/projects", a.listProjects)
-			r.Post("/projects", a.createProject)
-			r.Put("/projects/{id}", a.updateProject)
-			r.Delete("/projects/{id}", a.deleteProject)
-			r.Get("/servers", a.listServers)
-			r.Post("/servers", a.createServer)
-			r.Post("/relay/ssh/scan", a.scanRelaySSHHost)
-			r.Post("/relay/ssh/install", a.installRelayOverSSH)
-			r.Put("/servers/{id}", a.updateServer)
-			r.Post("/servers/{id}/relay/verify", a.verifyRelayServer)
-			r.Get("/servers/{id}/relay/webhooks", a.listRelayWebhooks)
-			r.Post("/servers/{id}/relay/webhooks", a.createRelayWebhook)
-			r.Delete("/servers/{id}/relay/webhooks/{webhookId}", a.deleteRelayWebhook)
-			r.Post("/servers/{id}/repair", a.repairOpenShiftServer)
-			r.Delete("/servers/{id}", a.deleteServer)
+			r.Post("/projects", a.ownerOnly(a.createProject))
+			r.Put("/projects/{id}", a.projectPermission(core.PermissionProjectManage, a.updateProject))
+			r.Delete("/projects/{id}", a.projectPermission(core.PermissionProjectManage, a.deleteProject))
+			r.Get("/servers", a.ownerOnly(a.listServers))
+			r.Post("/servers", a.ownerOnly(a.createServer))
+			r.Post("/relay/ssh/scan", a.ownerOnly(a.scanRelaySSHHost))
+			r.Post("/relay/ssh/install", a.ownerOnly(a.installRelayOverSSH))
+			r.Put("/servers/{id}", a.ownerOnly(a.updateServer))
+			r.Post("/servers/{id}/relay/verify", a.ownerOnly(a.verifyRelayServer))
+			r.Get("/servers/{id}/relay/webhooks", a.ownerOnly(a.listRelayWebhooks))
+			r.Post("/servers/{id}/relay/webhooks", a.ownerOnly(a.createRelayWebhook))
+			r.Delete("/servers/{id}/relay/webhooks/{webhookId}", a.ownerOnly(a.deleteRelayWebhook))
+			r.Post("/servers/{id}/repair", a.ownerOnly(a.repairOpenShiftServer))
+			r.Delete("/servers/{id}", a.ownerOnly(a.deleteServer))
 			r.Get("/apps", a.listApps)
 			r.Post("/helm/inspect", a.inspectHelmSource)
 			r.Post("/apps", a.createApp)
-			r.Get("/apps/{id}/helm-values", a.getAppHelmValues)
-			r.Put("/apps/{id}/helm-values", a.updateAppHelmValues)
-			r.Put("/apps/{id}/hooks", a.updateAppHooks)
-			r.Delete("/apps/{id}", a.deleteApp)
+			r.Get("/apps/{id}/helm-values", a.appPermission(core.PermissionProjectView, a.getAppHelmValues))
+			r.Put("/apps/{id}/helm-values", a.appPermission(core.PermissionProjectConfigure, a.updateAppHelmValues))
+			r.Put("/apps/{id}/hooks", a.appPermission(core.PermissionProjectConfigure, a.updateAppHooks))
+			r.Delete("/apps/{id}", a.appPermission(core.PermissionProjectConfigure, a.deleteApp))
 			r.Get("/event-triggers", a.listEventTriggers)
-			r.Post("/apps/{id}/event-triggers", a.createEventTrigger)
-			r.Put("/event-triggers/{id}", a.updateEventTrigger)
-			r.Delete("/event-triggers/{id}", a.deleteEventTrigger)
+			r.Post("/apps/{id}/event-triggers", a.appPermission(core.PermissionProjectConfigure, a.createEventTrigger))
+			r.Put("/event-triggers/{id}", a.eventTriggerPermission(core.PermissionProjectConfigure, a.updateEventTrigger))
+			r.Delete("/event-triggers/{id}", a.eventTriggerPermission(core.PermissionProjectConfigure, a.deleteEventTrigger))
 			r.Get("/preview-environments", a.listPreviewEnvironments)
 			r.Get("/preview-groups", a.listPreviewGroups)
-			r.Post("/preview-groups", a.createPreviewGroup)
-			r.Get("/preview-groups/{id}", a.getPreviewGroup)
-			r.Put("/preview-groups/{id}", a.updatePreviewGroup)
-			r.Delete("/preview-groups/{id}", a.deletePreviewGroup)
+			r.Post("/preview-groups", a.ownerOnly(a.createPreviewGroup))
+			r.Get("/preview-groups/{id}", a.previewGroupPermission(core.PermissionProjectView, a.getPreviewGroup))
+			r.Put("/preview-groups/{id}", a.ownerOnly(a.updatePreviewGroup))
+			r.Delete("/preview-groups/{id}", a.ownerOnly(a.deletePreviewGroup))
 			r.Get("/preview-group-runs", a.listPreviewGroupRuns)
-			r.Get("/preview-group-runs/{id}", a.getPreviewGroupRun)
-			r.Post("/preview-group-runs/{id}/cleanup", a.cleanupPreviewGroupRun)
-			r.Post("/apps/{id}/cleanup", a.cleanupApp)
+			r.Get("/preview-group-runs/{id}", a.previewGroupRunPermission(core.PermissionProjectView, a.getPreviewGroupRun))
+			r.Post("/preview-group-runs/{id}/cleanup", a.previewGroupRunPermission(core.PermissionDeploymentRun, a.cleanupPreviewGroupRun))
+			r.Post("/apps/{id}/cleanup", a.appPermission(core.PermissionDeploymentRun, a.cleanupApp))
 			r.Get("/deployments", a.listDeployments)
-			r.Get("/deployments/{id}", a.getDeployment)
-			r.Get("/deployments/{id}/topology", a.getDeploymentTopology)
-			r.Get("/deployments/{id}/manifests", a.getDeploymentManifests)
-			r.Get("/deployments/{id}/logs", a.getDeploymentLogs)
-			r.Post("/deployments/{id}/cancel", a.cancelDeployment)
-			r.Get("/deployments/{id}/events", a.deploymentEvents)
-			r.Get("/servers/{id}/topology", a.getServerTopology)
-			r.Post("/apps/{id}/deployments", a.startDeployment)
+			r.Get("/deployments/{id}", a.deploymentPermission(core.PermissionProjectView, a.getDeployment))
+			r.Get("/deployments/{id}/topology", a.deploymentPermission(core.PermissionProjectView, a.getDeploymentTopology))
+			r.Get("/deployments/{id}/manifests", a.deploymentPermission(core.PermissionProjectView, a.getDeploymentManifests))
+			r.Get("/deployments/{id}/resources/{kind}/{name}", a.deploymentPermission(core.PermissionProjectView, a.getDeploymentResource))
+			r.Get("/deployments/{id}/logs", a.deploymentPermission(core.PermissionProjectView, a.getDeploymentLogs))
+			r.Post("/deployments/{id}/cancel", a.deploymentPermission(core.PermissionDeploymentCancel, a.cancelDeployment))
+			r.Get("/deployments/{id}/events", a.deploymentPermission(core.PermissionProjectView, a.deploymentEvents))
+			r.Get("/servers/{id}/topology", a.serverPermission(a.getServerTopology))
+			r.Post("/apps/{id}/deployments", a.appPermission(core.PermissionDeploymentRun, a.startDeployment))
 			r.Get("/contracts/provider", a.providerContract)
 			r.Get("/contracts/runtime", a.runtimeContract)
 		})
@@ -259,41 +298,90 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.handler.Serv
 
 func (a *API) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.validBearer(r) {
-			next.ServeHTTP(w, r)
+		if identity, valid := a.bearerIdentity(r); valid {
+			ctx, ok := a.authorizedContext(w, r, identity)
+			if !ok {
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
 		username, password, basic := r.BasicAuth()
-		valid, setupRequired, err := a.validPassword(r.Context(), username, password)
+		identity, _, valid, setupRequired, err := a.passwordIdentity(r.Context(), username, password)
 		if err != nil {
 			a.internal(w, err)
 			return
 		}
 		if basic && valid {
-			next.ServeHTTP(w, r)
+			ctx, ok := a.authorizedContext(w, r, identity)
+			if !ok {
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		unauthorized(w, setupRequired)
 	})
 }
 
-func (a *API) validBearer(r *http.Request) bool {
+const impersonateUserHeader = "Impersonate-User"
+
+func (a *API) authorizedContext(w http.ResponseWriter, r *http.Request, actor core.Identity) (context.Context, bool) {
+	ctx := withIdentity(r.Context(), actor)
+	targetID := strings.TrimSpace(r.Header.Get(impersonateUserHeader))
+	if targetID == "" || targetID == actor.ID {
+		return ctx, true
+	}
+	if actor.SystemRole != core.UserRoleOwner {
+		problem(w, http.StatusForbidden, "Impersonation denied", "Controller owner access is required to view Dispatch as another user.")
+		return nil, false
+	}
+	target, err := a.store.GetUser(r.Context(), targetID)
+	if errors.Is(err, store.ErrNotFound) {
+		problem(w, http.StatusNotFound, "User not found", "The selected user no longer exists.")
+		return nil, false
+	}
+	if err != nil {
+		a.internal(w, err)
+		return nil, false
+	}
+	if target.State != core.UserStateActive {
+		problem(w, http.StatusConflict, "User is not active", "Only active users can be impersonated.")
+		return nil, false
+	}
+	ctx = withImpersonator(ctx, actor)
+	return withIdentity(ctx, identityForUser(target)), true
+}
+
+func (a *API) bearerIdentity(r *http.Request) (core.Identity, bool) {
 	provided, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok {
-		return false
+		return core.Identity{}, false
 	}
 	if a.auth.AdminToken != "" && secureEqual(provided, a.auth.AdminToken) {
-		return true
+		return controllerIdentity("token"), true
 	}
 	a.sessionMu.RLock()
-	expires, found := a.sessions[provided]
+	session, found := a.sessions[provided]
 	a.sessionMu.RUnlock()
-	if found && time.Now().Before(expires) {
-		return true
+	if found && time.Now().Before(session.expires) {
+		if session.identity.ID == "controller-owner" {
+			return session.identity, true
+		}
+		user, err := a.store.GetUser(r.Context(), session.identity.ID)
+		if err == nil && user.State == core.UserStateActive {
+			return identityForUser(user), true
+		}
+		return core.Identity{}, false
 	}
-	valid, err := a.store.AdminSessionValid(r.Context(), sessionHash(provided), time.Now().UTC())
-	return err == nil && valid
+	now := time.Now().UTC()
+	user, err := a.store.SessionUser(r.Context(), sessionHash(provided), now)
+	if err == nil && user.State == core.UserStateActive {
+		return identityForUser(user), true
+	}
+	valid, err := a.store.AdminSessionValid(r.Context(), sessionHash(provided), now)
+	return controllerIdentity("administrator"), err == nil && valid
 }
 
 func secureEqual(left, right string) bool {
@@ -309,18 +397,42 @@ func unauthorized(w http.ResponseWriter, setupRequired bool) {
 }
 
 func (a *API) validPassword(ctx context.Context, username, password string) (valid, setupRequired bool, err error) {
+	_, _, valid, setupRequired, err = a.passwordIdentity(ctx, username, password)
+	return valid, setupRequired, err
+}
+
+func (a *API) passwordIdentity(ctx context.Context, username, password string) (identity core.Identity, userID string, valid, setupRequired bool, err error) {
 	if a.auth.Username != "" {
-		return secureEqual(username, a.auth.Username) && secureEqual(password, a.auth.Password), false, nil
+		valid = secureEqual(username, a.auth.Username) && secureEqual(password, a.auth.Password)
+		return controllerIdentity(a.auth.Username), "", valid, false, nil
+	}
+	user, userErr := a.store.GetUserByUsername(ctx, username)
+	if errors.Is(userErr, store.ErrNotFound) && strings.Contains(username, "@") {
+		user, userErr = a.store.GetUserByEmail(ctx, username)
+	}
+	if userErr == nil {
+		valid = user.State == core.UserStateActive && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) == nil
+		return identityForUser(user), user.ID, valid, false, nil
+	}
+	if !errors.Is(userErr, store.ErrNotFound) {
+		return identity, "", false, false, userErr
+	}
+	users, listErr := a.store.ListUsers(ctx)
+	if listErr != nil {
+		return identity, "", false, false, listErr
+	}
+	if len(users) > 0 {
+		return identity, "", false, false, nil
 	}
 	credential, err := a.store.GetAdminCredential(ctx)
 	if errors.Is(err, store.ErrNotFound) {
-		return false, true, nil
+		return identity, "", false, true, nil
 	}
 	if err != nil {
-		return false, false, err
+		return identity, "", false, false, err
 	}
 	valid = secureEqual(username, credential.Username) && bcrypt.CompareHashAndPassword([]byte(credential.PasswordHash), []byte(password)) == nil
-	return valid, false, nil
+	return controllerIdentity(credential.Username), "", valid, false, nil
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
@@ -328,7 +440,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	valid, setupRequired, err := a.validPassword(r.Context(), strings.TrimSpace(input.Username), input.Password)
+	identity, userID, valid, setupRequired, err := a.passwordIdentity(r.Context(), strings.TrimSpace(input.Username), input.Password)
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -337,7 +449,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		unauthorized(w, setupRequired)
 		return
 	}
-	token, err := a.createSession(r.Context())
+	token, err := a.createSession(r.Context(), userID, identity)
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -346,7 +458,21 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
-func (a *API) createSession(ctx context.Context) (string, error) {
+func (a *API) logout(w http.ResponseWriter, r *http.Request) {
+	provided, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if ok && provided != "" {
+		if err := a.store.DeleteSession(r.Context(), sessionHash(provided)); err != nil {
+			a.internal(w, err)
+			return
+		}
+		a.sessionMu.Lock()
+		delete(a.sessions, provided)
+		a.sessionMu.Unlock()
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) createSession(ctx context.Context, userID string, identity core.Identity) (string, error) {
 	buffer := make([]byte, 32)
 	if _, err := rand.Read(buffer); err != nil {
 		return "", err
@@ -354,16 +480,22 @@ func (a *API) createSession(ctx context.Context) (string, error) {
 	token := base64.RawURLEncoding.EncodeToString(buffer)
 	now := time.Now().UTC()
 	expires := now.Add(12 * time.Hour)
-	if err := a.store.CreateAdminSession(ctx, sessionHash(token), expires, now); err != nil {
+	var err error
+	if userID == "" {
+		err = a.store.CreateAdminSession(ctx, sessionHash(token), expires, now)
+	} else {
+		err = a.store.CreateUserSession(ctx, sessionHash(token), userID, expires, now)
+	}
+	if err != nil {
 		return "", err
 	}
 	a.sessionMu.Lock()
-	for existing, expires := range a.sessions {
-		if now.After(expires) {
+	for existing, session := range a.sessions {
+		if now.After(session.expires) {
 			delete(a.sessions, existing)
 		}
 	}
-	a.sessions[token] = expires
+	a.sessions[token] = sessionState{expires: expires, identity: identity}
 	a.sessionMu.Unlock()
 	return token, nil
 }
@@ -421,9 +553,9 @@ func (a *API) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	err = a.store.CreateAdminCredential(r.Context(), store.AdminCredential{
-		Username: input.Username, PasswordHash: string(hash), CreatedAt: time.Now().UTC(),
-	})
+	now := time.Now().UTC()
+	owner := core.User{ID: ulid.Make().String(), Username: input.Username, DisplayName: input.Username, PasswordHash: string(hash), SystemRole: core.UserRoleOwner, State: core.UserStateActive, CreatedAt: now, UpdatedAt: now}
+	err = a.store.CreateInitialOwner(r.Context(), store.AdminCredential{Username: input.Username, PasswordHash: string(hash), CreatedAt: now}, owner)
 	if errors.Is(err, store.ErrAlreadyExists) {
 		problem(w, http.StatusConflict, "Administrator already configured", "The first administrator account has already been created.")
 		return
@@ -557,9 +689,18 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, core.Overview{Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
+	overview := core.Overview{Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Identity: currentIdentity(r.Context()), Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
 		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets, SecretStores: secretStores, PrivateNetworks: privateNetworks, GitHubApps: githubApps, RelayWebhooks: relayWebhooks,
-		ConfigSources: configSources, WorkflowResources: workflowResources, WorkflowRevisions: workflowRevisions, WorkflowStageRuns: workflowStageRuns})
+		ConfigSources: configSources, WorkflowResources: workflowResources, WorkflowRevisions: workflowRevisions, WorkflowStageRuns: workflowStageRuns}
+	if impersonator, ok := currentImpersonator(r.Context()); ok {
+		overview.Impersonator = &impersonator
+	}
+	overview, err = a.filterOverview(r.Context(), overview)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
 }
 
 func (a *API) RunWorkflowPoller(ctx context.Context) {
@@ -897,7 +1038,22 @@ func (a *API) deleteSecret(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListProjects(r.Context())
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visible, err := a.visibleProjectIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if visible[item.ID] {
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListServers(r.Context())
@@ -905,12 +1061,50 @@ func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) listApps(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListApps(r.Context())
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visible, err := a.visibleProjectIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	filtered := items[:0]
+	member := currentIdentity(r.Context()).SystemRole != core.UserRoleOwner
+	for _, item := range items {
+		if visible[item.ProjectID] {
+			if member {
+				item = redactAppCredentials(item)
+			}
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (a *API) listEventTriggers(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListEventTriggers(r.Context(), strings.TrimSpace(r.URL.Query().Get("appId")))
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visible, err := a.visibleAppIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	filtered := items[:0]
+	member := currentIdentity(r.Context()).SystemRole != core.UserRoleOwner
+	for _, item := range items {
+		if visible[item.AppID] {
+			if member {
+				item = redactEventTriggerCredentials(item)
+			}
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 type createEventTriggerRequest struct {
@@ -958,6 +1152,9 @@ func (a *API) createEventTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 	var input createEventTriggerRequest
 	if !decode(w, r, &input) {
+		return
+	}
+	if !a.requireCredentialOwner(w, r, len(input.SecretIDs) > 0 || input.GitHubAppID != nil && strings.TrimSpace(*input.GitHubAppID) != "") {
 		return
 	}
 	if err := validateEventHooks(input.PreDeployHook, input.PostDeployHook); err != nil {
@@ -1042,6 +1239,14 @@ func (a *API) updateEventTrigger(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
+		if len(input.SecretIDs) > 0 || input.GitHubAppID != nil && strings.TrimSpace(*input.GitHubAppID) != "" {
+			problem(w, http.StatusForbidden, "Credential access denied", "A controller owner must change event credentials.")
+			return
+		}
+		input.SecretIDs = append([]string(nil), item.SecretIDs...)
+		input.GitHubAppID = nil
+	}
 	if err := validateEventHooks(input.PreDeployHook, input.PostDeployHook); err != nil {
 		problem(w, http.StatusBadRequest, "Invalid deployment hook", err.Error())
 		return
@@ -1092,7 +1297,22 @@ func (a *API) deleteEventTrigger(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listPreviewEnvironments(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListPreviewEnvironments(r.Context(), strings.TrimSpace(r.URL.Query().Get("appId")))
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visible, err := a.visibleAppIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if visible[item.AppID] {
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 const maxWebhookBytes = 1 << 20
@@ -1108,7 +1328,27 @@ func (a *API) githubWebhook(w http.ResponseWriter, r *http.Request) {
 func (a *API) listDeployments(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	items, err := a.store.ListDeployments(r.Context(), limit)
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	visible, err := a.visibleAppIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	filtered := items[:0]
+	member := currentIdentity(r.Context()).SystemRole != core.UserRoleOwner
+	for _, item := range items {
+		if visible[item.AppID] {
+			if member && item.App != nil {
+				redacted := redactAppCredentials(*item.App)
+				item.App = &redacted
+			}
+			filtered = append(filtered, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (a *API) list(w http.ResponseWriter, value any, err error) {
@@ -1626,6 +1866,12 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Application details required", "Choose a project and server, then enter an application name.")
 		return
 	}
+	if !a.requireProject(w, r, core.PermissionProjectConfigure, input.ProjectID) {
+		return
+	}
+	if !a.requireCredentialOwner(w, r, input.SourceCredentialID != "") {
+		return
+	}
 	if input.SourceRepo == "" && !directCompose && !helmApplication {
 		problem(w, http.StatusBadRequest, "Application source required", "Enter a repository URL, paste a Docker Compose file, or configure a Helm chart.")
 		return
@@ -1760,6 +2006,13 @@ func (a *API) updateAppHooks(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
+		if len(input.SecretIDs) > 0 {
+			problem(w, http.StatusForbidden, "Credential access denied", "A controller owner must change hook credentials.")
+			return
+		}
+		input.SecretIDs = append([]string(nil), item.HookSecretIDs...)
+	}
 	if err := validateEventHooks(input.PreDeployHook, input.PostDeployHook); err != nil {
 		problem(w, http.StatusBadRequest, "Invalid deployment hook", err.Error())
 		return
@@ -1788,6 +2041,7 @@ func (a *API) updateAppHooks(w http.ResponseWriter, r *http.Request) {
 }
 
 type inspectHelmSourceRequest struct {
+	ProjectID          string `json:"projectId"`
 	SourceRepo         string `json:"sourceRepo"`
 	Branch             string `json:"branch"`
 	ChartPath          string `json:"chartPath"`
@@ -1798,6 +2052,12 @@ type inspectHelmSourceRequest struct {
 func (a *API) inspectHelmSource(w http.ResponseWriter, r *http.Request) {
 	var input inspectHelmSourceRequest
 	if !decode(w, r, &input) {
+		return
+	}
+	if !a.requireProject(w, r, core.PermissionProjectConfigure, strings.TrimSpace(input.ProjectID)) {
+		return
+	}
+	if !a.requireCredentialOwner(w, r, strings.TrimSpace(input.SourceCredentialID) != "") {
 		return
 	}
 	input.SourceRepo, input.Branch, input.ChartPath = deploy.NormalizeGitHelmSource(input.SourceRepo, input.Branch, input.ChartPath)
@@ -2131,6 +2391,10 @@ func (a *API) getDeployment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.internal(w, err)
 		return
+	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner && item.App != nil {
+		redacted := redactAppCredentials(*item.App)
+		item.App = &redacted
 	}
 	writeJSON(w, http.StatusOK, item)
 }
