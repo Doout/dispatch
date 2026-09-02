@@ -1,20 +1,25 @@
-# Laneway application contract
+# Laneway application integration handoff
 
-This contract covers a generic application that manages resources in Laneway.
-Dispatch is one consumer. Laneway must not contain Dispatch-specific routes,
-resource types, scope bundles, or UI.
+Implement the Laneway side of this contract. Keep the application,
+installation, OAuth, and node-installer code generic. Laneway must not import
+Dispatch code or add Dispatch-specific routes, resources, scopes, policy, or UI
+labels. Dispatch is one client of these APIs.
 
 Audit basis:
 
-- Dispatch commit `e29ff81`
-- Laneway commit `577d259`
+- Dispatch commit `fbfb73a`
+- Laneway commit `577d259fc925234fe75727e937c4a373d53558cb`
 
-Laneway already has network-scoped service principals, hashed service access
-tokens, and operation checks on the management API. It does not yet have
-registered applications, application installations, OAuth authorization,
-refresh tokens, or a node-installer API. Dispatch has the start of the browser
-flow, but its persistence and callback handling need changes before the flow is
-safe to run in production.
+Recheck the current Laneway branch before changing it. The audited revision has
+network-scoped service principals, hashed service access tokens, per-operation
+checks on management routes, one-time node enrollment tokens, and systemd
+installation through `laneway node install`.
+
+It does not have registered applications, application installations, OAuth
+authorization codes, rotating refresh tokens, application consent pages, or
+the node-installer endpoint used by Dispatch. The current service access-token
+limit counts expired but unrevoked tokens. Add bounded cleanup before relying
+on hourly access-token rotation.
 
 ## Decisions
 
@@ -481,16 +486,17 @@ The Dispatch UI still needs application listing, explicit application removal,
 and owner-only application registration. Once per-user authorization is merged,
 Dispatch must also save the initiating user ID on each browser transaction.
 
-Dispatch tables:
+Dispatch uses these tables:
 
 ```text
 laneway_applications
 laneway_authorization_transactions
 ```
 
-Add `laneway_application_id` to `private_networks`. Enforce unique local records
-for `(laneway_application_id, installation_id)` and for
-`(laneway_application_id, network_id)`.
+Migration `036_laneway_applications.sql` adds the application and transaction
+tables, the application, installation, and network references on
+`private_networks`, and unique indexes for each application and installation
+pair and each application and network pair.
 
 ## Laneway changes
 
@@ -511,6 +517,9 @@ Laneway needs these generic resources and handlers:
 8. Record the application, installation, network, human approver, service
    principal, granted scopes, credential rotation, refresh reuse, and
    revocation in the audit log.
+9. Update Laneway's OpenAPI document with every new JSON and form contract.
+   Keep the implementation in generic packages so clients other than Dispatch
+   can use the same flow.
 
 Recommended Laneway tables:
 
