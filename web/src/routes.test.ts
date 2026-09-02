@@ -46,4 +46,16 @@ describe("application routes", () => {
     expect(readRoute({ pathname: "/", search: "?view=connections" })).toEqual({ view: "connections" });
     expect(readRoute({ pathname: "/", search: "?view=applications&section=helm" })).toEqual({ view: "applications", applicationSection: "helm" });
   });
+
+  it("keeps the selected deployment stage in the URL", () => {
+    const path = routePath({ view: "deployments", deploymentApplicationID: "checkout/app", deploymentStage: "quality gate" });
+    const url = new URL(path, "https://dispatch.example");
+
+    expect(path).toBe("/deployments?application=checkout%2Fapp&stage=quality+gate");
+    expect(readRoute({ pathname: url.pathname, search: url.search })).toEqual({
+      view: "deployments",
+      deploymentApplicationID: "checkout/app",
+      deploymentStage: "quality gate",
+    });
+  });
 });

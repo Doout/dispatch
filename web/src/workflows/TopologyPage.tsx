@@ -4,7 +4,7 @@ import { api, ConfigSource, WorkflowResource, WorkflowTopology } from "../api";
 import { PageHeader } from "../PageHeader";
 import { TopologyCanvas } from "./TopologyCanvas";
 
-export function WorkflowTopologyPage({ resource, source, onBack, onRun }: { resource: WorkflowResource; source?: ConfigSource; onBack: () => void; onRun: () => Promise<void> }) {
+export function WorkflowTopologyPage({ resource, source, canRun = true, onBack, onRun }: { resource: WorkflowResource; source?: ConfigSource; canRun?: boolean; onBack: () => void; onRun: () => Promise<void> }) {
   const [topology, setTopology] = useState<WorkflowTopology | null>(null);
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
@@ -27,7 +27,7 @@ export function WorkflowTopologyPage({ resource, source, onBack, onRun }: { reso
     <PageHeader view="applications" title={resource.name} action={{ label: "Back", onClick: onBack, icon: <ArrowLeft size={16} />, tone: "quiet" }} />
     <div className="topology-context">
       <div><span className={`status-label ${resource.active ? resource.state : "paused"}`}><i />{resource.active ? resource.state : "paused"}</span><span>{source?.name ?? "Repository configuration"}</span><code>{resource.path}</code></div>
-      {resource.active && resource.kind === "Application" && <button className="primary-button" disabled={running} onClick={() => void run()}><RocketLaunch size={15} />{running ? "Starting" : "Run"}</button>}
+      {canRun && resource.active && resource.kind === "Application" && <button className="primary-button" disabled={running} onClick={() => void run()}><RocketLaunch size={15} />{running ? "Starting" : "Run"}</button>}
     </div>
     {error && <p className="topology-error" role="alert"><WarningCircle size={16} weight="fill" />{error}</p>}
     {!error && !topology && <div className="topology-loading"><span /><span /><span /></div>}

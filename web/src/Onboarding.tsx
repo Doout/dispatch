@@ -388,7 +388,7 @@ export function AppForm({ data, onChanged, focusName = false, initialSourceType 
     setInspectingHelm(true);
     setHelmInspectionError("");
     try {
-      const inspection = await api.inspectHelmSource({ sourceRepo: repo, branch, chartPath: helmChart, sourceAuthType, sourceCredentialId: sourceCredentialID });
+      const inspection = await api.inspectHelmSource({ projectId: projectID, sourceRepo: repo, branch, chartPath: helmChart, sourceAuthType, sourceCredentialId: sourceCredentialID });
       const defaults = structuredClone(inspection.defaults);
       setHelmInspection(inspection);
       setRepo(inspection.repository);

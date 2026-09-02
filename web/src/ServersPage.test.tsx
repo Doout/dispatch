@@ -56,4 +56,20 @@ describe("server actions", () => {
     expect(onEdit).toHaveBeenCalledWith(overview.servers[0]);
     expect(onDelete).toHaveBeenCalledWith(overview.servers[0]);
   });
+
+  it("shows inventory without mutation controls for a project viewer", () => {
+    const onAdd = vi.fn();
+    const onRepair = vi.fn();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    const onTopology = vi.fn();
+    render(<ServersPage overview={overview} canManage={false} onChanged={async () => undefined} onAdd={onAdd} onRepair={onRepair} onEdit={onEdit} onDelete={onDelete} onTopology={onTopology} />);
+
+    expect(screen.getByText("development")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "View deployments on development" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Repair development" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit development" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete development" })).toBeNull();
+  });
 });

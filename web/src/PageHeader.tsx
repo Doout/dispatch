@@ -10,6 +10,7 @@ const titles: Record<View, string> = {
   servers: "Servers",
   secrets: "Secrets",
   connections: "Connections",
+  access: "Access",
 };
 
 export type PageAction = {

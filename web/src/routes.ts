@@ -1,4 +1,4 @@
-export type View = "deployments" | "applications" | "events" | "projects" | "servers" | "secrets" | "connections";
+export type View = "deployments" | "applications" | "events" | "projects" | "servers" | "secrets" | "connections" | "access";
 export type ApplicationSection = "applications" | "templates" | "helm" | "groups";
 export type EventSection = "rules" | "activity";
 export type DeploymentSection = "summary" | "topology" | "values" | "manifests";
@@ -7,18 +7,29 @@ export type AppRoute = {
   view: View;
   deploymentID?: string;
   deploymentSection?: DeploymentSection;
+  deploymentApplicationID?: string;
+  deploymentStage?: string;
   serverID?: string;
   applicationID?: string;
   applicationSection?: ApplicationSection;
   eventSection?: EventSection;
 };
 
-const views = new Set<View>(["deployments", "applications", "events", "projects", "servers", "secrets", "connections"]);
+const views = new Set<View>(["deployments", "applications", "events", "projects", "servers", "secrets", "connections", "access"]);
 
 export function readRoute(location: Pick<Location, "pathname" | "search"> = window.location): AppRoute {
   const segments = location.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
   const first = segments[0] as View | undefined;
-  if (first === "deployments") return { view: "deployments", deploymentID: segments[1] || undefined, ...(segments[2] === "topology" ? { deploymentSection: "topology" as const } : segments[2] === "values" ? { deploymentSection: "values" as const } : segments[2] === "manifests" ? { deploymentSection: "manifests" as const } : {}) };
+  if (first === "deployments") {
+    const params = new URLSearchParams(location.search);
+    return {
+      view: "deployments",
+      deploymentID: segments[1] || undefined,
+      ...(segments[2] === "topology" ? { deploymentSection: "topology" as const } : segments[2] === "values" ? { deploymentSection: "values" as const } : segments[2] === "manifests" ? { deploymentSection: "manifests" as const } : {}),
+      ...(!segments[1] && params.get("application") ? { deploymentApplicationID: params.get("application") || undefined } : {}),
+      ...(!segments[1] && params.get("stage") ? { deploymentStage: params.get("stage") || undefined } : {}),
+    };
+  }
   if (first === "applications") {
     if (segments[1] && !isApplicationSectionPath(segments[1])) return { view: "applications", applicationID: segments[1] };
     return { view: "applications", applicationSection: applicationSectionFromPath(segments[1]) };
@@ -39,7 +50,13 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
 }
 
 export function routePath(route: AppRoute) {
-  if (route.view === "deployments") return route.deploymentID ? `/deployments/${encodeURIComponent(route.deploymentID)}${route.deploymentSection && route.deploymentSection !== "summary" ? `/${route.deploymentSection}` : ""}` : "/deployments";
+  if (route.view === "deployments") {
+    if (route.deploymentID) return `/deployments/${encodeURIComponent(route.deploymentID)}${route.deploymentSection && route.deploymentSection !== "summary" ? `/${route.deploymentSection}` : ""}`;
+    const params = new URLSearchParams();
+    if (route.deploymentApplicationID) params.set("application", route.deploymentApplicationID);
+    if (route.deploymentStage) params.set("stage", route.deploymentStage);
+    return `/deployments${params.size ? `?${params.toString()}` : ""}`;
+  }
   if (route.view === "applications") {
     if (route.applicationID) return `/applications/${encodeURIComponent(route.applicationID)}/topology`;
     const section = route.applicationSection ?? "applications";

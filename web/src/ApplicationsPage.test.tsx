@@ -28,6 +28,13 @@ const application = (values: Partial<App>): App => ({
 const overview: Overview = {
   demo: false,
   secretStorageConfigured: true,
+  identity: {
+    id: "owner-1",
+    username: "owner",
+    displayName: "Owner",
+    systemRole: "owner",
+    permissions: [],
+  },
   projects: [{ id: "project-1", name: "Platform", description: "", createdAt: "2026-08-18T11:00:00Z" }],
   servers: [
     { id: "docker-1", name: "build-01", address: "", runtime: "docker", state: "ready", agentMode: "", createdAt: "2026-08-18T11:00:00Z" },
@@ -134,6 +141,29 @@ describe("applications overview", () => {
     expect(menu.closest(".resource-table-wrap")).toBeNull();
     await user.click(within(menu).getByRole("menuitem", { name: "Deploy" }));
     expect(onDeploy).toHaveBeenCalledWith("helm-1");
+  });
+
+  it("keeps project viewers read-only", async () => {
+    const user = userEvent.setup();
+    const viewer: Overview = {
+      ...overview,
+      identity: {
+        id: "viewer-1",
+        username: "viewer",
+        displayName: "Viewer",
+        systemRole: "member",
+        permissions: [],
+      },
+      projectPermissions: { "project-1": ["project.view"] },
+    };
+    render(<ApplicationsPage overview={viewer} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+
+    expect(screen.queryByText("Add")).toBeNull();
+    await user.click(screen.getByLabelText("Options for Storefront preview"));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).queryByRole("menuitem", { name: "Deploy" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: "Delete" })).toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: "Helm values" })).not.toBeNull();
   });
 
   it("shows an imported application once and keeps its source controls in the row menu", async () => {

@@ -169,7 +169,7 @@ const uiSchema: UiSchema = {
   "ui:submitButtonOptions": { norender: true },
 };
 
-export function HelmValuesEditor({ inspection, values, baseline, selectedProfile, onProfileChange, onChange, onRawMode }: { inspection: HelmChartInspection; values: HelmObject; baseline: HelmObject; selectedProfile: string; onProfileChange: (path: string) => void; onChange: (values: HelmObject) => void; onRawMode?: () => void }) {
+export function HelmValuesEditor({ inspection, values, baseline, selectedProfile, onProfileChange, onChange, onRawMode, readOnly = false }: { inspection: HelmChartInspection; values: HelmObject; baseline: HelmObject; selectedProfile: string; onProfileChange: (path: string) => void; onChange: (values: HelmObject) => void; onRawMode?: () => void; readOnly?: boolean }) {
   const [search, setSearch] = useState("");
   const [selectedGroup, setSelectedGroup] = useState(() => Object.keys(values)[0] ?? "");
   const overrides = useMemo(() => helmValueOverrides(inspection.defaults, values), [inspection.defaults, values]);
@@ -193,7 +193,7 @@ export function HelmValuesEditor({ inspection, values, baseline, selectedProfile
     <div className="helm-values-toolbar">
       <label><span>Value profile</span><select value={selectedProfile} onChange={(event) => onProfileChange(event.target.value)}><option value="">Chart defaults</option>{inspection.profiles.map((profile) => <option value={profile.path} key={profile.path}>{humanize(profile.name)} ({profile.path})</option>)}</select></label>
       <label className="helm-values-search"><span className="sr-only">Search chart values</span><MagnifyingGlass size={15} /><input type="search" placeholder="Find a section or value" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-      <button type="button" className="quiet-button" disabled={equalValue(values, baseline)} onClick={() => onChange(cloneValue(baseline))}><ArrowCounterClockwise size={15} />Reset changes</button>
+      {!readOnly && <button type="button" className="quiet-button" disabled={equalValue(values, baseline)} onClick={() => onChange(cloneValue(baseline))}><ArrowCounterClockwise size={15} />Reset changes</button>}
     </div>
     <div className="helm-values-layout">
       <nav className="helm-section-nav" aria-label="Chart value sections">
@@ -210,7 +210,7 @@ export function HelmValuesEditor({ inspection, values, baseline, selectedProfile
       <div className="helm-section-editor">
         {activeKey && activeSchema && activeValue !== undefined ? <>
           <header><div><strong>{humanize(activeKey)}</strong><code>{activeKey}</code></div><span>{leafCount(activeValue)} value{leafCount(activeValue) === 1 ? "" : "s"}</span></header>
-          <Form schema={activeSchema} formData={activeValue} validator={validator} uiSchema={uiSchema} widgets={{ CheckboxWidget: SwitchWidget }} templates={{ FieldTemplate, ObjectFieldTemplate, ArrayFieldTemplate, ArrayFieldItemTemplate }} onChange={({ formData }) => onChange({ ...values, [activeKey]: formData as HelmValue })} liveValidate={false} showErrorList={false}>
+          <Form schema={activeSchema} formData={activeValue} validator={validator} uiSchema={uiSchema} widgets={{ CheckboxWidget: SwitchWidget }} templates={{ FieldTemplate, ObjectFieldTemplate, ArrayFieldTemplate, ArrayFieldItemTemplate }} onChange={({ formData }) => onChange({ ...values, [activeKey]: formData as HelmValue })} readonly={readOnly} liveValidate={false} showErrorList={false}>
             <></>
           </Form>
         </> : <div className="helm-values-empty">No values match "{search.trim()}".</div>}

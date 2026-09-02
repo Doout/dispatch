@@ -43,6 +43,7 @@ import { PreviewGroupsArea } from "./PreviewGroups";
 import { relative } from "./presentation";
 import { ApplicationSection, View } from "./routes";
 import { useDialogFocus } from "./useDialogFocus";
+import { canManageAnyProject, canManageProject } from "./permissions";
 import { WorkflowConfigSourceForm } from "./workflows/ConfigSourceForm";
 import { WorkflowResourceDialog } from "./workflows/ResourceDialog";
 import { WorkflowTopologyPage } from "./workflows/TopologyPage";
@@ -61,12 +62,13 @@ export function ApplicationsPage({ overview, section, applicationID, creating, o
   const dockerReady = overview.servers.some((server) => server.state === "ready" && server.runtime === "docker");
   const kubernetesReady = overview.servers.some((server) => server.state === "ready" && (server.runtime === "kubernetes" || server.runtime === "openshift"));
   const hasProject = overview.projects.length > 0;
-  const canAddApplication = dockerReady && hasProject;
-  const canAddTemplate = (dockerReady || kubernetesReady) && hasProject;
-  const canAddHelm = kubernetesReady && hasProject;
-  const canAddGroup = helmSources.length > 0 && overview.githubApps.some((connection) => connection.installationId && connection.state !== "needs_installation");
+  const canConfigure = canManageAnyProject(overview, "project.configure");
+  const canAddApplication = dockerReady && hasProject && canConfigure;
+  const canAddTemplate = (dockerReady || kubernetesReady) && hasProject && canConfigure;
+  const canAddHelm = kubernetesReady && hasProject && canConfigure;
+  const canAddGroup = overview.identity?.systemRole === "owner" && helmSources.length > 0 && overview.githubApps.some((connection) => connection.installationId && connection.state !== "needs_installation");
   const repositoryCredentials = overview.secrets.some((secret) => secret.type === "ssh_private_key" || secret.type === "github_token" || secret.type === "api_token");
-  const canAddConfig = hasProject && (repositoryCredentials || overview.githubApps.some((connection) => connection.state === "ready"));
+  const canAddConfig = overview.identity?.systemRole === "owner" && canConfigure && hasProject && (repositoryCredentials || overview.githubApps.some((connection) => connection.state === "ready"));
   const editorTitle = creating ? "New application" : creatingTemplate ? "New template" : creatingHelm ? "New Helm source" : configSourceEdit ? configSourceEdit === "new" ? "Import configuration" : "Edit configuration" : undefined;
   const action = creating
     ? { label: "Cancel", onClick: onToggleCreate, icon: <X size={16} weight="bold" />, tone: "quiet" as const }
@@ -87,7 +89,8 @@ export function ApplicationsPage({ overview, section, applicationID, creating, o
   if (applicationID) {
     const resource = (overview.workflowResources ?? []).find((item) => item.id === applicationID);
     if (!resource) return <div className="page-layout topology-page"><PageHeader view="applications" title="Application unavailable" action={{ label: "Back", onClick: onCloseTopology, icon: <ArrowLeft size={16} />, tone: "quiet" }} /><p className="topology-error">This application is no longer available.</p></div>;
-    return <WorkflowTopologyPage resource={resource} source={(overview.configSources ?? []).find((item) => item.id === resource.configSourceId)} onBack={onCloseTopology} onRun={async () => { await api.runWorkflowResource(resource.id); await onChanged(); }} />;
+    const source = (overview.configSources ?? []).find((item) => item.id === resource.configSourceId);
+    return <WorkflowTopologyPage resource={resource} source={source} canRun={Boolean(source && canManageProject(overview, source.projectId, "deployment.run"))} onBack={onCloseTopology} onRun={async () => { await api.runWorkflowResource(resource.id); await onChanged(); }} />;
   }
 
   if (hookApplication) return <div className="page-layout applications-page editor-page">
@@ -97,11 +100,11 @@ export function ApplicationsPage({ overview, section, applicationID, creating, o
 
   if (helmValuesApplication) return <div className="page-layout applications-page editor-page">
     <PageHeader view="applications" title={`Helm values: ${helmValuesApplication.name}`} action={{ label: "Back to applications", onClick: () => setHelmValuesApplication(null), icon: <ArrowLeft size={16} />, tone: "quiet" }} />
-    <HelmSourceValues application={helmValuesApplication} onChanged={onChanged} />
+    <HelmSourceValues application={helmValuesApplication} canEdit={canManageProject(overview, helmValuesApplication.projectId, "project.configure")} onChanged={onChanged} />
   </div>;
 
   return <div className="page-layout applications-page">
-    <PageHeader view="applications" action={previewGroupEditing ? undefined : action} trailing={!editorTitle && !previewGroupEditing ? <ApplicationAddMenu canAddApplication={canAddApplication} canAddHelm={canAddHelm} canAddTemplate={canAddTemplate} canAddGroup={canAddGroup} canAddConfig={canAddConfig} onApplication={onToggleCreate} onHelm={() => setCreatingHelm(true)} onTemplate={() => setCreatingTemplate(true)} onGroup={() => setPreviewGroupEdit("new")} onConfig={() => setConfigSourceEdit("new")} /> : undefined} title={editorTitle ?? (previewGroupEditing ? "Preview group" : undefined)} />
+    <PageHeader view="applications" action={previewGroupEditing ? undefined : action} trailing={!editorTitle && !previewGroupEditing && (canAddApplication || canAddHelm || canAddTemplate || canAddGroup || canAddConfig) ? <ApplicationAddMenu canAddApplication={canAddApplication} canAddHelm={canAddHelm} canAddTemplate={canAddTemplate} canAddGroup={canAddGroup} canAddConfig={canAddConfig} onApplication={onToggleCreate} onHelm={() => setCreatingHelm(true)} onTemplate={() => setCreatingTemplate(true)} onGroup={() => setPreviewGroupEdit("new")} onConfig={() => setConfigSourceEdit("new")} /> : undefined} title={editorTitle ?? (previewGroupEditing ? "Preview group" : undefined)} />
     {creating && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-application-title"><div className="inline-create-body"><h2 className="sr-only" id="new-application-title">New application</h2><AppForm data={overview} onChanged={onChanged} focusName /></div></section>}
     {creatingTemplate && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-template-title"><div className="inline-create-body"><h2 className="sr-only" id="new-template-title">New template</h2><AppForm data={overview} onChanged={async () => { await onChanged(); setCreatingTemplate(false); }} focusName initialSourceType="repository" template /></div></section>}
     {creatingHelm && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-helm-source-title"><div className="inline-create-body"><h2 className="sr-only" id="new-helm-source-title">New Helm source</h2><AppForm data={overview} onChanged={async () => { await onChanged(); setCreatingHelm(false); }} focusName initialSourceType="helm" sourceTypeLocked /></div></section>}
@@ -189,11 +192,12 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
   return <section id="application-resources" aria-labelledby="application-resources-title"><h2 className="sr-only" id="application-resources-title">Configured resources</h2>{error && <p className="form-error application-inventory-error" role="alert">{error}</p>}<div className="resource-table-wrap application-inventory-table-wrap"><table className="resource-table application-inventory-table"><thead><tr><th>Name</th><th>Type</th><th>Source</th><th>Target</th><th>Status</th><th className="actions-head"><span className="sr-only">Options</span></th></tr></thead><tbody>
     {emptyConfigSources.map((source) => {
       const project = overview.projects.find((item) => item.id === source.projectId)?.name ?? "Unknown project";
-      return <tr key={`config-${source.id}`}><td data-label="Name"><strong>{source.name}</strong><small>{project}</small></td><td data-label="Type"><strong className="cell-secondary-heading">Configuration</strong><small>{configSourceMethod(source)}</small></td><td data-label="Source"><span className="truncate-cell" title={source.repository}>{repositoryLabel(source.repository)}</span><small className="truncate-cell" title={source.branch}>{source.branch}</small></td><td data-label="Target"><span className="truncate-cell" title={source.path}>{source.path}</span></td><td data-label="Status"><span className={`status-label ${source.state}`} title={source.lastError}><i />{source.state}</span></td><td className="row-actions"><RowActionMenu name={source.name}>
+      const canConfigureSource = canManageProject(overview, source.projectId, "project.configure");
+      return <tr key={`config-${source.id}`}><td data-label="Name"><strong>{source.name}</strong><small>{project}</small></td><td data-label="Type"><strong className="cell-secondary-heading">Configuration</strong><small>{configSourceMethod(source)}</small></td><td data-label="Source"><span className="truncate-cell" title={source.repository}>{repositoryLabel(source.repository)}</span><small className="truncate-cell" title={source.branch}>{source.branch}</small></td><td data-label="Target"><span className="truncate-cell" title={source.path}>{source.path}</span></td><td data-label="Status"><span className={`status-label ${source.state}`} title={source.lastError}><i />{source.state}</span></td><td className="row-actions">{canConfigureSource && <RowActionMenu name={source.name}>
         <MenuAction icon={<ArrowClockwise size={16} />} label={busyID === source.id ? "Syncing" : "Sync now"} disabled={busyID === source.id} onClick={() => void sourceAction(source, "sync")} />
         <MenuAction icon={<PencilSimple size={16} />} label="Edit" onClick={() => onEditConfig(source)} />
         <MenuAction icon={<Trash size={16} />} label="Delete" danger onClick={() => setDeleteSource(source)} />
-      </RowActionMenu></td></tr>;
+      </RowActionMenu>}</td></tr>;
     })}
     {workflowResources.map((resource) => {
       const source = configSources.find((item) => item.id === resource.configSourceId);
@@ -202,6 +206,8 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
       const status = resource.active ? latest?.state ?? resource.state : "paused";
       const sourceDetail = source ? `${source.branch} · ${resource.path}` : resource.path;
       const latestDeploymentID = latestWorkflowDeploymentID(overview, resource.id);
+      const canConfigureResource = Boolean(source && canManageProject(overview, source.projectId, "project.configure"));
+      const canRunResource = Boolean(source && canManageProject(overview, source.projectId, "deployment.run"));
       return <tr className="inspectable-resource-row" key={`workflow-${resource.id}`} onMouseDown={(event) => {
         if (event.detail > 1) event.preventDefault();
       }} onDoubleClick={(event) => {
@@ -213,13 +219,13 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
         {latestDeploymentID && <MenuAction icon={<FileCode size={16} />} label="Manifests" onClick={() => onOpenDeploymentManifests(latestDeploymentID)} />}
         <DropdownMenu.Separator className="action-menu-separator" />
         <DropdownMenu.Label className="row-action-group-label">Application</DropdownMenu.Label>
-        {resource.active && resource.kind === "Application" && <MenuAction icon={<RocketLaunch size={16} />} label="Run now" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "run")} />}
-        <MenuAction icon={resource.active ? <X size={16} /> : <Check size={16} />} label={resource.active ? "Pause" : "Activate"} disabled={busyID === resource.id} onClick={() => void workflowAction(resource, resource.active ? "pause" : "activate")} />
-        {source && <DropdownMenu.Separator className="action-menu-separator" />}
-        {source && <DropdownMenu.Label className="row-action-group-label">Configuration</DropdownMenu.Label>}
-        {source && <MenuAction icon={<ArrowClockwise size={16} />} label={busyID === source.id ? "Syncing" : "Sync configuration"} disabled={busyID === source.id} onClick={() => void sourceAction(source, "sync")} />}
-        {source && <MenuAction icon={<PencilSimple size={16} />} label="Edit configuration" onClick={() => onEditConfig(source)} />}
-        {source && <MenuAction icon={<Trash size={16} />} label="Delete configuration" danger onClick={() => setDeleteSource(source)} />}
+        {canRunResource && resource.active && resource.kind === "Application" && <MenuAction icon={<RocketLaunch size={16} />} label="Run now" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "run")} />}
+        {canConfigureResource && <MenuAction icon={resource.active ? <X size={16} /> : <Check size={16} />} label={resource.active ? "Pause" : "Activate"} disabled={busyID === resource.id} onClick={() => void workflowAction(resource, resource.active ? "pause" : "activate")} />}
+        {canConfigureResource && source && <DropdownMenu.Separator className="action-menu-separator" />}
+        {canConfigureResource && source && <DropdownMenu.Label className="row-action-group-label">Configuration</DropdownMenu.Label>}
+        {canConfigureResource && source && <MenuAction icon={<ArrowClockwise size={16} />} label={busyID === source.id ? "Syncing" : "Sync configuration"} disabled={busyID === source.id} onClick={() => void sourceAction(source, "sync")} />}
+        {canConfigureResource && source && <MenuAction icon={<PencilSimple size={16} />} label="Edit configuration" onClick={() => onEditConfig(source)} />}
+        {canConfigureResource && source && <MenuAction icon={<Trash size={16} />} label="Delete configuration" danger onClick={() => setDeleteSource(source)} />}
       </RowActionMenu></td></tr>;
     })}
     {applications.map((application) => {
@@ -229,22 +235,24 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
       const method = application.buildType === "helm" ? "Helm" : application.buildType === "compose" ? "Compose" : "Dockerfile";
       const source = application.buildType === "helm" ? application.helmChart || "Chart reference" : application.sourceRepo ? repositoryLabel(application.sourceRepo) : "Saved definition";
       const sourceDetail = application.sourceRepo ? `${repositoryLabel(application.sourceRepo)} / ${application.branch}` : application.buildType === "helm" ? application.helmRepository || application.helmVersion || "Chart default" : method;
-      return <tr key={application.id}><td data-label="Name"><strong>{application.name}</strong><small>{project}</small></td><td data-label="Type"><strong className="cell-secondary-heading">{type}</strong><small>{method}</small></td><td data-label="Source"><span className="truncate-cell" title={source}>{source}</span><small className="truncate-cell" title={sourceDetail}>{sourceDetail}</small></td><td data-label="Target">{target}</td><td data-label="Status"><span className={`status-label ${application.state}`}><i />{application.state}</span></td><td className="row-actions"><RowActionMenu name={application.name}>
-        {!application.template && <MenuAction icon={<RocketLaunch size={16} />} label="Deploy" onClick={() => onDeploy(application.id)} />}
+      const canConfigureApplication = canManageProject(overview, application.projectId, "project.configure");
+      const canDeployApplication = canManageProject(overview, application.projectId, "deployment.run");
+      return <tr key={application.id}><td data-label="Name"><strong>{application.name}</strong><small>{project}</small></td><td data-label="Type"><strong className="cell-secondary-heading">{type}</strong><small>{method}</small></td><td data-label="Source"><span className="truncate-cell" title={source}>{source}</span><small className="truncate-cell" title={sourceDetail}>{sourceDetail}</small></td><td data-label="Target">{target}</td><td data-label="Status"><span className={`status-label ${application.state}`}><i />{application.state}</span></td><td className="row-actions">{(canDeployApplication || canConfigureApplication || (!application.template && application.buildType === "helm")) && <RowActionMenu name={application.name}>
+        {canDeployApplication && !application.template && <MenuAction icon={<RocketLaunch size={16} />} label="Deploy" onClick={() => onDeploy(application.id)} />}
         {!application.template && application.buildType === "helm" && <MenuAction icon={<SlidersHorizontal size={16} />} label="Helm values" onClick={() => onValues(application)} />}
-        {!application.template && <MenuAction icon={<Lightning size={16} />} label="Build hook" onClick={() => onHooks(application)} />}
-        <MenuAction icon={<Trash size={16} />} label="Delete" danger onClick={() => onDelete(application)} />
-      </RowActionMenu></td></tr>;
+        {canConfigureApplication && !application.template && <MenuAction icon={<Lightning size={16} />} label="Build hook" onClick={() => onHooks(application)} />}
+        {canConfigureApplication && <MenuAction icon={<Trash size={16} />} label="Delete" danger onClick={() => onDelete(application)} />}
+      </RowActionMenu>}</td></tr>;
     })}
     {overview.previewGroups.map((group) => {
       const entrypoint = group.components.find((component) => component.entrypoint);
       const targets = [...new Set(group.components.map((component) => overview.apps.find((app) => app.id === component.appId)?.serverId).map((serverID) => overview.servers.find((server) => server.id === serverID)?.name).filter((name): name is string => Boolean(name)))];
       const activeRun = overview.previewGroupRuns.find((run) => run.groupId === group.id && run.state !== "closed");
-      return <tr key={`group-${group.id}`}><td data-label="Name"><strong>{group.name}</strong><small>{group.components.length} component{group.components.length === 1 ? "" : "s"}</small></td><td data-label="Type"><strong className="cell-secondary-heading">Preview group</strong><small><code>{group.command}</code></small></td><td data-label="Source"><span className="truncate-cell" title={entrypoint?.repository}>{entrypoint?.repository ?? "No entrypoint"}</span><small>{group.components.length} linked repositor{group.components.length === 1 ? "y" : "ies"}</small></td><td data-label="Target"><span className="truncate-cell" title={targets.join(", ")}>{targets.join(", ") || "Not set"}</span></td><td data-label="Status"><span className={`status-label ${group.enabled ? "enabled" : "disabled"}`}><i />{group.enabled ? "enabled" : "disabled"}</span></td><td className="row-actions"><RowActionMenu name={group.name}>
+      return <tr key={`group-${group.id}`}><td data-label="Name"><strong>{group.name}</strong><small>{group.components.length} component{group.components.length === 1 ? "" : "s"}</small></td><td data-label="Type"><strong className="cell-secondary-heading">Preview group</strong><small><code>{group.command}</code></small></td><td data-label="Source"><span className="truncate-cell" title={entrypoint?.repository}>{entrypoint?.repository ?? "No entrypoint"}</span><small>{group.components.length} linked repositor{group.components.length === 1 ? "y" : "ies"}</small></td><td data-label="Target"><span className="truncate-cell" title={targets.join(", ")}>{targets.join(", ") || "Not set"}</span></td><td data-label="Status"><span className={`status-label ${group.enabled ? "enabled" : "disabled"}`}><i />{group.enabled ? "enabled" : "disabled"}</span></td><td className="row-actions">{(activeRun?.entrypointUrl || overview.identity?.systemRole === "owner") && <RowActionMenu name={group.name}>
         {activeRun?.entrypointUrl && <DropdownMenu.Item asChild><a className="action-menu-item" href={activeRun.entrypointUrl} target="_blank" rel="noreferrer"><ArrowSquareOut size={16} /><span><strong>Open preview</strong></span></a></DropdownMenu.Item>}
-        <MenuAction icon={<PencilSimple size={16} />} label="Edit" onClick={() => onEditGroup(group)} />
-        <MenuAction icon={<Trash size={16} />} label="Delete" danger onClick={() => onDeleteGroup(group)} />
-      </RowActionMenu></td></tr>;
+        {overview.identity?.systemRole === "owner" && <MenuAction icon={<PencilSimple size={16} />} label="Edit" onClick={() => onEditGroup(group)} />}
+        {overview.identity?.systemRole === "owner" && <MenuAction icon={<Trash size={16} />} label="Delete" danger onClick={() => onDeleteGroup(group)} />}
+      </RowActionMenu>}</td></tr>;
     })}
   </tbody></table></div>{deleteSource && <ConfigSourceDeleteDialog source={deleteSource} busy={busyID === deleteSource.id} error={error} onClose={() => { setDeleteSource(null); setError(""); }} onDelete={() => void sourceAction(deleteSource, "delete")} />}</section>;
 }
@@ -278,7 +286,7 @@ function ApplicationCollectionEmpty({ children }: { children: ReactNode }) {
 
 type HelmObject = Record<string, HelmValue>;
 
-function HelmSourceValues({ application, onChanged }: { application: AppModel; onChanged: () => Promise<void> }) {
+function HelmSourceValues({ application, canEdit = true, onChanged }: { application: AppModel; canEdit?: boolean; onChanged: () => Promise<void> }) {
   const [inspection, setInspection] = useState<HelmChartInspection | null>(null);
   const [savedOverrides, setSavedOverrides] = useState<HelmObject>({});
   const [values, setValues] = useState<HelmObject>({});
@@ -342,9 +350,9 @@ function HelmSourceValues({ application, onChanged }: { application: AppModel; o
   if (!inspection) return <section className="helm-values-error"><WarningCircle size={20} weight="fill" /><div><strong>Dispatch could not load chart values</strong><p>{error}</p><button className="quiet-button" onClick={() => setReload((value) => value + 1)}>Try again</button></div></section>;
   const changed = JSON.stringify(values) !== JSON.stringify(savedValues);
   return <div className="helm-values-editor-page">
-    <div className="helm-values-savebar"><div><strong>Chart values</strong><span>Blue marks values that differ from the chart defaults.</span></div><div>{notice && <span className="save-notice" role="status"><CheckCircle size={15} weight="fill" />{notice}</span>}<button className="primary-button" disabled={saving || !changed} onClick={() => void save()}>{saving ? "Saving..." : "Save values"}</button></div></div>
+    <div className="helm-values-savebar"><div><strong>Chart values</strong><span>{canEdit ? "Blue marks values that differ from the chart defaults." : "Read-only access."}</span></div><div>{notice && <span className="save-notice" role="status"><CheckCircle size={15} weight="fill" />{notice}</span>}{canEdit && <button className="primary-button" disabled={saving || !changed} onClick={() => void save()}>{saving ? "Saving..." : "Save values"}</button>}</div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <HelmValuesEditor inspection={inspection} values={values} baseline={baseline} selectedProfile={profile} onProfileChange={selectProfile} onChange={(next) => { setValues(next); setNotice(""); }} />
+    <HelmValuesEditor inspection={inspection} values={values} baseline={baseline} selectedProfile={profile} onProfileChange={selectProfile} onChange={canEdit ? (next) => { setValues(next); setNotice(""); } : () => undefined} readOnly={!canEdit} />
   </div>;
 }
 

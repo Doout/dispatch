@@ -39,10 +39,13 @@ afterEach(() => {
   window.history.replaceState({}, "", "/deployments");
 });
 
-function DeploymentList({ data = overview, onSelect = () => undefined }: { data?: Overview; onSelect?: (id: string) => void }) {
+function DeploymentList({ data = overview, selectedApplicationID, selectedStageName, onSelect = () => undefined, onSelectStage = () => undefined }: { data?: Overview; selectedApplicationID?: string; selectedStageName?: string; onSelect?: (id: string) => void; onSelectStage?: (applicationID?: string, stageName?: string) => void }) {
   return <DeploymentsPage
     overview={data}
+    selectedApplicationID={selectedApplicationID}
+    selectedStageName={selectedStageName}
     onSelect={onSelect}
+    onSelectStage={onSelectStage}
     onOpen={() => undefined}
     onCreateApplication={() => undefined}
   />;
@@ -57,62 +60,103 @@ function DeploymentPreview({ onClose = () => undefined, onOpenDetails = () => un
 }
 
 describe("deployment navigation", () => {
-  it("shows a failure behind a newer success only in previous deployments", async () => {
+  it("keeps an older failure in recent runs without replacing the current state", async () => {
     const user = userEvent.setup();
     const olderFailure = { ...deployment, id: "older-failure", state: "failed", createdAt: "2026-08-18T10:00:00Z", finishedAt: "2026-08-18T10:01:00Z" } as Deployment;
     const newerSuccess = { ...deployment, id: "newer-success", createdAt: "2026-08-18T12:00:00Z", finishedAt: "2026-08-18T12:01:00Z" };
     render(<DeploymentList data={{ ...overview, deployments: [olderFailure, newerSuccess] }} />);
 
-    expect(screen.queryByRole("heading", { name: "Needs attention" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Latest deployments" })).not.toBeNull();
-    expect(screen.getByText("1 across 1 application")).not.toBeNull();
-    await user.click(screen.getByText("Previous deployments"));
-    expect(screen.getByRole("link", { name: /Checkout API, failed/ })).not.toBeNull();
+    const checkoutDisclosure = screen.getByRole("button", { name: "Expand Checkout API deployment" });
+    expect(checkoutDisclosure.closest(".deployment-focus-heading")).not.toBeNull();
+    expect(checkoutDisclosure.closest(".deployment-focus-heading")?.textContent).not.toMatch(/expand|collapse/i);
+    await user.click(checkoutDisclosure);
+    expect(screen.getByRole("button", { name: /Development, Ready/ })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Open Checkout API Development deployment" }).getAttribute("href")).toBe("/deployments/newer-success");
+    expect(screen.getAllByRole("link", { name: "Checkout API Development 01234567 deployment" })).toHaveLength(2);
+    expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
   });
 
-  it("keeps the latest deployment for every application visible", () => {
+  it("keeps a focus rail visible for every application", () => {
     const catalog = { ...deployment, id: "catalog-latest", appId: "app-2", app: { ...deployment.app!, id: "app-2", name: "Catalog API" } };
-    render(<DeploymentList data={{ ...overview, deployments: [deployment, catalog] }} />);
+    render(<DeploymentList data={{ ...overview, apps: [deployment.app!, catalog.app], deployments: [deployment, catalog] }} />);
 
-    expect(screen.getByRole("heading", { name: "Latest deployments" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: /Checkout API, succeeded/ })).not.toBeNull();
-    expect(screen.getByRole("link", { name: /Catalog API, succeeded/ })).not.toBeNull();
-    expect(screen.queryByText("Previous deployments")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Checkout API" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Catalog API" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Expand Checkout API deployment" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Expand Catalog API deployment" })).not.toBeNull();
+    expect(screen.queryByLabelText(/promotion stages/)).toBeNull();
   });
 
-  it("exposes every deployment as a deep link", async () => {
+  it("keeps every recent run available and can reveal the full list", async () => {
+    const user = userEvent.setup();
+    const deployments = Array.from({ length: 6 }, (_, index) => ({
+      ...deployment,
+      id: `deployment-${index}`,
+      commitSha: `${index}123456789abcdef`,
+      createdAt: `2026-08-18T1${index}:00:00Z`,
+      finishedAt: `2026-08-18T1${index}:01:00Z`,
+    }));
+    render(<DeploymentList data={{ ...overview, deployments }} />);
+
+    await user.click(screen.getByRole("button", { name: "Expand Checkout API deployment" }));
+    const runList = screen.getByRole("list", { name: "Checkout API Development recent runs" });
+    expect(runList.querySelectorAll("li")).toHaveLength(6);
+    expect(runList.classList.contains("all")).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "View all" }));
+    expect(runList.classList.contains("all")).toBe(true);
+    expect(screen.getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("opens the selected deployment from a real deep link", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     const failedDeployment = { ...deployment, id: "deployment-failed", state: "failed", message: "Pre-deploy hook failed" } as Deployment;
     render(<DeploymentList data={{ ...overview, deployments: [failedDeployment] }} onSelect={onSelect} />);
-    const row = screen.getByRole("link", { name: /Checkout API, failed/ });
+    await user.click(screen.getByRole("button", { name: "Expand Checkout API deployment" }));
+    const row = screen.getByRole("link", { name: "Open Checkout API Development deployment" });
 
     expect(row.getAttribute("href")).toBe("/deployments/deployment-failed");
     await user.click(row);
     expect(onSelect).toHaveBeenCalledWith("deployment-failed");
   });
 
-  it("restores expanded deployment history after returning from a deployment", async () => {
+  it("shows configured promotion stages and exposes revision drift", async () => {
     const user = userEvent.setup();
-    const onSelect = vi.fn();
-    const earlierDeployment = { ...deployment, id: "deployment-earlier", createdAt: "2026-08-18T10:00:00Z", finishedAt: "2026-08-18T10:01:00Z" };
-    const oldestDeployment = { ...deployment, id: "deployment-oldest", createdAt: "2026-08-18T09:00:00Z", finishedAt: "2026-08-18T09:01:00Z" };
-    const data = { ...overview, deployments: [oldestDeployment, earlierDeployment, deployment] };
-    const view = render(<DeploymentList data={data} onSelect={onSelect} />);
+    const onSelectStage = vi.fn();
+    const developmentDeployment = { ...deployment, id: "development-deployment", commitSha: "current123456789" };
+    const stagingDeployment = { ...deployment, id: "staging-deployment", commitSha: "older123456789" };
+    const data: Overview = {
+      ...overview,
+      apps: [{ ...deployment.app!, generated: true }],
+      deployments: [developmentDeployment, stagingDeployment],
+      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "checkout", path: "deployment/checkout.yaml", document: "", specDigest: "sha256:workflow", configSha: "config-current", active: true, state: "ready", sourceCount: 2, jobCount: 2, stageNames: ["development", "staging", "production"], targetRefs: ["dev-005", "staging", "production"], createdAt: "2026-08-18T09:00:00Z", updatedAt: "2026-08-18T12:00:00Z" }],
+      workflowRevisions: [
+        { id: "revision-current", resourceId: "workflow-1", configSha: "config-current", specDigest: "sha256:current", state: "succeeded", trigger: "poll", sources: { service: { alias: "service", repository: "service", branch: "main", commitSha: "current123456789" }, ui: { alias: "ui", repository: "ui", branch: "main", commitSha: "ui-current123456" } }, createdAt: "2026-08-18T12:00:00Z" },
+        { id: "revision-older", resourceId: "workflow-1", configSha: "config-older", specDigest: "sha256:older", state: "succeeded", trigger: "poll", sources: { service: { alias: "service", repository: "service", branch: "main", commitSha: "older123456789" }, ui: { alias: "ui", repository: "ui", branch: "main", commitSha: "ui-older123456" } }, createdAt: "2026-08-18T10:00:00Z" },
+      ],
+      workflowStageRuns: [
+        { id: "stage-development", revisionId: "revision-current", stageName: "development", targetRef: "dev-005", state: "succeeded", approval: "automatic", deploymentIds: ["development-deployment"], createdAt: "2026-08-18T12:00:00Z", finishedAt: "2026-08-18T12:01:00Z" },
+        { id: "stage-staging", revisionId: "revision-older", stageName: "staging", targetRef: "staging", state: "succeeded", approval: "manual", deploymentIds: ["staging-deployment"], createdAt: "2026-08-18T10:00:00Z", finishedAt: "2026-08-18T10:01:00Z" },
+        { id: "stage-production", revisionId: "revision-current", stageName: "production", targetRef: "production", state: "awaiting_approval", approval: "manual", createdAt: "2026-08-18T12:02:00Z" },
+      ],
+    };
+    render(<DeploymentList data={data} onSelectStage={onSelectStage} />);
 
-    await user.click(screen.getByText("Previous deployments"));
-    await user.click(screen.getByText("Show 1 earlier attempt"));
-    await user.click(screen.getAllByRole("link", { name: /Checkout API, succeeded/ })[0]);
+    await user.click(screen.getByRole("button", { name: "Expand checkout deployment" }));
+    expect(screen.getByRole("button", { name: /Development, Ready, target dev-005/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Production, Awaiting approval/ }).getAttribute("aria-pressed")).toBe("true");
+    await user.click(screen.getByRole("button", { name: /Staging, Ready/ }));
+    expect(onSelectStage).toHaveBeenCalledWith("workflow-1", "staging");
+    expect(screen.getAllByText("Older revision")).not.toHaveLength(0);
+    expect(screen.getByText("Behind source")).not.toBeNull();
+  });
 
-    expect(onSelect).toHaveBeenCalled();
-    expect(window.history.state.deploymentHistoryOpen).toBe(true);
-    expect(window.history.state.deploymentAttemptClusters).toContain("previous deployments:app-1");
+  it("restores an expanded deployment from the route selection", () => {
+    render(<DeploymentList selectedApplicationID="app-1" selectedStageName="development" />);
 
-    view.unmount();
-    render(<DeploymentList data={data} />);
-
-    expect(screen.getByText("Previous deployments").closest("details")?.open).toBe(true);
-    expect(screen.getByText("Show 1 earlier attempt").closest("details")?.open).toBe(true);
+    expect(screen.getByRole("button", { name: "Collapse Checkout API deployment" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByLabelText("Checkout API promotion stages")).not.toBeNull();
   });
 
   it("opens deployment evidence in a dialog with a full-page action", async () => {
