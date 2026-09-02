@@ -1,6 +1,6 @@
 ---
 name: Dispatch
-description: An evidence-first deployment workbench for one private operator.
+description: A deployment control plane for private infrastructure.
 colors:
   graphite-rail: "#101b25"
   graphite-raised: "#1b2b38"
@@ -65,77 +65,76 @@ components:
     padding: "0 18px 0 12px"
 ---
 
-# Design System: Dispatch
+# Dispatch design system
 
-## Overview
+Dispatch is an operations interface. Put the current state, affected resource, and next action before explanatory text. Dense tables and topology views are useful when they expose real data. Empty decoration is not.
 
-**Creative North Star: "The Dispatch Workbench"**
+## Color
 
-Dispatch should feel like an operator's physical work surface translated into software: factual, dense enough for real work, and organized around movement records and their evidence. It uses calm mineral surfaces and a dark fixed rail so Signal Blue, Ready Green, and Exception Red remain meaningful.
+- Signal Blue marks selection, focus, links, and primary actions.
+- Ready Green means a resource is ready or a run succeeded.
+- Exception Red means a run failed or an action is destructive.
+- Amber Demo marks sample data.
+- Graphite is reserved for navigation and code surfaces.
+- Mineral Canvas is the page background. Evidence White is the main content surface.
 
-The interface is operational rather than promotional. It never imitates a generic analytics dashboard, and it never hides source, target, state, or consequence behind decorative summaries.
+Do not use status colors as decoration. Pair each status color with text or an icon.
 
-**Key Characteristics:**
+## Type
 
-- Evidence-first and exceptions-first hierarchy
-- Compact records with explicit handoff stages
-- Reserved semantic color and mostly flat structural surfaces
-- Responsive document flow with keyboard-visible controls
-
-## Colors
-
-Signal Blue owns selection and primary action. Ready Green and Exception Red appear only for real deployment states; Amber Demo labels non-production sample context. Graphite contains global navigation, while Mineral Canvas and Evidence White separate work from proof.
-
-**The Semantic Signal Rule.** Never use green, red, or amber as decoration; each must communicate a current operational fact.
-
-## Typography
-
-The variable system sans keeps inventory readable at compact sizes. Monospace is reserved for commits, digests, timestamps, and log evidence.
-
-**The Evidence Type Rule.** Use monospace only where exact character identity matters; application names, navigation, and actions remain in the system sans.
+Use the system sans for navigation, application names, fields, and actions. Use monospace for values that require exact character matching, such as commits, digests, timestamps, paths, and logs.
 
 ## Layout
 
-Desktop uses a 218px rail, a fluid movement region, and a 420px evidence dossier. At 1180px these contract; below 960px the rail becomes an off-canvas control and the dossier follows the board in normal document flow. At 640px, records recompose into identity, result, and stage rows without horizontal scrolling. The minimum supported width is 320px.
+Wide screens use a 218px navigation rail and one content column. Detail views may add a 420px column when the list does not move or resize as selection changes.
 
-## Elevation & Depth
+Below 960px, move navigation off canvas and place details after the main content. Below 640px, stack record fields without horizontal scrolling. Support widths down to 320px.
 
-Surfaces are flat by default. Borders establish the main structure; a restrained ambient shadow identifies selectable dispatch records and the active record gains a compact blue focus halo. The dossier uses only a faint directional separation from the board.
+Page content must use the shared maximum width. Forms, tables, empty states, and detail views must align to the same left and right edges.
 
-**The Structural Depth Rule.** Shadows identify interaction or selection, never decorate static containers.
+## Depth
 
-## Shapes
+Use borders for structure. Add a small shadow only to menus, dialogs, or selectable records. A selected record may use a blue outline. Static containers do not need shadows.
 
-Controls use gently compact corners, records use a slightly larger radius, state stamps stay nearly square, and status markers are circular. Thin rules carry hierarchy; strong colored rails are reserved for the state edge of the signature dispatch record.
+## Controls
 
-## Components
+- Keep primary buttons blue and use one primary action per section.
+- Use icon-only row actions when the icon is familiar. Provide a tooltip and accessible name.
+- Put secondary actions in a three-dot menu when a row has more than two actions.
+- Use custom menus and listboxes so focus, keyboard behavior, and placement match the rest of the interface.
+- Keep touch targets at least 44px high on narrow screens.
 
-### Buttons
+## Fields
 
-Primary buttons are Signal Blue, compact, and confident; quiet buttons are pale with a neutral rule. All reach a 44px touch height on mobile and expose a visible blue focus halo.
+Fields use an Evidence White background, one neutral border, and a compact radius. Focus uses a Signal Blue border and the shared focus ring. Error text sits next to the field that needs attention.
 
-### Inputs / Fields
+Remove helper text when the label and placeholder already explain the field. Do not use placeholders as labels.
 
-Fields are Evidence White with a single neutral border and compact radius. Focus changes the border to Signal Blue and adds the shared halo; errors use the light Exception Red surface.
+## Navigation and URLs
 
-### Navigation
+Every tab and selected record must have a stable URL. Back and forward navigation must restore the selected tab, expanded group, filters, and open detail page.
 
-The Graphite Rail uses subdued items, a raised active row, and honest noninteractive “Planned” labels for unavailable destinations. The closed mobile rail is removed from focus and revealed by a labeled 48px menu control.
+## Tables and records
 
-### Dispatch Record
+Keep rows compact. Show only the columns needed to identify the item and its current state. Make the name open the detail view. Use the row action menu for edit, retry, pause, or delete.
 
-The signature record binds application identity, immutable revision, target, four handoff stages, result, and relative time into one selectable row. Its narrow state edge and circular markers carry semantic status; the selected record uses the shared focus halo.
+Deployment records show the application, revision, target, result, and update time. Older failed attempts belong in history once a newer deployment succeeds.
 
-## Do's and Don'ts
+## Dialogs
 
-### Do:
+Dialogs must fit within the viewport and manage their own scroll area. Opening or closing a dialog must not move the underlying page. Long logs and manifests use tabs inside a fixed-size dialog or a dedicated URL.
 
-- **Do** put urgent and active records before completed history.
-- **Do** keep source, commit, target, spec digest, state, and log evidence inspectable.
-- **Do** preserve 44px mobile controls, visible keyboard focus, and reduced-motion behavior.
+## Runtime data
 
-### Don't:
+Topology nodes use short resource names and show the full name in a tooltip. Selecting a node opens its manifest, events, and logs when logs exist. Generated Kubernetes suffixes should not hide the workload name.
 
-- **Don't** turn the workbench into a card-grid metrics dashboard.
-- **Don't** use semantic status colors for visual variety.
-- **Don't** create dead navigation or fixed mobile panels that obscure operator actions.
+## Review checklist
+
+- The primary action is clear.
+- All boxes align to the shared content width.
+- Empty space has a layout purpose.
+- Text does not repeat labels or state.
+- Keyboard focus is visible.
+- Menus stay inside the viewport.
+- Status does not rely on color alone.
+- Narrow screens do not require horizontal scrolling.

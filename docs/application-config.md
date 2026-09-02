@@ -1,8 +1,8 @@
 # Repository configuration
 
-Dispatch can load applications and pipelines from YAML or JSON in a GitHub repository. Add the repository from **Applications > Add > GitHub configuration**. The default path is `.dispatch`.
+Dispatch loads Applications and Pipelines from YAML or JSON in a GitHub repository. Add the repository from **Applications > Add > GitHub configuration**. The default path is `.dispatch`.
 
-An import reads every `.yaml`, `.yml`, and `.json` file below that path. Parsing is strict. Unknown fields, invalid references, and duplicate resource names reject the new revision while the last valid configuration remains active.
+Each sync reads every `.yaml`, `.yml`, and `.json` file below that path. The parser rejects unknown fields, invalid references, and duplicate resource names. A rejected sync does not replace the last valid configuration.
 
 Imported resources start paused. Activate an Application to create its first immutable revision. Activate a Pipeline before an Application references it as a stage check.
 
@@ -102,9 +102,9 @@ spec:
       run: ./scripts/publish-result.sh
 ```
 
-`runFrom` selects the repository that contains the script. `sources` adds other repositories that the command needs. Runtime templates expose `path`, `commit`, and `branch` for every declared source.
+`runFrom` selects the repository that contains the script. `sources` adds repositories that the command reads. Runtime templates expose `path`, `commit`, and `branch` for each declared source.
 
-Application jobs default to `reuse: onInputMatch`. Their fingerprint covers the job definition, declared source revisions, and inputs. If only the service repository changes, `build-ui` reuses its latest successful result. A first run, a missing declared output, or a changed input runs the job again. Set `reuse: never` when a job must always execute. Pipeline and `finally` jobs always run.
+Application jobs default to `reuse: onInputMatch`. The fingerprint includes the job definition, declared source revisions, and inputs. If only the service repository changes, `build-ui` reuses its latest successful result. Dispatch runs the job when there is no prior result, a declared output is missing, or an input changed. Set `reuse: never` to run a job every time. Pipeline and `finally` jobs always run.
 
 Jobs receive `DISPATCH_OUTPUT_FILE` and `GITHUB_OUTPUT`. Write either JSON:
 
@@ -148,12 +148,12 @@ spec:
       run: ./scripts/upload-results.sh
 ```
 
-A stage check runs a named active Pipeline and waits for it. Pipeline `finally` jobs run after the normal job set whether the normal job set succeeds or fails.
+A stage check starts a named active Pipeline and waits for it. Pipeline `finally` jobs run after the main jobs, including after a failure.
 
 ## Event delivery
 
-The default update mode is webhook plus polling. Dispatch updates the GitHub App webhook URL and processes `push` deliveries. Its poller also compares the configuration branch and every referenced source branch. A private controller or missed webhook can still detect changes.
+The default update mode uses webhooks and polling. Dispatch processes `push` deliveries and compares the configuration branch and each referenced source branch on a schedule. Polling still detects a change when the controller is private or GitHub misses a webhook delivery.
 
 The GitHub App registration must subscribe to `push` and grant read access to repository contents. Commit status publishing also needs write access to commit statuses. The Dispatch manifest requests both settings. Update existing registrations in GitHub if they lack either permission.
 
-Polling checks each imported source at its configured interval, with a minimum of 30 seconds. Webhook-only and polling-only modes are available when required.
+Polling checks each imported source at its configured interval. The minimum interval is 30 seconds. A configuration may use only webhooks or only polling.

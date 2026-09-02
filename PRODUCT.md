@@ -4,54 +4,47 @@
 
 ## Platform
 
-web
+Web
 
 ## Users
 
-Dispatch is initially for one infrastructure operator, authenticated as the GitHub user `doout`, who deploys and operates personal applications on private infrastructure.
+Dispatch is for infrastructure and application teams that deploy to private Docker, Kubernetes, and OpenShift targets. Controller owners manage access. Project roles limit what members and teams can view or change.
 
-## Product Purpose
+## Purpose
 
-Dispatch is a small, self-hosted deployment control plane. It connects source repositories to Docker hosts, records an immutable deployment history, and exposes the evidence needed to deploy, inspect, recover, and roll back an application confidently.
+Dispatch connects source repositories to deployment targets. It records the source revision, configuration, logs, outputs, and runtime resources for each deployment.
 
-Success means the operator can connect a target, define an app, deploy an exact commit, see every transition, and recover without bypassing the control plane.
+A working deployment path lets an operator:
 
-## Positioning
+1. Connect a source and target.
+2. Deploy an exact revision.
+3. Inspect each build and deployment step.
+4. Reuse the same revision when promoting it to another stage.
+5. Diagnose a failed release without bypassing Dispatch.
 
-Dispatch keeps infrastructure-specific provisioning behind versioned provider contracts while the public core stays small. It is designed around one operator's environment rather than broad hosted-PaaS parity or multi-tenant administration.
+## Boundaries
 
-## Operating Context
+- The controller ships as one Go service with an embedded React application.
+- SQLite is the default store. PostgreSQL is supported.
+- Docker, Kubernetes, and OpenShift are deployment targets.
+- Agents poll the controller over outbound connections. SSH is limited to installation and recovery.
+- Provider integrations use versioned contracts instead of provider-specific code in the core.
+- Local secrets stay encrypted and write-only. External secret references resolve when a job starts.
+- Repository polling works without a public webhook endpoint. Webhooks and a durable relay can reduce update latency.
 
-The operator works with GitHub repositories, Dockerfiles, Compose files, Docker hosts, Traefik routes, wildcard certificates, deployment logs, private infrastructure APIs, and—later—K3s or Kubernetes clusters and pull-request environments.
+## Product rules
 
-## Capabilities and Constraints
+1. Show the source, target, state, and result of every deployment.
+2. Keep deployment evidence after a failure.
+3. Require an explicit action for privileged or destructive work.
+4. Do not fall back to a more privileged execution path.
+5. Keep provider credentials scoped to the connection that uses them.
+6. Make every permission check in the API. The interface may hide unavailable actions, but it is not an authorization boundary.
 
-- The source lives in one repository and ships as a Go controller, an embedded React interface, and a small agent.
-- SQLite WAL is the default store; PostgreSQL is an interchangeable, tested option.
-- Docker is the first runtime. K3s and Kubernetes follow through a runtime-driver interface.
-- Servers are enrolled through SSH and normally controlled through an outbound authenticated agent connection.
-- Private infrastructure logic is delivered as a private sidecar or container implementing the public provider interface.
-- The repository and GitHub project remain private until the owner explicitly approves public release.
-- Dispatch is single-controller and single-admin in its first releases.
+## Language
 
-## Brand Commitments
+Use the product name Dispatch. Write short labels that name the action or state. Avoid marketing copy, repeated helper text, and generic status messages.
 
-The product name is Dispatch. Its language is concise, operational, and factual. The interface treats deployments as dispatch records moving through explicit stages; it must not imitate Dokploy branding or present itself as a Dokploy fork.
+## Accessibility
 
-## Evidence on Hand
-
-- The confirmed implementation plan in the originating Codex task.
-- No customer claims, benchmarks, pricing, testimonials, or production reliability claims exist and none may be fabricated.
-- Any sample state must be visibly identified as demo data.
-
-## Product Principles
-
-1. Show the exact source, target, state, and consequence of every deployment.
-2. Prefer one small built-in path and versioned extension points over bundled provider breadth.
-3. Make recovery explicit; never silently fall back to a more privileged execution path.
-4. Keep secrets write-only and operational decisions auditable.
-5. Ship one complete deployment path before expanding into previews, databases, or clusters.
-
-## Accessibility & Inclusion
-
-The web interface must remain keyboard accessible, responsive, high contrast, and usable with reduced motion. Loading, empty, disconnected, failed, and recovery states are first-class product states.
+The interface must support keyboard navigation, visible focus, narrow screens, high contrast, and reduced motion. Loading, empty, disconnected, failed, and recovery states must remain usable without color alone.

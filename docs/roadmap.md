@@ -1,40 +1,38 @@
 # Roadmap
 
-Dispatch grows by completing one operational loop at a time. The public core stays provider-neutral; environment-specific automation remains behind versioned contracts.
+This file tracks unfinished work. Current behavior belongs in the README and the feature documents.
 
-## Milestone 1: deployment spine
+## Deployment reliability
 
-- [x] Single Go controller with embedded React console
-- [x] SQLite WAL default and PostgreSQL-compatible store
-- [x] Projects, Docker targets, applications, deployments, evidence logs, and SSE
-- [x] Simulation executor and opt-in local Dockerfile/Compose executor
-- [x] Secret vault primitive and provider/runtime contracts
-- [x] Small target agent status surface
-- [ ] Agent enrollment with short-lived tokens and outbound mTLS work stream
-- [ ] Durable deployment lease recovery after controller restart
-- [ ] Traefik route creation and certificate verification
-- [ ] Rollback and destructive-action confirmation flows
+- [ ] Recover expired deployment leases after a controller restart.
+- [ ] Add rollback with a destructive-action confirmation step.
+- [ ] Verify Traefik routes and certificates after deployment.
+- [ ] Add retention rules for runs, logs, and runtime snapshots.
 
-## Milestone 2: source automation
+## Agents and private networks
 
-- GitHub App authentication scoped to selected repositories
-- Signed webhook ingestion with delivery deduplication
-- Repository installation and branch selection
-- Pull-request preview policy, create/update lifecycle, and teardown on close
-- Check-run status and deployment links posted back to GitHub
+- [ ] Replace long-lived enrollment credentials with short-lived tokens and outbound mTLS.
+- [ ] Add typed edge operations for repository checkout, registries, and Kubernetes APIs.
+- [ ] Finish the generic Laneway application and installation contract.
+- [ ] Add approved cross-network routes after single-network installation is stable.
 
-## Milestone 3: private infrastructure providers
+## Source automation
 
-- Provider registration and encrypted credential records
-- Conformance-tested mock sidecar
-- Idempotent create, poll, adopt, and delete server workflows
-- Private provider image and configuration kept outside this repository
-- SSH bootstrap as an explicit enrollment/recovery operation
+- [ ] Publish GitHub check runs for repository-managed applications.
+- [ ] Add per-source scheduling controls beyond the shared poll interval.
+- [ ] Add a clear recovery flow for rejected repository configuration revisions.
+- [ ] Show promotion history across every stage and target.
 
-## Milestone 4: runtime depth
+## Runtime support
 
-- Health policies, domain routing, wildcard TLS, rollback, and retention
-- Volumes, managed backup jobs, and restore verification
-- K3s runtime driver, followed by general Kubernetes support
+- [ ] Add volume backup jobs and restore verification.
+- [ ] Add deployment health policies and automatic rollback rules.
+- [ ] Test more Kubernetes distributions through the runtime-driver contract.
 
-Each milestone must preserve immutable deployment evidence, scoped credentials, explicit destructive actions, and a safe simulation path.
+## Access
+
+- [ ] Add audit-log filters for impersonation, account links, role changes, and provider credentials.
+- [ ] Add group mapping for external identity providers.
+- [ ] Add time-limited project grants.
+
+Every change must keep source revisions immutable, credentials scoped, and destructive actions explicit.
