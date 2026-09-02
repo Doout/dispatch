@@ -120,7 +120,7 @@ callbacks.
 
 ## Application registration
 
-Dispatch starts a GitHub App manifest-style browser flow:
+Dispatch starts a browser registration flow:
 
 ```http
 POST /applications/new
@@ -462,39 +462,26 @@ remove the resulting routes and access rules as one operation. Audit records
 must include both networks, the actor, prefixes, reason, and resulting
 configuration epochs.
 
-## Dispatch changes
+## Dispatch status
 
-The current Dispatch implementation needs these changes before release:
+Dispatch now stores Laneway applications and browser transactions in the
+database. Network records reference an application, installation, and network.
+Application secrets use their own encrypted record. Network credentials contain
+only access and refresh tokens. Reauthorizing the same application and network
+updates the existing connection.
 
-1. Add a `laneway_applications` store and reference it from Laneway network
-   connections. Stop finding reusable client credentials by scanning network
-   records.
-2. Move the client secret out of each network credential bundle. Keep only the
-   installation access and refresh tokens there.
-3. Store registration and authorization transactions in the database. Replace
-   the process-local `lanewayStates` map.
-4. Build setup, callback, and return URLs from the configured public URL. Do
-   not derive them from `Host`, `X-Forwarded-Proto`, or another request header.
-   Production deployments must set `DISPATCH_PUBLIC_URL` to one HTTPS origin.
-5. Protect rotating refresh tokens with a per-installation transaction or
-   compare-and-swap update.
-6. Request the five scopes listed above. Remove `node.manage` until Dispatch
-   exposes node management.
-7. Revoke the Laneway installation before deleting a network connection. Keep
-   the saved application available for other networks.
-8. Add explicit application removal. Block it while network installations
-   reference it unless the user confirms that every installation will be
-   revoked.
-9. Treat the node-installer endpoint as unavailable until Laneway ships it.
-   Show a clear capability error instead of forwarding an unexplained 404.
-10. List Laneway applications and their installed networks in the connection
-    UI. Adding another network should start at the saved application.
-11. Restrict application registration to Dispatch owners. Canonicalize and pin
-    the approved Laneway authority. Server-to-server registration and token
-    requests must not follow redirects or forward credentials to another
-    authority.
+Dispatch builds callbacks from `DISPATCH_PUBLIC_URL`, consumes state once,
+serializes token refresh with a database lease, revokes an installation before
+deleting its network connection, requests the five scopes above, and blocks
+redirects on server-to-server Laneway requests. The node-installer control only
+offers systemd and reports a stable capability error when Laneway does not have
+the endpoint.
 
-Suggested Dispatch tables:
+The Dispatch UI still needs application listing, explicit application removal,
+and owner-only application registration. Once per-user authorization is merged,
+Dispatch must also save the initiating user ID on each browser transaction.
+
+Dispatch tables:
 
 ```text
 laneway_applications
@@ -571,13 +558,12 @@ application_refresh_tokens
 2. Add Laneway registration and consent.
 3. Add Laneway authorization, token rotation, revocation, and service principal
    binding.
-4. Add Dispatch application and authorization-transaction storage.
-5. Switch Dispatch callbacks and refresh handling to the new storage.
-6. Connect Dispatch inventory and route calls to installation tokens.
-7. Add the Laneway systemd node-installer endpoint and enable it in Dispatch.
-8. Add the management UI on both sides.
-9. Add Docker Compose node installation as a separate Laneway milestone.
-10. Design cross-network approval after the single-network flow is stable.
+4. Connect the existing management routes to installation tokens.
+5. Add the Laneway systemd node-installer endpoint.
+6. Add Laneway application and installation management pages.
+7. Add Docker Compose node installation after the node container lifecycle is
+   complete.
+8. Design cross-network approval after the single-network flow is stable.
 
 ## Acceptance tests
 

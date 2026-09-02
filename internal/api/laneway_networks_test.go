@@ -2,8 +2,10 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,8 +13,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/store"
 )
 
 func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
@@ -25,7 +30,7 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var registrationExchanged, tokenExchanged bool
+	var registrationExchanged, tokenExchanged, revoked bool
 	lanewayServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
@@ -63,7 +68,13 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 			_, _ = io.WriteString(w, `{"routes":[{"route_id":"route-1","network_id":"network-1","node_id":"node-1","prefix":"10.50.0.0/16","kind":"exit","mode":"managed","state":"ready"}]}`)
 		case http.MethodPost + " /v1/admin/networks/network-1/node-installers":
 			assertLanewayBearer(t, r)
-			_, _ = io.WriteString(w, `{"installation_id":"installer-1","command":"docker compose up","expires_at_unix_seconds":100}`)
+			var input struct {
+				InstallMode string `json:"install_mode"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.InstallMode != "systemd" {
+				t.Fatalf("unexpected node installer request: %#v %v", input, err)
+			}
+			_, _ = io.WriteString(w, `{"installation_id":"installer-1","command":"sudo laneway node install lane.example.com --token-file ./laneway.code","expires_at_unix_seconds":100}`)
 		case http.MethodPost + " /v1/admin/routes/assign":
 			assertLanewayBearer(t, r)
 			body, err := io.ReadAll(r.Body)
@@ -74,6 +85,16 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 				t.Fatalf("unexpected route request: %s", body)
 			}
 			_, _ = io.WriteString(w, `{"route_id":"route-2","network_id":"network-1","node_id":"node-1","prefix":"10.60.0.0/16","kind":"subnet","mode":"nat","state":"pending"}`)
+		case http.MethodPost + " /oauth/revoke":
+			clientID, clientSecret, ok := r.BasicAuth()
+			if !ok || clientID != "client-1" || clientSecret != "client-secret" {
+				t.Fatalf("unexpected revocation authentication: %q %q", clientID, clientSecret)
+			}
+			if err := r.ParseForm(); err != nil || r.Form.Get("token") != "lnw_refresh_secret" || r.Form.Get("token_type_hint") != "refresh_token" {
+				t.Fatalf("unexpected revocation request: %#v %v", r.Form, err)
+			}
+			revoked = true
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Fatalf("unexpected Laneway request %s %s", r.Method, r.URL.String())
 		}
@@ -84,8 +105,8 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	http.DefaultTransport = lanewayServer.Client().Transport
 	defer func() { http.DefaultTransport = previousTransport }()
 
-	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{Vault: vault})
-	defer cleanup()
+	databasePath := filepath.Join(t.TempDir(), "dispatch.db")
+	handler, cleanup := newLanewayTestHandler(t, databasePath, vault)
 
 	response := httptest.NewRecorder()
 	body := `{"name":"Private services","authority":"` + lanewayServer.URL + `"}`
@@ -108,6 +129,11 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	if start.Method != "post" || registrationURL.Path != "/applications/new" || start.Fields["state"] == "" || !strings.Contains(start.Fields["manifest"], `"name":"Dispatch"`) || strings.Contains(start.Action, "dispatch") {
 		t.Fatalf("unexpected application registration: %#v", start)
 	}
+	if !strings.Contains(start.Fields["manifest"], `"setup_uri":"https://dispatch.example.com/api/v1/laneway-applications/setup"`) {
+		t.Fatalf("manifest did not use the configured public URL: %s", start.Fields["manifest"])
+	}
+	cleanup()
+	handler, cleanup = newLanewayTestHandler(t, databasePath, vault)
 
 	response = httptest.NewRecorder()
 	setupCallback := "/api/v1/laneway-applications/setup?state=" + url.QueryEscape(start.Fields["state"]) + "&code=registration-code"
@@ -119,6 +145,9 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	if err != nil || authorizationURL.Path != "/oauth/authorize" || authorizationURL.Query().Get("client_id") != "client-1" || authorizationURL.Query().Get("state") == "" {
 		t.Fatalf("unexpected network authorization URL: %s %v", response.Header().Get("Location"), err)
 	}
+	cleanup()
+	handler, cleanup = newLanewayTestHandler(t, databasePath, vault)
+	defer cleanup()
 
 	response = httptest.NewRecorder()
 	callback := "/api/v1/laneway-networks/callback?state=" + url.QueryEscape(authorizationURL.Query().Get("state")) + "&code=authorization-code"
@@ -129,7 +158,7 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/private-networks", nil))
-	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"driver":"laneway_network"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"credentialsConfigured":true`)) {
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"driver":"laneway_network"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"lanewayApplicationId":`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"lanewayInstallationId":"installation-1"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"lanewayNetworkId":"network-1"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"credentialsConfigured":true`)) {
 		t.Fatalf("saved Laneway network: %d %s", response.Code, response.Body.String())
 	}
 	if bytes.Contains(response.Body.Bytes(), []byte("lnw_access_secret")) || bytes.Contains(response.Body.Bytes(), []byte("lnw_refresh_secret")) || bytes.Contains(response.Body.Bytes(), []byte("client-secret")) || bytes.Contains(response.Body.Bytes(), []byte("encryptedCredentials")) {
@@ -157,6 +186,24 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	if reused.Method != "redirect" || !strings.Contains(reused.Action, "/oauth/authorize") || reused.Fields != nil {
 		t.Fatalf("expected reusable application authorization, got %#v", reused)
 	}
+	reusedURL, err := url.Parse(reused.Action)
+	if err != nil || reusedURL.Query().Get("state") == "" {
+		t.Fatalf("unexpected reused authorization URL: %s %v", reused.Action, err)
+	}
+	response = httptest.NewRecorder()
+	reusedCallback := "/api/v1/laneway-networks/callback?state=" + url.QueryEscape(reusedURL.Query().Get("state")) + "&code=authorization-code"
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, reusedCallback, nil))
+	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "lanewayStatus=connected") {
+		t.Fatalf("reauthorize Laneway network: %d %s %s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/private-networks", nil))
+	var reauthorized []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&reauthorized); err != nil || len(reauthorized) != 1 || reauthorized[0].ID != networks[0].ID {
+		t.Fatalf("reauthorization created another network: %#v %v", reauthorized, err)
+	}
 
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/laneway-networks/"+networks[0].ID+"/inventory", nil))
@@ -165,8 +212,8 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/laneway-networks/"+networks[0].ID+"/node-installers", strings.NewReader(`{"name":"vpc-node","kind":"exit","installMode":"docker_compose"}`)))
-	if response.Code != http.StatusCreated || !bytes.Contains(response.Body.Bytes(), []byte(`"command":"docker compose up"`)) {
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/laneway-networks/"+networks[0].ID+"/node-installers", strings.NewReader(`{"name":"vpc-node","kind":"exit","installMode":"systemd"}`)))
+	if response.Code != http.StatusCreated || !bytes.Contains(response.Body.Bytes(), []byte(`"command":"sudo laneway node install`)) {
 		t.Fatalf("Laneway node installer: %d %s", response.Code, response.Body.String())
 	}
 
@@ -175,6 +222,30 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	if response.Code != http.StatusCreated || !bytes.Contains(response.Body.Bytes(), []byte(`"route_id":"route-2"`)) {
 		t.Fatalf("Laneway route assignment: %d %s", response.Code, response.Body.String())
 	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/private-networks/"+networks[0].ID, nil))
+	if response.Code != http.StatusNoContent || !revoked {
+		t.Fatalf("Laneway revocation: %d %s revoked=%t", response.Code, response.Body.String(), revoked)
+	}
+}
+
+func newLanewayTestHandler(t *testing.T, databasePath string, vault *secretcrypto.Vault) (http.Handler, func()) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	data, err := store.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.Migrate(ctx); err != nil {
+		_ = data.Close()
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := New(data, deploy.NewService(data, deploy.SimulationExecutor{Delay: time.Millisecond}), false,
+		AuthConfig{AdminToken: "secret", PublicURL: "https://dispatch.example.com"}, logger, EventConfig{Vault: vault})
+	return handler, func() { _ = data.Close() }
 }
 
 func assertLanewayBearer(t *testing.T, r *http.Request) {

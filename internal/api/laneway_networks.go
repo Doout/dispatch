@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/laneway"
+	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
 )
@@ -21,20 +24,19 @@ import (
 const lanewayAuthorizationLifetime = 10 * time.Minute
 
 type lanewayAuthorizationState struct {
+	Kind          string
 	Name          string
 	Authority     string
 	CodeVerifier  string
 	RedirectURI   string
 	ApplicationID string
-	ClientID      string
-	ClientSecret  string
 	ExpiresAt     time.Time
 }
 
 type lanewayCredentialBundle struct {
-	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken,omitempty"`
-	ClientSecret string `json:"clientSecret"`
+	AccessToken        string `json:"accessToken"`
+	RefreshToken       string `json:"refreshToken,omitempty"`
+	LegacyClientSecret string `json:"clientSecret,omitempty"`
 }
 
 type lanewayAuthorizationStart struct {
@@ -80,9 +82,13 @@ func (a *API) startLanewayAuthorization(w http.ResponseWriter, r *http.Request) 
 		problem(w, http.StatusBadRequest, "Invalid connection", err.Error()+".")
 		return
 	}
-	applicationID, clientID, clientSecret, found := a.reusableLanewayApplication(r, authority)
+	application, found, err := a.reusableLanewayApplication(r.Context(), authority)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
 	if found {
-		start, err := a.beginLanewayNetworkInstallation(input.Name, authority, applicationID, clientID, clientSecret, r)
+		start, err := a.beginLanewayNetworkInstallation(r.Context(), input.Name, application)
 		if err != nil {
 			a.internal(w, err)
 			return
@@ -101,7 +107,11 @@ func (a *API) startLanewayAuthorization(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	challenge := sha256.Sum256([]byte(verifier))
-	origin := a.lanewayPublicOrigin(r)
+	origin, err := a.lanewayPublicOrigin()
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, "Public URL unavailable", err.Error()+".")
+		return
+	}
 	setupURI := origin + "/api/v1/laneway-applications/setup"
 	redirectURI := origin + "/api/v1/laneway-networks/callback"
 	action, err := laneway.NewApplicationAction(authority)
@@ -122,45 +132,65 @@ func (a *API) startLanewayAuthorization(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	now := time.Now().UTC()
-	a.saveLanewayState(state, lanewayAuthorizationState{Name: input.Name, Authority: authority, CodeVerifier: verifier, RedirectURI: redirectURI, ExpiresAt: now.Add(lanewayAuthorizationLifetime)})
+	if err := a.saveLanewayState(r.Context(), state, lanewayAuthorizationState{Kind: "registration", Name: input.Name, Authority: authority, CodeVerifier: verifier, RedirectURI: redirectURI, ExpiresAt: now.Add(lanewayAuthorizationLifetime)}); err != nil {
+		a.internal(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, lanewayAuthorizationStart{Method: "post", Action: action, Fields: map[string]string{
 		"manifest": string(manifest), "state": state, "code_challenge": base64.RawURLEncoding.EncodeToString(challenge[:]), "code_challenge_method": "S256",
 	}})
 }
 
 func (a *API) completeLanewayApplicationRegistration(w http.ResponseWriter, r *http.Request) {
-	pending, ok := a.consumeLanewayState(strings.TrimSpace(r.URL.Query().Get("state")))
-	if !ok {
+	pending, err := a.consumeLanewayState(r.Context(), strings.TrimSpace(r.URL.Query().Get("state")))
+	if err != nil || pending.Kind != "registration" {
 		a.redirectLanewayStatus(w, r, "error", "Laneway application registration expired. Start the connection again.")
 		return
 	}
-	if detail := lanewayCallbackError(r); detail != "" {
-		a.redirectLanewayStatus(w, r, "error", detail)
+	if lanewayCallbackFailed(r) {
+		a.redirectLanewayStatus(w, r, "error", "Laneway application registration was not approved.")
 		return
 	}
 	registration, err := (laneway.Client{Authority: pending.Authority}).ExchangeApplicationRegistration(r.Context(), laneway.ApplicationRegistrationRequest{
 		Code: strings.TrimSpace(r.URL.Query().Get("code")), CodeVerifier: pending.CodeVerifier,
 	})
 	if err != nil {
-		a.redirectLanewayStatus(w, r, "error", err.Error())
+		a.redirectLanewayStatus(w, r, "error", "Laneway could not complete application registration.")
 		return
 	}
-	start, err := a.beginLanewayNetworkInstallation(pending.Name, pending.Authority, registration.ApplicationID, registration.ClientID, registration.ClientSecret, r)
+	now := time.Now().UTC()
+	application := core.LanewayApplication{
+		ID: ulid.Make().String(), Name: registration.Name, Authority: pending.Authority,
+		RemoteApplicationID: registration.ApplicationID, ClientID: registration.ClientID,
+		State: "active", CreatedAt: now, UpdatedAt: now,
+	}
+	if strings.TrimSpace(application.Name) == "" {
+		application.Name = "Dispatch"
+	}
+	application.EncryptedClientSecret, err = a.eventConfig.Vault.Encrypt("laneway-application:"+application.ID, []byte(registration.ClientSecret))
+	if err == nil {
+		err = a.store.CreateLanewayApplication(r.Context(), application)
+	}
 	if err != nil {
-		a.redirectLanewayStatus(w, r, "error", err.Error())
+		a.redirectLanewayStatus(w, r, "error", "Could not save the Laneway application.")
+		return
+	}
+	start, err := a.beginLanewayNetworkInstallation(r.Context(), pending.Name, application)
+	if err != nil {
+		a.redirectLanewayStatus(w, r, "error", "Could not start Laneway network authorization.")
 		return
 	}
 	http.Redirect(w, r, start.Action, http.StatusSeeOther)
 }
 
 func (a *API) completeLanewayAuthorization(w http.ResponseWriter, r *http.Request) {
-	pending, ok := a.consumeLanewayState(strings.TrimSpace(r.URL.Query().Get("state")))
-	if !ok || pending.ClientID == "" || pending.ClientSecret == "" {
+	pending, err := a.consumeLanewayState(r.Context(), strings.TrimSpace(r.URL.Query().Get("state")))
+	if err != nil || pending.Kind != "installation" || pending.ApplicationID == "" {
 		a.redirectLanewayStatus(w, r, "error", "Laneway authorization expired. Start the connection again.")
 		return
 	}
-	if detail := lanewayCallbackError(r); detail != "" {
-		a.redirectLanewayStatus(w, r, "error", detail)
+	if lanewayCallbackFailed(r) {
+		a.redirectLanewayStatus(w, r, "error", "Laneway network authorization was not approved.")
 		return
 	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
@@ -172,30 +202,49 @@ func (a *API) completeLanewayAuthorization(w http.ResponseWriter, r *http.Reques
 		a.redirectLanewayStatus(w, r, "error", "Secret storage is unavailable.")
 		return
 	}
-	response, err := (laneway.Client{Authority: pending.Authority}).ExchangeOAuthCode(r.Context(), pending.ClientID, pending.ClientSecret, laneway.OAuthTokenRequest{Code: code, CodeVerifier: pending.CodeVerifier, RedirectURI: pending.RedirectURI})
-	if err != nil {
-		a.redirectLanewayStatus(w, r, "error", err.Error())
+	application, clientSecret, err := a.lanewayApplication(r.Context(), pending.ApplicationID)
+	if err != nil || application.State != "active" || application.Authority != pending.Authority {
+		a.redirectLanewayStatus(w, r, "error", "The Laneway application is unavailable.")
 		return
 	}
-	if response.Installation.ID == "" || response.Installation.Network.ID == "" || response.Installation.ApplicationID != pending.ApplicationID {
+	response, err := (laneway.Client{Authority: pending.Authority}).ExchangeOAuthCode(r.Context(), application.ClientID, clientSecret, laneway.OAuthTokenRequest{Code: code, CodeVerifier: pending.CodeVerifier, RedirectURI: pending.RedirectURI})
+	if err != nil {
+		a.redirectLanewayStatus(w, r, "error", "Laneway could not complete network authorization.")
+		return
+	}
+	if response.Installation.ID == "" || response.Installation.Network.ID == "" || response.Installation.ApplicationID != application.RemoteApplicationID {
 		a.redirectLanewayStatus(w, r, "error", "Laneway returned an invalid network installation.")
 		return
 	}
 	now := time.Now().UTC()
-	item := core.PrivateNetwork{
-		ID:        ulid.Make().String(),
-		Name:      pending.Name,
-		Driver:    laneway.DriverNetwork,
-		Config:    map[string]string{"authority": pending.Authority, "networkId": response.Installation.Network.ID, "networkName": response.Installation.Network.Name, "ipv4Pool": response.Installation.Network.IPv4Pool, "ipv6Pool": response.Installation.Network.IPv6Pool, "applicationId": pending.ApplicationID, "clientId": pending.ClientID, "installationId": response.Installation.ID, "tokenType": response.TokenType, "scopes": response.Scope},
-		Details:   map[string]string{"nodeCount": "0", "routeCount": "0", "configurationEpoch": strconv.FormatUint(response.Installation.Network.ConfigurationEpoch, 10)},
-		State:     "ready",
-		CreatedAt: now,
-		UpdatedAt: now,
+	item, err := a.store.GetPrivateNetworkByLaneway(r.Context(), application.ID, response.Installation.Network.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		a.redirectLanewayStatus(w, r, "error", "Could not save the Laneway network.")
+		return
 	}
+	create := errors.Is(err, store.ErrNotFound)
+	if create {
+		item = core.PrivateNetwork{ID: ulid.Make().String(), CreatedAt: now}
+	}
+	item.Name, item.Driver = pending.Name, laneway.DriverNetwork
+	item.LanewayApplicationID, item.LanewayInstallationID = application.ID, response.Installation.ID
+	item.LanewayNetworkID = response.Installation.Network.ID
+	item.Config = map[string]string{
+		"authority": pending.Authority, "networkId": response.Installation.Network.ID,
+		"networkName": response.Installation.Network.Name, "ipv4Pool": response.Installation.Network.IPv4Pool,
+		"ipv6Pool": response.Installation.Network.IPv6Pool, "applicationId": application.RemoteApplicationID,
+		"clientId": application.ClientID, "installationId": response.Installation.ID,
+		"tokenType": response.TokenType, "scopes": response.Scope,
+	}
+	item.Details = map[string]string{
+		"nodeCount": "0", "routeCount": "0",
+		"configurationEpoch": strconv.FormatUint(response.Installation.Network.ConfigurationEpoch, 10),
+	}
+	item.State, item.UpdatedAt = "ready", now
 	if response.ExpiresIn > 0 {
 		item.Config["tokenExpiresAt"] = now.Add(time.Duration(response.ExpiresIn) * time.Second).Format(time.RFC3339)
 	}
-	credentials, err := json.Marshal(lanewayCredentialBundle{AccessToken: response.AccessToken, RefreshToken: response.RefreshToken, ClientSecret: pending.ClientSecret})
+	credentials, err := json.Marshal(lanewayCredentialBundle{AccessToken: response.AccessToken, RefreshToken: response.RefreshToken})
 	if err == nil {
 		item.EncryptedCredentials, err = a.eventConfig.Vault.Encrypt("laneway-network:"+item.ID, credentials)
 	}
@@ -204,14 +253,19 @@ func (a *API) completeLanewayAuthorization(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	item.CredentialsConfigured = true
-	if err := a.store.CreatePrivateNetwork(r.Context(), item); err != nil {
+	if create {
+		err = a.store.CreatePrivateNetwork(r.Context(), item)
+	} else {
+		err = a.store.UpdatePrivateNetwork(r.Context(), item)
+	}
+	if err != nil {
 		a.redirectLanewayStatus(w, r, "error", "Could not save the Laneway network.")
 		return
 	}
 	a.redirectLanewayStatus(w, r, "connected", "")
 }
 
-func (a *API) beginLanewayNetworkInstallation(name, authority, applicationID, clientID, clientSecret string, r *http.Request) (lanewayAuthorizationStart, error) {
+func (a *API) beginLanewayNetworkInstallation(ctx context.Context, name string, application core.LanewayApplication) (lanewayAuthorizationStart, error) {
 	state, err := randomLanewayURLToken(32)
 	if err != nil {
 		return lanewayAuthorizationStart{}, err
@@ -221,73 +275,30 @@ func (a *API) beginLanewayNetworkInstallation(name, authority, applicationID, cl
 		return lanewayAuthorizationStart{}, err
 	}
 	challenge := sha256.Sum256([]byte(verifier))
-	redirectURI := a.lanewayPublicOrigin(r) + "/api/v1/laneway-networks/callback"
-	authorizationURL, err := laneway.AuthorizationURL(authority, laneway.OAuthAuthorizationRequest{
-		ClientID: clientID, RedirectURI: redirectURI, State: state,
+	origin, err := a.lanewayPublicOrigin()
+	if err != nil {
+		return lanewayAuthorizationStart{}, err
+	}
+	redirectURI := origin + "/api/v1/laneway-networks/callback"
+	authorizationURL, err := laneway.AuthorizationURL(application.Authority, laneway.OAuthAuthorizationRequest{
+		ClientID: application.ClientID, RedirectURI: redirectURI, State: state,
 		CodeChallenge: base64.RawURLEncoding.EncodeToString(challenge[:]), Scopes: laneway.NetworkManagementScopes,
 	})
 	if err != nil {
 		return lanewayAuthorizationStart{}, err
 	}
-	a.saveLanewayState(state, lanewayAuthorizationState{
-		Name: name, Authority: authority, CodeVerifier: verifier, RedirectURI: redirectURI,
-		ApplicationID: applicationID, ClientID: clientID, ClientSecret: clientSecret,
-		ExpiresAt: time.Now().UTC().Add(lanewayAuthorizationLifetime),
-	})
+	if err := a.saveLanewayState(ctx, state, lanewayAuthorizationState{
+		Kind: "installation", Name: name, Authority: application.Authority, CodeVerifier: verifier, RedirectURI: redirectURI,
+		ApplicationID: application.ID,
+		ExpiresAt:     time.Now().UTC().Add(lanewayAuthorizationLifetime),
+	}); err != nil {
+		return lanewayAuthorizationStart{}, err
+	}
 	return lanewayAuthorizationStart{Method: "redirect", Action: authorizationURL}, nil
 }
 
-func (a *API) reusableLanewayApplication(r *http.Request, authority string) (string, string, string, bool) {
-	items, err := a.store.ListPrivateNetworks(r.Context())
-	if err != nil || a.eventConfig.Vault == nil {
-		return "", "", "", false
-	}
-	for _, item := range items {
-		if item.Driver != laneway.DriverNetwork || item.Config["authority"] != authority || item.Config["applicationId"] == "" || item.Config["clientId"] == "" || item.EncryptedCredentials == "" {
-			continue
-		}
-		plain, err := a.eventConfig.Vault.Decrypt("laneway-network:"+item.ID, item.EncryptedCredentials)
-		if err != nil {
-			continue
-		}
-		var credentials lanewayCredentialBundle
-		if json.Unmarshal(plain, &credentials) == nil && credentials.ClientSecret != "" {
-			return item.Config["applicationId"], item.Config["clientId"], credentials.ClientSecret, true
-		}
-	}
-	return "", "", "", false
-}
-
-func (a *API) saveLanewayState(state string, pending lanewayAuthorizationState) {
-	now := time.Now().UTC()
-	a.lanewayMu.Lock()
-	defer a.lanewayMu.Unlock()
-	for pendingState, value := range a.lanewayStates {
-		if now.After(value.ExpiresAt) {
-			delete(a.lanewayStates, pendingState)
-		}
-	}
-	a.lanewayStates[state] = pending
-}
-
-func (a *API) consumeLanewayState(state string) (lanewayAuthorizationState, bool) {
-	a.lanewayMu.Lock()
-	defer a.lanewayMu.Unlock()
-	pending, ok := a.lanewayStates[state]
-	if ok {
-		delete(a.lanewayStates, state)
-	}
-	return pending, ok && state != "" && time.Now().UTC().Before(pending.ExpiresAt)
-}
-
-func lanewayCallbackError(r *http.Request) string {
-	if detail := strings.TrimSpace(r.URL.Query().Get("error_description")); detail != "" {
-		return detail
-	}
-	if code := strings.TrimSpace(r.URL.Query().Get("error")); code != "" {
-		return "Laneway authorization failed: " + code
-	}
-	return ""
+func lanewayCallbackFailed(r *http.Request) bool {
+	return strings.TrimSpace(r.URL.Query().Get("error")) != ""
 }
 
 func (a *API) getLanewayInventory(w http.ResponseWriter, r *http.Request) {
@@ -334,14 +345,18 @@ func (a *API) createLanewayNodeInstaller(w http.ResponseWriter, r *http.Request)
 		problem(w, http.StatusBadRequest, "Invalid node", "Choose node, connector, or exit.")
 		return
 	}
-	if input.InstallMode != "docker_compose" && input.InstallMode != "systemd" {
-		problem(w, http.StatusBadRequest, "Invalid install method", "Choose Docker Compose or systemd.")
+	if input.InstallMode != "systemd" {
+		problem(w, http.StatusBadRequest, "Unsupported install method", "Laneway currently supports systemd node installation.")
 		return
 	}
 	installer, err := client.CreateNodeInstaller(r.Context(), item.Config["networkId"], laneway.NodeInstallerRequest{
 		Name: input.Name, Kind: input.Kind, InstallMode: input.InstallMode,
 	})
 	if err != nil {
+		if errors.Is(err, laneway.ErrNodeInstallerUnavailable) {
+			problem(w, http.StatusNotImplemented, "Node installation unavailable", "This Laneway server does not provide node installers.")
+			return
+		}
 		problem(w, http.StatusBadGateway, "Could not create node installer", err.Error())
 		return
 	}
@@ -439,19 +454,62 @@ func (a *API) lanewayNetworkClientForItem(w http.ResponseWriter, r *http.Request
 		a.internal(w, err)
 		return item, laneway.Client{}, false
 	}
-	credentials := lanewayCredentialBundle{AccessToken: string(plain)}
-	_ = json.Unmarshal(plain, &credentials)
+	credentials := decodeLanewayCredentials(plain)
 	if credentials.AccessToken == "" {
 		problem(w, http.StatusServiceUnavailable, "Laneway credential unavailable", "Reconnect this Laneway network.")
 		return item, laneway.Client{}, false
 	}
 	expiresAt, _ := time.Parse(time.RFC3339, item.Config["tokenExpiresAt"])
 	if !expiresAt.IsZero() && time.Now().UTC().Add(time.Minute).After(expiresAt) {
-		if credentials.RefreshToken == "" || credentials.ClientSecret == "" || item.Config["clientId"] == "" {
+		leaseToken, err := randomLanewayURLToken(24)
+		if err != nil {
+			a.internal(w, err)
+			return item, laneway.Client{}, false
+		}
+		now := time.Now().UTC()
+		if err := a.store.AcquireLanewayRefreshLease(r.Context(), item.ID, leaseToken, now, now.Add(30*time.Second)); err != nil {
+			if errors.Is(err, store.ErrLanewayRefreshBusy) {
+				problem(w, http.StatusConflict, "Laneway access is refreshing", "Retry this request.")
+			} else {
+				a.internal(w, err)
+			}
+			return item, laneway.Client{}, false
+		}
+		defer func() { _ = a.store.ReleaseLanewayRefreshLease(context.Background(), item.ID, leaseToken) }()
+
+		item, err = a.store.GetPrivateNetwork(r.Context(), item.ID)
+		if err != nil {
+			a.notFoundOrInternal(w, err, "Laneway network")
+			return item, laneway.Client{}, false
+		}
+		plain, err = a.eventConfig.Vault.Decrypt("laneway-network:"+item.ID, item.EncryptedCredentials)
+		if err != nil {
+			a.internal(w, errors.New("decrypt Laneway network credential"))
+			return item, laneway.Client{}, false
+		}
+		credentials = decodeLanewayCredentials(plain)
+		expiresAt, _ = time.Parse(time.RFC3339, item.Config["tokenExpiresAt"])
+		if !expiresAt.IsZero() && time.Now().UTC().Add(time.Minute).Before(expiresAt) {
+			return item, laneway.Client{Authority: item.Config["authority"], Token: credentials.AccessToken}, true
+		}
+		if credentials.RefreshToken == "" || item.Config["clientId"] == "" {
 			problem(w, http.StatusUnauthorized, "Laneway access expired", "Reconnect this Laneway network.")
 			return item, laneway.Client{}, false
 		}
-		refreshed, err := (laneway.Client{Authority: item.Config["authority"]}).RefreshOAuthToken(r.Context(), item.Config["clientId"], credentials.ClientSecret, credentials.RefreshToken)
+		clientID, clientSecret := item.Config["clientId"], credentials.LegacyClientSecret
+		if item.LanewayApplicationID != "" {
+			application, secret, applicationErr := a.lanewayApplication(r.Context(), item.LanewayApplicationID)
+			if applicationErr != nil || application.State != "active" || application.Authority != item.Config["authority"] {
+				problem(w, http.StatusUnauthorized, "Laneway application unavailable", "Reconnect this Laneway network.")
+				return item, laneway.Client{}, false
+			}
+			clientID, clientSecret = application.ClientID, secret
+		}
+		if clientSecret == "" {
+			problem(w, http.StatusUnauthorized, "Laneway application unavailable", "Reconnect this Laneway network.")
+			return item, laneway.Client{}, false
+		}
+		refreshed, err := (laneway.Client{Authority: item.Config["authority"]}).RefreshOAuthToken(r.Context(), clientID, clientSecret, credentials.RefreshToken)
 		if err != nil {
 			problem(w, http.StatusBadGateway, "Could not refresh Laneway access", err.Error())
 			return item, laneway.Client{}, false
@@ -460,6 +518,7 @@ func (a *API) lanewayNetworkClientForItem(w http.ResponseWriter, r *http.Request
 		if refreshed.RefreshToken != "" {
 			credentials.RefreshToken = refreshed.RefreshToken
 		}
+		credentials.LegacyClientSecret = ""
 		encoded, err := json.Marshal(credentials)
 		if err == nil {
 			item.EncryptedCredentials, err = a.eventConfig.Vault.Encrypt("laneway-network:"+item.ID, encoded)
@@ -481,21 +540,53 @@ func (a *API) lanewayNetworkClientForItem(w http.ResponseWriter, r *http.Request
 }
 
 func (a *API) redirectLanewayStatus(w http.ResponseWriter, r *http.Request, status, detail string) {
-	target := a.lanewayPublicOrigin(r) + "/?view=connections&lanewayStatus=" + url.QueryEscape(status)
+	origin, _ := a.lanewayPublicOrigin()
+	target := origin + "/?view=connections&lanewayStatus=" + url.QueryEscape(status)
 	if detail != "" {
 		target += "&detail=" + url.QueryEscape(detail)
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
-func (a *API) lanewayPublicOrigin(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	} else if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded == "http" || forwarded == "https" {
-		scheme = forwarded
+func (a *API) lanewayPublicOrigin() (string, error) {
+	origin := strings.TrimRight(strings.TrimSpace(a.auth.PublicURL), "/")
+	parsed, err := url.Parse(origin)
+	if origin == "" || err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("set DISPATCH_PUBLIC_URL to the HTTPS origin for this controller")
 	}
-	return scheme + "://" + r.Host
+	return origin, nil
+}
+
+func (a *API) revokeLanewayNetwork(ctx context.Context, item core.PrivateNetwork) error {
+	if a.eventConfig.Vault == nil || item.EncryptedCredentials == "" {
+		return errors.New("Laneway credential is unavailable")
+	}
+	plain, err := a.eventConfig.Vault.Decrypt("laneway-network:"+item.ID, item.EncryptedCredentials)
+	if err != nil {
+		return err
+	}
+	var credentials lanewayCredentialBundle
+	if err := json.Unmarshal(plain, &credentials); err != nil || credentials.RefreshToken == "" {
+		return errors.New("Laneway refresh token is unavailable")
+	}
+	clientID, clientSecret := item.Config["clientId"], credentials.LegacyClientSecret
+	if item.LanewayApplicationID != "" {
+		application, secret, err := a.lanewayApplication(ctx, item.LanewayApplicationID)
+		if err != nil {
+			return err
+		}
+		clientID, clientSecret = application.ClientID, secret
+	}
+	return (laneway.Client{Authority: item.Config["authority"]}).RevokeOAuthToken(ctx, clientID, clientSecret, credentials.RefreshToken)
+}
+
+func decodeLanewayCredentials(plain []byte) lanewayCredentialBundle {
+	credentials := lanewayCredentialBundle{AccessToken: string(plain)}
+	var encoded lanewayCredentialBundle
+	if json.Unmarshal(plain, &encoded) == nil {
+		return encoded
+	}
+	return credentials
 }
 
 func randomLanewayURLToken(size int) (string, error) {

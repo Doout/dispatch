@@ -15,7 +15,6 @@ export function LanewayNodeInstallerForm({
 }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"node" | "connector" | "exit">("node");
-  const [installMode, setInstallMode] = useState<"docker_compose" | "systemd">("docker_compose");
   const [busy, setBusy] = useState(false);
   const [installer, setInstaller] = useState<LanewayNodeInstaller | null>(null);
   const [copied, setCopied] = useState(false);
@@ -25,7 +24,7 @@ export function LanewayNodeInstallerForm({
     setBusy(true);
     onError("");
     try {
-      setInstaller(await api.createLanewayNodeInstaller(network.id, { name, kind, installMode }));
+      setInstaller(await api.createLanewayNodeInstaller(network.id, { name, kind, installMode: "systemd" }));
     } catch (cause) {
       onError((cause as Error).message);
     } finally {
@@ -52,7 +51,7 @@ export function LanewayNodeInstallerForm({
       <div className="laneway-action-fields">
         <label><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="vpc-node" required maxLength={253} /></label>
         <label><span>Role</span><select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}><option value="node">Node</option><option value="connector">Connector</option><option value="exit">Exit</option></select></label>
-        <label><span>Install with</span><select value={installMode} onChange={(event) => setInstallMode(event.target.value as typeof installMode)}><option value="docker_compose">Docker Compose</option><option value="systemd">systemd</option></select></label>
+        <label><span>Install with</span><select value="systemd" disabled><option value="systemd">systemd</option></select></label>
       </div>
       <footer><button type="submit" className="primary-button" disabled={busy || !name.trim()}>{busy ? "Creating..." : "Create installer"}</button></footer>
     </>}

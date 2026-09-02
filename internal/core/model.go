@@ -432,6 +432,9 @@ type PrivateNetwork struct {
 	ID                    string            `json:"id"`
 	Name                  string            `json:"name"`
 	Driver                string            `json:"driver"`
+	LanewayApplicationID  string            `json:"lanewayApplicationId,omitempty"`
+	LanewayInstallationID string            `json:"lanewayInstallationId,omitempty"`
+	LanewayNetworkID      string            `json:"lanewayNetworkId,omitempty"`
 	Config                map[string]string `json:"config"`
 	Details               map[string]string `json:"details"`
 	TokenHash             string            `json:"-"`

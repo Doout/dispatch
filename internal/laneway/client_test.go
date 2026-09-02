@@ -8,10 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"testing"
 )
 
 func TestGenericApplicationAndAuthorizationURLs(t *testing.T) {
+	if slices.Contains(NetworkManagementScopes, "node.manage") || !slices.Contains(NetworkManagementScopes, "enrollment.issue") {
+		t.Fatalf("unexpected management scopes: %#v", NetworkManagementScopes)
+	}
 	action, err := NewApplicationAction("https://lane.example.com/base")
 	if err != nil || action != "https://lane.example.com/base/applications/new" {
 		t.Fatalf("unexpected application action: %s %v", action, err)
@@ -32,6 +36,18 @@ func TestGenericApplicationAndAuthorizationURLs(t *testing.T) {
 	}
 	if parsed.Query().Get("client_id") != "client-1" || parsed.Query().Get("scope") != "network.read node.read" {
 		t.Fatalf("unexpected query: %#v", parsed.Query())
+	}
+}
+
+func TestValidateAuthorityRejectsURLMetadata(t *testing.T) {
+	for _, value := range []string{
+		"https://user@lane.example.com",
+		"https://lane.example.com?next=other",
+		"https://lane.example.com#fragment",
+	} {
+		if _, err := ValidateAuthority(value); err == nil {
+			t.Fatalf("expected %q to fail", value)
+		}
 	}
 }
 
@@ -67,6 +83,46 @@ func TestApplicationRegistrationAndOAuthTokenExchange(t *testing.T) {
 	token, err := client.ExchangeOAuthCode(context.Background(), registration.ClientID, registration.ClientSecret, OAuthTokenRequest{Code: "authorize", CodeVerifier: "verifier", RedirectURI: "https://client.example.com/callback"})
 	if err != nil || token.Installation.Network.ID != "network-1" || token.RefreshToken != "refresh" {
 		t.Fatalf("token: %#v %v", token, err)
+	}
+}
+
+func TestTokenRequestsDoNotFollowRedirects(t *testing.T) {
+	redirectTargetCalled := false
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectTargetCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer target.Close()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+
+	_, err := (Client{Authority: server.URL, HTTPClient: server.Client()}).ExchangeOAuthCode(context.Background(), "client", "secret", OAuthTokenRequest{Code: "code", CodeVerifier: "verifier", RedirectURI: "https://client.example.com/callback"})
+	if err == nil {
+		t.Fatal("expected redirect response to fail")
+	}
+	if redirectTargetCalled {
+		t.Fatal("token request followed a redirect")
+	}
+}
+
+func TestOAuthTokenRevocationUsesClientAuthentication(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientID, clientSecret, ok := r.BasicAuth()
+		if !ok || clientID != "client-1" || clientSecret != "secret-1" {
+			t.Fatalf("unexpected client authentication: %q %q", clientID, clientSecret)
+		}
+		if err := r.ParseForm(); err != nil || r.Form.Get("token") != "refresh-1" || r.Form.Get("token_type_hint") != "refresh_token" {
+			t.Fatalf("unexpected revocation form: %#v %v", r.Form, err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	err := (Client{Authority: server.URL, HTTPClient: server.Client()}).RevokeOAuthToken(context.Background(), "client-1", "secret-1", "refresh-1")
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

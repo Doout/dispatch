@@ -18,10 +18,20 @@ const DriverNetwork = "laneway_network"
 var NetworkManagementScopes = []string{
 	"network.read",
 	"node.read",
-	"node.manage",
 	"enrollment.issue",
 	"route.read",
 	"route.manage",
+}
+
+var ErrNodeInstallerUnavailable = errors.New("Laneway node installation is unavailable")
+
+type HTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("Laneway returned %s: %s", http.StatusText(e.StatusCode), e.Message)
 }
 
 type Client struct {
@@ -153,10 +163,10 @@ type AssignRouteRequest struct {
 func ValidateAuthority(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", errors.New("enter an HTTPS Laneway URL")
 	}
-	parsed.Path, parsed.RawPath, parsed.RawQuery, parsed.Fragment = strings.TrimRight(parsed.Path, "/"), "", "", ""
+	parsed.Path, parsed.RawPath = strings.TrimRight(parsed.Path, "/"), ""
 	return parsed.String(), nil
 }
 
@@ -222,6 +232,25 @@ func (c Client) RefreshOAuthToken(ctx context.Context, clientID, clientSecret, r
 		"refresh_token": {refreshToken},
 	}
 	return c.oauthToken(ctx, clientID, clientSecret, values)
+}
+
+func (c Client) RevokeOAuthToken(ctx context.Context, clientID, clientSecret, refreshToken string) error {
+	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(clientSecret) == "" || strings.TrimSpace(refreshToken) == "" {
+		return errors.New("Laneway revocation credentials are missing")
+	}
+	authority, err := ValidateAuthority(c.Authority)
+	if err != nil {
+		return err
+	}
+	values := url.Values{"token": {refreshToken}, "token_type_hint": {"refresh_token"}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(authority, "/")+"/oauth/revoke", strings.NewReader(values.Encode()))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth(clientID, clientSecret)
+	return c.do(request, nil)
 }
 
 func (c Client) oauthToken(ctx context.Context, clientID, clientSecret string, values url.Values) (OAuthTokenResponse, error) {
@@ -298,6 +327,10 @@ func (c Client) CreateNodeInstaller(ctx context.Context, networkID string, reque
 	}
 	endpoint := "/v1/admin/networks/" + url.PathEscape(networkID) + "/node-installers"
 	if err := c.requestJSON(ctx, http.MethodPost, endpoint, request, &installer, true); err != nil {
+		var responseError *HTTPError
+		if errors.As(err, &responseError) && responseError.StatusCode == http.StatusNotFound {
+			return installer, ErrNodeInstallerUnavailable
+		}
 		return installer, err
 	}
 	if strings.TrimSpace(installer.Command) == "" {
@@ -355,7 +388,9 @@ func (c Client) do(request *http.Request, target any) error {
 	if client == nil {
 		client = &http.Client{Timeout: 12 * time.Second}
 	}
-	response, err := client.Do(request)
+	requestClient := *client
+	requestClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := requestClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("Laneway request failed: %w", err)
 	}
@@ -381,7 +416,7 @@ func (c Client) do(request *http.Request, target any) error {
 		if message == "" {
 			message = response.Status
 		}
-		return fmt.Errorf("Laneway returned %s: %s", response.Status, message)
+		return &HTTPError{StatusCode: response.StatusCode, Message: message}
 	}
 	if target == nil || response.StatusCode == http.StatusNoContent {
 		return nil

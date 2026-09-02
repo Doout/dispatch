@@ -36,6 +36,14 @@ type Store interface {
 	DeletePrivateNetwork(context.Context, string) error
 	ListPrivateNetworks(context.Context) ([]core.PrivateNetwork, error)
 	GetPrivateNetwork(context.Context, string) (core.PrivateNetwork, error)
+	GetPrivateNetworkByLaneway(context.Context, string, string) (core.PrivateNetwork, error)
+	CreateLanewayApplication(context.Context, core.LanewayApplication) error
+	GetLanewayApplication(context.Context, string) (core.LanewayApplication, error)
+	GetActiveLanewayApplicationByAuthority(context.Context, string) (core.LanewayApplication, error)
+	CreateLanewayAuthorizationTransaction(context.Context, core.LanewayAuthorizationTransaction) error
+	ConsumeLanewayAuthorizationTransaction(context.Context, string, time.Time) (core.LanewayAuthorizationTransaction, error)
+	AcquireLanewayRefreshLease(context.Context, string, string, time.Time, time.Time) error
+	ReleaseLanewayRefreshLease(context.Context, string, string) error
 	CreateEdgeJob(context.Context, core.EdgeJob) error
 	LeaseEdgeJob(context.Context, string, time.Time, time.Duration) (*core.EdgeJob, error)
 	CompleteEdgeJob(context.Context, string, string, string, string, string, time.Time) error

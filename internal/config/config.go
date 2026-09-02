@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -14,6 +15,7 @@ type Config struct {
 	AdminToken      string
 	AdminUsername   string
 	AdminPassword   string
+	PublicURL       string
 	MasterKeyFile   string
 	DockerSocket    string
 	WebhookSecret   string
@@ -32,6 +34,7 @@ func Load() (Config, error) {
 		AdminToken:      os.Getenv("DISPATCH_ADMIN_TOKEN"),
 		AdminUsername:   strings.TrimSpace(os.Getenv("DISPATCH_ADMIN_USERNAME")),
 		AdminPassword:   os.Getenv("DISPATCH_ADMIN_PASSWORD"),
+		PublicURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("DISPATCH_PUBLIC_URL")), "/"),
 		MasterKeyFile:   os.Getenv("DISPATCH_MASTER_KEY_FILE"),
 		DockerSocket:    env("DISPATCH_DOCKER_SOCKET", "/var/run/docker.sock"),
 		WebhookSecret:   os.Getenv("DISPATCH_GITHUB_WEBHOOK_SECRET"),
@@ -51,6 +54,12 @@ func Load() (Config, error) {
 	}
 	if cfg.AdminPassword != "" && (len([]byte(cfg.AdminPassword)) < 12 || len([]byte(cfg.AdminPassword)) > 72) {
 		return Config{}, errors.New("DISPATCH_ADMIN_PASSWORD must be 12 to 72 bytes")
+	}
+	if cfg.PublicURL != "" {
+		parsed, err := url.Parse(cfg.PublicURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return Config{}, errors.New("DISPATCH_PUBLIC_URL must be an HTTPS origin")
+		}
 	}
 	if !strings.HasPrefix(cfg.PreviewCommand, "/") || strings.ContainsAny(cfg.PreviewCommand, " \t\r\n") || len(cfg.PreviewCommand) > 64 {
 		return Config{}, errors.New("DISPATCH_PREVIEW_COMMAND must start with / and contain no whitespace")

@@ -48,6 +48,7 @@ type AuthConfig struct {
 	AdminToken string
 	Username   string
 	Password   string
+	PublicURL  string
 }
 
 type EventConfig struct {
@@ -85,8 +86,6 @@ type API struct {
 	githubServices map[string]githubEventServices
 	manifestMu     sync.Mutex
 	manifestStates map[string]githubAppManifestState
-	lanewayMu      sync.Mutex
-	lanewayStates  map[string]lanewayAuthorizationState
 	workflows      *workflowservice.Service
 
 	sessionMu sync.RWMutex
@@ -131,7 +130,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			}
 			return nil
 		}(), nil), eventConfig: eventConfig, secretResolver: eventConfig.SecretResolver, openShift: openshift.New(), lifecycle: lifecycle,
-		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState), lanewayStates: make(map[string]lanewayAuthorizationState)}
+		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState)}
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)

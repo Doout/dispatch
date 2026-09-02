@@ -205,6 +205,12 @@ func (a *API) deletePrivateNetwork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if network.Driver == laneway.DriverNetwork {
+		if err := a.revokeLanewayNetwork(r.Context(), network); err != nil {
+			problem(w, http.StatusBadGateway, "Could not disconnect Laneway", err.Error())
+			return
+		}
+	}
 	if err := a.store.DeletePrivateNetwork(r.Context(), id); err != nil {
 		a.notFoundOrInternal(w, err, "Private network")
 		return
