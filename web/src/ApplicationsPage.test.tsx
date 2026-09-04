@@ -166,29 +166,46 @@ describe("applications overview", () => {
     expect(within(menu).getByRole("menuitem", { name: "Helm values" })).not.toBeNull();
   });
 
-  it("shows an imported application once and keeps its source controls in the row menu", async () => {
+  it("groups imported applications under their repository configuration", async () => {
     const user = userEvent.setup();
     const configured: Overview = {
       ...overview,
       configSources: [{ id: "config-1", projectId: "project-1", githubAppId: "github-1", name: "Platform config", repository: "platform/deployments", branch: "main", path: ".dispatch", syncMode: "webhook_poll", pollIntervalSeconds: 300, active: true, state: "ready", createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" }],
-      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "checkout", path: ".dispatch/checkout.yaml", document: "apiVersion: dispatch/v1alpha1\nkind: Application\n", specDigest: "sha256:test", configSha: "abc123", active: false, state: "paused", sourceCount: 2, jobCount: 2, targetRefs: ["development"], stageNames: ["development"], createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" }],
+      workflowResources: [
+        { id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "checkout", path: ".dispatch/checkout.yaml", document: "apiVersion: dispatch/v1alpha1\nkind: Application\n", specDigest: "sha256:test", configSha: "abc123", active: false, state: "paused", sourceCount: 2, jobCount: 2, targetRefs: ["development"], stageNames: ["development"], createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" },
+        { id: "workflow-2", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "worker", path: ".dispatch/worker.yaml", document: "apiVersion: dispatch/v1alpha1\nkind: Application\n", specDigest: "sha256:test-2", configSha: "def456", active: true, state: "ready", sourceCount: 1, jobCount: 1, targetRefs: ["development"], stageNames: ["development"], createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" },
+      ],
       workflowRevisions: [],
       workflowStageRuns: [],
     };
     render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
 
-    expect(screen.queryByText("Platform config")).toBeNull();
-    const name = screen.getByRole("button", { name: "Open checkout" });
+    expect(screen.getByText("Platform config")).not.toBeNull();
+    expect(screen.getByText("2 applications")).not.toBeNull();
     expect(screen.getByText("Webhook + poll")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Open checkout" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
+    expect(screen.getByRole("button", { name: "Open worker" })).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Collapse Platform config" }));
+    expect(screen.queryByRole("button", { name: "Open checkout" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
+    const name = screen.getByRole("button", { name: "Open checkout" });
+
+    await user.click(screen.getByLabelText("Options for Platform config"));
+    let menu = await screen.findByRole("menu");
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Sync configuration",
+      "Edit configuration",
+      "Delete configuration",
+    ]);
+    await user.keyboard("{Escape}");
+
     await user.click(screen.getByLabelText("Options for checkout"));
-    const menu = await screen.findByRole("menu");
+    menu = await screen.findByRole("menu");
     expect(within(menu).queryByRole("menuitem", { name: "View" })).toBeNull();
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
       "Activate",
       "Topology",
-      "Sync configuration",
-      "Edit configuration",
-      "Delete configuration",
     ]);
     await user.keyboard("{Escape}");
     await user.click(name);
@@ -196,7 +213,8 @@ describe("applications overview", () => {
     expect(screen.getByText("No runs.")).not.toBeNull();
   });
 
-  it("shows a newly discovered application as pending activation", () => {
+  it("shows a newly discovered application as pending activation", async () => {
+    const user = userEvent.setup();
     const configured: Overview = {
       ...overview,
       configSources: [{ id: "config-1", projectId: "project-1", githubAppId: "github-1", name: "Platform config", repository: "platform/deployments", branch: "main", path: "deployment", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" }],
@@ -206,6 +224,8 @@ describe("applications overview", () => {
     };
     render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
 
+    expect(screen.getByText("1 pending")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
     expect(screen.getByText("pending activation")).not.toBeNull();
     expect(screen.queryByText("paused")).toBeNull();
   });
@@ -221,7 +241,10 @@ describe("applications overview", () => {
     };
     render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
 
-    const source = screen.getByText("platform/deployments");
+    await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
+    const resourceRow = screen.getByRole("button", { name: "Open checkout" }).closest("tr");
+    expect(resourceRow).not.toBeNull();
+    const source = within(resourceRow!).getByText(".dispatch/checkout.yaml");
     const secondMouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 2 });
     source.dispatchEvent(secondMouseDown);
     expect(secondMouseDown.defaultPrevented).toBe(true);

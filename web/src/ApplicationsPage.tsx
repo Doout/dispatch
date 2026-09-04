@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useState } from "react";
+import { Fragment, ReactNode, useCallback, useEffect, useState } from "react";
 import {
   AppWindow,
   ArrowClockwise,
@@ -8,6 +8,8 @@ import {
   CheckCircle,
   CircleNotch,
   Copy,
+  CaretDown,
+  CaretRight,
   DotsThreeVertical,
   GitBranch,
   Graph,
@@ -127,6 +129,35 @@ function configSourceMethod(source: ConfigSource) {
   return `Poll every ${source.pollIntervalSeconds}s`;
 }
 
+function workflowResourceCountLabel(resources: WorkflowResource[]) {
+  if (!resources.length) return "No applications found";
+  const applications = resources.filter((resource) => resource.kind === "Application").length;
+  const pipelines = resources.length - applications;
+  return [
+    applications ? `${applications} application${applications === 1 ? "" : "s"}` : "",
+    pipelines ? `${pipelines} pipeline${pipelines === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(", ");
+}
+
+function workflowResourceSummary(source: ConfigSource, resources: WorkflowResource[], overview: Overview) {
+  const synced = source.lastSyncedAt ? `Synced ${relative(source.lastSyncedAt)}` : "Configuration not synced";
+  if (!resources.length) return { state: source.state, label: source.state, detail: synced };
+  const statuses = resources.map((resource) => {
+    const latest = (overview.workflowRevisions ?? []).find((revision) => revision.resourceId === resource.id);
+    return workflowResourceStatus(resource, latest?.state);
+  });
+  const failed = statuses.filter((status) => status === "failed" || status === "degraded").length;
+  const pending = statuses.filter((status) => status === "pending_activation").length;
+  const paused = statuses.filter((status) => status === "paused").length;
+  const ready = statuses.filter((status) => status === "succeeded" || status === "ready").length;
+  if (failed) return { state: "failed", label: `${failed} failed`, detail: synced };
+  if (pending) return { state: "pending_activation", label: `${pending} pending`, detail: synced };
+  if (ready === resources.length) return { state: "succeeded", label: `${ready}/${resources.length} ready`, detail: synced };
+  if (paused === resources.length) return { state: "paused", label: `${paused} paused`, detail: synced };
+  const active = statuses.find((status) => !["succeeded", "ready", "paused"].includes(status));
+  return { state: active ?? "paused", label: active ? workflowResourceStatusLabel(active) : `${ready}/${resources.length} ready`, detail: synced };
+}
+
 function ApplicationAddMenu({ canAddApplication, canAddHelm, canAddTemplate, canAddGroup, canAddConfig, onApplication, onHelm, onTemplate, onGroup, onConfig }: { canAddApplication: boolean; canAddHelm: boolean; canAddTemplate: boolean; canAddGroup: boolean; canAddConfig: boolean; onApplication: () => void; onHelm: () => void; onTemplate: () => void; onGroup: () => void; onConfig: () => void }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild><button className="primary-button add-resource-menu" type="button"><Plus size={16} weight="bold" />Add</button></DropdownMenu.Trigger>
@@ -152,12 +183,22 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
   const [busyID, setBusyID] = useState("");
   const [error, setError] = useState("");
   const [deleteSource, setDeleteSource] = useState<ConfigSource | null>(null);
+  const [expandedSourceIDs, setExpandedSourceIDs] = useState<Set<string>>(() => new Set());
   const applications = overview.apps.filter((application) => !application.generated);
   const configSources = overview.configSources ?? [];
   const workflowResources = overview.workflowResources ?? [];
-  const populatedSourceIDs = new Set(workflowResources.map((resource) => resource.configSourceId));
-  const emptyConfigSources = configSources.filter((source) => !populatedSourceIDs.has(source.id));
-  const resourceCount = applications.length + overview.previewGroups.length + emptyConfigSources.length + workflowResources.length;
+  const sourceIDs = new Set(configSources.map((source) => source.id));
+  const orphanWorkflowResources = workflowResources.filter((resource) => !sourceIDs.has(resource.configSourceId));
+  const resourceCount = applications.length + overview.previewGroups.length + configSources.length + orphanWorkflowResources.length;
+
+  function toggleSource(sourceID: string) {
+    setExpandedSourceIDs((current) => {
+      const next = new Set(current);
+      if (next.has(sourceID)) next.delete(sourceID);
+      else next.add(sourceID);
+      return next;
+    });
+  }
 
   async function sourceAction(source: ConfigSource, action: "sync" | "delete") {
     setBusyID(source.id);
@@ -189,46 +230,58 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
     }
   }
 
+  function workflowResourceRow(resource: WorkflowResource, source?: ConfigSource, nested = false) {
+    const latest = (overview.workflowRevisions ?? []).find((item) => item.resourceId === resource.id);
+    const target = resource.targetRefs?.join(", ") || (resource.kind === "Pipeline" ? "Stage check" : "No stage");
+    const status = workflowResourceStatus(resource, latest?.state);
+    const latestDeploymentID = latestWorkflowDeploymentID(overview, resource.id);
+    const canConfigureResource = Boolean(source && canManageProject(overview, source.projectId, "project.configure"));
+    const canRunResource = Boolean(source && canManageProject(overview, source.projectId, "deployment.run"));
+    return <tr className={`inspectable-resource-row${nested ? " configuration-resource-row" : ""}`} key={`workflow-${resource.id}`} onMouseDown={(event) => {
+      if (event.detail > 1) event.preventDefault();
+    }} onDoubleClick={(event) => {
+      if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [role='menuitem']")) return;
+      onOpenWorkflow(resource);
+    }}><td data-label="Name"><button type="button" className="resource-name-button" aria-label={`Open ${resource.name}`} onClick={() => onOpenWorkflow(resource)}><strong>{resource.name}</strong><small>{resource.sourceCount} source{resource.sourceCount === 1 ? "" : "s"}, {resource.jobCount} job{resource.jobCount === 1 ? "" : "s"}</small></button></td><td data-label="Type"><strong className="cell-secondary-heading">{resource.kind}</strong><small>{source ? "Managed application" : "Imported"}</small></td><td data-label="Source"><span className="truncate-cell" title={resource.path}>{resource.path}</span><small className="truncate-cell" title={resource.configSha}>Config {resource.configSha.slice(0, 8)}</small></td><td data-label="Target"><span className="truncate-cell" title={target}>{target}</span></td><td data-label="Status"><span className={`status-label ${status}`}><i />{workflowResourceStatusLabel(status)}</span></td><td className="row-actions"><RowActionMenu name={resource.name}>
+      <DropdownMenu.Label className="row-action-group-label">{resource.kind}</DropdownMenu.Label>
+      {canConfigureResource && !resource.active && <MenuAction icon={<Check size={16} />} label="Activate" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "activate")} />}
+      {canRunResource && resource.active && resource.kind === "Application" && <MenuAction icon={<RocketLaunch size={16} />} label="Run now" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "run")} />}
+      <MenuAction icon={<Graph size={16} />} label="Topology" onClick={() => onOpenTopology(resource)} />
+      {latestDeploymentID && <MenuAction icon={<FileCode size={16} />} label="Manifests" onClick={() => onOpenDeploymentManifests(latestDeploymentID)} />}
+      {canConfigureResource && resource.active && <MenuAction icon={<X size={16} />} label="Pause" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "pause")} />}
+    </RowActionMenu></td></tr>;
+  }
+
   if (!resourceCount) return <section id="application-resources">{hasReadyServer && hasProject ? <ApplicationCollectionEmpty>No applications.</ApplicationCollectionEmpty> : <PrerequisiteState hasReadyServer={hasReadyServer} hasProject={hasProject} onNavigate={onNavigate} />}</section>;
   return <section id="application-resources" aria-labelledby="application-resources-title"><h2 className="sr-only" id="application-resources-title">Configured resources</h2>{error && <p className="form-error application-inventory-error" role="alert">{error}</p>}<div className="resource-table-wrap application-inventory-table-wrap"><table className="resource-table application-inventory-table"><thead><tr><th>Name</th><th>Type</th><th>Source</th><th>Target</th><th>Status</th><th className="actions-head"><span className="sr-only">Options</span></th></tr></thead><tbody>
-    {emptyConfigSources.map((source) => {
+    {configSources.map((source) => {
       const project = overview.projects.find((item) => item.id === source.projectId)?.name ?? "Unknown project";
+      const resources = workflowResources.filter((resource) => resource.configSourceId === source.id);
+      const expanded = expandedSourceIDs.has(source.id);
+      const summary = workflowResourceSummary(source, resources, overview);
       const canConfigureSource = canManageProject(overview, source.projectId, "project.configure");
-      return <tr key={`config-${source.id}`}><td data-label="Name"><strong>{source.name}</strong><small>{project}</small></td><td data-label="Type"><strong className="cell-secondary-heading">Configuration</strong><small>{configSourceMethod(source)}</small></td><td data-label="Source"><span className="truncate-cell" title={source.repository}>{repositoryLabel(source.repository)}</span><small className="truncate-cell" title={source.branch}>{source.branch}</small></td><td data-label="Target"><span className="truncate-cell" title={source.path}>{source.path}</span></td><td data-label="Status"><span className={`status-label ${source.state}`} title={source.lastError}><i />{source.state}</span></td><td className="row-actions">{canConfigureSource && <RowActionMenu name={source.name}>
-        <MenuAction icon={<ArrowClockwise size={16} />} label={busyID === source.id ? "Syncing" : "Sync now"} disabled={busyID === source.id} onClick={() => void sourceAction(source, "sync")} />
-        <MenuAction icon={<PencilSimple size={16} />} label="Edit" onClick={() => onEditConfig(source)} />
-        <MenuAction icon={<Trash size={16} />} label="Delete" danger onClick={() => setDeleteSource(source)} />
-      </RowActionMenu>}</td></tr>;
+      return <Fragment key={`config-${source.id}`}>
+        <tr className="configuration-source-row" onMouseDown={(event) => { if (event.detail > 1) event.preventDefault(); }} onClick={(event) => {
+          if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [role='menuitem']")) return;
+          toggleSource(source.id);
+        }}>
+          <td data-label="Name"><button type="button" className="configuration-source-toggle" aria-label={`${expanded ? "Collapse" : "Expand"} ${source.name}`} aria-expanded={expanded} onClick={() => toggleSource(source.id)}>{expanded ? <CaretDown size={16} weight="bold" /> : <CaretRight size={16} weight="bold" />}<span><strong>{source.name}</strong><small>{workflowResourceCountLabel(resources)}</small></span></button></td>
+          <td data-label="Type"><strong className="cell-secondary-heading">Repository configuration</strong><small>{configSourceMethod(source)}</small></td>
+          <td data-label="Source"><span className="truncate-cell" title={source.repository}>{repositoryLabel(source.repository)}</span><small className="truncate-cell" title={source.branch}>{source.branch}</small></td>
+          <td data-label="Target"><span className="truncate-cell" title={source.path}>{source.path || "Repository root"}</span><small>{project}</small></td>
+          <td data-label="Status"><span className={`status-label ${summary.state}`} title={source.lastError}><i />{summary.label}</span><small>{summary.detail}</small></td>
+          <td className="row-actions">{canConfigureSource && <RowActionMenu name={source.name}>
+            <DropdownMenu.Label className="row-action-group-label">Configuration</DropdownMenu.Label>
+            <MenuAction icon={<ArrowClockwise size={16} />} label={busyID === source.id ? "Syncing" : "Sync configuration"} disabled={busyID === source.id} onClick={() => void sourceAction(source, "sync")} />
+            <MenuAction icon={<PencilSimple size={16} />} label="Edit configuration" onClick={() => onEditConfig(source)} />
+            <DropdownMenu.Separator className="action-menu-separator" />
+            <MenuAction icon={<Trash size={16} />} label="Delete configuration" danger onClick={() => setDeleteSource(source)} />
+          </RowActionMenu>}</td>
+        </tr>
+        {expanded && resources.map((resource) => workflowResourceRow(resource, source, true))}
+      </Fragment>;
     })}
-    {workflowResources.map((resource) => {
-      const source = configSources.find((item) => item.id === resource.configSourceId);
-      const latest = (overview.workflowRevisions ?? []).find((item) => item.resourceId === resource.id);
-      const target = resource.targetRefs?.join(", ") || (resource.kind === "Pipeline" ? "Stage check" : "No stage");
-      const status = workflowResourceStatus(resource, latest?.state);
-      const sourceDetail = source ? `${source.branch} · ${resource.path}` : resource.path;
-      const latestDeploymentID = latestWorkflowDeploymentID(overview, resource.id);
-      const canConfigureResource = Boolean(source && canManageProject(overview, source.projectId, "project.configure"));
-      const canRunResource = Boolean(source && canManageProject(overview, source.projectId, "deployment.run"));
-      return <tr className="inspectable-resource-row" key={`workflow-${resource.id}`} onMouseDown={(event) => {
-        if (event.detail > 1) event.preventDefault();
-      }} onDoubleClick={(event) => {
-        if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [role='menuitem']")) return;
-        onOpenWorkflow(resource);
-      }}><td data-label="Name"><button type="button" className="resource-name-button" aria-label={`Open ${resource.name}`} onClick={() => onOpenWorkflow(resource)}><strong>{resource.name}</strong><small>{resource.sourceCount} source{resource.sourceCount === 1 ? "" : "s"}, {resource.jobCount} job{resource.jobCount === 1 ? "" : "s"}</small></button></td><td data-label="Type"><strong className="cell-secondary-heading">{resource.kind}</strong><small>{source ? configSourceMethod(source) : "Imported"}</small></td><td data-label="Source"><span className="truncate-cell" title={source?.repository}>{source ? repositoryLabel(source.repository) : "Configuration removed"}</span><small className="truncate-cell" title={sourceDetail}>{sourceDetail}</small></td><td data-label="Target"><span className="truncate-cell" title={target}>{target}</span></td><td data-label="Status"><span className={`status-label ${status}`}><i />{workflowResourceStatusLabel(status)}</span></td><td className="row-actions"><RowActionMenu name={resource.name}>
-        <DropdownMenu.Label className="row-action-group-label">Application</DropdownMenu.Label>
-        {canConfigureResource && !resource.active && <MenuAction icon={<Check size={16} />} label="Activate" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "activate")} />}
-        {canRunResource && resource.active && resource.kind === "Application" && <MenuAction icon={<RocketLaunch size={16} />} label="Run now" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "run")} />}
-        <MenuAction icon={<Graph size={16} />} label="Topology" onClick={() => onOpenTopology(resource)} />
-        {latestDeploymentID && <MenuAction icon={<FileCode size={16} />} label="Manifests" onClick={() => onOpenDeploymentManifests(latestDeploymentID)} />}
-        {canConfigureResource && resource.active && <MenuAction icon={<X size={16} />} label="Pause" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "pause")} />}
-        {canConfigureResource && source && <DropdownMenu.Separator className="action-menu-separator" />}
-        {canConfigureResource && source && <DropdownMenu.Label className="row-action-group-label">Configuration</DropdownMenu.Label>}
-        {canConfigureResource && source && <MenuAction icon={<ArrowClockwise size={16} />} label={busyID === source.id ? "Syncing" : "Sync configuration"} disabled={busyID === source.id} onClick={() => void sourceAction(source, "sync")} />}
-        {canConfigureResource && source && <MenuAction icon={<PencilSimple size={16} />} label="Edit configuration" onClick={() => onEditConfig(source)} />}
-        {canConfigureResource && source && <DropdownMenu.Separator className="action-menu-separator" />}
-        {canConfigureResource && source && <MenuAction icon={<Trash size={16} />} label="Delete configuration" danger onClick={() => setDeleteSource(source)} />}
-      </RowActionMenu></td></tr>;
-    })}
+    {orphanWorkflowResources.map((resource) => workflowResourceRow(resource))}
     {applications.map((application) => {
       const project = overview.projects.find((item) => item.id === application.projectId)?.name ?? "Unknown project";
       const target = overview.servers.find((server) => server.id === application.serverId)?.name ?? "Unknown target";

@@ -350,6 +350,18 @@ code { font-family: var(--mono); }
 .application-inventory-table th:nth-child(5) { width: 12%; }
 .application-inventory-table th.actions-head, .application-inventory-table .row-actions { width: 54px; }
 .application-inventory-table td { height: 62px; }
+.configuration-source-row { cursor: pointer; background: #f7f9fb; }
+.configuration-source-row:hover { background: #f1f6fa !important; }
+.configuration-source-row td { border-bottom-color: #dfe5e9; }
+.configuration-source-toggle { display: flex; align-items: center; gap: 10px; width: calc(100% + 32px); min-height: 62px; margin: -11px -16px; padding: 11px 16px; overflow: hidden; color: #202a34; text-align: left; background: transparent; border: 0; border-radius: 0; cursor: pointer; font: inherit; }
+.configuration-source-toggle > svg { flex: 0 0 auto; color: #61717e; }
+.configuration-source-toggle > span { display: grid; min-width: 0; }
+.configuration-source-toggle strong, .configuration-source-toggle small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.configuration-source-toggle small { margin-top: 4px; color: #74818d; font-size: 11px; font-weight: 450; }
+.configuration-source-toggle:hover strong { color: var(--blue); }
+.configuration-source-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: -3px; }
+.configuration-resource-row td:first-child { box-shadow: inset 3px 0 0 #d9e8f5; }
+.configuration-resource-row .resource-name-button { padding-left: 34px; }
 .resource-name-button { display: grid; align-content: center; width: calc(100% + 32px); min-height: 62px; margin: -11px -16px; padding: 11px 16px; overflow: hidden; color: #202a34; text-align: left; background: transparent; border: 0; border-radius: 0; cursor: pointer; font: inherit; }
 .resource-name-button strong, .resource-name-button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .resource-name-button small { margin-top: 4px; color: #74818d; font-size: 11px; font-weight: 450; }
@@ -1654,6 +1666,10 @@ code { font-family: var(--mono); }
   .resource-table td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
   .resource-table td.row-actions { display: flex; justify-content: flex-end; width: 100%; min-height: 44px; padding-top: 9px; border-top: 1px solid var(--rule); }
   .resource-table td.row-actions::before { display: none; }
+  .configuration-source-row { padding-block: 8px; }
+  .configuration-source-toggle, .resource-name-button { width: 100%; min-height: 35px; margin: -5px 0; padding: 5px 0; }
+  .configuration-resource-row { width: calc(100% - 18px) !important; margin-left: 18px; }
+  .configuration-resource-row .resource-name-button { padding-left: 12px; }
   .row-actions button, .table-action { min-height: 40px; }
   .truncate-cell, .event-sources code, .event-sources small { white-space: normal; overflow-wrap: anywhere; }
   .empty-state { align-items: flex-start; flex-wrap: wrap; }
