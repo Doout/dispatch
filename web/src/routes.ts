@@ -11,6 +11,7 @@ export type AppRoute = {
   deploymentStage?: string;
   serverID?: string;
   applicationID?: string;
+  configurationSourceID?: string;
   applicationSection?: ApplicationSection;
   eventSection?: EventSection;
 };
@@ -31,6 +32,7 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
     };
   }
   if (first === "applications") {
+    if (segments[1] === "configurations" && segments[2]) return { view: "applications", configurationSourceID: segments[2] };
     if (segments[1] && !isApplicationSectionPath(segments[1])) return { view: "applications", applicationID: segments[1] };
     return { view: "applications", applicationSection: applicationSectionFromPath(segments[1]) };
   }
@@ -58,6 +60,7 @@ export function routePath(route: AppRoute) {
     return `/deployments${params.size ? `?${params.toString()}` : ""}`;
   }
   if (route.view === "applications") {
+    if (route.configurationSourceID) return `/applications/configurations/${encodeURIComponent(route.configurationSourceID)}/topology`;
     if (route.applicationID) return `/applications/${encodeURIComponent(route.applicationID)}/topology`;
     const section = route.applicationSection ?? "applications";
     if (section === "templates") return "/applications/templates";

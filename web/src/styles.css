@@ -353,21 +353,33 @@ code { font-family: var(--mono); }
 .configuration-source-row { cursor: pointer; background: #f7f9fb; }
 .configuration-source-row:hover { background: #f1f6fa !important; }
 .configuration-source-row td { border-bottom-color: #dfe5e9; }
-.configuration-source-toggle { display: flex; align-items: center; gap: 10px; width: calc(100% + 32px); min-height: 62px; margin: -11px -16px; padding: 11px 16px; overflow: hidden; color: #202a34; text-align: left; background: transparent; border: 0; border-radius: 0; cursor: pointer; font: inherit; }
-.configuration-source-toggle > svg { flex: 0 0 auto; color: #61717e; }
-.configuration-source-toggle > span { display: grid; min-width: 0; }
-.configuration-source-toggle strong, .configuration-source-toggle small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.configuration-source-toggle small { margin-top: 4px; color: #74818d; font-size: 11px; font-weight: 450; }
-.configuration-source-toggle:hover strong { color: var(--blue); }
-.configuration-source-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: -3px; }
+.configuration-source-identity, .resource-identity { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 8px; width: calc(100% + 32px); min-height: 62px; margin: -11px -16px; padding: 9px 16px; overflow: hidden; }
+.hierarchy-toggle { display: grid; width: 26px; min-height: 32px; padding: 0; color: #61717e; background: transparent; border: 0; border-radius: 6px; cursor: pointer; place-items: center; }
+.hierarchy-toggle:hover { color: var(--blue); background: #e5eef7; }
+.hierarchy-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.hierarchy-toggle-placeholder { width: 26px; }
+.configuration-source-link, .resource-name-button { display: grid; align-content: center; min-width: 0; min-height: 44px; padding: 0; overflow: hidden; color: #202a34; text-align: left; background: transparent; border: 0; border-radius: 4px; cursor: pointer; font: inherit; }
+.configuration-source-link strong, .configuration-source-link small, .resource-name-button strong, .resource-name-button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.configuration-source-link strong { color: var(--blue); }
+.configuration-source-link small, .resource-name-button small { margin-top: 4px; color: #74818d; font-size: 11px; font-weight: 450; }
+.configuration-source-link:hover strong, .resource-name-button:hover strong { color: var(--blue); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.configuration-source-link:focus-visible, .resource-name-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .configuration-resource-row td:first-child { box-shadow: inset 3px 0 0 #d9e8f5; }
-.configuration-resource-row .resource-name-button { padding-left: 34px; }
-.resource-name-button { display: grid; align-content: center; width: calc(100% + 32px); min-height: 62px; margin: -11px -16px; padding: 11px 16px; overflow: hidden; color: #202a34; text-align: left; background: transparent; border: 0; border-radius: 0; cursor: pointer; font: inherit; }
-.resource-name-button strong, .resource-name-button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.resource-name-button small { margin-top: 4px; color: #74818d; font-size: 11px; font-weight: 450; }
-.resource-name-button:hover strong { color: var(--blue); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-.resource-name-button:focus-visible { outline: 2px solid var(--blue); outline-offset: -3px; }
+.configuration-resource-row .resource-identity { padding-left: 26px; }
 .inspectable-resource-row { cursor: default; }
+.expandable-resource-row { cursor: pointer; }
+.configuration-stage-row { background: #fbfcfd; }
+.configuration-stage-row:hover { background: #f7fafc !important; }
+.configuration-stage-row td { height: 54px; border-bottom-color: #e7ebee; }
+.configuration-stage-row td:first-child { box-shadow: inset 3px 0 0 #e8eef3; }
+.stage-name-button { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 8px; width: calc(100% + 32px); min-height: 54px; margin: -8px -16px; padding: 7px 16px 7px 58px; overflow: hidden; color: #33424e; text-align: left; background: transparent; border: 0; border-radius: 0; cursor: pointer; font: inherit; }
+.stage-name-button > span:last-child { display: grid; min-width: 0; }
+.stage-name-button strong, .stage-name-button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage-name-button strong { font-size: 11px; }
+.stage-name-button small { margin-top: 2px; color: #84909a; font-size: 9px; font-weight: 450; }
+.stage-name-button:hover strong { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; }
+.stage-name-button:focus-visible { outline: 2px solid var(--blue); outline-offset: -3px; }
+.stage-icon { display: grid; width: 26px; height: 26px; color: #16745e; background: #edf8f4; border: 1px solid #d4ebe3; border-radius: 6px; place-items: center; }
 .application-inventory-error { margin: 0 0 10px; }
 .workflow-config-form .dialog-actions { align-self: end; }
 .workflow-source-warning { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; color: #7a4a10; background: #fff8e8; border: 1px solid #ead5a9; border-radius: 7px; font-size: 10px; line-height: 1.45; }
@@ -1513,6 +1525,7 @@ code { font-family: var(--mono); }
 .topology-context > div { display: flex; align-items: center; min-width: 0; gap: 13px; color: var(--muted); font-size: 11px; }
 .topology-context code { overflow: hidden; max-width: 46vw; color: #4d5e6b; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .topology-context .primary-button { min-height: 34px; }
+.configuration-topology-context > small { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .topology-error { display: flex; align-items: center; gap: 8px; margin: 0; padding: 13px 14px; color: var(--red); background: var(--red-soft); border: 1px solid #e8b7bd; border-radius: 8px; font-size: 11px; }
 .topology-loading { display: grid; gap: 10px; padding-top: 12px; }
 .topology-loading span { height: 88px; background: linear-gradient(90deg,#e9edf0 0%,#f8fafb 45%,#e9edf0 90%); background-size: 200% 100%; border-radius: 9px; animation: loading 1.2s linear infinite; }
@@ -1552,7 +1565,7 @@ code { font-family: var(--mono); }
 .topology-name-tooltip { position: absolute; z-index: 5; top: calc(100% + 7px); left: 0; width: max-content; max-width: 280px; padding: 6px 8px; visibility: hidden; opacity: 0; color: #f4f7f9; background: #1f2b34; border-radius: 6px; box-shadow: 0 6px 18px rgba(20,35,48,.18); font: 10px/1.4 var(--mono); overflow-wrap: anywhere; pointer-events: none; transition: opacity .1s ease, visibility .1s ease; }
 .topology-card-copy:hover .topology-name-tooltip, .topology-card:focus-within .topology-name-tooltip, .topology-card:focus .topology-name-tooltip { visibility: visible; opacity: 1; }
 .topology-card.job .topology-card-icon, .topology-card.finally .topology-card-icon { color: #76561f; background: #fff7e9; border-color: #eedebd; }
-.topology-card.deployment .topology-card-icon { color: #6b4c92; background: #f5f0fb; border-color: #e2d7ef; }
+.topology-card.application .topology-card-icon, .topology-card.deployment .topology-card-icon { color: #6b4c92; background: #f5f0fb; border-color: #e2d7ef; }
 .topology-card.stage .topology-card-icon { color: #16745e; background: #edf8f4; border-color: #d4ebe3; }
 .topology-card dl { display: grid; gap: 5px; margin: 0; padding-top: 8px; border-top: 1px solid #edf0f2; }
 .topology-card dl > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 7px; }
@@ -1650,6 +1663,7 @@ code { font-family: var(--mono); }
   .topology-context { align-items: stretch; flex-direction: column; padding: 12px; }
   .topology-context > div { align-items: flex-start; flex-direction: column; gap: 6px; }
   .topology-context code { max-width: 100%; }
+  .configuration-topology-context > small { white-space: normal; }
   .topology-toolbar { align-items: flex-start; gap: 10px; padding-block: 10px; }
   .topology-toolbar dl { overflow-x: auto; max-width: calc(100% - 104px); padding-bottom: 3px; }
   .topology-viewport { min-height: 390px; padding: 14px; }
@@ -1667,9 +1681,11 @@ code { font-family: var(--mono); }
   .resource-table td.row-actions { display: flex; justify-content: flex-end; width: 100%; min-height: 44px; padding-top: 9px; border-top: 1px solid var(--rule); }
   .resource-table td.row-actions::before { display: none; }
   .configuration-source-row { padding-block: 8px; }
-  .configuration-source-toggle, .resource-name-button { width: 100%; min-height: 35px; margin: -5px 0; padding: 5px 0; }
+  .configuration-source-identity, .resource-identity { width: 100%; min-height: 42px; margin: -5px 0; padding: 3px 0; }
   .configuration-resource-row { width: calc(100% - 18px) !important; margin-left: 18px; }
-  .configuration-resource-row .resource-name-button { padding-left: 12px; }
+  .configuration-resource-row .resource-identity { padding-left: 0; }
+  .configuration-stage-row { width: calc(100% - 36px) !important; margin-left: 36px; }
+  .stage-name-button { width: 100%; min-height: 42px; margin: -5px 0; padding: 3px 0; }
   .row-actions button, .table-action { min-height: 40px; }
   .truncate-cell, .event-sources code, .event-sources small { white-space: normal; overflow-wrap: anywhere; }
   .empty-state { align-items: flex-start; flex-wrap: wrap; }

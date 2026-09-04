@@ -593,6 +593,7 @@ export default function DispatchApp() {
               overview={overview}
               section={route.applicationSection ?? "applications"}
               applicationID={route.applicationID}
+              configurationSourceID={route.configurationSourceID}
               creating={creatingApplication}
               onToggleCreate={() => setCreatingApplication((value) => !value)}
               onChanged={async () => {
@@ -614,6 +615,19 @@ export default function DispatchApp() {
                 navigateRoute({
                   view: "applications",
                   applicationID: resource.id,
+                })
+              }
+              onOpenConfigurationTopology={(source) =>
+                navigateRoute({
+                  view: "applications",
+                  configurationSourceID: source.id,
+                })
+              }
+              onOpenWorkflowStage={(applicationID, stageName) =>
+                navigateRoute({
+                  view: "deployments",
+                  deploymentApplicationID: applicationID,
+                  deploymentStage: stageName,
                 })
               }
               onOpenDeploymentManifests={(deploymentID) =>

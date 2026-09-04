@@ -168,6 +168,8 @@ describe("applications overview", () => {
 
   it("groups imported applications under their repository configuration", async () => {
     const user = userEvent.setup();
+    const onOpenConfigurationTopology = vi.fn();
+    const onOpenWorkflowStage = vi.fn();
     const configured: Overview = {
       ...overview,
       configSources: [{ id: "config-1", projectId: "project-1", githubAppId: "github-1", name: "Platform config", repository: "platform/deployments", branch: "main", path: ".dispatch", syncMode: "webhook_poll", pollIntervalSeconds: 300, active: true, state: "ready", createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" }],
@@ -178,11 +180,13 @@ describe("applications overview", () => {
       workflowRevisions: [],
       workflowStageRuns: [],
     };
-    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} onOpenConfigurationTopology={onOpenConfigurationTopology} onOpenWorkflowStage={onOpenWorkflowStage} />);
 
     expect(screen.getByText("Platform config")).not.toBeNull();
     expect(screen.getByText("2 applications")).not.toBeNull();
     expect(screen.getByText("Webhook + poll")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "View Platform config topology" }));
+    expect(onOpenConfigurationTopology).toHaveBeenCalledWith(configured.configSources![0]);
     expect(screen.queryByRole("button", { name: "Open checkout" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
     expect(screen.getByRole("button", { name: "Open worker" })).not.toBeNull();
@@ -194,6 +198,7 @@ describe("applications overview", () => {
     await user.click(screen.getByLabelText("Options for Platform config"));
     let menu = await screen.findByRole("menu");
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Topology",
       "Sync configuration",
       "Edit configuration",
       "Delete configuration",
@@ -204,13 +209,36 @@ describe("applications overview", () => {
     menu = await screen.findByRole("menu");
     expect(within(menu).queryByRole("menuitem", { name: "View" })).toBeNull();
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-      "Activate",
       "Topology",
+      "Activate",
     ]);
     await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Expand checkout stages" }));
+    await user.click(screen.getByRole("button", { name: "Open checkout Development stage" }));
+    expect(onOpenWorkflowStage).toHaveBeenCalledWith("workflow-1", "development");
     await user.click(name);
     expect(screen.getByRole("dialog", { name: "checkout" })).not.toBeNull();
     expect(screen.getByText("No runs.")).not.toBeNull();
+  });
+
+  it("shows a repository topology that drills into applications and stages", async () => {
+    const user = userEvent.setup();
+    const onOpenTopology = vi.fn();
+    const onOpenWorkflowStage = vi.fn();
+    const configured: Overview = {
+      ...overview,
+      configSources: [{ id: "config-1", projectId: "project-1", name: "Platform config", repository: "platform/deployments", branch: "main", path: "deployment", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" }],
+      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "checkout", path: "deployment/checkout.yaml", document: "", specDigest: "sha256:test", configSha: "abc123456789", active: true, state: "ready", sourceCount: 2, jobCount: 2, targetRefs: ["development"], stageNames: ["development"], createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" }],
+      workflowRevisions: [],
+      workflowStageRuns: [],
+    };
+    render(<ApplicationsPage overview={configured} section="applications" configurationSourceID="config-1" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} onOpenTopology={onOpenTopology} onOpenWorkflowStage={onOpenWorkflowStage} />);
+
+    expect(screen.getByLabelText("Platform config configuration topology")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Inspect application checkout" }));
+    expect(onOpenTopology).toHaveBeenCalledWith(configured.workflowResources![0]);
+    await user.click(screen.getByRole("button", { name: "Inspect stage Development" }));
+    expect(onOpenWorkflowStage).toHaveBeenCalledWith("workflow-1", "development");
   });
 
   it("shows a newly discovered application as pending activation", async () => {

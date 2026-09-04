@@ -1,5 +1,5 @@
 import { CSSProperties, KeyboardEvent, useCallback, useLayoutEffect, useRef, useState } from "react";
-import { Cloud, Cube, Database, FlagCheckered, GitBranch, HardDrives, Minus, Package, Plus, Stack, TerminalWindow } from "@phosphor-icons/react";
+import { AppWindow, Cloud, Cube, Database, FlagCheckered, GitBranch, HardDrives, Minus, Package, Plus, Stack, TerminalWindow } from "@phosphor-icons/react";
 import { WorkflowTopology, WorkflowTopologyNode } from "../api";
 
 type DrawnEdge = { id: string; path: string; from: string; to: string; kind: string };
@@ -69,7 +69,7 @@ export function TopologyCanvas({ topology, label = "Application topology", onNod
 }
 
 function TopologyCard({ node, owner, focused, onFocus, onSelect }: { node: WorkflowTopologyNode; owner?: WorkflowTopologyNode; focused: boolean; onFocus: (id: string) => void; onSelect?: (node: WorkflowTopologyNode) => void }) {
-  const Icon = node.kind === "source" ? GitBranch : node.kind === "deployment" || node.kind === "release" ? Package : node.kind === "stage" ? FlagCheckered : node.kind === "target" ? HardDrives : node.kind === "namespace" ? Stack : node.kind === "service" || node.kind === "route" || node.kind === "ingress" ? Cloud : node.kind === "pvc" ? Database : node.kind === "pod" || node.kind === "hpa" || node.kind === "statefulset" || node.kind === "daemonset" ? Cube : TerminalWindow;
+  const Icon = node.kind === "source" ? GitBranch : node.kind === "application" ? AppWindow : node.kind === "deployment" || node.kind === "release" ? Package : node.kind === "stage" ? FlagCheckered : node.kind === "target" ? HardDrives : node.kind === "namespace" ? Stack : node.kind === "service" || node.kind === "route" || node.kind === "ingress" ? Cloud : node.kind === "pvc" ? Database : node.kind === "pod" || node.kind === "hpa" || node.kind === "statefulset" || node.kind === "daemonset" ? Cube : TerminalWindow;
   const metadata = Object.entries(node.metadata ?? {});
   const compactLabel = topologyDisplayLabel(node, owner);
   const body = <><div className="topology-card-main"><span className="topology-card-icon"><Icon size={17} /></span><span className="topology-card-copy"><strong aria-label={node.label}>{compactLabel}</strong>{compactLabel !== node.label && <span className="topology-name-tooltip" role="tooltip">{node.label}</span>}{node.detail && <small title={node.detail}>{node.detail}</small>}</span>{node.state && <em className={`topology-node-state ${node.state.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{node.state}</em>}</div>

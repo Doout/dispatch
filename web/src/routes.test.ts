@@ -19,6 +19,7 @@ describe("application routes", () => {
       routePath({ view: "applications", applicationSection: "templates" }),
       routePath({ view: "applications", applicationSection: "helm" }),
       routePath({ view: "applications", applicationSection: "groups" }),
+      routePath({ view: "applications", configurationSourceID: "configuration/one" }),
       routePath({ view: "applications", applicationID: "resource/one" }),
       routePath({ view: "events", eventSection: "activity" }),
     ];
@@ -28,6 +29,7 @@ describe("application routes", () => {
       "/applications/templates",
       "/applications/helm-sources",
       "/applications/preview-groups",
+      "/applications/configurations/configuration%2Fone/topology",
       "/applications/resource%2Fone/topology",
       "/events/activity",
     ]);
@@ -37,6 +39,7 @@ describe("application routes", () => {
       { view: "applications", applicationSection: "templates" },
       { view: "applications", applicationSection: "helm" },
       { view: "applications", applicationSection: "groups" },
+      { view: "applications", configurationSourceID: "configuration/one" },
       { view: "applications", applicationID: "resource/one" },
       { view: "events", eventSection: "activity" },
     ]);
