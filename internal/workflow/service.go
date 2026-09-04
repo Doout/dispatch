@@ -140,11 +140,15 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 		identity := resourceIdentity(value.path, value.document.Kind, value.document.Metadata.Name)
 		item, found := byIdentity[identity]
 		if !found {
-			item = core.WorkflowResource{ID: ulid.Make().String(), ConfigSourceID: source.ID, CreatedAt: now, Active: false}
+			item = core.WorkflowResource{ID: ulid.Make().String(), ConfigSourceID: source.ID, CreatedAt: now, Active: false, State: "pending"}
+		} else if item.Active {
+			item.State = "ready"
+		} else if item.State != "paused" {
+			item.State = "pending"
 		}
 		item.APIVersion, item.Kind, item.Name, item.Path = value.document.APIVersion, value.document.Kind, value.document.Metadata.Name, value.path
 		item.Document, item.SpecDigest, item.ConfigSHA = string(contents), digest, head
-		item.State, item.LastError, item.UpdatedAt = "ready", "", now
+		item.LastError, item.UpdatedAt = "", now
 		desired = append(desired, item)
 	}
 	source.LastSeenSHA, source.LastSyncedAt, source.UpdatedAt = head, &now, now

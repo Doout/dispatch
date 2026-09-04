@@ -114,8 +114,12 @@ spec:
 	if err != nil || len(resources) != 1 {
 		t.Fatalf("unexpected initial resources: %#v err=%v", resources, err)
 	}
+	if resources[0].Active || resources[0].State != "pending" {
+		t.Fatalf("new resource was not pending activation: %#v", resources[0])
+	}
 	initialDigest := resources[0].SpecDigest
 	resources[0].Active = true
+	resources[0].State = "ready"
 	if err := data.UpdateWorkflowResource(ctx, resources[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +138,17 @@ spec:
 	resources, err = data.ListWorkflowResources(ctx, source.ID)
 	if err != nil || len(resources) != 1 || resources[0].SpecDigest == initialDigest || !resources[0].Active {
 		t.Fatalf("valid update was not reconciled: %#v err=%v", resources, err)
+	}
+	if _, err := service.Deactivate(ctx, resources[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	version.Store(4)
+	if _, err := service.SyncSource(ctx, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	resources, err = data.ListWorkflowResources(ctx, source.ID)
+	if err != nil || len(resources) != 1 || resources[0].Active || resources[0].State != "paused" {
+		t.Fatalf("repository sync did not preserve the explicit pause: %#v err=%v", resources, err)
 	}
 }
 

@@ -183,12 +183,31 @@ describe("applications overview", () => {
     await user.click(screen.getByLabelText("Options for checkout"));
     const menu = await screen.findByRole("menu");
     expect(within(menu).queryByRole("menuitem", { name: "View" })).toBeNull();
-    expect(within(menu).getByRole("menuitem", { name: "Sync configuration" })).not.toBeNull();
-    expect(within(menu).getByRole("menuitem", { name: "Edit configuration" })).not.toBeNull();
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Activate",
+      "Topology",
+      "Sync configuration",
+      "Edit configuration",
+      "Delete configuration",
+    ]);
     await user.keyboard("{Escape}");
     await user.click(name);
     expect(screen.getByRole("dialog", { name: "checkout" })).not.toBeNull();
     expect(screen.getByText("No runs.")).not.toBeNull();
+  });
+
+  it("shows a newly discovered application as pending activation", () => {
+    const configured: Overview = {
+      ...overview,
+      configSources: [{ id: "config-1", projectId: "project-1", githubAppId: "github-1", name: "Platform config", repository: "platform/deployments", branch: "main", path: "deployment", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" }],
+      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "checkout", path: "deployment/checkout.yaml", document: "apiVersion: dispatch/v1alpha1\nkind: Application\n", specDigest: "sha256:test", configSha: "abc123", active: false, state: "pending", sourceCount: 2, jobCount: 2, targetRefs: ["development"], stageNames: ["development"], createdAt: "2026-08-27T01:00:00Z", updatedAt: "2026-08-27T01:00:00Z" }],
+      workflowRevisions: [],
+      workflowStageRuns: [],
+    };
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+
+    expect(screen.getByText("pending activation")).not.toBeNull();
+    expect(screen.queryByText("paused")).toBeNull();
   });
 
   it("opens an imported application by double-clicking its row", async () => {

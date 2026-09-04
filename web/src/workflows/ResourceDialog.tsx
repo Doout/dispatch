@@ -4,6 +4,7 @@ import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun } 
 import { relative } from "../presentation";
 import { useDialogFocus } from "../useDialogFocus";
 import { canManageProject } from "../permissions";
+import { workflowResourceStatus, workflowResourceStatusLabel } from "./status";
 
 export function WorkflowResourceDialog({ resource, overview, onClose, onChanged, onOpenDeploymentManifests }: { resource: WorkflowResource; overview: Overview; onClose: () => void; onChanged: () => Promise<void>; onOpenDeploymentManifests: (deploymentID: string) => void }) {
   const dialogRef = useDialogFocus(onClose);
@@ -22,6 +23,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const canRun = Boolean(source && canManageProject(overview, source.projectId, "deployment.run"));
   const canApprove = Boolean(source && canManageProject(overview, source.projectId, "stage.approve"));
   const selectedJob = jobs.find((job) => job.id === selectedJobID) ?? jobs[0];
+  const resourceStatus = workflowResourceStatus(resource, revisions[0]?.state);
 
   useEffect(() => {
     let active = true;
@@ -81,10 +83,10 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     <section ref={dialogRef} className="resource-dialog workflow-resource-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-resource-title">
       <header><div><h2 id="workflow-resource-title">{resource.name}</h2><p>{resource.kind} from {resource.path}</p></div><button data-autofocus aria-label="Close workflow details" onClick={onClose}><X size={19} weight="bold" /></button></header>
       <div className="dialog-body workflow-resource-body">
-        <div className="workflow-resource-toolbar"><span className={`status-label ${resource.active ? resource.state : "disabled"}`}><i />{resource.active ? resource.state : "paused"}</span>{(canRun || canConfigure) && <div>{canRun && resource.active && resource.kind === "Application" && <button className="quiet-button" disabled={busy} onClick={() => void action("run")}><RocketLaunch size={15} />Run</button>}{canConfigure && <button className="quiet-button" disabled={busy} onClick={() => void action(resource.active ? "pause" : "activate")}>{resource.active ? "Pause" : "Activate"}</button>}</div>}</div>
+        <div className="workflow-resource-toolbar"><span className={`status-label ${resourceStatus}`}><i />{workflowResourceStatusLabel(resourceStatus)}</span>{(canRun || canConfigure) && <div>{canRun && resource.active && resource.kind === "Application" && <button className="quiet-button" disabled={busy} onClick={() => void action("run")}><RocketLaunch size={15} />Run</button>}{canConfigure && <button className="quiet-button" disabled={busy} onClick={() => void action(resource.active ? "pause" : "activate")}>{resource.active ? "Pause" : "Activate"}</button>}</div>}</div>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="workflow-resource-columns">
-          <section><div className="workflow-section-heading"><h3>Configuration</h3><span>{resource.apiVersion}</span></div>{resource.kind === "Application" && <div className="workflow-managed-guide"><strong>Add another managed deployment</strong><span>Add it under <code>spec.deployments</code>, include its name in <code>stages[].deploy</code>, then commit this file. The next poll imports it.</span></div>}<pre className="workflow-document">{resource.document}</pre></section>
+          <section><div className="workflow-section-heading"><h3>Configuration</h3><span>{resource.apiVersion}</span></div>{resource.kind === "Application" && <div className="workflow-managed-guide"><strong>Add another application</strong><span>Add another YAML file under <code>{source?.path || "the watched path"}</code>. The next sync adds it as a separate row pending activation.</span></div>}<pre className="workflow-document">{resource.document}</pre></section>
           <section><div className="workflow-section-heading"><h3>Runs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setRevisionID(event.target.value)}>{revisions.map((item) => <option key={item.id} value={item.id}>{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
             {!revision && <p className="workflow-empty-note">No runs.</p>}
             {revision && <><dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>{revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}

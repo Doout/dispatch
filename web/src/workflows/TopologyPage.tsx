@@ -3,11 +3,13 @@ import { ArrowLeft, RocketLaunch, WarningCircle } from "@phosphor-icons/react";
 import { api, ConfigSource, WorkflowResource, WorkflowTopology } from "../api";
 import { PageHeader } from "../PageHeader";
 import { TopologyCanvas } from "./TopologyCanvas";
+import { workflowResourceStatus, workflowResourceStatusLabel } from "./status";
 
 export function WorkflowTopologyPage({ resource, source, canRun = true, onBack, onRun }: { resource: WorkflowResource; source?: ConfigSource; canRun?: boolean; onBack: () => void; onRun: () => Promise<void> }) {
   const [topology, setTopology] = useState<WorkflowTopology | null>(null);
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
+  const resourceStatus = workflowResourceStatus(resource);
 
   useEffect(() => {
     let active = true;
@@ -26,7 +28,7 @@ export function WorkflowTopologyPage({ resource, source, canRun = true, onBack, 
   return <div className="page-layout topology-page">
     <PageHeader view="applications" title={resource.name} action={{ label: "Back", onClick: onBack, icon: <ArrowLeft size={16} />, tone: "quiet" }} />
     <div className="topology-context">
-      <div><span className={`status-label ${resource.active ? resource.state : "paused"}`}><i />{resource.active ? resource.state : "paused"}</span><span>{source?.name ?? "Repository configuration"}</span><code>{resource.path}</code></div>
+      <div><span className={`status-label ${resourceStatus}`}><i />{workflowResourceStatusLabel(resourceStatus)}</span><span>{source?.name ?? "Repository configuration"}</span><code>{resource.path}</code></div>
       {canRun && resource.active && resource.kind === "Application" && <button className="primary-button" disabled={running} onClick={() => void run()}><RocketLaunch size={15} />{running ? "Starting" : "Run"}</button>}
     </div>
     {error && <p className="topology-error" role="alert"><WarningCircle size={16} weight="fill" />{error}</p>}

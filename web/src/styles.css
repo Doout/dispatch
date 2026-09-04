@@ -407,6 +407,7 @@ code { font-family: var(--mono); }
 .status-label.ready, .status-label.connected, .status-label.succeeded, .status-label.enabled { color: var(--green); }
 .status-label.failed, .status-label.degraded { color: var(--red); }
 .status-label.closed, .status-label.disabled, .status-label.cancelled, .status-label.paused { color: var(--muted); }
+.status-label.pending, .status-label.pending_activation { color: var(--amber); }
 .status-label.connecting, .status-label.deploying, .status-label.requested, .status-label.rolling_back, .status-label.cleaning, .status-label.building, .status-label.running, .status-label.queued, .status-label.syncing { color: var(--blue); }
 .resource-table th.actions-head, .row-actions { width: 96px; }
 .server-table th.actions-head, .server-table .row-actions { width: 132px; }
