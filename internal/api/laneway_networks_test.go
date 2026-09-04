@@ -230,6 +230,64 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	}
 }
 
+func TestLanewayApplicationRegistrationReportsUnsupportedServer(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lanewayServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/application-registrations/exchange" {
+			t.Fatalf("unexpected Laneway request %s %s", r.Method, r.URL.String())
+		}
+		http.NotFound(w, r)
+	}))
+	defer lanewayServer.Close()
+
+	previousTransport := http.DefaultTransport
+	http.DefaultTransport = lanewayServer.Client().Transport
+	defer func() { http.DefaultTransport = previousTransport }()
+
+	handler, cleanup := newLanewayTestHandler(t, filepath.Join(t.TempDir(), "dispatch.db"), vault)
+	defer cleanup()
+
+	response := httptest.NewRecorder()
+	body := `{"name":"Private services","authority":"` + lanewayServer.URL + `"}`
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/laneway-networks/authorize", strings.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("start Laneway authorization: %d %s", response.Code, response.Body.String())
+	}
+	var start lanewayAuthorizationStart
+	if err := json.NewDecoder(response.Body).Decode(&start); err != nil {
+		t.Fatal(err)
+	}
+
+	response = httptest.NewRecorder()
+	callback := "/api/v1/laneway-applications/setup?state=" + url.QueryEscape(start.Fields["state"]) + "&code=registration-code"
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, callback, nil))
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("complete Laneway application registration: %d %s", response.Code, response.Body.String())
+	}
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "This Laneway server does not support application registration. Upgrade Laneway, then start the connection again."
+	if location.Query().Get("lanewayStatus") != "error" || location.Query().Get("detail") != want {
+		t.Fatalf("unexpected callback redirect: %s", location.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/private-networks", nil))
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != "[]" {
+		t.Fatalf("unsupported server saved a network: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func newLanewayTestHandler(t *testing.T, databasePath string, vault *secretcrypto.Vault) (http.Handler, func()) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

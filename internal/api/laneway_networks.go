@@ -151,11 +151,17 @@ func (a *API) completeLanewayApplicationRegistration(w http.ResponseWriter, r *h
 		a.redirectLanewayStatus(w, r, "error", "Laneway application registration was not approved.")
 		return
 	}
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	if code == "" {
+		a.redirectLanewayStatus(w, r, "error", "Laneway did not return an application registration code.")
+		return
+	}
 	registration, err := (laneway.Client{Authority: pending.Authority}).ExchangeApplicationRegistration(r.Context(), laneway.ApplicationRegistrationRequest{
-		Code: strings.TrimSpace(r.URL.Query().Get("code")), CodeVerifier: pending.CodeVerifier,
+		Code: code, CodeVerifier: pending.CodeVerifier,
 	})
 	if err != nil {
-		a.redirectLanewayStatus(w, r, "error", "Laneway could not complete application registration.")
+		a.logger.Warn("Laneway application registration failed", "authority", pending.Authority, "error", err)
+		a.redirectLanewayStatus(w, r, "error", lanewayApplicationRegistrationFailure(err))
 		return
 	}
 	now := time.Now().UTC()
@@ -209,6 +215,7 @@ func (a *API) completeLanewayAuthorization(w http.ResponseWriter, r *http.Reques
 	}
 	response, err := (laneway.Client{Authority: pending.Authority}).ExchangeOAuthCode(r.Context(), application.ClientID, clientSecret, laneway.OAuthTokenRequest{Code: code, CodeVerifier: pending.CodeVerifier, RedirectURI: pending.RedirectURI})
 	if err != nil {
+		a.logger.Warn("Laneway network authorization failed", "authority", pending.Authority, "application_id", application.ID, "error", err)
 		a.redirectLanewayStatus(w, r, "error", "Laneway could not complete network authorization.")
 		return
 	}
@@ -263,6 +270,14 @@ func (a *API) completeLanewayAuthorization(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	a.redirectLanewayStatus(w, r, "connected", "")
+}
+
+func lanewayApplicationRegistrationFailure(err error) string {
+	var responseError *laneway.HTTPError
+	if errors.As(err, &responseError) && (responseError.StatusCode == http.StatusNotFound || responseError.StatusCode == http.StatusMethodNotAllowed) {
+		return "This Laneway server does not support application registration. Upgrade Laneway, then start the connection again."
+	}
+	return "Laneway could not complete application registration. Start the connection again."
 }
 
 func (a *API) beginLanewayNetworkInstallation(ctx context.Context, name string, application core.LanewayApplication) (lanewayAuthorizationStart, error) {
