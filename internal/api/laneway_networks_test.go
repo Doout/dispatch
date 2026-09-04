@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/laneway"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -285,6 +287,32 @@ func TestLanewayApplicationRegistrationReportsUnsupportedServer(t *testing.T) {
 	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/private-networks", nil))
 	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != "[]" {
 		t.Fatalf("unsupported server saved a network: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestLanewayNetworkAuthorizationFailureReportsUpstreamStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "upstream HTTP status",
+			err:  &laneway.HTTPError{StatusCode: http.StatusBadGateway, Message: "internal upstream detail"},
+			want: "Laneway could not complete network authorization (502 Bad Gateway). Start the connection again.",
+		},
+		{
+			name: "transport failure",
+			err:  errors.New("connection reset"),
+			want: "Laneway could not complete network authorization. Start the connection again.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := lanewayNetworkAuthorizationFailure(test.err); got != test.want {
+				t.Fatalf("failure message = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

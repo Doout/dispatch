@@ -216,7 +216,7 @@ func (a *API) completeLanewayAuthorization(w http.ResponseWriter, r *http.Reques
 	response, err := (laneway.Client{Authority: pending.Authority}).ExchangeOAuthCode(r.Context(), application.ClientID, clientSecret, laneway.OAuthTokenRequest{Code: code, CodeVerifier: pending.CodeVerifier, RedirectURI: pending.RedirectURI})
 	if err != nil {
 		a.logger.Warn("Laneway network authorization failed", "authority", pending.Authority, "application_id", application.ID, "error", err)
-		a.redirectLanewayStatus(w, r, "error", "Laneway could not complete network authorization.")
+		a.redirectLanewayStatus(w, r, "error", lanewayNetworkAuthorizationFailure(err))
 		return
 	}
 	if response.Installation.ID == "" || response.Installation.Network.ID == "" || response.Installation.ApplicationID != application.RemoteApplicationID {
@@ -278,6 +278,18 @@ func lanewayApplicationRegistrationFailure(err error) string {
 		return "This Laneway server does not support application registration. Upgrade Laneway, then start the connection again."
 	}
 	return "Laneway could not complete application registration. Start the connection again."
+}
+
+func lanewayNetworkAuthorizationFailure(err error) string {
+	var responseError *laneway.HTTPError
+	if errors.As(err, &responseError) {
+		status := strconv.Itoa(responseError.StatusCode)
+		if text := http.StatusText(responseError.StatusCode); text != "" {
+			status += " " + text
+		}
+		return "Laneway could not complete network authorization (" + status + "). Start the connection again."
+	}
+	return "Laneway could not complete network authorization. Start the connection again."
 }
 
 func (a *API) beginLanewayNetworkInstallation(ctx context.Context, name string, application core.LanewayApplication) (lanewayAuthorizationStart, error) {

@@ -86,6 +86,41 @@ func TestApplicationRegistrationAndOAuthTokenExchange(t *testing.T) {
 	}
 }
 
+func TestOAuthCodeExchangeRetriesGatewayFailures(t *testing.T) {
+	attempts := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"access","token_type":"Bearer","installation":{"installation_id":"install-1","application_id":"app-1","network":{"network_id":"network-1","name":"Production"}}}`)
+	}))
+	defer server.Close()
+
+	response, err := (Client{Authority: server.URL, HTTPClient: server.Client()}).ExchangeOAuthCode(context.Background(), "client", "secret", OAuthTokenRequest{Code: "code", CodeVerifier: "verifier", RedirectURI: "https://client.example.com/callback"})
+	if err != nil || attempts != 3 || response.Installation.Network.ID != "network-1" {
+		t.Fatalf("exchange after gateway failures: attempts=%d response=%#v err=%v", attempts, response, err)
+	}
+}
+
+func TestOAuthCodeExchangeDoesNotRetryAuthorizationErrors(t *testing.T) {
+	attempts := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":"invalid_client","error_description":"client authentication failed"}`)
+	}))
+	defer server.Close()
+
+	_, err := (Client{Authority: server.URL, HTTPClient: server.Client()}).ExchangeOAuthCode(context.Background(), "client", "secret", OAuthTokenRequest{Code: "code", CodeVerifier: "verifier", RedirectURI: "https://client.example.com/callback"})
+	if err == nil || attempts != 1 {
+		t.Fatalf("authorization error attempts=%d err=%v", attempts, err)
+	}
+}
+
 func TestTokenRequestsDoNotFollowRedirects(t *testing.T) {
 	redirectTargetCalled := false
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

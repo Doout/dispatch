@@ -223,7 +223,42 @@ func (c Client) ExchangeOAuthCode(ctx context.Context, clientID, clientSecret st
 		"code_verifier": {request.CodeVerifier},
 		"redirect_uri":  {request.RedirectURI},
 	}
-	return c.oauthToken(ctx, clientID, clientSecret, values)
+	var firstErr error
+	for attempt, delay := range []time.Duration{0, 250 * time.Millisecond, time.Second} {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return OAuthTokenResponse{}, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		response, err := c.oauthToken(ctx, clientID, clientSecret, values)
+		if err == nil {
+			return response, nil
+		}
+		if !retryableOAuthExchangeError(err) {
+			return response, err
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		if attempt == 2 {
+			return response, firstErr
+		}
+	}
+	return OAuthTokenResponse{}, firstErr
+}
+
+func retryableOAuthExchangeError(err error) bool {
+	var responseError *HTTPError
+	if !errors.As(err, &responseError) {
+		return false
+	}
+	return responseError.StatusCode == http.StatusBadGateway ||
+		responseError.StatusCode == http.StatusServiceUnavailable ||
+		responseError.StatusCode == http.StatusGatewayTimeout
 }
 
 func (c Client) RefreshOAuthToken(ctx context.Context, clientID, clientSecret, refreshToken string) (OAuthTokenResponse, error) {
