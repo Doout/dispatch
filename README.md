@@ -2,7 +2,7 @@
 
 Dispatch is a self-hosted deployment controller for private infrastructure. It connects repositories to Docker, Kubernetes, and OpenShift targets. The controller stores each deployment revision, configuration snapshot, log, output, and runtime resource.
 
-> Dispatch is under active development. Keep the controller and its agents behind trusted network boundaries.
+> Dispatch is under active development. Keep the controller and its agents on a trusted network.
 
 ## Current support
 
@@ -33,7 +33,7 @@ sudo dispatch auto-upgrade enable  # Optional daily checks
 
 Upgrades preserve configuration and back up the controller data before replacing its container. An unhealthy replacement restores the previous image and data. Automatic upgrades are disabled by default.
 
-See [installation](docs/installation.md) for CLI downloads, building before the first release, configuration, recovery, and release publishing.
+See [installation](docs/installation.md) for CLI downloads, configuration, recovery, and building from source.
 
 ## Run with Compose
 
@@ -68,11 +68,11 @@ Helm operations use the Go SDK. The controller does not require a `helm` binary.
 
 ## Repository configuration
 
-Dispatch imports `dispatch/v1alpha1` YAML or JSON from a GitHub repository. One Application can watch several repositories. A source change reruns only the jobs that declare that source. Dispatch reuses a prior job result when its fingerprint matches and all declared outputs exist.
+Dispatch imports `dispatch/v1alpha1` YAML or JSON from a GitHub repository. One Application can watch several repositories. A source change reruns only the jobs that declare that source. Applications in the same repository configuration can share a build when their declared inputs match and every required output is available.
 
 Each run resolves source branches to exact commits before any job starts. Promotion stages deploy that same revision and its saved outputs to each target in order.
 
-Add a GitHub configuration from **Applications > Add > GitHub configuration**. Imports start paused. Polling works without a public controller URL. Webhooks can start the same sync sooner.
+Add a GitHub configuration from **Applications > Add > GitHub configuration**. Applications deploy automatically after a valid import. Paused applications stay paused. Polling works without a public controller URL. Webhooks can start the same sync sooner.
 
 See [repository configuration](docs/application-config.md) for the schema and a promotion example.
 
@@ -96,7 +96,7 @@ secrets:
     secretRef: registry-password
 ```
 
-Dispatch resolves each value for the child process. It does not include secret values in job logs or outputs.
+Dispatch passes resolved secrets to the job process. Job scripts can print those values or write them to outputs, so review scripts before granting credentials. Avoid shell tracing such as `set -x` in jobs that use secrets.
 
 ## GitHub events
 
@@ -194,7 +194,7 @@ The managed OpenShift credential has cluster-wide privileges. Protect Dispatch s
 
 ## Development
 
-Requirements are Go 1.26 or newer, Node.js 22 or newer, Corepack, and Docker for executor tests.
+Use Go 1.27.1 or newer, Node.js 22, Corepack, and Docker for executor tests.
 
 ```sh
 make web
@@ -204,15 +204,17 @@ go run ./cmd/dispatch
 
 Use `make check` for the race detector, `go vet`, TypeScript checks, and frontend tests. Use `make dev` to build the web application and start Dispatch with demo records.
 
-## More documents
+## Documentation
 
-- [Architecture and invariants](docs/architecture.md)
+- [Architecture](docs/architecture.md)
 - [Repository configuration](docs/application-config.md)
-- [OpenAPI contract](docs/openapi.yaml)
+- [API reference](docs/openapi.yaml)
 - [Provider API](docs/provider-api.md)
 - [Private routes](docs/private-networks.md)
 - [Roadmap](docs/roadmap.md)
 
 Database migrations are ordered SQL files under `internal/store/migrations`.
+
+See [contributing](CONTRIBUTING.md) for development and review guidance, and [security](SECURITY.md) for the trust model and vulnerability reporting.
 
 Dispatch uses Apache License 2.0. Keep private provider code and credentials outside this repository.

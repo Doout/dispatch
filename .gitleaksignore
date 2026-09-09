@@ -1,0 +1,4 @@
+# Deterministic tokens used only by local httptest fixtures.
+6d9428d0cd0ad113a1093f94e2bc889265b4e97a:internal/api/laneway_networks_test.go:generic-api-key:41
+b4216978f91fa47ecfc175f0f46eb78910d7584c:internal/api/relay_install_test.go:generic-api-key:79
+b4216978f91fa47ecfc175f0f46eb78910d7584c:internal/api/relay_install_test.go:generic-api-key:131

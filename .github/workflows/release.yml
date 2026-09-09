@@ -47,11 +47,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web audit --prod --audit-level high
       - run: pnpm --dir web test --maxWorkers=2
       - run: pnpm --dir web build
       - run: go test -race -p 2 ./...
       - run: sh scripts/install_test.sh
       - run: go vet ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - name: Build release binaries once
         run: sh scripts/build-release.sh "$GITHUB_REF_NAME"
       - uses: docker/setup-qemu-action@v3

@@ -130,13 +130,13 @@ describe("deployment navigation", () => {
       ...overview,
       apps: [{ ...deployment.app!, generated: true }],
       deployments: [developmentDeployment, stagingDeployment],
-      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "checkout", path: "deployment/checkout.yaml", document: "", specDigest: "sha256:workflow", configSha: "config-current", active: true, state: "ready", sourceCount: 2, jobCount: 2, stageNames: ["development", "staging", "production"], targetRefs: ["dev-005", "staging", "production"], createdAt: "2026-08-18T09:00:00Z", updatedAt: "2026-08-18T12:00:00Z" }],
+      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "checkout", path: "deployment/checkout.yaml", document: "", specDigest: "sha256:workflow", configSha: "config-current", active: true, state: "ready", sourceCount: 2, jobCount: 2, stageNames: ["development", "staging", "production"], targetRefs: ["development-cluster", "staging", "production"], createdAt: "2026-08-18T09:00:00Z", updatedAt: "2026-08-18T12:00:00Z" }],
       workflowRevisions: [
         { id: "revision-current", resourceId: "workflow-1", configSha: "config-current", specDigest: "sha256:current", state: "succeeded", trigger: "poll", sources: { service: { alias: "service", repository: "service", branch: "main", commitSha: "current123456789" }, ui: { alias: "ui", repository: "ui", branch: "main", commitSha: "ui-current123456" } }, createdAt: "2026-08-18T12:00:00Z" },
         { id: "revision-older", resourceId: "workflow-1", configSha: "config-older", specDigest: "sha256:older", state: "succeeded", trigger: "poll", sources: { service: { alias: "service", repository: "service", branch: "main", commitSha: "older123456789" }, ui: { alias: "ui", repository: "ui", branch: "main", commitSha: "ui-older123456" } }, createdAt: "2026-08-18T10:00:00Z" },
       ],
       workflowStageRuns: [
-        { id: "stage-development", revisionId: "revision-current", stageName: "development", targetRef: "dev-005", state: "succeeded", approval: "automatic", deploymentIds: ["development-deployment"], createdAt: "2026-08-18T12:00:00Z", finishedAt: "2026-08-18T12:01:00Z" },
+        { id: "stage-development", revisionId: "revision-current", stageName: "development", targetRef: "development-cluster", state: "succeeded", approval: "automatic", deploymentIds: ["development-deployment"], createdAt: "2026-08-18T12:00:00Z", finishedAt: "2026-08-18T12:01:00Z" },
         { id: "stage-staging", revisionId: "revision-older", stageName: "staging", targetRef: "staging", state: "succeeded", approval: "manual", deploymentIds: ["staging-deployment"], createdAt: "2026-08-18T10:00:00Z", finishedAt: "2026-08-18T10:01:00Z" },
         { id: "stage-production", revisionId: "revision-current", stageName: "production", targetRef: "production", state: "awaiting_approval", approval: "manual", createdAt: "2026-08-18T12:02:00Z" },
       ],
@@ -144,7 +144,7 @@ describe("deployment navigation", () => {
     render(<DeploymentList data={data} onSelectStage={onSelectStage} />);
 
     await user.click(screen.getByRole("button", { name: "Expand checkout deployment" }));
-    expect(screen.getByRole("button", { name: /Development, Ready, target dev-005/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Development, Ready, target development-cluster/ })).not.toBeNull();
     expect(screen.getByRole("button", { name: /Production, Awaiting approval/ }).getAttribute("aria-pressed")).toBe("true");
     await user.click(screen.getByRole("button", { name: /Staging, Ready/ }));
     expect(onSelectStage).toHaveBeenCalledWith("workflow-1", "staging");
@@ -155,12 +155,12 @@ describe("deployment navigation", () => {
   it.each([['running', 'Building'], ['failed', 'Failed']])("shows a %s workflow before its deployment stage exists", (state, label) => {
     const data: Overview = {
       ...overview, apps: [], deployments: [],
-      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "slot3", path: "slot3.yaml", document: "", specDigest: "digest", configSha: "config", active: true, state: "ready", sourceCount: 1, jobCount: 2, stageNames: ["development"], targetRefs: ["dev-005"], createdAt: "2026-09-09T12:00:00Z", updatedAt: "2026-09-09T12:00:00Z" }],
+      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "slot3", path: "slot3.yaml", document: "", specDigest: "digest", configSha: "config", active: true, state: "ready", sourceCount: 1, jobCount: 2, stageNames: ["development"], targetRefs: ["development-cluster"], createdAt: "2026-09-09T12:00:00Z", updatedAt: "2026-09-09T12:00:00Z" }],
       workflowRevisions: [{ id: "revision", resourceId: "workflow-1", configSha: "config", specDigest: "digest", state, trigger: "configuration sync", sources: {}, error: state === "failed" ? "Build script exited with code 1" : undefined, createdAt: "2026-09-09T12:00:00Z" }],
       workflowStageRuns: [],
     };
     render(<DeploymentList data={data} selectedApplicationID="workflow-1" selectedStageName="development" />);
-    expect(screen.getByRole("button", { name: new RegExp(`Development, ${label}, target dev-005`) })).not.toBeNull();
+    expect(screen.getByRole("button", { name: new RegExp(`Development, ${label}, target development-cluster`) })).not.toBeNull();
     if (state === "failed") expect(screen.getByText("Build script exited with code 1")).not.toBeNull();
   });
 

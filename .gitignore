@@ -1,5 +1,10 @@
 /dispatch
 /dispatch-agent
+/dispatch-relay
+/repository-cache/
+/relay.db
+/relay.db-shm
+/relay.db-wal
 /dispatch.db
 /dispatch.db-shm
 /dispatch.db-wal

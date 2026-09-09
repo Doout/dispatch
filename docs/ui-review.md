@@ -18,5 +18,3 @@ The console uses a graphite navigation rail, signal blue selection, self-hosted 
 Browser review uses an isolated demonstration controller and synthetic access and secret records. Production credentials and stored secrets are not used in screenshots. The route sweep covers 19 URLs at 1440px, 390px, and 320px, with additional form and populated-table checks. Provider authorization and deployment mutations are not submitted during visual review.
 
 The frontend test suite includes a regression for null topology edges. The production build embeds the frontend and licensed font in the Go controller image.
-
-The final writing pass removes decorative page categories, repetitive introductory descriptions, and redundant labels in the rollout overview. Counts, resource names, states, and actions carry the hierarchy.

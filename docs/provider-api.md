@@ -1,6 +1,6 @@
 # Provider API v1
 
-Private infrastructure adapters run outside the Dispatch controller. An adapter exposes an HTTP and JSON contract. Dispatch stores its base URL and bearer-secret reference.
+Private infrastructure adapters run outside the Dispatch controller. An adapter exposes an HTTP API that accepts and returns JSON. Dispatch stores its base URL and bearer-secret reference.
 
 ## Endpoints
 

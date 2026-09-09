@@ -6,6 +6,9 @@ node_modules
 web/*.tsbuildinfo
 dispatch
 dispatch-agent
+dispatch-relay
+repository-cache
+relay.db*
 dispatch.db*
 data
 kubeconfigs

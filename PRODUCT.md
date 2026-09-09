@@ -22,7 +22,7 @@ A working deployment path lets an operator:
 4. Reuse the same revision when promoting it to another stage.
 5. Diagnose a failed release without bypassing Dispatch.
 
-## Boundaries
+## Scope
 
 - The controller ships as one Go service with an embedded React application.
 - SQLite is the default store. PostgreSQL is supported.
@@ -35,7 +35,7 @@ A working deployment path lets an operator:
 ## Product rules
 
 1. Show the source, target, state, and result of every deployment.
-2. Keep deployment evidence after a failure.
+2. Keep deployment logs and results after a failure.
 3. Require an explicit action for privileged or destructive work.
 4. Do not fall back to a more privileged execution path.
 5. Keep provider credentials scoped to the connection that uses them.

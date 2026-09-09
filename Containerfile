@@ -1,11 +1,11 @@
-FROM --platform=$BUILDPLATFORM node:22.13-alpine AS web
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN npm install --global pnpm@11.18.0 && pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG DISPATCH_VERSION=development
@@ -26,6 +26,7 @@ FROM docker:cli AS runtime
 RUN apk add --no-cache bash ca-certificates git openssh-client poetry && \
     addgroup -S -g 65532 dispatch && \
     adduser -S -D -H -u 65532 -G dispatch dispatch
+COPY LICENSE web/public/fonts/OFL-Manrope.txt /usr/share/licenses/dispatch/
 USER dispatch:dispatch
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/dispatch"]

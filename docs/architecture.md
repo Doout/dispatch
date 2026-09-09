@@ -11,7 +11,7 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 
 ## Trust boundaries
 
-- The browser receives inventory and write-only secret metadata, never secret values.
+- Secret APIs return metadata rather than stored credential values. Deployment logs and outputs contain data written by job scripts; scripts must not print credentials.
 - The controller holds encrypted integration material and issues scoped work to agents.
 - The API checks controller roles and project grants. Hiding an action in the web interface is not an authorization check.
 - A linked external identity authenticates the same Dispatch user. Linking accounts does not merge permissions at sign-in time.
@@ -24,7 +24,7 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Runtime drivers expose typed operations; there is no public arbitrary-command endpoint.
 - OpenShift login text is parsed as data. The controller never invokes a shell or the `oc` binary and never stores the temporary human credential.
 
-## Deployment invariants
+## Deployments
 
 - A deployment binds an immutable source revision to an immutable app-spec digest.
 - Only one mutating deployment may be active for an application.
@@ -34,7 +34,7 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Managed OpenShift connections persist only the cluster-admin service-account kubeconfig. Repair verifies and persists a replacement token Secret before revoking the prior credential.
 - A provider connection explicitly selects Direct or one edge node and stores that binding.
 
-## Preview group invariants
+## Preview groups
 
 - A group contains Helm application templates that target one Kubernetes server.
 - Component aliases and repositories are unique, one component is the entrypoint, and dependencies form a directed acyclic graph.
@@ -47,14 +47,14 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Dispatch removes a failed first attempt. After a failed update, it reruns the last successful revision set. A failed restoration leaves the run degraded for operator inspection.
 - Only explicitly linked pull requests control automatic cleanup. Default-branch sources do not keep a run open.
 
-## Repository workflow invariants
+## Repository workflows
 
 - A configuration sync is atomic. Invalid files do not replace the last valid resource set.
 - Imported Applications deploy automatically when an active configuration syncs. Pipelines are available for stage checks immediately. Explicitly paused resources remain paused across syncs.
 - Every Application run resolves all source branches to exact commits before work starts.
 - The poller checks remote heads before fetching repository content. Applications share credential-scoped mirrors. Each run receives a detached worktree for its immutable revision.
-- A job fingerprint includes only its definition, declared sources, and pipeline inputs. Reuse requires a successful prior result containing every declared output.
-- Dispatch resolves secrets before starting a job and excludes them from logs and outputs.
+- A job fingerprint covers its definition, declared sources, inputs, resolved secrets, and controller platform. Applications in one configuration source share matching successful results with complete outputs. Concurrent matching builds are coordinated within one controller.
+- Dispatch resolves secrets before starting a job. Jobs receive those values in their environment and are responsible for keeping them out of logs and outputs.
 - Stage promotion reuses one immutable revision and its versioned outputs. It does not rebuild between targets.
 - A stage starts only after the prior stage and all of its checks succeed. Required approval pauses before deployment.
 - Webhooks and polling use the same event deduplication and source snapshot code. Either method can detect a source change.
