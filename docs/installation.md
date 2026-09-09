@@ -11,9 +11,9 @@ curl -fsSL https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install
 sudo dispatch install
 ```
 
-The download script verifies the release archive against `SHA256SUMS` before installing the CLI. Set `DISPATCH_VERSION=v0.1.0` to select a published release, or `DISPATCH_BIN_DIR` to choose its destination. Re-running the script updates the CLI binary. It does not start or upgrade a controller.
+The download script verifies the release archive against `SHA256SUMS` before installing the CLI. Set `DISPATCH_VERSION=v0.1.1` to select a published release, or `DISPATCH_BIN_DIR` to choose its destination. Re-running the script updates the CLI binary. It does not start or upgrade a controller.
 
-For a private repository, authenticate with GitHub CLI and download the release assets with `gh release download v0.1.0 --repo Doout/dispatch --pattern 'dispatch-linux-*.tar.gz' --pattern SHA256SUMS`. Run `sha256sum -c SHA256SUMS`, extract the archive for your architecture, and install its `dispatch` binary into `/usr/local/bin`. Authenticate to GHCR with `docker login ghcr.io` before installing a private image. The curl bootstrap above requires public release assets.
+For a private repository, authenticate with GitHub CLI and download the release assets with `gh release download v0.1.1 --repo Doout/dispatch --pattern 'dispatch-linux-*.tar.gz' --pattern SHA256SUMS`. Run `sha256sum -c SHA256SUMS`, extract the archive for your architecture, and install its `dispatch` binary into `/usr/local/bin`. Authenticate to GHCR with `docker login ghcr.io` before installing a private image. The curl bootstrap above requires public release assets.
 
 To build from this checkout and use a local image:
 
@@ -109,6 +109,10 @@ The updater uses the currently installed controller image, which includes the CL
 The release workflow runs for stable `vMAJOR.MINOR.PATCH` tags. It tests the code, publishes amd64 and arm64 controller images to GHCR with both the version and `stable` tags, then publishes Linux CLI archives and `SHA256SUMS` as GitHub release assets. The GHCR package must permit public pulls for unauthenticated installation; private installations can use `docker login ghcr.io` first. No release is created merely by building the source locally.
 
 Docker documents the raw environment-file format in its [Compose environment guide](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/). The image publishing workflow follows GitHub's [container publishing guide](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images).
+
+## Build caching
+
+CI and releases share a Go module and compiled-package cache. Main-branch CI builds both architectures so subsequent release tags can reuse that cache. Release images package the same binaries as the CLI archives; they do not compile Go again inside Docker. Docker runtime layers are also cached for both architectures. Local source builds use native cross-compilation and BuildKit cache mounts for Go modules and compiled packages.
 
 ## Validation performed
 

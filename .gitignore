@@ -18,3 +18,5 @@
 /.impeccable/screens/*.png
 /.impeccable/screens/*.webp
 !/web/dist/.gitkeep
+
+/release/
