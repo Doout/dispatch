@@ -795,7 +795,7 @@ function UsersTable({
                 );
                 return (
                   <tr key={user.id}>
-                    <td>
+                    <td data-label="User">
                       <button
                         type="button"
                         className="access-user-link"
@@ -809,21 +809,21 @@ function UsersTable({
                         </small>
                       </button>
                     </td>
-                    <td>
+                    <td data-label="Controller role">
                       {user.systemRole === "owner" ? (
                         <span className="access-role owner">Owner</span>
                       ) : (
                         <span className="access-role">Member</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Teams">
                       {teams.length ? (
                         teams.join(", ")
                       ) : (
                         <span className="muted-cell">None</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Direct access">
                       {user.systemRole === "owner" ? (
                         <span className="access-role owner">All projects</span>
                       ) : (
@@ -834,12 +834,12 @@ function UsersTable({
                         />
                       )}
                     </td>
-                    <td>
+                    <td data-label="Status">
                       <span className={`access-state ${user.state}`}>
                         {user.state === "active" ? "Active" : "Disabled"}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Actions">
                       <div className="access-row-actions">
                         {user.id !== identityID &&
                           user.state === "active" &&
@@ -1072,15 +1072,15 @@ function TeamsTable({
             );
             return (
               <tr key={team.id}>
-                <td>
+                <td data-label="Team">
                   <strong>{team.name}</strong>
                   {team.description && <small>{team.description}</small>}
                 </td>
-                <td>{memberCount}</td>
-                <td>
+                <td data-label="Members">{memberCount}</td>
+                <td data-label="Project access">
                   <GrantList access={access} grants={grants} />
                 </td>
-                <td>
+                <td data-label="Actions">
                   <div className="access-row-actions">
                     <button
                       aria-label={`Edit ${team.name}`}

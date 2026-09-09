@@ -18,6 +18,7 @@ describe("API impersonation", () => {
     const fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      headers: new Headers({"X-Overview-Version":"v1"}),
       json: async () => ({}),
     });
     vi.stubGlobal("fetch", fetch);

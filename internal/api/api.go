@@ -69,6 +69,7 @@ type githubEventServices struct {
 }
 
 type API struct {
+	overviewSnapshots  overviewCache
 	handler            http.Handler
 	store              store.Store
 	deploy             *deploy.Service
@@ -194,6 +195,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Post("/role-assignments", a.upsertRoleAssignment)
 			r.Delete("/role-assignments/{id}", a.deleteRoleAssignment)
 			r.Get("/overview", a.overview)
+			r.Get("/overview/watch", a.watchOverview)
 			r.Get("/secrets", a.ownerOnly(a.listSecrets))
 			r.Post("/secrets", a.ownerOnly(a.createSecret))
 			r.Put("/secrets/{id}", a.ownerOnly(a.updateSecret))
@@ -578,80 +580,83 @@ func validateCredentials(username, password string) string {
 }
 
 func (a *API) overview(w http.ResponseWriter, r *http.Request) {
-	projects, err := a.store.ListProjects(r.Context())
+	overview, err := a.overviewData(r)
 	if err != nil {
 		a.internal(w, err)
 		return
+	}
+	data, err := json.Marshal(overview)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	w.Header().Set("X-Overview-Version", a.overviewSnapshots.remember(overviewScope(r), data))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (a *API) overviewData(r *http.Request) (core.Overview, error) {
+	projects, err := a.store.ListProjects(r.Context())
+	if err != nil {
+		return core.Overview{}, err
 	}
 	servers, err := a.store.ListServers(r.Context())
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	apps, err := a.store.ListApps(r.Context())
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	deployments, err := a.store.ListDeployments(r.Context(), 100)
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	eventTriggers, err := a.store.ListEventTriggers(r.Context(), "")
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	previews, err := a.store.ListPreviewEnvironments(r.Context(), "")
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	previewGroups, err := a.store.ListPreviewGroups(r.Context())
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	previewGroupRuns, err := a.store.ListPreviewGroupRuns(r.Context(), "")
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	secrets, err := a.store.ListSecrets(r.Context())
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	secretStores, err := a.store.ListSecretStores(r.Context())
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	privateNetworks, err := a.store.ListPrivateNetworks(r.Context())
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	githubApps, err := a.store.ListGitHubApps(r.Context())
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	relayWebhooks, err := a.store.ListRelayWebhooks(r.Context(), "")
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	configSources, err := a.store.ListConfigSources(r.Context())
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	workflowResources, err := a.store.ListWorkflowResources(r.Context(), "")
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	currentWorkflowResources := workflowResources[:0]
 	for _, resource := range workflowResources {
@@ -681,13 +686,11 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	workflowRevisions, err := a.store.ListWorkflowRevisions(r.Context(), "", 100)
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	workflowStageRuns, err := a.store.ListWorkflowStageRuns(r.Context(), "")
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
 	overview := core.Overview{Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Identity: currentIdentity(r.Context()), Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
 		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets, SecretStores: secretStores, PrivateNetworks: privateNetworks, GitHubApps: githubApps, RelayWebhooks: relayWebhooks,
@@ -697,10 +700,9 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	overview, err = a.filterOverview(r.Context(), overview)
 	if err != nil {
-		a.internal(w, err)
-		return
+		return core.Overview{}, err
 	}
-	writeJSON(w, http.StatusOK, overview)
+	return overview, nil
 }
 
 func (a *API) RunWorkflowPoller(ctx context.Context) {

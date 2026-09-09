@@ -183,16 +183,18 @@ describe("applications overview", () => {
     render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} onOpenConfigurationTopology={onOpenConfigurationTopology} onOpenWorkflowStage={onOpenWorkflowStage} />);
 
     expect(screen.getByText("Platform config")).not.toBeNull();
-    expect(screen.getByText("2 applications")).not.toBeNull();
+    expect(screen.getByText("Show 2 applications")).not.toBeNull();
     expect(screen.getByText("Webhook + poll")).not.toBeNull();
+    await user.click(screen.getByText("Webhook + poll"));
+    expect(screen.queryByRole("button", { name: "Open checkout" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "View Platform config topology" }));
     expect(onOpenConfigurationTopology).toHaveBeenCalledWith(configured.configSources![0]);
     expect(screen.queryByRole("button", { name: "Open checkout" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
+    await user.click(screen.getByRole("button", { name: /^Show .* in Platform config$/ }));
     expect(screen.getByRole("button", { name: "Open worker" })).not.toBeNull();
-    await user.click(screen.getByRole("button", { name: "Collapse Platform config" }));
+    await user.click(screen.getByRole("button", { name: "Hide resources in Platform config" }));
     expect(screen.queryByRole("button", { name: "Open checkout" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
+    await user.click(screen.getByRole("button", { name: /^Show .* in Platform config$/ }));
     const name = screen.getByRole("button", { name: "Open checkout" });
 
     await user.click(screen.getByLabelText("Options for Platform config"));
@@ -213,7 +215,9 @@ describe("applications overview", () => {
       "Activate",
     ]);
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: "Expand checkout stages" }));
+    await user.click(within(name.closest("tr")!).getByText("Managed application"));
+    expect(screen.queryByRole("button", { name: "Open checkout Development stage" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show 1 stage for checkout" }));
     await user.click(screen.getByRole("button", { name: "Open checkout Development stage" }));
     expect(onOpenWorkflowStage).toHaveBeenCalledWith("workflow-1", "development");
     await user.click(name);
@@ -253,7 +257,7 @@ describe("applications overview", () => {
     render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
 
     expect(screen.getByText("1 pending")).not.toBeNull();
-    await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
+    await user.click(screen.getByRole("button", { name: /^Show .* in Platform config$/ }));
     expect(screen.getByText("pending activation")).not.toBeNull();
     expect(screen.queryByText("paused")).toBeNull();
   });
@@ -269,7 +273,7 @@ describe("applications overview", () => {
     };
     render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
 
-    await user.click(screen.getByRole("button", { name: "Expand Platform config" }));
+    await user.click(screen.getByRole("button", { name: /^Show .* in Platform config$/ }));
     const resourceRow = screen.getByRole("button", { name: "Open checkout" }).closest("tr");
     expect(resourceRow).not.toBeNull();
     const source = within(resourceRow!).getByText(".dispatch/checkout.yaml");

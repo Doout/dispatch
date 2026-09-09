@@ -26,7 +26,7 @@ var (
 )
 
 type SQLStore struct {
-	db       *sql.DB
+	db       *changeDB
 	postgres bool
 }
 
@@ -52,7 +52,7 @@ func Open(ctx context.Context, databaseURL string) (*SQLStore, error) {
 		db.Close()
 		return nil, err
 	}
-	return &SQLStore{db: db, postgres: postgres}, nil
+	return &SQLStore{db: &changeDB{DB: db}, postgres: postgres}, nil
 }
 
 func (s *SQLStore) Close() error { return s.db.Close() }
@@ -1210,7 +1210,7 @@ func (s *SQLStore) UpdateEventTrigger(ctx context.Context, trigger core.EventTri
 	return tx.Commit()
 }
 
-func (s *SQLStore) replaceEventTriggerSecrets(ctx context.Context, tx *sql.Tx, triggerID string, secretIDs []string) error {
+func (s *SQLStore) replaceEventTriggerSecrets(ctx context.Context, tx *changeTx, triggerID string, secretIDs []string) error {
 	var err error
 	if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM event_trigger_secrets WHERE trigger_id=?`), triggerID); err != nil {
 		return err

@@ -1,10 +1,23 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { shortenTopologyLabel, topologyDisplayLabel, TopologyCanvas } from "./TopologyCanvas";
 
+afterEach(cleanup);
+
 describe("topology labels", () => {
+  it("renders a Docker target when the API returns null edges", () => {
+    render(<TopologyCanvas topology={{
+      columns: [{ id: "targets", label: "Targets" }],
+      nodes: [{ id: "target:local", column: "targets", kind: "target", label: "Local Docker" }],
+      edges: null,
+    }} />);
+
+    expect(screen.getByText("Local Docker")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Zoom in" })).toBeTruthy();
+  });
+
   it("shows a deployment name instead of generated pod hashes", () => {
     const label = "inventory-api-development-77669dcd4f-xlh6p";
     const deployment = { id: "deployment:inventory", column: "workloads", kind: "deployment", label: "inventory-api-development" };

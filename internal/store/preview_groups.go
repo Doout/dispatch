@@ -56,7 +56,7 @@ func (s *SQLStore) UpdatePreviewGroup(ctx context.Context, group core.PreviewGro
 	return tx.Commit()
 }
 
-func (s *SQLStore) insertPreviewGroupComponents(ctx context.Context, tx *sql.Tx, group core.PreviewGroup) error {
+func (s *SQLStore) insertPreviewGroupComponents(ctx context.Context, tx *changeTx, group core.PreviewGroup) error {
 	for _, component := range group.Components {
 		if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO preview_group_components(
             id,group_id,app_id,alias,repository,default_branch,entrypoint,depends_on,bindings,pre_deploy_hook,post_deploy_hook)

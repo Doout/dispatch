@@ -15,7 +15,7 @@ export function TopologyCanvas({ topology, label = "Application topology", onNod
     if (!board) return;
     const bounds = board.getBoundingClientRect();
     const nodes = Array.from(board.querySelectorAll<HTMLElement>("[data-topology-node]"));
-    setEdges(topology.edges.flatMap((edge, index) => {
+    setEdges((topology.edges ?? []).flatMap((edge, index) => {
       const from = nodes.find((node) => node.dataset.topologyNode === edge.from);
       const to = nodes.find((node) => node.dataset.topologyNode === edge.to);
       if (!from || !to) return [];
@@ -41,7 +41,7 @@ export function TopologyCanvas({ topology, label = "Application topology", onNod
   const edgeClass = (edge: DrawnEdge) => !focused ? "" : edge.from === focused || edge.to === focused ? "related" : "muted";
   const counts = topology.columns.map((column) => ({ ...column, count: topology.nodes.filter((node) => node.column === column.id).length }));
   const nodesByID = new Map(topology.nodes.map((node) => [node.id, node]));
-  const ownerByNodeID = new Map(topology.edges.filter((edge) => edge.kind === "owns").map((edge) => [edge.to, nodesByID.get(edge.from)]));
+  const ownerByNodeID = new Map((topology.edges ?? []).filter((edge) => edge.kind === "owns").map((edge) => [edge.to, nodesByID.get(edge.from)]));
 
   return <section className="topology-surface" aria-label={label}>
     <div className="topology-toolbar">

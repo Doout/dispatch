@@ -1,0 +1,82 @@
+// @vitest-environment jsdom
+import { afterEach, expect, it, vi } from "vitest";
+import { setOverviewState } from "./overviewState";
+import type { Overview } from "./api";
+import { api, setToken, setImpersonatedUserID } from "./api";
+import { subscribeOverview } from "./overviewStream";
+const baseline = () => setOverviewState({version:"v1",value:{projects:[]} as unknown as Overview});
+let stop: (() => void) | undefined;
+afterEach(() => { stop?.(); sessionStorage.clear(); setOverviewState(undefined, false); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+it("keeps one connection, decodes split events, and pauses hidden tabs", async () => {
+  vi.useFakeTimers();
+  setToken("secret");
+  setImpersonatedUserID("member"); baseline();
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  const fetcher = vi.fn().mockImplementation(() => Promise.resolve({ok:true,status:200,headers:new Headers({"content-type":"text/event-stream"}),body:new ReadableStream({start(c){stream=c;}})}));
+  vi.stubGlobal("fetch",fetcher);
+  const update=vi.fn();
+  stop=subscribeOverview(update,vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  const encode=(s:string)=>new TextEncoder().encode(s);
+  stream.enqueue(encode('event: patch\ndata: {"base":"v1","version":"v2","ops":'));
+  stream.enqueue(encode('[{"op":"add","path":"/projects/0","value":{"id":"new"}}]}\n\n'));
+  await vi.advanceTimersByTimeAsync(20000);
+  expect(update).toHaveBeenCalledWith({projects:[{id:"new"}]});
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher.mock.calls[0][1].headers["Impersonate-User"]).toBe("member");
+  vi.spyOn(document,"hidden","get").mockReturnValue(true);
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  vi.spyOn(document,"hidden","get").mockReturnValue(false);
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher.mock.calls[1][1].headers["Last-Event-ID"]).toBe("v2");
+});
+it("backs off failed connections and stops retrying after authentication failures",async()=>{
+ vi.useFakeTimers();setToken("secret");baseline();vi.spyOn(Math,"random").mockReturnValue(0);
+ const fetcher=vi.fn().mockRejectedValue(new Error("offline"));vi.stubGlobal("fetch",fetcher);
+ const auth=vi.fn();stop=subscribeOverview(vi.fn(),auth);
+ await vi.advanceTimersByTimeAsync(0);expect(fetcher).toHaveBeenCalledTimes(1);
+ await vi.advanceTimersByTimeAsync(1000);expect(fetcher).toHaveBeenCalledTimes(2);
+ await vi.advanceTimersByTimeAsync(1999);expect(fetcher).toHaveBeenCalledTimes(2);
+ fetcher.mockResolvedValue({status:401});
+ await vi.advanceTimersByTimeAsync(1);expect(auth).toHaveBeenCalledTimes(1);
+ await vi.advanceTimersByTimeAsync(60000);expect(fetcher).toHaveBeenCalledTimes(3);
+});
+it("replaces the stream when the viewed account changes", async () => {
+  vi.useFakeTimers(); setToken("secret"); baseline();
+  const fetcher = vi.fn().mockImplementation(() => new Promise(() => {}));
+  vi.stubGlobal("fetch", fetcher);
+  stop = subscribeOverview(vi.fn(), vi.fn());
+  const first = fetcher.mock.calls[0][1].signal;
+  setImpersonatedUserID("another-user");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  baseline();
+  expect(first.aborted).toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher.mock.calls[1][1].headers["Impersonate-User"]).toBe("another-user");
+  setToken("");
+  expect(fetcher.mock.calls[1][1].signal.aborted).toBe(true);
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("fetches one new baseline after cache eviction and opens a versioned stream", async () => {
+ vi.useFakeTimers(); setToken("secret"); baseline();
+ const fetcher = vi.fn().mockResolvedValueOnce({status:409}).mockImplementation(()=>new Promise(()=>{}));
+ vi.stubGlobal("fetch",fetcher);
+ const resync = vi.spyOn(api,"overview").mockImplementation(async()=>{
+   const value={projects:[{id:"caught-up"}]} as unknown as Overview;
+   setOverviewState({version:"v3",value});return value;
+ });
+ const update=vi.fn();stop=subscribeOverview(update,vi.fn());
+ await vi.advanceTimersByTimeAsync(0);
+ expect(resync).toHaveBeenCalledTimes(1);
+ expect(fetcher).toHaveBeenCalledTimes(2);
+ expect(fetcher.mock.calls[1][1].headers["Last-Event-ID"]).toBe("v3");
+ expect(update).toHaveBeenCalledWith({projects:[{id:"caught-up"}]});
+ await vi.advanceTimersByTimeAsync(60000);
+ expect(fetcher).toHaveBeenCalledTimes(2);
+});

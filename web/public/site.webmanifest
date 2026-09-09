@@ -5,7 +5,7 @@
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f4f6f8",
-  "theme_color": "#101b25",
+  "theme_color": "#111c2d",
   "icons": [
     {
       "src": "/dispatch-mark.svg",

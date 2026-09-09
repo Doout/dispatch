@@ -1,3 +1,4 @@
+import { subscribeOverview } from "./overviewStream";
 import {
   ChangeEvent,
   FormEvent,
@@ -75,7 +76,7 @@ import {
 import { ApplicationsPage } from "./ApplicationsPage";
 import { ConnectionsPage } from "./ConnectionsPage";
 import { HookCredentialBindings, HookFields } from "./HookEditorFields";
-import { PageHeader } from "./PageHeader";
+import { PageHeader, pageTitles } from "./PageHeader";
 import { StatusLabel, TableIconAction } from "./ResourceTable";
 import { useDialogFocus } from "./useDialogFocus";
 import {
@@ -282,9 +283,13 @@ export default function DispatchApp() {
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(true), 1800);
-    return () => window.clearInterval(timer);
+
   }, [load]);
+
+  useEffect(() => subscribeOverview(
+    (next) => { setOverview(next); setNeedsAuth(false); setError(""); },
+    () => { void load(true); },
+  ), [load]);
 
   useEffect(() => {
     if (!overview || needsAuth || connectionCallbackHandled.current) return;
@@ -390,12 +395,14 @@ export default function DispatchApp() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 1200);
+    const timer = selectedDeployment.finishedAt ? undefined : window.setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 3000);
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, [selectedDeployment?.id]);
+  }, [selectedDeployment?.id, selectedDeployment?.finishedAt]);
 
   const navigate = (next: View) => {
     navigateRoute({ view: next });
@@ -477,6 +484,7 @@ export default function DispatchApp() {
               <strong>Dispatch</strong>
             </div>
           </div>
+          <div className="workspace-location"><span>Workspace</span><span aria-hidden="true">/</span><strong>{pageTitles[view]}</strong></div>
           {overview?.identity && (
             <AccountMenu
               identity={overview.identity}
@@ -1189,6 +1197,15 @@ export function DeploymentsPage({
   return (
     <div className="page-layout">
       <PageHeader view="deployments" action={action} />
+      {rails.length > 0 && <section className="deployment-overview" aria-label="Deployment health">
+        <div className="deployment-overview-title"><h2>Rollout status</h2><p>{rails.length} {rails.length === 1 ? "application" : "applications"}</p></div>
+        <dl>
+          <div><dd>{rails.flatMap((rail) => rail.stages).length}</dd><dt>Total stages</dt></div>
+          <div className="success"><dd>{rails.flatMap((rail) => rail.stages).filter((stage) => stage.tone === "success").length}</dd><dt><i />Ready</dt></div>
+          <div className="active"><dd>{rails.flatMap((rail) => rail.stages).filter((stage) => stage.tone === "active").length}</dd><dt><i />In progress</dt></div>
+          <div className="danger"><dd>{rails.flatMap((rail) => rail.stages).filter((stage) => stage.tone === "danger").length}</dd><dt><i />Needs attention</dt></div>
+        </dl>
+      </section>}
       <div className="deployment-workspace">
         <section className="deployment-board" aria-label="Deployment activity">
           {rails.length === 0 && (
@@ -3120,7 +3137,7 @@ function EmptyState({
         {body && <p>{body}</p>}
       </div>
       {action && (
-        <button className="primary-button" onClick={action.onClick}>
+        <button className="quiet-button" onClick={action.onClick}>
           <Plus size={15} weight="bold" />
           {action.label}
         </button>

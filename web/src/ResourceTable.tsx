@@ -5,5 +5,5 @@ export function TableIconAction({ label, tooltip, danger = false, onClick, child
 }
 
 export function StatusLabel({ state }: { state: string }) {
-  return <span className={`status-label ${state}`}><i />{state}</span>;
+  return <span className={`status-label ${state}`}><i aria-hidden="true" />{state.replaceAll("_", " ")}</span>;
 }

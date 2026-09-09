@@ -1,3 +1,4 @@
+import { setOverviewState } from "./overviewState";
 export type Project = {
   id: string;
   name: string;
@@ -445,7 +446,7 @@ export type WorkflowTopologyEdge = { from: string; to: string; kind: string };
 export type WorkflowTopology = {
   columns: WorkflowTopologyColumn[];
   nodes: WorkflowTopologyNode[];
-  edges: WorkflowTopologyEdge[];
+  edges: WorkflowTopologyEdge[] | null;
 };
 export type AppliedValue = { path: string; value: unknown; redacted?: boolean };
 export type DeploymentTopology = {
@@ -721,15 +722,20 @@ const impersonationKey = "dispatch-impersonated-user";
 export const getToken = () => sessionStorage.getItem(tokenKey) ?? "";
 export const getImpersonatedUserID = () =>
   sessionStorage.getItem(impersonationKey) ?? "";
-export const setImpersonatedUserID = (value: string) =>
+export const setImpersonatedUserID = (value: string) => {
   value
     ? sessionStorage.setItem(impersonationKey, value)
     : sessionStorage.removeItem(impersonationKey);
+  setOverviewState(undefined, false);
+  window.dispatchEvent(new Event("dispatch-auth-change"));
+};
 export const setToken = (value: string) => {
   const changed = value !== getToken();
   if (value) sessionStorage.setItem(tokenKey, value);
   else sessionStorage.removeItem(tokenKey);
   if (!value || changed) sessionStorage.removeItem(impersonationKey);
+  setOverviewState(undefined, false);
+  window.dispatchEvent(new Event("dispatch-auth-change"));
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -758,7 +764,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw error;
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  const value = await response.json() as T;
+  if (path === "/api/v1/overview" && token === getToken() && impersonatedUserID === getImpersonatedUserID()) {
+    const version = response.headers.get("X-Overview-Version");
+    if (version) setOverviewState({ version, value: value as Overview });
+  }
+  return value;
 }
 
 export const api = {

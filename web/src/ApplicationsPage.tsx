@@ -260,16 +260,13 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
     return <Fragment key={`workflow-${resource.id}`}>
       <tr className={`inspectable-resource-row${nested ? " configuration-resource-row" : ""}${stages.length ? " expandable-resource-row" : ""}`} onMouseDown={(event) => {
         if (event.detail > 1) event.preventDefault();
-      }} onClick={(event) => {
-        if (!stages.length || (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [role='menuitem']"))) return;
-        toggleResource(resource.id);
       }} onDoubleClick={(event) => {
         if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [role='menuitem']")) return;
         onOpenWorkflow(resource);
       }}>
         <td data-label="Name"><div className="resource-identity">
-          {stages.length ? <button type="button" className="hierarchy-toggle" aria-label={`${expanded ? "Collapse" : "Expand"} ${resource.name} stages`} aria-expanded={expanded} onClick={() => toggleResource(resource.id)}>{expanded ? <CaretDown size={15} weight="bold" /> : <CaretRight size={15} weight="bold" />}</button> : <span className="hierarchy-toggle-placeholder" />}
           <button type="button" className="resource-name-button" aria-label={`Open ${resource.name}`} onClick={() => onOpenWorkflow(resource)}><strong>{resource.name}</strong><small>{resource.sourceCount} source{resource.sourceCount === 1 ? "" : "s"}, {resource.jobCount} job{resource.jobCount === 1 ? "" : "s"}</small></button>
+          {stages.length ? <button type="button" className="hierarchy-toggle" aria-label={`${expanded ? "Hide stages" : `Show ${stages.length} stage${stages.length === 1 ? "" : "s"}`} for ${resource.name}`} aria-expanded={expanded} onClick={() => toggleResource(resource.id)}>{expanded ? <CaretDown size={13} /> : <CaretRight size={13} />}<span>{expanded ? "Hide stages" : `Show ${stages.length} stage${stages.length === 1 ? "" : "s"}`}</span></button> : null}
         </div></td>
         <td data-label="Type"><strong className="cell-secondary-heading">{resource.kind}</strong><small>{source ? "Managed application" : "Imported"}</small></td>
         <td data-label="Source"><span className="truncate-cell" title={resource.path}>{resource.path}</span><small className="truncate-cell" title={resource.configSha}>Config {resource.configSha.slice(0, 8)}</small></td>
@@ -310,13 +307,10 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
       const summary = workflowResourceSummary(source, resources, overview);
       const canConfigureSource = canManageProject(overview, source.projectId, "project.configure");
       return <Fragment key={`config-${source.id}`}>
-        <tr className="configuration-source-row" onMouseDown={(event) => { if (event.detail > 1) event.preventDefault(); }} onClick={(event) => {
-          if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [role='menuitem']")) return;
-          toggleSource(source.id);
-        }}>
+        <tr className="configuration-source-row">
           <td data-label="Name"><div className="configuration-source-identity">
-            <button type="button" className="hierarchy-toggle" aria-label={`${expanded ? "Collapse" : "Expand"} ${source.name}`} aria-expanded={expanded} onClick={() => toggleSource(source.id)}>{expanded ? <CaretDown size={16} weight="bold" /> : <CaretRight size={16} weight="bold" />}</button>
-            <button type="button" className="configuration-source-link" aria-label={`View ${source.name} topology`} onClick={() => onOpenConfigurationTopology(source)}><strong>{source.name}</strong><small>{workflowResourceCountLabel(resources)}</small></button>
+            <button type="button" className="configuration-source-link" aria-label={`View ${source.name} topology`} onClick={() => onOpenConfigurationTopology(source)}><strong>{source.name}</strong></button>
+            {resources.length > 0 && <button type="button" className="hierarchy-toggle" aria-label={`${expanded ? "Hide resources" : `Show ${workflowResourceCountLabel(resources)}`} in ${source.name}`} aria-expanded={expanded} onClick={() => toggleSource(source.id)}>{expanded ? <CaretDown size={13} /> : <CaretRight size={13} />}<span>{expanded ? "Hide resources" : `Show ${workflowResourceCountLabel(resources)}`}</span></button>}
           </div></td>
           <td data-label="Type"><strong className="cell-secondary-heading">Repository configuration</strong><small>{configSourceMethod(source)}</small></td>
           <td data-label="Source"><span className="truncate-cell" title={source.repository}>{repositoryLabel(source.repository)}</span><small className="truncate-cell" title={source.branch}>{source.branch}</small></td>
