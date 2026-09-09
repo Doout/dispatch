@@ -193,7 +193,7 @@ func (a *API) syncConfigSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, item)
+		problem(w, http.StatusUnprocessableEntity, "Configuration sync blocked", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, item)

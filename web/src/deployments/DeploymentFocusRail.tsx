@@ -72,7 +72,8 @@ function buildManagedRail(resource: WorkflowResource, allRevisions: WorkflowRevi
   const stages = stageNames.map((name, index) => {
     const stageRuns = runs.filter((stage) => stage.stageName === name);
     const run = stageRuns[0];
-    const candidateRevision = run ? revisionByID.get(run.revisionId) : undefined;
+    const preparing = latestRevision && !runs.some((stage) => stage.revisionId === latestRevision.id) && ["queued", "running", "failed", "cancelled"].includes(latestRevision.state);
+    const candidateRevision = preparing ? latestRevision : run ? revisionByID.get(run.revisionId) : undefined;
     const deployedRun = stageRuns.find((stage) => (stage.deploymentIds?.length ?? 0) > 0);
     const deployedRevision = deployedRun ? revisionByID.get(deployedRun.revisionId) : undefined;
     const deployments = unique(stageRuns.flatMap((stage) => stage.deploymentIds ?? []))
@@ -80,7 +81,7 @@ function buildManagedRail(resource: WorkflowResource, allRevisions: WorkflowRevi
       .filter((deployment): deployment is Deployment => Boolean(deployment))
       .sort(sortNewest);
     const deployment = deployedRun?.deploymentIds?.map((id) => deploymentByID.get(id)).filter((item): item is Deployment => Boolean(item)).sort(sortNewest)[0] ?? deployments[0];
-    const state = run?.state ?? deployment?.state ?? "not_deployed";
+    const state = preparing ? (latestRevision.state === "running" ? "building" : latestRevision.state) : run?.state ?? deployment?.state ?? "not_deployed";
     return {
       name,
       label: humanize(name),
@@ -96,8 +97,8 @@ function buildManagedRail(resource: WorkflowResource, allRevisions: WorkflowRevi
       run,
       deployment,
       deployments,
-      updatedAt: run?.finishedAt ?? run?.startedAt ?? run?.createdAt ?? deployment?.finishedAt ?? deployment?.createdAt,
-      error: run?.error || (deployment?.state === "failed" ? deployment.message : undefined),
+      updatedAt: (preparing ? latestRevision.finishedAt ?? latestRevision.startedAt ?? latestRevision.createdAt : undefined) ?? run?.finishedAt ?? run?.startedAt ?? run?.createdAt ?? deployment?.finishedAt ?? deployment?.createdAt,
+      error: (preparing ? latestRevision.error : undefined) || run?.error || (deployment?.state === "failed" ? deployment.message : undefined),
     } satisfies RailStage;
   });
 
@@ -264,7 +265,7 @@ function CompactPromotionSummary({ rail }: { rail: DeploymentRail }) {
 
 function StageInspector({ rail, stage, onSelectDeployment }: { rail: DeploymentRail; stage: RailStage; onSelectDeployment: (id: string) => void }) {
   const [showAllRuns, setShowAllRuns] = useState(false);
-  const deployState = stage.run && stage.run.state !== "succeeded" ? stage.run.state : stage.deployment?.state ?? stage.run?.state ?? "not_deployed";
+  const deployState = stage.run && stage.run.state !== "succeeded" ? stage.run.state : stage.deployment?.state ?? stage.run?.state ?? stage.state;
   const readyState = stage.state === "succeeded" ? "Ready" : stage.state === "failed" ? "Failed" : stage.state === "awaiting_approval" ? "Waiting" : "Pending";
 
   useEffect(() => setShowAllRuns(false), [rail.id, stage.name]);

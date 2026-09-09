@@ -2030,3 +2030,17 @@ code { font-family: var(--mono); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+.configuration-sync-error { display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px; border: 1px solid #edd2c7; border-radius: 8px; background: #fff8f4; color: #723e2b; text-align: left; overflow-wrap: anywhere; }
+.configuration-sync-error > svg { flex: 0 0 auto; margin-top: 2px; }
+.configuration-sync-error > div { min-width: 0; }
+.configuration-sync-error strong { display: block; font-size: 13px; line-height: 1.5; }
+.configuration-sync-error p { margin: 5px 0 0; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.configuration-sync-error .configuration-sync-hint { font-weight: 600; }
+.configuration-sync-error .configuration-sync-context { color: var(--muted); font-size: 12px; }
+.resource-table .configuration-error-row > td { padding: 0 16px 16px; height: auto; }
+@media (max-width: 720px) {
+  .resource-table .configuration-error-row { padding: 0; border: 0; background: transparent; box-shadow: none; }
+  .resource-table .configuration-error-row > td { display: block; padding: 0; }
+  .resource-table .configuration-error-row > td::before { display: none; }
+}

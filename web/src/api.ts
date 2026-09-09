@@ -758,7 +758,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       .json()
       .catch(() => ({ title: "Request failed", detail: response.statusText }));
     const error = new Error(
-      problem.detail ?? problem.title ?? "Request failed",
+      problem.detail || problem.lastError || problem.title || `Request failed (${response.status})`,
     ) as Error & { status?: number };
     error.status = response.status;
     throw error;

@@ -102,7 +102,7 @@ spec:
 	if err := data.CreateGitHubApp(ctx, connection); err != nil {
 		t.Fatal(err)
 	}
-	source := core.ConfigSource{ID: "config", ProjectID: project.ID, GitHubAppID: connection.ID, Name: "Config", Repository: "owner/config", Branch: "main", Path: ".dispatch", SyncMode: core.ConfigSyncPoll, PollIntervalSeconds: 300, Active: true, State: "syncing", CreatedAt: now, UpdatedAt: now}
+	source := core.ConfigSource{ID: "config", ProjectID: project.ID, GitHubAppID: connection.ID, Name: "Config", Repository: "owner/config", Branch: "main", Path: ".dispatch", SyncMode: core.ConfigSyncPoll, PollIntervalSeconds: 300, Active: false, State: "syncing", CreatedAt: now, UpdatedAt: now}
 	if err := data.CreateConfigSource(ctx, source); err != nil {
 		t.Fatal(err)
 	}
@@ -114,8 +114,8 @@ spec:
 	if err != nil || len(resources) != 1 {
 		t.Fatalf("unexpected initial resources: %#v err=%v", resources, err)
 	}
-	if resources[0].Active || resources[0].State != "pending" {
-		t.Fatalf("new resource was not pending activation: %#v", resources[0])
+	if !resources[0].Active || resources[0].State != "ready" {
+		t.Fatalf("new resource was not enabled for automatic deployment: %#v", resources[0])
 	}
 	initialDigest := resources[0].SpecDigest
 	resources[0].Active = true
@@ -246,17 +246,12 @@ spec:
 		t.Fatalf("unexpected resources: %#v err=%v", resources, err)
 	}
 	resource := resources[0]
-	resource.Active = true
-	if err := data.UpdateWorkflowResource(ctx, resource); err != nil {
-		t.Fatal(err)
+	if !resource.Active {
+		t.Fatal("imported application is not enabled")
 	}
-	baseline := core.WorkflowRevision{ID: "poll-baseline", ResourceID: resource.ID, ConfigSHA: resource.ConfigSHA, SpecDigest: resource.SpecDigest, State: "succeeded", Trigger: "activation",
-		Sources: map[string]core.WorkflowSourceRevision{
-			"service": {Alias: "service", Repository: "example/service", Branch: "main", CommitSHA: "service-1"},
-			"ui":      {Alias: "ui", Repository: "example/ui", Branch: "main", CommitSHA: "ui-1"},
-		}, Outputs: map[string]map[string]string{}, CreatedAt: now}
-	if err := data.CreateWorkflowRevision(ctx, baseline); err != nil {
-		t.Fatal(err)
+	initial, err := data.ListWorkflowRevisions(ctx, resource.ID, 10)
+	if err != nil || len(initial) != 1 || initial[0].Trigger != "configuration sync" {
+		t.Fatalf("import did not start the initial deployment: %#v err=%v", initial, err)
 	}
 	if err := service.PollOnce(ctx); err != nil {
 		t.Fatal(err)
@@ -291,6 +286,18 @@ spec:
 	resources, err = data.ListWorkflowResources(ctx, source.ID)
 	if err != nil || len(resources) != 1 || resources[0].SpecDigest == initialDigest || resources[0].ConfigSHA != "config-2" || !resources[0].Active {
 		t.Fatalf("configuration change was not reloaded: %#v err=%v", resources, err)
+	}
+	revisions, err = data.ListWorkflowRevisions(ctx, resource.ID, 10)
+	if err != nil || len(revisions) != 3 || revisions[0].SpecDigest != resources[0].SpecDigest {
+		t.Fatalf("configuration-only change did not deploy exactly once: %#v err=%v", revisions, err)
+	}
+	makePollDue(t, ctx, data, source.ID)
+	if err := service.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	revisions, err = data.ListWorkflowRevisions(ctx, resource.ID, 10)
+	if err != nil || len(revisions) != 3 {
+		t.Fatalf("unchanged poll duplicated a deployment: count=%d err=%v", len(revisions), err)
 	}
 	if treeReads.Load() != 2 {
 		t.Fatalf("configuration was not fetched exactly once per changed revision; tree reads=%d", treeReads.Load())

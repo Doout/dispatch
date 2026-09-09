@@ -152,6 +152,18 @@ describe("deployment navigation", () => {
     expect(screen.getByText("Behind source")).not.toBeNull();
   });
 
+  it.each([['running', 'Building'], ['failed', 'Failed']])("shows a %s workflow before its deployment stage exists", (state, label) => {
+    const data: Overview = {
+      ...overview, apps: [], deployments: [],
+      workflowResources: [{ id: "workflow-1", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "slot3", path: "slot3.yaml", document: "", specDigest: "digest", configSha: "config", active: true, state: "ready", sourceCount: 1, jobCount: 2, stageNames: ["development"], targetRefs: ["dev-005"], createdAt: "2026-09-09T12:00:00Z", updatedAt: "2026-09-09T12:00:00Z" }],
+      workflowRevisions: [{ id: "revision", resourceId: "workflow-1", configSha: "config", specDigest: "digest", state, trigger: "configuration sync", sources: {}, error: state === "failed" ? "Build script exited with code 1" : undefined, createdAt: "2026-09-09T12:00:00Z" }],
+      workflowStageRuns: [],
+    };
+    render(<DeploymentList data={data} selectedApplicationID="workflow-1" selectedStageName="development" />);
+    expect(screen.getByRole("button", { name: new RegExp(`Development, ${label}, target dev-005`) })).not.toBeNull();
+    if (state === "failed") expect(screen.getByText("Build script exited with code 1")).not.toBeNull();
+  });
+
   it("restores an expanded deployment from the route selection", () => {
     render(<DeploymentList selectedApplicationID="app-1" selectedStageName="development" />);
 

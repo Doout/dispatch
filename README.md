@@ -21,6 +21,20 @@ Dispatch is a self-hosted deployment controller for private infrastructure. It c
 - Users, teams, project roles, external sign-in, account linking, and impersonation
 - Deployment, application, server, and runtime topology views
 
+## Install and upgrade
+
+Dispatch includes a Docker installer and upgrade CLI:
+
+```sh
+sudo dispatch install
+sudo dispatch upgrade
+sudo dispatch auto-upgrade enable  # Optional daily checks
+```
+
+Upgrades preserve configuration and back up the controller data before replacing its container. An unhealthy replacement restores the previous image and data. Automatic upgrades are disabled by default.
+
+See [installation](docs/installation.md) for CLI downloads, building before the first release, configuration, recovery, and release publishing.
+
 ## Run with Compose
 
 The included Compose file exposes Dispatch on `127.0.0.1:8080` and expects an external Docker network named `web` for Traefik.

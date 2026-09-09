@@ -1,5 +1,5 @@
+import { ConfigSourceError } from "./ConfigSourceError";
 import { FormEvent, useEffect, useId, useState } from "react";
-import { WarningCircle } from "@phosphor-icons/react";
 import { api, ConfigSource, GitHubRepository, Overview } from "../api";
 
 export function WorkflowConfigSourceForm({ overview, source, onCancel, onSaved }: { overview: Overview; source?: ConfigSource; onCancel: () => void; onSaved: () => Promise<void> }) {
@@ -116,7 +116,7 @@ export function WorkflowConfigSourceForm({ overview, source, onCancel, onSaved }
       <input type="number" min={30} max={86400} value={pollInterval} onChange={(event) => setPollInterval(Number(event.target.value))} disabled={syncMode === "webhook"} />
       <small>Seconds between repository checks.</small>
     </label>
-    {source?.lastError && <p className="workflow-source-warning wide"><WarningCircle size={16} weight="fill" />{source.lastError}</p>}
+    {source && <div className="wide"><ConfigSourceError source={source} /></div>}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="dialog-actions">
       <button type="button" className="quiet-button" onClick={onCancel}>Cancel</button>

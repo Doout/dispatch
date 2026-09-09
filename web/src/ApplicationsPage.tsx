@@ -1,3 +1,4 @@
+import { ConfigSourceError } from "./workflows/ConfigSourceError";
 import { Fragment, ReactNode, useCallback, useEffect, useState } from "react";
 import {
   AppWindow,
@@ -149,7 +150,10 @@ function workflowResourceCountLabel(resources: WorkflowResource[]) {
 
 function workflowResourceSummary(source: ConfigSource, resources: WorkflowResource[], overview: Overview) {
   const synced = source.lastSyncedAt ? `Synced ${relative(source.lastSyncedAt)}` : "Configuration not synced";
-  if (!resources.length) return { state: source.state, label: source.state, detail: synced };
+  if (source.state === "invalid") return { state: "failed", label: "Sync blocked", detail: synced };
+  if (source.state === "degraded") return { state: "degraded", label: "Sync warning", detail: synced };
+  if (source.state === "syncing") return { state: "running", label: "Syncing", detail: synced };
+  if (!resources.length) return { state: source.state, label: source.state === "ready" ? "Synced" : source.state, detail: synced };
   const statuses = resources.map((resource) => {
     const latest = (overview.workflowRevisions ?? []).find((revision) => revision.resourceId === resource.id);
     return workflowResourceStatus(resource, latest?.state);
@@ -227,7 +231,9 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
       await onChanged();
       if (action === "delete") setDeleteSource(null);
     } catch (cause) {
-      setError((cause as Error).message);
+      setError(`${source.name}: ${(cause as Error).message || "Configuration sync failed. Retry to get the current cause."}`);
+      // A failed sync still updates the stored configuration's error details.
+      if (action === "sync") await onChanged().catch(() => {});
     } finally {
       setBusyID("");
     }
@@ -327,6 +333,7 @@ function ApplicationInventory({ overview, onDeploy, onHooks, onValues, onEditGro
             {canConfigureSource && <MenuAction icon={<Trash size={16} />} label="Delete configuration" danger onClick={() => setDeleteSource(source)} />}
           </RowActionMenu></td>
         </tr>
+        {(source.lastError || ["invalid", "degraded"].includes(source.state)) && <tr className="configuration-error-row"><td colSpan={6}><ConfigSourceError source={source} /></td></tr>}
         {expanded && resources.map((resource) => workflowResourceRow(resource, source, true))}
       </Fragment>;
     })}

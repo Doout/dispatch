@@ -1,3 +1,4 @@
+import { ConfigSourceError } from "./ConfigSourceError";
 import { ArrowLeft } from "@phosphor-icons/react";
 import {
   ConfigSource,
@@ -32,12 +33,13 @@ export function ConfigurationTopologyPage({
     <PageHeader view="applications" title={source.name} action={{ label: "Back", onClick: onBack, icon: <ArrowLeft size={16} />, tone: "quiet" }} />
     <div className="topology-context configuration-topology-context">
       <div>
-        <span className={`status-label ${source.state}`}><i />{workflowResourceStatusLabel(source.state)}</span>
+        <span className={`status-label ${source.state}`}><i />{source.state === "invalid" ? "Sync blocked" : source.state === "degraded" ? "Sync warning" : workflowResourceStatusLabel(source.state)}</span>
         <span>{repositoryLabel(source.repository)} · {source.branch}</span>
         <code>{source.path || "Repository root"}</code>
       </div>
       <small>Select an application or stage to drill down.</small>
     </div>
+    <ConfigSourceError source={source} />
     <TopologyCanvas
       topology={topology}
       label={`${source.name} configuration topology`}

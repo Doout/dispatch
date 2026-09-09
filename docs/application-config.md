@@ -4,7 +4,7 @@ Dispatch loads Applications and Pipelines from YAML or JSON in a GitHub reposito
 
 Each sync reads every `.yaml`, `.yml`, and `.json` file below that path. The parser rejects unknown fields, invalid references, and duplicate resource names. A rejected sync does not replace the last valid configuration.
 
-Imported resources start paused. Activate an Application to create its first immutable revision. Activate a Pipeline before an Application references it as a stage check.
+Imported Applications start their first deployment automatically when an active configuration syncs. Subsequent source or application configuration changes create a new immutable revision. Pipelines are available for stage checks immediately. Pause an Application to stop automatic deployments; syncing preserves that choice.
 
 ## Application
 

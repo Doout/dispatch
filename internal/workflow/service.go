@@ -140,7 +140,7 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 		identity := resourceIdentity(value.path, value.document.Kind, value.document.Metadata.Name)
 		item, found := byIdentity[identity]
 		if !found {
-			item = core.WorkflowResource{ID: ulid.Make().String(), ConfigSourceID: source.ID, CreatedAt: now, Active: false, State: "pending"}
+			item = core.WorkflowResource{ID: ulid.Make().String(), ConfigSourceID: source.ID, CreatedAt: now, Active: true, State: "ready"}
 		} else if item.Active {
 			item.State = "ready"
 		} else if item.State != "paused" {
@@ -165,6 +165,20 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 	}
 	if webhookErr != nil && source.SyncMode == core.ConfigSyncWebhook {
 		return source, webhookErr
+	}
+	if source.Active {
+		for _, resource := range desired {
+			if !resource.Active || resource.Kind != KindApplication {
+				continue
+			}
+			snapshot, err := s.resolveResourceSources(ctx, source, resource)
+			if err == nil && s.snapshotChanged(ctx, resource, snapshot) {
+				_, err = s.startWithSnapshot(ctx, resource, source, snapshot, "configuration sync")
+			}
+			if err != nil {
+				return s.sourceError(ctx, source, fmt.Errorf("start application %s: %w", resource.Name, err))
+			}
+		}
 	}
 	return source, nil
 }
@@ -278,7 +292,10 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
 			}
 			configChanged := sameSource(event.Repository, event.Branch, source.Repository, source.Branch)
 			if configChanged || resourceReferences(resource, event.Repository, event.Branch) {
-				_, runErr := s.Start(ctx, resource.ID, "github push")
+				snapshot, runErr := s.resolveResourceSources(ctx, source, resource)
+				if runErr == nil && s.snapshotChanged(ctx, resource, snapshot) {
+					_, runErr = s.startWithSnapshot(ctx, resource, source, snapshot, "github push")
+				}
 				if runErr != nil {
 					err = runErr
 				}
@@ -383,10 +400,10 @@ func (s *Service) PollOnce(ctx context.Context) error {
 				joined = errors.Join(joined, err)
 				continue
 			}
-			if !configChanged && !s.snapshotChanged(ctx, resource.ID, snapshot) {
+			if !s.snapshotChanged(ctx, resource, snapshot) {
 				continue
 			}
-			delivery := "poll:" + resource.ID + ":" + snapshotDigest(snapshot)
+			delivery := "poll:" + resource.ID + ":" + resource.SpecDigest + ":" + snapshotDigest(snapshot)
 			event := core.WorkflowEvent{ID: ulid.Make().String(), ConfigSourceID: source.ID, Provider: "poll", DeliveryID: delivery,
 				Kind: "branch_scan", Repository: source.Repository, Branch: source.Branch, CommitSHA: head, State: "running", CreatedAt: now}
 			inserted, err := s.Store.CreateWorkflowEvent(ctx, event)
@@ -416,9 +433,12 @@ func pollDue(source core.ConfigSource, now time.Time) bool {
 	return source.LastPolledAt == nil || now.Sub(*source.LastPolledAt) >= time.Duration(interval)*time.Second
 }
 
-func (s *Service) snapshotChanged(ctx context.Context, resourceID string, snapshot map[string]core.WorkflowSourceRevision) bool {
-	revisions, err := s.Store.ListWorkflowRevisions(ctx, resourceID, 1)
+func (s *Service) snapshotChanged(ctx context.Context, resource core.WorkflowResource, snapshot map[string]core.WorkflowSourceRevision) bool {
+	revisions, err := s.Store.ListWorkflowRevisions(ctx, resource.ID, 1)
 	if err != nil || len(revisions) == 0 {
+		return true
+	}
+	if revisions[0].SpecDigest != resource.SpecDigest {
 		return true
 	}
 	previous := revisions[0].Sources

@@ -6,12 +6,13 @@ COPY web/ ./
 RUN pnpm build
 
 FROM golang:1.26-alpine AS build
+ARG DISPATCH_VERSION=development
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/internal/ui/dist ./internal/ui/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dispatch ./cmd/dispatch && \
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/doout/dispatch/internal/installation.Version=${DISPATCH_VERSION}" -o /out/dispatch ./cmd/dispatch && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/edge/linux-amd64 ./cmd/dispatch-agent && \
     CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o /out/edge/linux-arm64 ./cmd/dispatch-agent && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dispatch-hook ./cmd/dispatch-hook && \

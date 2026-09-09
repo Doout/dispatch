@@ -30,6 +30,7 @@ jobs:
       - run: pnpm --dir web test
       - run: pnpm --dir web build
       - run: go test -race ./...
+      - run: sh scripts/install_test.sh
       - run: go vet ./...
       - run: go build ./cmd/dispatch ./cmd/dispatch-agent
 

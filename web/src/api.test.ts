@@ -46,3 +46,11 @@ describe("API impersonation", () => {
     expect(getImpersonatedUserID()).toBe("");
   });
 });
+
+it.each([
+  { detail: "deployment/slot2.yaml and deployment/slot3.yaml both define Application/slot2" },
+  { lastError: "deployment/slot2.yaml and deployment/slot3.yaml both define Application/slot2" },
+])("preserves configuration sync error details", async (body) => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 422, json: async () => body }));
+  await expect(api.syncConfigSource("slots")).rejects.toThrow("deployment/slot2.yaml and deployment/slot3.yaml both define Application/slot2");
+});

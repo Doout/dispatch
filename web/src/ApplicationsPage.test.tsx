@@ -284,3 +284,36 @@ describe("applications overview", () => {
     expect(screen.getByRole("dialog", { name: "checkout" })).not.toBeNull();
   });
 });
+
+describe("configuration sync errors", () => {
+  const detail = "deployment/slot2.yaml and deployment/slot3.yaml both define Application/slot2";
+  const configured: Overview = {
+    ...overview,
+    configSources: [{ id: "slots", projectId: "project-1", name: "slots", repository: "org/config", branch: "main", path: "deployment", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "invalid", lastError: detail, lastSyncedAt: "2026-09-04T12:00:00Z", createdAt: "2026-09-04T12:00:00Z", updatedAt: "2026-09-04T12:00:00Z" }],
+    workflowResources: [{ id: "slot2", configSourceId: "slots", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "slot2", path: "deployment/slot2.yaml", document: "", specDigest: "hash", configSha: "abc", active: true, state: "ready", sourceCount: 1, jobCount: 1, createdAt: "2026-09-04T12:00:00Z", updatedAt: "2026-09-04T12:00:00Z" }],
+  };
+  const props = { section: "applications" as const, creating: false, onToggleCreate: () => {}, onChanged: async () => {}, onDeploy: () => {}, onDelete: () => {}, onDeleteGroup: () => {}, onNavigate: () => {} };
+  it("shows the cause and correction without expanding a configuration", () => {
+    render(<ApplicationsPage {...props} overview={configured} />);
+    expect(screen.getByText("Sync blocked")).not.toBeNull();
+    const alert = screen.getByRole("alert");
+    expect(within(alert).getByText(detail)).not.toBeNull();
+    expect(within(alert).getByText(/different metadata.name/)).not.toBeNull();
+    expect(screen.queryByRole("button", {name:"Open slot2"})).toBeNull();
+    expect(screen.queryByText("1/1 ready")).toBeNull();
+  });
+  it("keeps the failure visible in configuration topology", () => {
+    render(<ApplicationsPage {...props} overview={configured} configurationSourceID="slots" />);
+    expect(within(screen.getByRole("alert")).getByText(detail)).not.toBeNull();
+  });
+  it("refreshes the stored failure after a failed manual sync", async () => {
+    const onChanged = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(api, "syncConfigSource").mockRejectedValueOnce(new Error(detail));
+    const user = userEvent.setup();
+    render(<ApplicationsPage {...props} overview={configured} onChanged={onChanged} />);
+    await user.click(screen.getByLabelText("Options for slots"));
+    await user.click(await screen.findByRole("menuitem", {name:"Sync configuration"}));
+    expect(await screen.findByText(`slots: ${detail}`)).not.toBeNull();
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+});

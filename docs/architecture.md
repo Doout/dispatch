@@ -50,7 +50,7 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 ## Repository workflow invariants
 
 - A configuration sync is atomic. Invalid files do not replace the last valid resource set.
-- Imported Applications and Pipelines remain paused until an operator activates them.
+- Imported Applications deploy automatically when an active configuration syncs. Pipelines are available for stage checks immediately. Explicitly paused resources remain paused across syncs.
 - Every Application run resolves all source branches to exact commits before work starts.
 - The poller checks remote heads before fetching repository content. Applications share credential-scoped mirrors. Each run receives a detached worktree for its immutable revision.
 - A job fingerprint includes only its definition, declared sources, and pipeline inputs. Reuse requires a successful prior result containing every declared output.
