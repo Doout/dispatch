@@ -31,8 +31,9 @@ type Service struct {
 	Logger       *slog.Logger
 	Repositories *repositoryCache
 
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	mu         sync.Mutex
+	locks      map[string]*sync.Mutex
+	buildLocks map[string]*buildLock
 }
 
 type Push struct {

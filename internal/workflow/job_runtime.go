@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,6 +28,42 @@ const (
 	maxJobLogBytes = 1 << 20
 	maxJobOutput   = 64 << 10
 )
+
+// References include both the builder and waiters so a key is removed only
+// after its last user exits. Waiting does not prevent cancellation.
+type buildLock struct {
+	token chan struct{}
+	users int
+}
+
+func (s *Service) lockBuild(ctx context.Context, key string) (func(), error) {
+	s.mu.Lock()
+	if s.buildLocks == nil {
+		s.buildLocks = map[string]*buildLock{}
+	}
+	gate := s.buildLocks[key]
+	if gate == nil {
+		gate = &buildLock{token: make(chan struct{}, 1)}
+		s.buildLocks[key] = gate
+	}
+	gate.users++
+	s.mu.Unlock()
+	releaseReference := func() {
+		s.mu.Lock()
+		gate.users--
+		if gate.users == 0 {
+			delete(s.buildLocks, key)
+		}
+		s.mu.Unlock()
+	}
+	select {
+	case gate.token <- struct{}{}:
+		return func() { <-gate.token; releaseReference() }, nil
+	case <-ctx.Done():
+		releaseReference()
+		return nil, ctx.Err()
+	}
+}
 
 type jobRuntime struct {
 	service   *Service
@@ -72,8 +109,20 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 		}
 		jobSources[alias] = revision
 	}
-	fingerprint := jobFingerprint(name, job, jobSources, r.inputs)
+	secrets, err := r.resolveSecrets(ctx, job.Secrets)
+	if err != nil {
+		return nil, err
+	}
+	fingerprint := jobExecutionFingerprint(name, job, jobSources, r.inputs, secrets)
 	if job.Reuse == "onInputMatch" && !pipeline {
+		unlock, err := r.service.lockBuild(ctx, resource.ConfigSourceID+":"+fingerprint)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		previous, err := r.service.Store.FindWorkflowJobResult(ctx, resource.ID, name, fingerprint)
 		if err == nil && previous.State == "succeeded" && completeOutputs(previous.Outputs, job.Outputs) {
 			now := time.Now().UTC()
@@ -95,7 +144,7 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 	if err := r.service.Store.CreateWorkflowJobResult(ctx, result); err != nil {
 		return nil, err
 	}
-	outputs, logText, err := r.runJobCommand(ctx, job)
+	outputs, logText, err := r.runJobCommand(ctx, job, secrets)
 	finished := time.Now().UTC()
 	result.Log, result.FinishedAt = logText, &finished
 	if err != nil {
@@ -110,14 +159,21 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 	return outputs, nil
 }
 
-func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec) (map[string]string, string, error) {
+func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map[string]string) (map[string]string, string, error) {
 	aliases := jobSourceAliases(job)
 	for _, alias := range aliases {
 		if _, err := r.checkout(ctx, alias); err != nil {
 			return nil, "", err
 		}
 	}
-	command, err := renderRuntime(job.Run, r.paths, r.revision.Sources, r.inputs, nil)
+	jobRevision := r.revision
+	jobRevision.Sources = map[string]core.WorkflowSourceRevision{}
+	jobPaths := map[string]string{}
+	for _, alias := range aliases {
+		jobRevision.Sources[alias] = r.revision.Sources[alias]
+		jobPaths[alias] = r.paths[alias]
+	}
+	command, err := renderRuntime(job.Run, jobPaths, jobRevision.Sources, r.inputs, nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -126,11 +182,7 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec) (map[string
 		return nil, "", fmt.Errorf("source %s was not checked out", job.RunFrom)
 	}
 	outputPath := filepath.Join(r.root, "output-"+safePathPart(job.RunFrom)+"-"+ulid.Make().String()+".env")
-	environment := workflowEnvironment(r.revision, r.paths, outputPath)
-	secrets, err := r.resolveSecrets(ctx, job.Secrets)
-	if err != nil {
-		return nil, "", err
-	}
+	environment := workflowEnvironment(jobRevision, jobPaths, outputPath)
 	for name, value := range secrets {
 		environment = append(environment, name+"="+value)
 	}
@@ -245,12 +297,24 @@ func workflowEnvironment(revision core.WorkflowRevision, paths map[string]string
 
 func jobFingerprint(name string, job JobSpec, sources map[string]core.WorkflowSourceRevision, inputs map[string]string) string {
 	contents, _ := json.Marshal(struct {
-		Name    string
-		Job     JobSpec
-		Sources map[string]core.WorkflowSourceRevision
-		Inputs  map[string]string
-	}{Name: name, Job: job, Sources: sources, Inputs: inputs})
+		Format   string
+		Platform string
+		Name     string
+		Job      JobSpec
+		Sources  map[string]core.WorkflowSourceRevision
+		Inputs   map[string]string
+	}{Format: "shared-build-v1", Platform: runtime.GOOS + "/" + runtime.GOARCH, Name: name, Job: job, Sources: sources, Inputs: inputs})
 	digest := sha256.Sum256(contents)
+	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func jobExecutionFingerprint(name string, job JobSpec, sources map[string]core.WorkflowSourceRevision, inputs, secrets map[string]string) string {
+	fingerprint := jobFingerprint(name, job, sources, inputs)
+	if len(secrets) == 0 {
+		return fingerprint
+	}
+	encoded, _ := json.Marshal(secrets)
+	digest := sha256.Sum256(append([]byte(fingerprint), encoded...))
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 

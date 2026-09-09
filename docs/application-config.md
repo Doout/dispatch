@@ -104,7 +104,13 @@ spec:
 
 `runFrom` selects the repository that contains the script. `sources` adds repositories that the command reads. Runtime templates expose `path`, `commit`, and `branch` for each declared source.
 
-Application jobs default to `reuse: onInputMatch`. The fingerprint includes the job definition, declared source revisions, and inputs. If only the service repository changes, `build-ui` reuses its latest successful result. Dispatch runs the job when there is no prior result, a declared output is missing, or an input changed. Set `reuse: never` to run a job every time. Pipeline and `finally` jobs always run.
+Application jobs default to `reuse: onInputMatch`. Matching jobs share successful results across Applications in the same repository configuration. Concurrent requests for identical inputs wait for the first build. This coordination works within one controller; it does not coordinate multiple controller replicas.
+
+The fingerprint includes the job definition, declared source revisions, inputs, resolved secrets, and controller platform. Changing a secret invalidates the result. Separate configuration sources do not share results.
+
+If only the service repository changes, `build-ui` reuses its latest successful result. Dispatch runs the job when there is no prior result, a declared output is missing, or an input changed. Pipeline and `finally` jobs always run.
+
+A job receives source variables only for its `runFrom` and `sources` declarations. Reusable jobs must produce outputs from those declared inputs. Set `reuse: never` for jobs that depend on per-run IDs, time, or external mutable state.
 
 Jobs receive `DISPATCH_OUTPUT_FILE` and `GITHUB_OUTPUT`. Write either JSON:
 

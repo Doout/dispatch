@@ -269,7 +269,7 @@ func (s *SQLStore) UpdateWorkflowJobResult(ctx context.Context, item core.Workfl
 const workflowJobResultSelect = `SELECT id,resource_id,revision_id,job_name,fingerprint,reused_from_id,state,sources,outputs,log,error,created_at,started_at,finished_at FROM workflow_job_results`
 
 func (s *SQLStore) FindWorkflowJobResult(ctx context.Context, resourceID, jobName, fingerprint string) (core.WorkflowJobResult, error) {
-	item, err := scanWorkflowJobResult(s.db.QueryRowContext(ctx, s.q(workflowJobResultSelect+` WHERE resource_id=? AND job_name=? AND fingerprint=? ORDER BY created_at DESC LIMIT 1`), resourceID, jobName, fingerprint))
+	item, err := scanWorkflowJobResult(s.db.QueryRowContext(ctx, s.q(workflowJobResultSelect+` WHERE resource_id IN (SELECT id FROM workflow_resources WHERE kind='Application' AND config_source_id=(SELECT config_source_id FROM workflow_resources WHERE id=?)) AND job_name=? AND fingerprint=? AND state='succeeded' ORDER BY created_at DESC LIMIT 1`), resourceID, jobName, fingerprint))
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
 	}
