@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/doout/dispatch/internal/core"
@@ -23,7 +24,12 @@ type repositoryAccess struct {
 	cleanup      func()
 }
 
+var commitRefPattern = regexp.MustCompile(`^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$`)
+
 func (s *Service) repositoryHead(ctx context.Context, source core.ConfigSource, repository, branch string) (string, error) {
+	if commitRefPattern.MatchString(branch) {
+		return strings.ToLower(branch), nil
+	}
 	if source.GitHubAppID != "" {
 		if s.GitHub == nil {
 			return "", errors.New("GitHub App access is not configured")
@@ -38,7 +44,15 @@ func (s *Service) repositoryHead(ctx context.Context, source core.ConfigSource, 
 	if strings.ContainsAny(branch, " \t\r\n") {
 		return "", errors.New("branch contains whitespace")
 	}
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--exit-code", access.url, "refs/heads/"+branch)
+	refs := []string{branch}
+	if !strings.HasPrefix(branch, "refs/") {
+		refs = []string{"refs/heads/" + branch, "refs/tags/" + branch}
+	}
+	args := []string{"ls-remote", "--exit-code", access.url}
+	for _, ref := range refs {
+		args = append(args, ref, ref+"^{}")
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = access.environment
 	var output limitedBuffer
 	output.limit = maxJobLogBytes
@@ -46,7 +60,15 @@ func (s *Service) repositoryHead(ctx context.Context, source core.ConfigSource, 
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("resolve repository branch: %w: %s", err, strings.TrimSpace(output.String()))
 	}
-	return parseRepositoryHead(output.String(), "refs/heads/"+branch)
+	for _, ref := range refs {
+		if sha, err := parseRepositoryHead(output.String(), ref+"^{}"); err == nil {
+			return sha, nil
+		}
+		if sha, err := parseRepositoryHead(output.String(), ref); err == nil {
+			return sha, nil
+		}
+	}
+	return "", errors.New("repository returned no matching ref")
 }
 
 func parseRepositoryHead(output, ref string) (string, error) {

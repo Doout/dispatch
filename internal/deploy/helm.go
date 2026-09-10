@@ -67,7 +67,7 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 		}
 		sourcePath := filepath.Join(workspace, "source")
 		args := []string{"clone", "--depth", "1"}
-		if app.Branch != "" {
+		if app.Branch != "" && (deployment.CommitSHA == "" || deployment.CommitSHA == "HEAD" || deployment.CommitSHA == "chart") {
 			args = append(args, "--branch", app.Branch)
 		}
 		args = append(args, app.SourceRepo, sourcePath)
@@ -264,6 +264,7 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	upgrade.ChartPathOptions = chartOptions
 	upgrade.SetRegistryClient(c.registry)
 	upgrade.Namespace = c.settings.Namespace()
+	upgrade.ResetValues = true
 	upgrade.Atomic = true
 	upgrade.Wait = true
 	upgrade.Timeout = helmOperationTimeout

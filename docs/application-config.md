@@ -163,3 +163,53 @@ The default update mode uses webhooks and polling. Dispatch processes `push` del
 The GitHub App registration must subscribe to `push` and grant read access to repository contents. Commit status publishing also needs write access to commit statuses. The Dispatch manifest requests both settings. Update existing registrations in GitHub if they lack either permission.
 
 Polling checks each imported source at its configured interval. The minimum interval is 30 seconds. A configuration may use only webhooks or only polling.
+
+## Shared charts and values files
+
+A source can use `ref` instead of `branch` to select a full commit SHA, tag or
+branch. Commits pin the baseline across runs. Branches and tags resolve to an
+exact commit when a run starts. Retries and later stages use that recorded commit.
+
+Use `chartPath` when the chart is below the source directory. Existing Applications
+can keep using their source's `path` with no `chartPath`.
+
+```yaml
+sources:
+  platform:
+    repository: example/platform
+    ref: chart-test-branch
+  overrides:
+    repository: example/deployment-config
+    branch: main
+
+deployments:
+  app:
+    helm:
+      sourceRef: platform
+      chartPath: charts/app
+      valuesFiles:
+        - sourceRef: platform
+          path: values/default.yaml
+        - sourceRef: platform
+          path: values/development.yaml
+        - sourceRef: overrides
+          path: slots/engineer-1.yaml
+      values:
+        replicas: 1
+```
+
+Paths are relative to the selected source directory and must stay inside it.
+The controller reads files at the run's source commits, in the listed order.
+Helm merges maps and replaces lists. Later files override earlier files, inline
+`values` override files, and output `bindings` apply last. Each deployment log
+records file paths, commits and content hashes, without printing file contents.
+
+File contents go to Helm without Pipeline expression expansion. Helm expressions
+such as `{{ .Values.name }}` remain intact. Existing inline values still support
+Pipeline expressions. Upgrades reset old release values before applying the new
+inputs, matching `helm upgrade --reset-values`.
+
+Keep chart experiments on a branch of the chart repository. Test that branch in
+one engineer slot, then open a PR with those commits into the shared baseline.
+Keep slot identities and experiment-only overrides in the configuration repository.
+After merging a shared default, remove any temporary override that would mask it.

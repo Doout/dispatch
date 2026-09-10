@@ -73,6 +73,7 @@ type InputSpec struct {
 }
 
 type SourceSpec struct {
+	Ref        string `json:"ref,omitempty" yaml:"ref,omitempty"`
 	Repository string `json:"repository" yaml:"repository"`
 	Branch     string `json:"branch,omitempty" yaml:"branch,omitempty"`
 	Path       string `json:"path,omitempty" yaml:"path,omitempty"`
@@ -95,7 +96,14 @@ type DeploymentSpec struct {
 	Helm HelmDeploymentSpec `json:"helm" yaml:"helm"`
 }
 
+type HelmValuesFile struct {
+	SourceRef string `json:"sourceRef" yaml:"sourceRef"`
+	Path      string `json:"path" yaml:"path"`
+}
+
 type HelmDeploymentSpec struct {
+	ChartPath   string                   `json:"chartPath,omitempty" yaml:"chartPath,omitempty"`
+	ValuesFiles []HelmValuesFile         `json:"valuesFiles,omitempty" yaml:"valuesFiles,omitempty"`
 	SourceRef   string                   `json:"sourceRef" yaml:"sourceRef"`
 	Namespace   string                   `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	ReleaseName string                   `json:"releaseName,omitempty" yaml:"releaseName,omitempty"`
@@ -217,7 +225,7 @@ func applyPipelineDefaults(spec *PipelineSpec) {
 
 func applySourceDefaults(sources map[string]SourceSpec) {
 	for name, source := range sources {
-		if source.Branch == "" {
+		if source.Branch == "" && source.Ref == "" {
 			source.Branch = "main"
 		}
 		source.Path = strings.Trim(strings.TrimSpace(source.Path), "/")
@@ -257,6 +265,20 @@ func validateApplication(document ApplicationDocument) error {
 		}
 		if _, ok := document.Spec.Sources[deployment.Helm.SourceRef]; !ok {
 			return fmt.Errorf("spec.deployments.%s.helm.sourceRef references unknown source %q", name, deployment.Helm.SourceRef)
+		}
+		if _, err := safeJoin("/repository", deployment.Helm.ChartPath); err != nil {
+			return fmt.Errorf("deployment %s chartPath: %w", name, err)
+		}
+		for _, file := range deployment.Helm.ValuesFiles {
+			if _, ok := document.Spec.Sources[file.SourceRef]; !ok {
+				return fmt.Errorf("deployment %s values file references unknown source %q", name, file.SourceRef)
+			}
+			if strings.TrimSpace(file.Path) == "" {
+				return fmt.Errorf("deployment %s values file path is required", name)
+			}
+			if _, err := safeJoin("/repository", file.Path); err != nil {
+				return fmt.Errorf("deployment %s values file: %w", name, err)
+			}
 		}
 		for path, binding := range deployment.Helm.Bindings {
 			jobName, outputName, ok := strings.Cut(binding.OutputRef, ".")
@@ -348,7 +370,14 @@ func validateSources(sources map[string]SourceSpec) error {
 		if strings.TrimSpace(source.Repository) == "" {
 			return fmt.Errorf("spec.sources.%s.repository is required", alias)
 		}
-		if strings.TrimSpace(source.Branch) == "" {
+		if source.Branch != "" && source.Ref != "" {
+			return fmt.Errorf("spec.sources.%s must use branch or ref, not both", alias)
+		}
+		ref := sourceRevisionRef(source)
+		if strings.ContainsAny(ref, " \t\r\n~^:?*[\\") || strings.Contains(ref, "..") || strings.HasPrefix(ref, "-") {
+			return fmt.Errorf("spec.sources.%s has an invalid Git ref", alias)
+		}
+		if strings.TrimSpace(ref) == "" {
 			return fmt.Errorf("spec.sources.%s.branch is required", alias)
 		}
 		if source.Path == ".." || strings.HasPrefix(source.Path, "../") || strings.Contains(source.Path, "/../") {
@@ -461,4 +490,11 @@ func (d Document) MarshalYAML() ([]byte, error) {
 		return yaml.Marshal(PipelineDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.Pipeline})
 	}
 	return nil, errors.New("document has no spec")
+}
+
+func sourceRevisionRef(source SourceSpec) string {
+	if source.Ref != "" {
+		return source.Ref
+	}
+	return source.Branch
 }

@@ -74,10 +74,14 @@ func applicationTopology(spec ApplicationSpec) Topology {
 		}
 		topology.Nodes = append(topology.Nodes, TopologyNode{ID: id, Column: "deployments", Kind: "deployment", Label: name, Detail: detail, Metadata: compactMetadata(map[string]string{
 			"Chart source": deployment.Helm.SourceRef,
+			"Chart path":   deployment.Helm.ChartPath,
 			"Namespace":    deployment.Helm.Namespace,
 		})})
 		if _, ok := spec.Sources[deployment.Helm.SourceRef]; ok {
 			topology.Edges = append(topology.Edges, TopologyEdge{From: nodeID("source", deployment.Helm.SourceRef), To: id, Kind: "chart"})
+		}
+		for _, file := range deployment.Helm.ValuesFiles {
+			topology.Edges = append(topology.Edges, TopologyEdge{From: nodeID("source", file.SourceRef), To: id, Kind: "values"})
 		}
 		for _, binding := range deployment.Helm.Bindings {
 			job := strings.SplitN(binding.OutputRef, ".", 2)[0]
@@ -126,7 +130,7 @@ func addSources(topology *Topology, sources map[string]SourceSpec) {
 	for _, name := range sortedKeys(sources) {
 		source := sources[name]
 		topology.Nodes = append(topology.Nodes, TopologyNode{ID: nodeID("source", name), Column: "sources", Kind: "source", Label: name, Detail: repositoryName(source.Repository), Metadata: compactMetadata(map[string]string{
-			"Branch": source.Branch,
+			"Branch": sourceRevisionRef(source),
 			"Path":   source.Path,
 		})})
 	}

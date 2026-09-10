@@ -109,11 +109,11 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 			sources = value.document.Pipeline.Sources
 		}
 		for alias, spec := range sources {
-			key := normalizeRepository(spec.Repository) + "@" + strings.ToLower(spec.Branch)
+			key := normalizeRepository(spec.Repository) + "@" + sourceRevisionRef(spec)
 			if validatedSources[key] {
 				continue
 			}
-			if _, err := s.repositoryHead(ctx, source, spec.Repository, spec.Branch); err != nil {
+			if _, err := s.repositoryHead(ctx, source, spec.Repository, sourceRevisionRef(spec)); err != nil {
 				return s.sourceError(ctx, source, fmt.Errorf("validate source %s in %s: %w", alias, value.path, err))
 			}
 			validatedSources[key] = true
@@ -319,7 +319,7 @@ func resourceReferences(resource core.WorkflowResource, repository, branch strin
 		return false
 	}
 	for _, source := range documents[0].Spec.Sources {
-		if sameSource(repository, branch, source.Repository, source.Branch) {
+		if sameSource(repository, branch, source.Repository, strings.TrimPrefix(sourceRevisionRef(source), "refs/heads/")) {
 			return true
 		}
 	}
@@ -521,11 +521,11 @@ func (s *Service) resolveResourceSources(ctx context.Context, source core.Config
 	}
 	result := map[string]core.WorkflowSourceRevision{}
 	for alias, spec := range documents[0].Spec.Sources {
-		sha, err := s.repositoryHead(ctx, source, spec.Repository, spec.Branch)
+		sha, err := s.repositoryHead(ctx, source, spec.Repository, sourceRevisionRef(spec))
 		if err != nil {
 			return nil, fmt.Errorf("resolve source %s: %w", alias, err)
 		}
-		result[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: spec.Repository, Branch: spec.Branch, CommitSHA: sha, Path: spec.Path}
+		result[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: spec.Repository, Branch: sourceRevisionRef(spec), CommitSHA: sha, Path: spec.Path}
 	}
 	return result, nil
 }
