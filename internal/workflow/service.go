@@ -87,17 +87,8 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 	if err != nil {
 		return s.sourceError(ctx, source, err)
 	}
-	parsed := []parsedResource{}
-	for _, file := range files {
-		documents, err := Parse(file.Path, file.Contents)
-		if err != nil {
-			return s.sourceError(ctx, source, err)
-		}
-		for _, document := range documents {
-			parsed = append(parsed, parsedResource{path: file.Path, document: document})
-		}
-	}
-	if err := validateResourceSet(parsed); err != nil {
+	parsed, err := s.parseConfiguration(ctx, source, head, files)
+	if err != nil {
 		return s.sourceError(ctx, source, err)
 	}
 	validatedSources := map[string]bool{}
@@ -123,10 +114,6 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 	if err != nil {
 		return s.sourceError(ctx, source, err)
 	}
-	byIdentity := map[string]core.WorkflowResource{}
-	for _, item := range existing {
-		byIdentity[resourceIdentity(item.Path, item.Kind, item.Name)] = item
-	}
 	now := time.Now().UTC()
 	desired := make([]core.WorkflowResource, 0, len(parsed))
 	for _, value := range parsed {
@@ -138,8 +125,10 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 		if err != nil {
 			return s.sourceError(ctx, source, err)
 		}
-		identity := resourceIdentity(value.path, value.document.Kind, value.document.Metadata.Name)
-		item, found := byIdentity[identity]
+		item, found, err := existingApplication(existing, value.path, value.document.Kind, value.document.Metadata.Name)
+		if err != nil {
+			return s.sourceError(ctx, source, err)
+		}
 		if !found {
 			item = core.WorkflowResource{ID: ulid.Make().String(), ConfigSourceID: source.ID, CreatedAt: now, Active: true, State: "ready"}
 		} else if item.Active {
@@ -195,8 +184,6 @@ func validateResourceSet(resources []parsedResource) error {
 	}
 	return nil
 }
-
-func resourceIdentity(path, kind, name string) string { return path + "\x00" + kind + "\x00" + name }
 
 func (s *Service) sourceError(ctx context.Context, source core.ConfigSource, cause error) (core.ConfigSource, error) {
 	now := time.Now().UTC()

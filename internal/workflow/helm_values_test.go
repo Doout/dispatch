@@ -151,3 +151,35 @@ func TestValueSourcesFollowOverrides(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplateMetadataDoesNotReachHelm(t *testing.T) {
+	root := t.TempDir()
+	original := filepath.Join(root, "slot1.yaml")
+	content := "_pipeline:\n  gitopsRef: experiment\napp:\n  expression: '{{ .Values.cluster.name }}'\n  remove: null\n  list: [a, b]\n"
+	if err := os.WriteFile(original, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	values, _, err := readHelmValues(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := helmValuesInput(root, 0, original, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := (&helmvalues.Options{ValueFiles: []string{input}}).MergeValues(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := merged["_pipeline"]; ok {
+		t.Fatal("metadata passed to Helm")
+	}
+	app := merged["app"].(map[string]any)
+	if app["expression"] != "{{ .Values.cluster.name }}" || app["remove"] != nil || len(app["list"].([]any)) != 2 {
+		t.Fatal("Helm values changed", app)
+	}
+	raw, err := os.ReadFile(original)
+	if err != nil || string(raw) != content {
+		t.Fatal("source file changed", err)
+	}
+}

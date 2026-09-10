@@ -338,6 +338,8 @@ func (m *Manager) RepositoryHead(ctx context.Context, id, repository, branch str
 
 // RepositoryFiles returns YAML or JSON configuration files at an immutable
 // revision. path may identify one file or a directory prefix.
+var ErrNoConfigurationFiles = errors.New("no YAML or JSON configuration files found")
+
 func (m *Manager) RepositoryFiles(ctx context.Context, id, repository, revision, path string) ([]RepositoryFile, error) {
 	connection, err := m.Store.GetGitHubApp(ctx, id)
 	if err != nil {
@@ -359,6 +361,7 @@ func (m *Manager) RepositoryFiles(ctx context.Context, id, repository, revision,
 		Truncated bool `json:"truncated"`
 		Tree      []struct {
 			Path string `json:"path"`
+			Mode string `json:"mode"`
 			Type string `json:"type"`
 			SHA  string `json:"sha"`
 			Size int64  `json:"size"`
@@ -377,13 +380,16 @@ func (m *Manager) RepositoryFiles(ctx context.Context, id, repository, revision,
 		if entry.Type != "blob" || !configurationPath(path, entry.Path) {
 			continue
 		}
+		if entry.Mode == "120000" {
+			return nil, fmt.Errorf("configuration file %s is a symbolic link", entry.Path)
+		}
 		if entry.Size > 1<<20 {
 			return nil, fmt.Errorf("configuration file %s exceeds 1 MiB", entry.Path)
 		}
 		blobs = append(blobs, blob{path: entry.Path, sha: entry.SHA})
 	}
 	if len(blobs) == 0 {
-		return nil, fmt.Errorf("no YAML or JSON configuration files found at %s", path)
+		return nil, fmt.Errorf("%w at %s", ErrNoConfigurationFiles, path)
 	}
 	if len(blobs) > 64 {
 		return nil, errors.New("configuration path contains more than 64 YAML or JSON files")

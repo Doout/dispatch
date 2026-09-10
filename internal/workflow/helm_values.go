@@ -50,6 +50,10 @@ func (s *Service) deploymentValues(ctx context.Context, source core.ConfigSource
 		if err != nil {
 			return nil, nil, fmt.Errorf("values file %s:%s: %w", file.SourceRef, file.Path, err)
 		}
+		path, err = helmValuesInput(root, len(paths), path, fileValues)
+		if err != nil {
+			return nil, nil, err
+		}
 		recordValueSources(origins, "", fileValues, file.SourceRef+":"+file.Path)
 		paths = append(paths, path)
 		evidence = append(evidence, fmt.Sprintf("Helm values %s@%s:%s sha256:%s", file.SourceRef, revision.Sources[file.SourceRef].CommitSHA, file.Path, digest))
@@ -131,4 +135,22 @@ func recordValueSources(out map[string]string, path string, value any, source st
 		}
 		out[path] = source
 	}
+}
+
+// Keep deployment parameters out of Helm while preserving ordinary YAML merge
+// behavior and recording the original file hash.
+func helmValuesInput(root string, index int, path string, values map[string]any) (string, error) {
+	if _, ok := values["_pipeline"]; !ok {
+		return path, nil
+	}
+	delete(values, "_pipeline")
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	output := filepath.Join(root, fmt.Sprintf("values-%d.json", index))
+	if err := os.WriteFile(output, raw, 0600); err != nil {
+		return "", err
+	}
+	return output, nil
 }

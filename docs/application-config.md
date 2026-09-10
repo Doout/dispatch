@@ -229,3 +229,96 @@ The view reads the chart stored with the current Helm release. If the selected
 deployment no longer matches that release, or the cluster cannot be read, it shows
 the saved supplied values with an explanation. Secret redaction applies to both
 views.
+
+## Generate Applications from slot values
+
+An ApplicationTemplate replaces repeated Application documents. The Pipeline
+discovers files in the same repository and commit as the template, then expands
+one Application per matching file. The generated documents stay in the database;
+there are no generated files to commit.
+
+```yaml
+apiVersion: dispatch/v1alpha1
+kind: ApplicationTemplate
+metadata:
+  name: service-slots
+spec:
+  files:
+    path: helm-values/slots
+    pattern: slot*.yaml
+  parameters:
+    chartRef: main
+    target: development
+  template:
+    apiVersion: dispatch/v1alpha1
+    kind: Application
+    metadata:
+      name: ${slot.name}
+    spec:
+      sources:
+        chart:
+          repository: platform/charts
+          ref: ${param.chartRef}
+        slot-config:
+          repository: team/deployments
+          ref: ${config.revision}
+      deployments:
+        service:
+          helm:
+            sourceRef: chart
+            chartPath: charts/service
+            releaseName: ${slot.name}
+            valuesFiles:
+              - sourceRef: slot-config
+                path: helm-values/common.yaml
+              - sourceRef: slot-config
+                path: ${slot.path}
+      stages:
+        - name: development
+          targetRef: ${param.target}
+          deploy: [service]
+```
+
+Here, `team/deployments` is the repository containing the template and slot
+files. Use its actual repository name. Pinning `slot-config` to
+`${config.revision}` keeps discovery and deployment on the same commit.
+
+A slot file contains ordinary Helm values and optional Pipeline parameters:
+
+```yaml
+_pipeline:
+  chartRef: my-chart-experiment
+replicas: 1
+```
+
+Only parameters declared in the template may be overridden, and their values
+must be strings. The Pipeline strips the reserved top-level `_pipeline` map
+before passing a values file to Helm. Common settings belong in a shared values
+file loaded before the slot file.
+
+`${slot.name}` is the filename without its extension. `${slot.path}` is its
+repository-relative path. `${config.revision}` is the resolved configuration
+commit. `${param.NAME}` selects a declared parameter. Substitution happens in
+YAML scalar nodes and keys; Helm and job expressions are preserved.
+
+Discovery uses a repository-relative directory and a filename glob, without
+recursive glob patterns. Subdirectories are ignored. Ordinary Applications and
+Pipelines may coexist with templates, but generated names must remain unique.
+Discovery is limited to 64 configuration files per directory read and 256
+generated resources per sync. Invalid files retain the previous valid resource
+set.
+
+Every generated Application has independent Run, Pause and history controls.
+New Applications activate automatically, consistent with ordinary repository
+Applications. Existing IDs and pause state survive moving a definition to a
+template. Removing a slot file stops future runs; it does not uninstall its
+release or cancel an in-flight deployment. Readding a removed slot requires
+activation.
+
+Applications sharing the configuration repository still observe its commits.
+Editing one slot file can therefore trigger other active slots whose sources
+include that repository.
+
+Deploy a Pipeline version with ApplicationTemplate support before changing a
+watched repository to this layout. Pause affected Applications during migration,
+sync the new template and verify their IDs before resuming them.

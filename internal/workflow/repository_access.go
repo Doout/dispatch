@@ -116,9 +116,18 @@ func (s *Service) repositoryFiles(ctx context.Context, source core.ConfigSource,
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Stat(configurationRoot)
+	info, err := os.Lstat(configurationRoot)
 	if err != nil {
-		return nil, fmt.Errorf("configuration path %s was not found", source.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w at %s", githubapp.ErrNoConfigurationFiles, source.Path)
+		}
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("configuration path must not be a symbolic link")
+	}
+	if _, err := containedPath(worktree.path, configurationRoot); err != nil {
+		return nil, err
 	}
 	paths := []string{}
 	if !info.IsDir() {
@@ -135,16 +144,22 @@ func (s *Service) repositoryFiles(ctx context.Context, source core.ConfigSource,
 		return nil, err
 	}
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("no YAML or JSON configuration files found at %s", source.Path)
+		return nil, fmt.Errorf("%w at %s", githubapp.ErrNoConfigurationFiles, source.Path)
 	}
 	if len(paths) > 64 {
 		return nil, errors.New("configuration path contains more than 64 YAML or JSON files")
 	}
 	items := make([]githubapp.RepositoryFile, 0, len(paths))
 	for _, path := range paths {
-		info, err := os.Stat(path)
+		if _, err := containedPath(worktree.path, path); err != nil {
+			return nil, err
+		}
+		info, err := os.Lstat(path)
 		if err != nil {
 			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("configuration file %s must be a regular file", path)
 		}
 		if info.Size() > 1<<20 {
 			return nil, fmt.Errorf("configuration file %s exceeds 1 MiB", path)

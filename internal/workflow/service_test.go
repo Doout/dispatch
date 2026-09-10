@@ -72,7 +72,14 @@ spec:
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/app/commits/main":
 			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "app-1"})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/owner/config/git/trees/config-"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"truncated": false, "tree": []map[string]any{{"path": ".dispatch/app.yaml", "type": "blob", "sha": "config-blob", "size": 256}}})
+			entries := []map[string]any{{"path": ".dispatch/app.yaml", "type": "blob", "sha": "config-blob", "size": 256}}
+			if version.Load() >= 5 {
+				entries[0]["path"] = ".dispatch/slots.template.yaml"
+				if version.Load() != 6 {
+					entries = append(entries, map[string]any{"path": "values/slots/example.yaml", "type": "blob", "sha": "slot-blob", "size": 16})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"truncated": false, "tree": entries})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/config/git/blobs/config-blob":
 			contents := valid("./build-v1.sh")
 			if version.Load() == 2 {
@@ -80,7 +87,18 @@ spec:
 			} else if version.Load() == 3 {
 				contents = valid("./build-v2.sh")
 			}
+			if version.Load() >= 5 {
+				application := strings.Replace(valid("./build-v2.sh"), "name: example", "name: ${slot.name}", 1)
+				contents = "apiVersion: dispatch/v1alpha1\nkind: ApplicationTemplate\nmetadata: {name: slots}\nspec:\n  files: {path: values/slots, pattern: '*.yaml'}\n  template:\n"
+				for _, line := range strings.Split(strings.TrimSpace(application), "\n") {
+					contents += "    " + line + "\n"
+				}
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(contents)), "size": len(contents)})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/config/git/blobs/slot-blob":
+			contents := "replicas: 1"
+			_ = json.NewEncoder(w).Encode(map[string]any{"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(contents)), "size": len(contents)})
+
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.String())
 			http.NotFound(w, r)
@@ -150,6 +168,27 @@ spec:
 	if err != nil || len(resources) != 1 || resources[0].Active || resources[0].State != "paused" {
 		t.Fatalf("repository sync did not preserve the explicit pause: %#v err=%v", resources, err)
 	}
+	stableID := resources[0].ID
+	for _, v := range []int32{5, 6, 7} {
+		version.Store(v)
+		if _, err := service.SyncSource(ctx, source.ID); err != nil {
+			t.Fatal(err)
+		}
+		resources, err = data.ListWorkflowResources(ctx, source.ID)
+		if err != nil || len(resources) != 1 || resources[0].ID != stableID || resources[0].Active {
+			t.Fatalf("identity or pause lost at version %d: %#v %v", v, resources, err)
+		}
+		if v == 5 && (resources[0].Path != ".dispatch/slots.template.yaml" || resources[0].State != "paused") {
+			t.Fatal(resources)
+		}
+		if v == 6 && resources[0].State != "removed" {
+			t.Fatal("last file removal did not deactivate", resources)
+		}
+		if v == 7 && resources[0].State != "pending" {
+			t.Fatal("removed slot automatically reactivated", resources)
+		}
+	}
+
 }
 
 func TestPollOnceDetectsRevisionsWithoutWebhooksAndReloadsConfiguration(t *testing.T) {

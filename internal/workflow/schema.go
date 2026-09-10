@@ -18,8 +18,9 @@ import (
 const APIVersion = "dispatch/v1alpha1"
 
 const (
-	KindApplication = "Application"
-	KindPipeline    = "Pipeline"
+	KindApplication         = "Application"
+	KindApplicationTemplate = "ApplicationTemplate"
+	KindPipeline            = "Pipeline"
 )
 
 type TypeMeta struct {
@@ -33,10 +34,11 @@ type Metadata struct {
 
 type Document struct {
 	TypeMeta   `json:",inline" yaml:",inline"`
-	Metadata   Metadata         `json:"metadata" yaml:"metadata"`
-	Spec       *ApplicationSpec `json:"spec,omitempty" yaml:"spec,omitempty"`
-	Pipeline   *PipelineSpec    `json:"-" yaml:"-"`
-	SourcePath string           `json:"-" yaml:"-"`
+	Metadata   Metadata                 `json:"metadata" yaml:"metadata"`
+	Spec       *ApplicationSpec         `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Pipeline   *PipelineSpec            `json:"-" yaml:"-"`
+	SourcePath string                   `json:"-" yaml:"-"`
+	Template   *ApplicationTemplateSpec `json:"-" yaml:"-"`
 }
 
 type ApplicationDocument struct {
@@ -163,6 +165,15 @@ func Parse(path string, contents []byte) ([]Document, error) {
 		}
 		var item Document
 		switch meta.Kind {
+		case KindApplicationTemplate:
+			var value ApplicationTemplateDocument
+			if err := strictDecode(raw, &value); err != nil {
+				return nil, fmt.Errorf("%s document %d: %w", path, index, err)
+			}
+			if err := validateApplicationTemplate(value); err != nil {
+				return nil, fmt.Errorf("%s document %d: %w", path, index, err)
+			}
+			item = Document{TypeMeta: value.TypeMeta, Metadata: value.Metadata, Template: &value.Spec, SourcePath: path}
 		case KindApplication:
 			var value ApplicationDocument
 			if err := strictDecode(raw, &value); err != nil {
@@ -184,7 +195,7 @@ func Parse(path string, contents []byte) ([]Document, error) {
 			}
 			item = Document{TypeMeta: value.TypeMeta, Metadata: value.Metadata, Pipeline: &value.Spec, SourcePath: path}
 		default:
-			return nil, fmt.Errorf("%s document %d: kind must be Application or Pipeline", path, index)
+			return nil, fmt.Errorf("%s document %d: kind must be Application, ApplicationTemplate or Pipeline", path, index)
 		}
 		items = append(items, item)
 	}
@@ -464,6 +475,9 @@ func uniqueStrings(values []string) []string {
 }
 
 func (d Document) CanonicalJSON() ([]byte, error) {
+	if d.Template != nil {
+		return json.Marshal(ApplicationTemplateDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.Template})
+	}
 	if d.Spec != nil {
 		return json.Marshal(ApplicationDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.Spec})
 	}
@@ -483,6 +497,9 @@ func (d Document) Digest() (string, error) {
 }
 
 func (d Document) MarshalYAML() ([]byte, error) {
+	if d.Template != nil {
+		return yaml.Marshal(ApplicationTemplateDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.Template})
+	}
 	if d.Spec != nil {
 		return yaml.Marshal(ApplicationDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.Spec})
 	}
