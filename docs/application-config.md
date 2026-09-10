@@ -213,3 +213,19 @@ Keep chart experiments on a branch of the chart repository. Test that branch in
 one engineer slot, then open a PR with those commits into the shared baseline.
 Keep slot identities and experiment-only overrides in the configuration repository.
 After merging a shared default, remove any temporary override that would mask it.
+
+## Inspecting chart values
+
+The deployment's Chart values view shows chart defaults, schema fields and values
+referenced by templates or helpers. It follows selected image keys and references
+inside Helm value expressions. Unresolved dynamic lookups retain their input
+section and show a note. This analysis affects the display only.
+
+Use Show all supplied values to inspect the complete merged input. New managed
+deployments also record each value's source file, inline override or build output.
+Older deployments show Supplied values when that source was not recorded.
+
+The view reads the chart stored with the current Helm release. If the selected
+deployment no longer matches that release, or the cluster cannot be read, it shows
+the saved supplied values with an explanation. Secret redaction applies to both
+views.

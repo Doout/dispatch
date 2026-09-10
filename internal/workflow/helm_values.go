@@ -26,6 +26,7 @@ func (s *Service) deploymentValues(ctx context.Context, source core.ConfigSource
 	defer runtime.close()
 	paths := []string{}
 	evidence := []string{}
+	origins := map[string]string{}
 	for _, file := range spec.ValuesFiles {
 		directory, err := runtime.checkout(ctx, file.SourceRef)
 		if err != nil {
@@ -45,10 +46,11 @@ func (s *Service) deploymentValues(ctx context.Context, source core.ConfigSource
 		if err != nil {
 			return nil, nil, err
 		}
-		_, digest, err := readHelmValues(path)
+		fileValues, digest, err := readHelmValues(path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("values file %s:%s: %w", file.SourceRef, file.Path, err)
 		}
+		recordValueSources(origins, "", fileValues, file.SourceRef+":"+file.Path)
 		paths = append(paths, path)
 		evidence = append(evidence, fmt.Sprintf("Helm values %s@%s:%s sha256:%s", file.SourceRef, revision.Sources[file.SourceRef].CommitSHA, file.Path, digest))
 	}
@@ -56,6 +58,7 @@ func (s *Service) deploymentValues(ctx context.Context, source core.ConfigSource
 	if err != nil {
 		return nil, nil, err
 	}
+	recordValueSources(origins, "", inline, "Inline values")
 	raw, err := json.Marshal(inline)
 	if err != nil {
 		return nil, nil, err
@@ -67,6 +70,10 @@ func (s *Service) deploymentValues(ctx context.Context, source core.ConfigSource
 	paths = append(paths, inlinePath)
 	options := helmvalues.Options{ValueFiles: paths}
 	values, err := options.MergeValues(nil)
+	if err == nil && len(origins) > 0 {
+		raw, _ := json.Marshal(origins)
+		evidence = append(evidence, "Helm value sources: "+string(raw))
+	}
 	return values, evidence, err
 }
 
@@ -103,4 +110,25 @@ func readHelmValues(path string) (map[string]any, string, error) {
 		return nil, "", fmt.Errorf("invalid YAML values")
 	}
 	return values, fmt.Sprintf("%x", sha256.Sum256(raw)), nil
+}
+
+// Record paths and their source, never the values themselves.
+func recordValueSources(out map[string]string, path string, value any, source string) {
+	if object, ok := value.(map[string]any); ok && len(object) > 0 {
+		delete(out, path)
+		for key, item := range object {
+			next := key
+			if path != "" {
+				next = path + "." + key
+			}
+			recordValueSources(out, next, item, source)
+		}
+	} else if path != "" {
+		for previous := range out {
+			if strings.HasPrefix(previous, path+".") {
+				delete(out, previous)
+			}
+		}
+		out[path] = source
+	}
 }

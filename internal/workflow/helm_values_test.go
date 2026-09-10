@@ -129,7 +129,25 @@ func TestDeploymentInlineValuesKeepRuntimeBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["revision"] != "recorded" || len(evidence) != 0 {
+	if got["revision"] != "recorded" || len(evidence) != 1 {
 		t.Fatalf("unexpected inline values: %v", got)
+	}
+}
+
+func TestValueSourcesFollowOverrides(t *testing.T) {
+	origins := map[string]string{}
+	recordValueSources(origins, "", map[string]any{"image": map[string]any{"tag": "old", "registry": "registry"}, "password": "private-value"}, "platform.yaml")
+	recordValueSources(origins, "", map[string]any{"image": map[string]any{"tag": "new"}}, "slot.yaml")
+	if origins["image.tag"] != "slot.yaml" || origins["image.registry"] != "platform.yaml" {
+		t.Fatal(origins)
+	}
+	recordValueSources(origins, "", map[string]any{"image": nil}, "inline")
+	if _, ok := origins["image.tag"]; ok {
+		t.Fatal("stale nested source")
+	}
+	for _, source := range origins {
+		if source == "private-value" {
+			t.Fatal("value stored in source metadata")
+		}
 	}
 }

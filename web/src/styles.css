@@ -2044,3 +2044,8 @@ code { font-family: var(--mono); }
   .resource-table .configuration-error-row > td { display: block; padding: 0; }
   .resource-table .configuration-error-row > td::before { display: none; }
 }
+
+.values-scope { display: flex; align-items: center; gap: 8px; margin: 0 22px 14px; }
+.applied-values .value-origin { display: block; color: var(--muted); font-weight: normal; margin-top: 4px; }
+
+.values-summary { margin: 0 22px 12px; color: var(--muted); font-size: 13px; }

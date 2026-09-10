@@ -448,7 +448,7 @@ export type WorkflowTopology = {
   nodes: WorkflowTopologyNode[];
   edges: WorkflowTopologyEdge[] | null;
 };
-export type AppliedValue = { path: string; value: unknown; redacted?: boolean };
+export type AppliedValue = { path: string; value: unknown; redacted?: boolean; source?: string };
 export type DeploymentTopology = {
   topology: WorkflowTopology;
   target: string;
@@ -457,6 +457,9 @@ export type DeploymentTopology = {
   release: string;
   chart?: string;
   values: AppliedValue[];
+  chartValues?: AppliedValue[];
+  valuesAnalyzed?: boolean;
+  valuesNotes?: string[];
   live: boolean;
   warning?: string;
 };
@@ -919,8 +922,8 @@ export const api = {
     request<void>(`/api/v1/role-assignments/${id}`, { method: "DELETE" }),
   logs: (id: string) =>
     request<DeploymentLog[]>(`/api/v1/deployments/${id}/logs`),
-  deploymentTopology: (id: string) =>
-    request<DeploymentTopology>(`/api/v1/deployments/${id}/topology`),
+  deploymentTopology: (id: string, chartValues = false) =>
+    request<DeploymentTopology>(`/api/v1/deployments/${id}/topology${chartValues ? "?values=chart" : ""}`),
   deploymentManifests: (id: string) =>
     request<DeploymentManifests>(`/api/v1/deployments/${id}/manifests`),
   deploymentResource: (deploymentID: string, kind: string, name: string) =>

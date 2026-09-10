@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
+	"github.com/doout/dispatch/internal/chartvalues"
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/kubeconfig"
 	"gopkg.in/yaml.v3"
@@ -19,6 +21,7 @@ import (
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/registry"
+	helmrelease "helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
 )
 
@@ -214,6 +217,50 @@ func HelmReleaseManifest(ctx context.Context, server core.Server, namespace, rel
 		return "", err
 	}
 	return installed.Manifest, nil
+}
+
+// HelmReleaseValues analyzes the stored chart only when its inputs match the
+// selected deployment. Historical deployments never borrow a newer chart.
+func HelmReleaseValues(ctx context.Context, server core.Server, namespace, release string, deployment core.Deployment, expected map[string]any) (chartvalues.Result, error) {
+	prepared, cleanup, err := prepareKubernetesServer(server)
+	if err != nil {
+		return chartvalues.Result{}, err
+	}
+	defer cleanup()
+	workspace, err := os.MkdirTemp("", "dispatch-values-inspect-")
+	if err != nil {
+		return chartvalues.Result{}, err
+	}
+	defer os.RemoveAll(workspace)
+	client, err := newSDKHelmClient(prepared, namespace, workspace)
+	if err != nil {
+		return chartvalues.Result{}, err
+	}
+	sdk := client.(*sdkHelmClient)
+	if err := ctx.Err(); err != nil {
+		return chartvalues.Result{}, err
+	}
+	installed, err := action.NewGet(sdk.configuration).Run(release)
+	if err != nil {
+		return chartvalues.Result{}, err
+	}
+	if !releaseValuesMatch(installed, deployment, expected) {
+		return chartvalues.Result{}, errors.New("the current Helm release does not match this deployment")
+	}
+	result, err := chartvalues.Analyze(installed.Chart, installed.Config)
+	if err == nil {
+		result.Values = redactSnapshotValues("", result.Values).(map[string]any)
+	}
+	return result, err
+}
+
+func releaseValuesMatch(installed *helmrelease.Release, deployment core.Deployment, expected map[string]any) bool {
+	if installed.Info == nil || installed.Info.LastDeployed.Time.Before(deployment.CreatedAt) || (deployment.FinishedAt != nil && installed.Info.LastDeployed.Time.After(*deployment.FinishedAt)) {
+		return false
+	}
+	actualJSON, _ := json.Marshal(redactSnapshotValues("", installed.Config))
+	expectedJSON, _ := json.Marshal(redactSnapshotValues("", expected))
+	return bytes.Equal(actualJSON, expectedJSON)
 }
 
 func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app core.App, values map[string]interface{}) error {

@@ -56,17 +56,21 @@ type appliedValue struct {
 	Path     string `json:"path"`
 	Value    any    `json:"value"`
 	Redacted bool   `json:"redacted,omitempty"`
+	Source   string `json:"source,omitempty"`
 }
 type deploymentTopologyResponse struct {
-	Topology  runtimeTopology `json:"topology"`
-	Target    string          `json:"target"`
-	Runtime   string          `json:"runtime"`
-	Namespace string          `json:"namespace"`
-	Release   string          `json:"release"`
-	Chart     string          `json:"chart,omitempty"`
-	Values    []appliedValue  `json:"values"`
-	Live      bool            `json:"live"`
-	Warning   string          `json:"warning,omitempty"`
+	Topology       runtimeTopology `json:"topology"`
+	Target         string          `json:"target"`
+	Runtime        string          `json:"runtime"`
+	Namespace      string          `json:"namespace"`
+	Release        string          `json:"release"`
+	Chart          string          `json:"chart,omitempty"`
+	Values         []appliedValue  `json:"values"`
+	ChartValues    []appliedValue  `json:"chartValues,omitempty"`
+	ValuesNotes    []string        `json:"valuesNotes,omitempty"`
+	ValuesAnalyzed bool            `json:"valuesAnalyzed"`
+	Live           bool            `json:"live"`
+	Warning        string          `json:"warning,omitempty"`
 }
 
 type deploymentManifest struct {
@@ -143,6 +147,43 @@ func (a *API) getDeploymentTopology(w http.ResponseWriter, r *http.Request) {
 	if item.Snapshot.TargetID != "" {
 		result.Target, result.Runtime, result.Namespace, result.Release, result.Chart = item.Snapshot.TargetName, item.Snapshot.Runtime, item.Snapshot.Namespace, item.Snapshot.Release, item.Snapshot.Chart
 		result.Values = visibleValueMap(item.Snapshot.Values)
+	}
+	if r.URL.Query().Get("values") == "chart" && item.Server.Kubernetes != nil {
+		expected := item.Snapshot.Values
+		if expected == nil {
+			expected = map[string]any{}
+			for _, doc := range []string{item.App.HelmValues, item.App.HelmGeneratedValues, item.App.HelmGroupValues} {
+				var values map[string]any
+				if yaml.Unmarshal([]byte(doc), &values) == nil {
+					mergeValues(expected, values)
+				}
+			}
+		}
+		if selected, err := deploy.HelmReleaseValues(r.Context(), *item.Server, result.Namespace, result.Release, item, expected); err == nil {
+			result.ChartValues = visibleValueMap(selected.Values)
+			result.ValuesNotes = selected.Notes
+			result.ValuesAnalyzed = true
+			origins := item.Snapshot.ValueSources
+			for i := range result.ChartValues {
+				field := &result.ChartValues[i]
+				field.Source = "Chart default"
+				for _, supplied := range result.Values {
+					if field.Path == supplied.Path || strings.HasPrefix(field.Path, supplied.Path+".") {
+						field.Source = "Supplied values"
+						break
+					}
+				}
+				best := 0
+				for path, source := range origins {
+					if (field.Path == path || strings.HasPrefix(field.Path, path+".")) && len(path) > best {
+						field.Source = source
+						best = len(path)
+					}
+				}
+			}
+		} else {
+			result.ValuesNotes = []string{"Chart analysis is unavailable for this deployment. Showing all supplied values."}
+		}
 	}
 	result.Topology = releaseRoot(item, result.Namespace, result.Release)
 	if item.Server.Kubernetes != nil {

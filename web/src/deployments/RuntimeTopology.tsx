@@ -10,19 +10,23 @@ export function DeploymentRuntime({ deployment, section }: { deployment: Deploym
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [showAll, setShowAll] = useState(false);
   const [selectedNode, setSelectedNode] = useState<WorkflowTopologyNode | null>(null);
-  const load = async () => { if (section === "manifests") return; setLoading(true); setError(""); try { setData(await api.deploymentTopology(deployment.id)); } catch (cause) { setError((cause as Error).message); } finally { setLoading(false); } };
-  useEffect(() => { void load(); }, [deployment.id, section]);
-  const values = useMemo(() => data?.values.filter((item) => item.path.toLowerCase().includes(query.trim().toLowerCase())) ?? [], [data, query]);
+  const load = async () => { if (section === "manifests") return; setLoading(true); setError(""); try { setData(await api.deploymentTopology(deployment.id, section === "values")); } catch (cause) { setError((cause as Error).message); } finally { setLoading(false); } };
+  useEffect(() => { setShowAll(false); void load(); }, [deployment.id, section]);
+  const values = useMemo(() => (data?.valuesAnalyzed && !showAll ? data.chartValues ?? [] : data?.values ?? []).filter((item) => item.path.toLowerCase().includes(query.trim().toLowerCase())) ?? [], [data, query, showAll]);
   if (section === "manifests") return <DeploymentManifests deployment={deployment} />;
   if (loading) return <div className="runtime-loading">Loading deployment inventory…</div>;
   if (error || !data) return <div className="runtime-error" role="alert">{error || "Deployment inventory is unavailable."}<button onClick={() => void load()}>Retry</button></div>;
   return <section className="runtime-panel">
-    <header className="runtime-heading"><div><h2>{section === "topology" ? "Runtime topology" : "Applied values"}</h2><p>{data.target} · {data.namespace} · {data.release}</p></div><button className="icon-button" title="Refresh" aria-label="Refresh runtime inventory" onClick={() => void load()}><ArrowClockwise size={17} /></button></header>
+    <header className="runtime-heading"><div><h2>{section === "topology" ? "Runtime topology" : "Chart values"}</h2><p>{data.target} · {data.namespace} · {data.release}</p></div><button className="icon-button" title="Refresh" aria-label="Refresh runtime inventory" onClick={() => void load()}><ArrowClockwise size={17} /></button></header>
     {data.warning && <p className="runtime-warning">{data.warning}</p>}
     {section === "topology" ? <><TopologyCanvas topology={data.topology} label="Deployment runtime topology" isNodeSelectable={(node) => inspectableKinds.has(node.kind)} onNodeSelect={setSelectedNode} />{selectedNode && <ResourceInspector deploymentID={deployment.id} node={selectedNode} onClose={() => setSelectedNode(null)} />}</> : <>
+      {data.valuesAnalyzed && <p className="values-summary">{data.chartValues?.length ?? 0} chart values · {data.values.length} supplied values</p>}
+      <label className="values-scope"><input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} /> Show all supplied values</label>
+      {data.valuesNotes?.map((note) => <p key={note} className="runtime-warning">{note}</p>)}
       <label className="value-search"><MagnifyingGlass size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter values" aria-label="Filter applied values" /></label>
-      {values.length ? <div className="applied-values"><div className="applied-values-head"><span>Path</span><span>Value</span></div>{values.map((item) => <div key={item.path}><code>{item.path}</code><code className={item.redacted ? "redacted" : ""}>{renderValue(item.value)}</code></div>)}</div> : <p className="runtime-empty">No matching values.</p>}
+      {values.length ? <div className="applied-values"><div className="applied-values-head"><span>Path</span><span>Value</span></div>{values.map((item) => <div key={item.path}><code>{item.path}{item.source && <small className="value-origin">{item.source}</small>}</code><code className={item.redacted ? "redacted" : ""}>{renderValue(item.value)}</code></div>)}</div> : <p className="runtime-empty">No matching values.</p>}
     </>}
   </section>;
 }

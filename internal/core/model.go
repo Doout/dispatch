@@ -206,13 +206,14 @@ type Deployment struct {
 }
 
 type DeploymentSnapshot struct {
-	TargetID   string         `json:"targetId,omitempty"`
-	TargetName string         `json:"targetName,omitempty"`
-	Runtime    string         `json:"runtime,omitempty"`
-	Namespace  string         `json:"namespace,omitempty"`
-	Release    string         `json:"release,omitempty"`
-	Chart      string         `json:"chart,omitempty"`
-	Values     map[string]any `json:"values,omitempty"`
+	TargetID     string            `json:"targetId,omitempty"`
+	TargetName   string            `json:"targetName,omitempty"`
+	Runtime      string            `json:"runtime,omitempty"`
+	Namespace    string            `json:"namespace,omitempty"`
+	Release      string            `json:"release,omitempty"`
+	Chart        string            `json:"chart,omitempty"`
+	Values       map[string]any    `json:"values,omitempty"`
+	ValueSources map[string]string `json:"valueSources,omitempty"`
 }
 
 type PreviewGroupState string

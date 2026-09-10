@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -148,7 +149,9 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 	if err != nil {
 		return "", err
 	}
+	bindingSources := map[string]string{}
 	for path, binding := range spec.Helm.Bindings {
+		bindingSources[path] = "Build output: " + binding.OutputRef
 		jobName, outputName, _ := strings.Cut(binding.OutputRef, ".")
 		value, ok := revision.Outputs[jobName][outputName]
 		if !ok {
@@ -157,6 +160,10 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 		if err := setNestedValue(values, path, value); err != nil {
 			return "", err
 		}
+	}
+	if len(bindingSources) > 0 {
+		raw, _ := json.Marshal(bindingSources)
+		evidence = append(evidence, "Helm value sources: "+string(raw))
 	}
 	valuesYAML, err := yaml.Marshal(values)
 	if err != nil {
@@ -216,12 +223,29 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 	if err != nil {
 		return "", err
 	}
+	valueSources := map[string]string{}
 	for _, message := range evidence {
+		if raw, ok := strings.CutPrefix(message, "Helm value sources: "); ok {
+			var layer map[string]string
+			if json.Unmarshal([]byte(raw), &layer) == nil {
+				for path, source := range layer {
+					valueSources[path] = source
+				}
+			}
+			continue
+		}
 		if err := s.Store.AppendDeploymentLog(ctx, core.DeploymentLog{DeploymentID: deployment.ID, Level: "info", Message: message, CreatedAt: time.Now().UTC()}); err != nil {
 			return deployment.ID, err
 		}
 	}
-	return deployment.ID, s.waitDeployment(ctx, deployment.ID)
+	waitErr := s.waitDeployment(ctx, deployment.ID)
+	if saved, getErr := s.Store.GetDeployment(ctx, deployment.ID); getErr == nil && saved.Snapshot.TargetID != "" {
+		saved.Snapshot.ValueSources = valueSources
+		if err := s.Store.UpdateDeploymentSnapshot(ctx, deployment.ID, saved.Snapshot); err != nil && waitErr == nil {
+			return deployment.ID, err
+		}
+	}
+	return deployment.ID, waitErr
 }
 
 func (s *Service) waitDeployment(ctx context.Context, id string) error {
