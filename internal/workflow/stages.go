@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -143,7 +144,7 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 	if !ok {
 		return "", fmt.Errorf("chart source %s is missing", spec.Helm.SourceRef)
 	}
-	values, err := renderValues(spec.Helm.Values, revision.Sources, stage)
+	values, evidence, err := s.deploymentValues(ctx, source, revision, stage, spec.Helm)
 	if err != nil {
 		return "", err
 	}
@@ -185,10 +186,14 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 			app.SourceAuthType = deploy.SourceAuthSSHKey
 		}
 	}
-	chartPath := chart.Path
+	chartPath := filepath.Join(chart.Path, spec.Helm.ChartPath)
 	if chartPath == "" {
 		chartPath = "."
 	}
+	if commitRefPattern.MatchString(app.Branch) {
+		app.Branch = ""
+	}
+	app.Branch = strings.TrimPrefix(strings.TrimPrefix(app.Branch, "refs/heads/"), "refs/tags/")
 	app.BuildType, app.HelmChart, app.HelmValues, app.State = core.BuildTypeHelm, chartPath, string(valuesYAML), "ready"
 	app.HelmNamespace, err = renderRuntime(spec.Helm.Namespace, nil, revision.Sources, nil, &stage)
 	if err != nil {
@@ -210,6 +215,11 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 	deployment, err := s.Deployments.Start(ctx, app.ID, chart.CommitSHA)
 	if err != nil {
 		return "", err
+	}
+	for _, message := range evidence {
+		if err := s.Store.AppendDeploymentLog(ctx, core.DeploymentLog{DeploymentID: deployment.ID, Level: "info", Message: message, CreatedAt: time.Now().UTC()}); err != nil {
+			return deployment.ID, err
+		}
 	}
 	return deployment.ID, s.waitDeployment(ctx, deployment.ID)
 }

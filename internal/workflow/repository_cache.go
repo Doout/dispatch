@@ -58,12 +58,18 @@ func (c *repositoryCache) checkout(ctx context.Context, repositoryURL, credentia
 		return nil, err
 	}
 	if err := runGit(ctx, environment, "--git-dir", mirrorPath, "cat-file", "-e", commit+"^{commit}"); err != nil {
-		refspec := "+refs/heads/" + branch + ":refs/remotes/origin/" + branch
-		if fetchErr := runGit(ctx, environment, "--git-dir", mirrorPath, "fetch", "--no-tags", "--prune", "origin", refspec); fetchErr != nil {
-			return nil, fmt.Errorf("fetch repository: %w", fetchErr)
+		// Fetch the recorded commit first, even if its branch has moved.
+		if fetchErr := runGit(ctx, environment, "--git-dir", mirrorPath, "fetch", "--depth", "1", "--no-tags", "origin", commit); fetchErr != nil {
+			ref := branch
+			if !strings.HasPrefix(ref, "refs/") && !commitRefPattern.MatchString(ref) {
+				ref = "refs/heads/" + ref
+			}
+			if err := runGit(ctx, environment, "--git-dir", mirrorPath, "fetch", "--depth", "1", "--no-tags", "origin", ref); err != nil {
+				return nil, fmt.Errorf("fetch repository revision: %w", err)
+			}
 		}
 		if err := runGit(ctx, environment, "--git-dir", mirrorPath, "cat-file", "-e", commit+"^{commit}"); err != nil {
-			return nil, fmt.Errorf("revision %s was not fetched from branch %s", commit, branch)
+			return nil, fmt.Errorf("recorded revision %s is unavailable", commit)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
