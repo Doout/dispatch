@@ -448,7 +448,7 @@ export type WorkflowTopology = {
   nodes: WorkflowTopologyNode[];
   edges: WorkflowTopologyEdge[] | null;
 };
-export type AppliedValue = { path: string; value: unknown; redacted?: boolean; source?: string };
+export type AppliedValue = { path: string; value: unknown; redacted?: boolean; source?: string; renderedValue?: string };
 export type DeploymentTopology = {
   topology: WorkflowTopology;
   target: string;

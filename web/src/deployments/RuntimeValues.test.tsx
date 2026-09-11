@@ -31,3 +31,25 @@ it("keeps supplied values when chart analysis is unavailable",async()=>{
  expect(await screen.findByText("Chart analysis is unavailable.")).not.toBeNull();
  expect(screen.getByText("••••••••")).not.toBeNull();
 });
+
+it("shows tpl previews with their raw expression and preserves redaction", async () => {
+ const raw = "{{ .Values.archer_server.model_maps.default_llm_model }}";
+ vi.spyOn(api, "deploymentTopology").mockResolvedValue({
+  target: "dev", namespace: "slots", release: "one", runtime: "kubernetes", live: true,
+  topology: { columns: [], nodes: [], edges: [] }, values: [], valuesAnalyzed: true,
+  chartValues: [
+   { path: "configMap.data.MODEL", value: raw, renderedValue: "azure-openai/gpt-5.4", source: "gitops:default-values.yaml" },
+   { path: "password", value: "••••••••", redacted: true, renderedValue: "must-not-display" },
+   { path: "empty", value: '{{ "" }}', renderedValue: "" },
+  ],
+ });
+ render(<DeploymentRuntime deployment={deployment} section="values" />);
+ expect(await screen.findByText("azure-openai/gpt-5.4")).not.toBeNull();
+ expect(screen.getByText("gitops:default-values.yaml")).not.toBeNull();
+ expect(screen.getAllByText("Rendered with Helm tpl · preview")).toHaveLength(2);
+ expect(screen.queryByText("must-not-display")).toBeNull();
+ const rawValue = screen.getByText(raw);
+ expect(rawValue.closest("details")?.open).toBe(false);
+ await userEvent.click(screen.getAllByText("Raw value")[0]);
+ expect(rawValue.closest("details")?.open).toBe(true);
+});

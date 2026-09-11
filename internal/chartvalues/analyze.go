@@ -14,8 +14,10 @@ import (
 )
 
 type Result struct {
-	Values map[string]any
-	Notes  []string
+	Values   map[string]any
+	Notes    []string
+	TplPaths [][]string
+	Rendered map[string]string
 }
 type value struct {
 	data    any
@@ -30,6 +32,7 @@ type scope struct {
 type analyzer struct {
 	trees    map[string]*parse.Tree
 	selected map[string][]string
+	tplPaths map[string][]string
 	notes    map[string]bool
 	depth    int
 	steps    int
@@ -40,7 +43,7 @@ func Analyze(c *chart.Chart, supplied map[string]any) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	a := &analyzer{trees: map[string]*parse.Tree{}, selected: map[string][]string{}, notes: map[string]bool{}}
+	a := &analyzer{trees: map[string]*parse.Tree{}, selected: map[string][]string{}, tplPaths: map[string][]string{}, notes: map[string]bool{}}
 	a.register(c)
 	a.chart(c, merged, []string{})
 	if a.steps > 100000 {
@@ -56,7 +59,12 @@ func Analyze(c *chart.Chart, supplied map[string]any) (Result, error) {
 		notes = append(notes, n)
 	}
 	sort.Strings(notes)
-	return Result{out, notes}, nil
+	tplPaths := [][]string{}
+	for _, p := range a.tplPaths {
+		tplPaths = append(tplPaths, p)
+	}
+	sort.Slice(tplPaths, func(i, j int) bool { return strings.Join(tplPaths[i], ".") < strings.Join(tplPaths[j], ".") })
+	return Result{Values: out, Notes: notes, TplPaths: tplPaths}, nil
 }
 func (a *analyzer) register(c *chart.Chart) {
 	for _, dep := range c.Dependencies() {
@@ -453,12 +461,19 @@ func (a *analyzer) call(name string, args []value, s scope) value {
 		a.notes["An unresolved helper retains its input section."] = true
 		return value{unknown: true}
 	case "tpl":
+		// Only preview calls using the chart root; custom tpl scopes need their own context.
+		if root, ok := arg(1).fields["Values"]; ok && root.path != nil && len(root.path) == 0 && arg(0).path != nil {
+			a.tplPaths[strings.Join(arg(0).path, "\x00")] = arg(0).path
+		}
 		a.consume(arg(0), s)
 		if text, ok := arg(0).data.(string); ok {
 			a.templateString(text, arg(1))
 		}
 		return value{unknown: true}
-	case "toString", "quote":
+	case "toString":
+		a.consume(arg(0), s)
+		return value{data: fmt.Sprint(arg(0).data), path: arg(0).path}
+	case "quote":
 		a.consume(arg(0), s)
 		return value{data: fmt.Sprint(arg(0).data)}
 	case "printf":

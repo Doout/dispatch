@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/registry"
 	helmrelease "helm.sh/helm/v3/pkg/release"
@@ -250,6 +251,10 @@ func HelmReleaseValues(ctx context.Context, server core.Server, namespace, relea
 	result, err := chartvalues.Analyze(installed.Chart, installed.Config)
 	if err == nil {
 		result.Values = redactSnapshotValues("", result.Values).(map[string]any)
+		if merged, mergeErr := chartutil.CoalesceValues(installed.Chart, installed.Config); mergeErr == nil {
+			values := redactSnapshotValues("", map[string]any(merged)).(map[string]any)
+			chartvalues.PreviewTpl(installed.Chart, values, chartutil.ReleaseOptions{Name: installed.Name, Namespace: installed.Namespace, Revision: installed.Version, IsInstall: installed.Version == 1, IsUpgrade: installed.Version > 1}, &result)
+		}
 	}
 	return result, err
 }

@@ -2049,3 +2049,8 @@ code { font-family: var(--mono); }
 .applied-values .value-origin { display: block; color: var(--muted); font-weight: normal; margin-top: 4px; }
 
 .values-summary { margin: 0 22px 12px; color: var(--muted); font-size: 13px; }
+
+.value-content { min-width: 0; overflow-wrap: anywhere; }
+.value-raw { margin-top: 6px; }
+.value-raw summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.value-raw code { display: block; margin-top: 6px; white-space: pre-wrap; }

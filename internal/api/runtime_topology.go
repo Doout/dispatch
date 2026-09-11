@@ -53,10 +53,11 @@ type runtimeTopology struct {
 	Edges   []topologyEdge   `json:"edges"`
 }
 type appliedValue struct {
-	Path     string `json:"path"`
-	Value    any    `json:"value"`
-	Redacted bool   `json:"redacted,omitempty"`
-	Source   string `json:"source,omitempty"`
+	Path          string  `json:"path"`
+	Value         any     `json:"value"`
+	Redacted      bool    `json:"redacted,omitempty"`
+	Source        string  `json:"source,omitempty"`
+	RenderedValue *string `json:"renderedValue,omitempty"`
 }
 type deploymentTopologyResponse struct {
 	Topology       runtimeTopology `json:"topology"`
@@ -166,6 +167,9 @@ func (a *API) getDeploymentTopology(w http.ResponseWriter, r *http.Request) {
 			origins := item.Snapshot.ValueSources
 			for i := range result.ChartValues {
 				field := &result.ChartValues[i]
+				if rendered, ok := selected.Rendered[field.Path]; ok && !field.Redacted {
+					field.RenderedValue = &rendered
+				}
 				field.Source = "Chart default"
 				for _, supplied := range result.Values {
 					if field.Path == supplied.Path || strings.HasPrefix(field.Path, supplied.Path+".") {
