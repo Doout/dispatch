@@ -186,7 +186,7 @@ func (a *API) getDeploymentTopology(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		} else {
-			result.ValuesNotes = []string{"Chart analysis is unavailable for this deployment. Showing all supplied values."}
+			result.ValuesNotes = []string{"Chart analysis is unavailable for this deployment. Select Show all supplied values to inspect its inputs."}
 		}
 	}
 	result.Topology = releaseRoot(item, result.Namespace, result.Release)

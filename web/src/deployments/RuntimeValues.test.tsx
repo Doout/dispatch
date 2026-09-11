@@ -21,7 +21,7 @@ it("defaults to chart values and allows the complete supplied input",async()=>{
  expect(screen.getByText("unrelated.enabled")).not.toBeNull();
  expect(screen.queryByText("Chart default")).toBeNull();
 });
-it("keeps supplied values when chart analysis is unavailable",async()=>{
+it("shows supplied values only when requested if chart analysis is unavailable",async()=>{
  vi.spyOn(api,"deploymentTopology").mockResolvedValue({
   target:"dev",namespace:"slots",release:"one",runtime:"kubernetes",live:false,topology:{columns:[],nodes:[],edges:[]},
   values:[{path:"password",value:"••••••••",redacted:true}],
@@ -29,7 +29,12 @@ it("keeps supplied values when chart analysis is unavailable",async()=>{
  });
  render(<DeploymentRuntime deployment={deployment} section="values"/>);
  expect(await screen.findByText("Chart analysis is unavailable.")).not.toBeNull();
+ expect(screen.queryByText("••••••••")).toBeNull();
+ expect(screen.getByText("Chart values are unavailable for this deployment.")).not.toBeNull();
+ await userEvent.click(screen.getByRole("checkbox", {name: "Show all supplied values"}));
  expect(screen.getByText("••••••••")).not.toBeNull();
+ await userEvent.click(screen.getByRole("checkbox", {name: "Show all supplied values"}));
+ expect(screen.queryByText("••••••••")).toBeNull();
 });
 
 it("shows tpl previews with their raw expression and preserves redaction", async () => {

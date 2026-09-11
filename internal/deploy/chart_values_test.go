@@ -28,3 +28,19 @@ func TestReleaseValuesMatchDeployment(t *testing.T) {
 		t.Fatal("different inputs matched")
 	}
 }
+
+func TestMatchingReleaseUsesDeploymentHistory(t *testing.T) {
+	started := time.Now().Add(-time.Hour)
+	finished := started.Add(time.Minute)
+	deployment := core.Deployment{CreatedAt: started, FinishedAt: &finished}
+	expected := map[string]any{"replicas": float64(1)}
+	old := &helmrelease.Release{Version: 62, Info: &helmrelease.Info{LastDeployed: helmtime.Time{Time: started.Add(time.Second)}}, Config: map[string]any{"replicas": 1}}
+	latest := &helmrelease.Release{Version: 64, Info: &helmrelease.Info{LastDeployed: helmtime.Time{Time: finished.Add(time.Minute)}}, Config: map[string]any{"replicas": 1}}
+	wrongInputs := &helmrelease.Release{Version: 63, Info: old.Info, Config: map[string]any{"replicas": 2}}
+	if got := matchingRelease([]*helmrelease.Release{latest, nil, wrongInputs, old}, deployment, expected); got != old {
+		t.Fatal("did not select the exact historical revision")
+	}
+	if got := matchingRelease([]*helmrelease.Release{latest, wrongInputs}, deployment, expected); got != nil {
+		t.Fatal("used another revision when deployment history was unavailable")
+	}
+}

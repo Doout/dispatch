@@ -220,8 +220,7 @@ func HelmReleaseManifest(ctx context.Context, server core.Server, namespace, rel
 	return installed.Manifest, nil
 }
 
-// HelmReleaseValues analyzes the stored chart only when its inputs match the
-// selected deployment. Historical deployments never borrow a newer chart.
+// HelmReleaseValues uses the stored Helm revision matching the selected deployment.
 func HelmReleaseValues(ctx context.Context, server core.Server, namespace, release string, deployment core.Deployment, expected map[string]any) (chartvalues.Result, error) {
 	prepared, cleanup, err := prepareKubernetesServer(server)
 	if err != nil {
@@ -246,7 +245,14 @@ func HelmReleaseValues(ctx context.Context, server core.Server, namespace, relea
 		return chartvalues.Result{}, err
 	}
 	if !releaseValuesMatch(installed, deployment, expected) {
-		return chartvalues.Result{}, errors.New("the current Helm release does not match this deployment")
+		history, historyErr := action.NewHistory(sdk.configuration).Run(release)
+		if historyErr != nil {
+			return chartvalues.Result{}, historyErr
+		}
+		installed = matchingRelease(history, deployment, expected)
+		if installed == nil {
+			return chartvalues.Result{}, errors.New("no retained Helm revision matches this deployment")
+		}
 	}
 	result, err := chartvalues.Analyze(installed.Chart, installed.Config)
 	if err == nil {
@@ -259,8 +265,18 @@ func HelmReleaseValues(ctx context.Context, server core.Server, namespace, relea
 	return result, err
 }
 
+func matchingRelease(history []*helmrelease.Release, deployment core.Deployment, expected map[string]any) *helmrelease.Release {
+	var matched *helmrelease.Release
+	for _, candidate := range history {
+		if releaseValuesMatch(candidate, deployment, expected) && (matched == nil || candidate.Version > matched.Version) {
+			matched = candidate
+		}
+	}
+	return matched
+}
+
 func releaseValuesMatch(installed *helmrelease.Release, deployment core.Deployment, expected map[string]any) bool {
-	if installed.Info == nil || installed.Info.LastDeployed.Time.Before(deployment.CreatedAt) || (deployment.FinishedAt != nil && installed.Info.LastDeployed.Time.After(*deployment.FinishedAt)) {
+	if installed == nil || installed.Info == nil || installed.Info.LastDeployed.Time.Before(deployment.CreatedAt) || (deployment.FinishedAt != nil && installed.Info.LastDeployed.Time.After(*deployment.FinishedAt)) {
 		return false
 	}
 	actualJSON, _ := json.Marshal(redactSnapshotValues("", installed.Config))
