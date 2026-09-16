@@ -124,6 +124,9 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 			return nil, err
 		}
 		previous, err := r.service.Store.FindWorkflowJobResult(ctx, resource.ID, name, fingerprint)
+		if errors.Is(err, store.ErrNotFound) && len(job.SourcePaths) > 0 {
+			previous, err = r.findContentMatch(ctx, resource, name, job, jobSources, secrets, fingerprint)
+		}
 		if err == nil && previous.State == "succeeded" && completeOutputs(previous.Outputs, job.Outputs) {
 			now := time.Now().UTC()
 			result := core.WorkflowJobResult{ID: ulid.Make().String(), ResourceID: resource.ID, RevisionID: r.revision.ID, JobName: name,
@@ -303,7 +306,7 @@ func jobFingerprint(name string, job JobSpec, sources map[string]core.WorkflowSo
 		Job      JobSpec
 		Sources  map[string]core.WorkflowSourceRevision
 		Inputs   map[string]string
-	}{Format: "shared-build-v1", Platform: runtime.GOOS + "/" + runtime.GOARCH, Name: name, Job: job, Sources: sources, Inputs: inputs})
+	}{Format: "shared-build-v1", Platform: runtime.GOOS + "/" + runtime.GOARCH, Name: name, Job: job, Sources: jobContentSources(job, sources), Inputs: inputs})
 	digest := sha256.Sum256(contents)
 	return "sha256:" + hex.EncodeToString(digest[:])
 }

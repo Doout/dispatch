@@ -112,6 +112,27 @@ If only the service repository changes, `build-ui` reuses its latest successful 
 
 A job receives source variables only for its `runFrom` and `sources` declarations. Reusable jobs must produce outputs from those declared inputs. Set `reuse: never` for jobs that depend on per-run IDs, time, or external mutable state.
 
+### File and directory inputs
+
+Use `sourcePaths` when a job reads only part of a declared repository:
+
+```yaml
+build-service:
+  runFrom: service
+  sources: [slot-config]
+  sourcePaths:
+    slot-config: [shared]
+  run: bash "{{ sources.slot-config.path }}/shared/build-image.sh"
+```
+
+Paths are relative to that source's `path`, or its repository root when no `path` is set. List files or directories, without glob patterns. Include every file the job reads, including build scripts and dependency configuration. Sources without a path declaration keep their existing commit-based matching.
+
+Dispatch hashes the selected Git objects at the recorded commit. For the application-level check it also includes the Helm chart and values files referenced from that source. Adding another slot's YAML does not invalidate an existing slot. Changing its values can trigger a deployment while reusing unchanged builds. If the application definition and all source inputs match the latest revision, automatic sync, push, and polling create no new run. Manual runs remain available for retries.
+
+Successful builds recorded before path matching was enabled can be reused after Dispatch verifies the old input contents and unchanged job definition, credentials, and other sources. Missing historical inputs cause a rebuild. Results are never shared across configuration sources.
+
+A scoped job must not depend on undeclared files, the scoped repository's commit metadata, or mutable external state. Explicit commit templates retain commit matching. Use `reuse: never` for side effects or inputs that cannot be represented by the declared source files. Missing selected paths fail with an error rather than silently skipping work.
+
 Jobs receive `DISPATCH_OUTPUT_FILE` and `GITHUB_OUTPUT`. Write either JSON:
 
 ```json

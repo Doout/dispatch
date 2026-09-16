@@ -106,6 +106,7 @@ type Store interface {
 	CreateWorkflowJobResult(context.Context, core.WorkflowJobResult) error
 	UpdateWorkflowJobResult(context.Context, core.WorkflowJobResult) error
 	FindWorkflowJobResult(context.Context, string, string, string) (core.WorkflowJobResult, error)
+	ListReusableWorkflowJobResults(context.Context, string, string) ([]core.WorkflowJobResult, error)
 	ListWorkflowJobResults(context.Context, string) ([]core.WorkflowJobResult, error)
 	CreateWorkflowStageRun(context.Context, core.WorkflowStageRun) error
 	UpdateWorkflowStageRun(context.Context, core.WorkflowStageRun) error

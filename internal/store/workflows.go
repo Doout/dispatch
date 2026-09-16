@@ -362,3 +362,21 @@ func scanWorkflowStageRun(row scanner) (core.WorkflowStageRun, error) {
 	item.CreatedAt, item.StartedAt, item.FinishedAt = parseTime(created), parseNullTime(started), parseNullTime(finished)
 	return item, err
 }
+
+// Bound legacy cache inspection to recent successes in this configuration.
+func (s *SQLStore) ListReusableWorkflowJobResults(ctx context.Context, resourceID, jobName string) ([]core.WorkflowJobResult, error) {
+	rows, err := s.db.QueryContext(ctx, s.q(workflowJobResultSelect+` WHERE resource_id IN (SELECT id FROM workflow_resources WHERE kind='Application' AND config_source_id=(SELECT config_source_id FROM workflow_resources WHERE id=?)) AND job_name=? AND state='succeeded' ORDER BY created_at DESC LIMIT 100`), resourceID, jobName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	results := []core.WorkflowJobResult{}
+	for rows.Next() {
+		item, err := scanWorkflowJobResult(rows)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, item)
+	}
+	return results, rows.Err()
+}

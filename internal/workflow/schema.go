@@ -82,12 +82,13 @@ type SourceSpec struct {
 }
 
 type JobSpec struct {
-	RunFrom string                   `json:"runFrom" yaml:"runFrom"`
-	Sources []string                 `json:"sources,omitempty" yaml:"sources,omitempty"`
-	Run     string                   `json:"run" yaml:"run"`
-	Secrets map[string]SecretBinding `json:"secrets,omitempty" yaml:"secrets,omitempty"`
-	Outputs []string                 `json:"outputs,omitempty" yaml:"outputs,omitempty"`
-	Reuse   string                   `json:"reuse,omitempty" yaml:"reuse,omitempty"`
+	SourcePaths map[string][]string      `json:"sourcePaths,omitempty" yaml:"sourcePaths,omitempty"`
+	RunFrom     string                   `json:"runFrom" yaml:"runFrom"`
+	Sources     []string                 `json:"sources,omitempty" yaml:"sources,omitempty"`
+	Run         string                   `json:"run" yaml:"run"`
+	Secrets     map[string]SecretBinding `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+	Outputs     []string                 `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	Reuse       string                   `json:"reuse,omitempty" yaml:"reuse,omitempty"`
 }
 
 type SecretBinding struct {
@@ -250,6 +251,9 @@ func applyJobDefaults(jobs map[string]JobSpec) {
 			job.Reuse = "onInputMatch"
 		}
 		job.Sources = uniqueStrings(job.Sources)
+		for alias, paths := range job.SourcePaths {
+			job.SourcePaths[alias] = uniqueStrings(paths)
+		}
 		jobs[name] = job
 	}
 }
@@ -412,6 +416,16 @@ func validateJobs(prefix string, jobs map[string]JobSpec, sources map[string]Sou
 		for _, alias := range job.Sources {
 			if _, ok := sources[alias]; !ok {
 				return fmt.Errorf("%s.%s.sources references unknown source %q", prefix, name, alias)
+			}
+		}
+		for alias, paths := range job.SourcePaths {
+			if !slices.Contains(jobSourceAliases(job), alias) || len(paths) == 0 {
+				return fmt.Errorf("%s.%s.sourcePaths.%s requires a declared source and at least one path", prefix, name, alias)
+			}
+			for _, path := range paths {
+				if err := validateInputPath(path); err != nil {
+					return fmt.Errorf("%s.%s.sourcePaths.%s: %w", prefix, name, alias, err)
+				}
 			}
 		}
 		if err := validateTemplates(job.Run, sources, inputs, false); err != nil {

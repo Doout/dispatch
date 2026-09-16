@@ -40,37 +40,9 @@ func (c *repositoryCache) checkout(ctx context.Context, repositoryURL, credentia
 	unlock := c.lock(key)
 	defer unlock()
 
-	mirrorPath := filepath.Join(c.root, "mirrors", key+".git")
-	if err := os.MkdirAll(filepath.Dir(mirrorPath), 0o700); err != nil {
+	mirrorPath, err := c.prepareMirror(ctx, repositoryURL, key, branch, commit, environment)
+	if err != nil {
 		return nil, err
-	}
-	if _, err := os.Stat(mirrorPath); errors.Is(err, os.ErrNotExist) {
-		if err := runGit(ctx, environment, "init", "--bare", mirrorPath); err != nil {
-			return nil, err
-		}
-		if err := runGit(ctx, environment, "--git-dir", mirrorPath, "remote", "add", "origin", repositoryURL); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, err
-	}
-	if err := runGit(ctx, environment, "--git-dir", mirrorPath, "remote", "set-url", "origin", repositoryURL); err != nil {
-		return nil, err
-	}
-	if err := runGit(ctx, environment, "--git-dir", mirrorPath, "cat-file", "-e", commit+"^{commit}"); err != nil {
-		// Fetch the recorded commit first, even if its branch has moved.
-		if fetchErr := runGit(ctx, environment, "--git-dir", mirrorPath, "fetch", "--depth", "1", "--no-tags", "origin", commit); fetchErr != nil {
-			ref := branch
-			if !strings.HasPrefix(ref, "refs/") && !commitRefPattern.MatchString(ref) {
-				ref = "refs/heads/" + ref
-			}
-			if err := runGit(ctx, environment, "--git-dir", mirrorPath, "fetch", "--depth", "1", "--no-tags", "origin", ref); err != nil {
-				return nil, fmt.Errorf("fetch repository revision: %w", err)
-			}
-		}
-		if err := runGit(ctx, environment, "--git-dir", mirrorPath, "cat-file", "-e", commit+"^{commit}"); err != nil {
-			return nil, fmt.Errorf("recorded revision %s is unavailable", commit)
-		}
 	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return nil, err
@@ -80,6 +52,43 @@ func (c *repositoryCache) checkout(ctx context.Context, repositoryURL, credentia
 		return nil, fmt.Errorf("create repository worktree: %w", err)
 	}
 	return &cachedWorktree{cache: c, mirrorPath: mirrorPath, path: destination}, nil
+}
+
+// The caller holds the credential-scoped repository lock.
+func (c *repositoryCache) prepareMirror(ctx context.Context, repositoryURL, key, branch, commit string, environment []string) (string, error) {
+	mirrorPath := filepath.Join(c.root, "mirrors", key+".git")
+	if err := os.MkdirAll(filepath.Dir(mirrorPath), 0o700); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(mirrorPath); errors.Is(err, os.ErrNotExist) {
+		if err := runGit(ctx, environment, "init", "--bare", mirrorPath); err != nil {
+			return "", err
+		}
+		if err := runGit(ctx, environment, "--git-dir", mirrorPath, "remote", "add", "origin", repositoryURL); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	if err := runGit(ctx, environment, "--git-dir", mirrorPath, "remote", "set-url", "origin", repositoryURL); err != nil {
+		return "", err
+	}
+	if err := runGit(ctx, environment, "--git-dir", mirrorPath, "cat-file", "-e", commit+"^{commit}"); err != nil {
+		// Fetch the recorded commit first, even if its branch has moved.
+		if fetchErr := runGit(ctx, environment, "--git-dir", mirrorPath, "fetch", "--depth", "1", "--no-tags", "origin", commit); fetchErr != nil {
+			ref := branch
+			if !strings.HasPrefix(ref, "refs/") && !commitRefPattern.MatchString(ref) {
+				ref = "refs/heads/" + ref
+			}
+			if err := runGit(ctx, environment, "--git-dir", mirrorPath, "fetch", "--depth", "1", "--no-tags", "origin", ref); err != nil {
+				return "", fmt.Errorf("fetch repository revision: %w", err)
+			}
+		}
+		if err := runGit(ctx, environment, "--git-dir", mirrorPath, "cat-file", "-e", commit+"^{commit}"); err != nil {
+			return "", fmt.Errorf("recorded revision %s is unavailable", commit)
+		}
+	}
+	return mirrorPath, nil
 }
 
 func (w *cachedWorktree) remove(ctx context.Context) error {

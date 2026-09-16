@@ -162,8 +162,8 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 				continue
 			}
 			snapshot, err := s.resolveResourceSources(ctx, source, resource)
-			if err == nil && s.snapshotChanged(ctx, resource, snapshot) {
-				_, err = s.startWithSnapshot(ctx, resource, source, snapshot, "configuration sync")
+			if err == nil {
+				_, err = s.startIfChanged(ctx, resource, source, snapshot, "configuration sync")
 			}
 			if err != nil {
 				return s.sourceError(ctx, source, fmt.Errorf("start application %s: %w", resource.Name, err))
@@ -281,8 +281,8 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
 			configChanged := sameSource(event.Repository, event.Branch, source.Repository, source.Branch)
 			if configChanged || resourceReferences(resource, event.Repository, event.Branch) {
 				snapshot, runErr := s.resolveResourceSources(ctx, source, resource)
-				if runErr == nil && s.snapshotChanged(ctx, resource, snapshot) {
-					_, runErr = s.startWithSnapshot(ctx, resource, source, snapshot, "github push")
+				if runErr == nil {
+					_, runErr = s.startIfChanged(ctx, resource, source, snapshot, "github push")
 				}
 				if runErr != nil {
 					err = runErr
@@ -399,7 +399,7 @@ func (s *Service) PollOnce(ctx context.Context) error {
 				joined = errors.Join(joined, err)
 				continue
 			}
-			if _, err := s.startWithSnapshot(ctx, resource, source, snapshot, "poll"); err != nil {
+			if _, err := s.startIfChanged(ctx, resource, source, snapshot, "poll"); err != nil {
 				event.State, event.Error = "failed", err.Error()
 				joined = errors.Join(joined, err)
 			} else {
@@ -426,7 +426,7 @@ func (s *Service) snapshotChanged(ctx context.Context, resource core.WorkflowRes
 	if err != nil || len(revisions) == 0 {
 		return true
 	}
-	if revisions[0].SpecDigest != resource.SpecDigest {
+	if revisions[0].SpecDigest != resource.SpecDigest && !addsOnlyInputPaths(resource, revisions[0].SpecDigest) {
 		return true
 	}
 	previous := revisions[0].Sources
@@ -434,7 +434,26 @@ func (s *Service) snapshotChanged(ctx context.Context, resource core.WorkflowRes
 		return true
 	}
 	for name, source := range snapshot {
-		if previous[name].CommitSHA != source.CommitSHA {
+		old := previous[name]
+		if len(source.ContentHashes) > 0 && len(old.ContentHashes) == 0 {
+			if old.CommitSHA == source.CommitSHA {
+				old.ContentHashes = source.ContentHashes
+			} else {
+				config, err := s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
+				if err != nil {
+					return true
+				}
+				paths := make([]string, 0, len(source.ContentHashes))
+				for p := range source.ContentHashes {
+					paths = append(paths, p)
+				}
+				old.ContentHashes, err = s.hashSourceInputs(ctx, config, old, paths)
+				if err != nil {
+					return true
+				}
+			}
+		}
+		if !sameSourceInput(old, source) {
 			return true
 		}
 	}
@@ -491,6 +510,18 @@ func (s *Service) Start(ctx context.Context, resourceID, trigger string) (core.W
 	return s.startWithSnapshot(ctx, resource, source, snapshot, trigger)
 }
 
+// Recheck under a per-resource scheduling lock so overlapping sync, push, and
+// poll notifications cannot enqueue the same inputs twice. Manual Start remains
+// an explicit rerun, including after a failed deployment.
+func (s *Service) startIfChanged(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, snapshot map[string]core.WorkflowSourceRevision, trigger string) (core.WorkflowRevision, error) {
+	unlock := s.lock("schedule:" + resource.ID)
+	defer unlock()
+	if !s.snapshotChanged(ctx, resource, snapshot) {
+		return core.WorkflowRevision{}, nil
+	}
+	return s.startWithSnapshot(ctx, resource, source, snapshot, trigger)
+}
+
 func (s *Service) startWithSnapshot(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, snapshot map[string]core.WorkflowSourceRevision, trigger string) (core.WorkflowRevision, error) {
 	revision := core.WorkflowRevision{ID: ulid.Make().String(), ResourceID: resource.ID, ConfigSHA: resource.ConfigSHA, SpecDigest: resource.SpecDigest,
 		State: "queued", Trigger: trigger, Sources: snapshot, Outputs: map[string]map[string]string{}, CreatedAt: time.Now().UTC()}
@@ -506,6 +537,7 @@ func (s *Service) resolveResourceSources(ctx context.Context, source core.Config
 	if err != nil || len(documents) != 1 || documents[0].Spec == nil {
 		return nil, errors.New("stored application document is invalid")
 	}
+	inputPaths := applicationInputPaths(*documents[0].Spec)
 	result := map[string]core.WorkflowSourceRevision{}
 	for alias, spec := range documents[0].Spec.Sources {
 		sha, err := s.repositoryHead(ctx, source, spec.Repository, sourceRevisionRef(spec))
@@ -513,12 +545,23 @@ func (s *Service) resolveResourceSources(ctx context.Context, source core.Config
 			return nil, fmt.Errorf("resolve source %s: %w", alias, err)
 		}
 		result[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: spec.Repository, Branch: sourceRevisionRef(spec), CommitSHA: sha, Path: spec.Path}
+		if paths, ok := inputPaths[alias]; ok {
+			item := result[alias]
+			item.ContentHashes, err = s.hashSourceInputs(ctx, source, item, paths)
+			if err != nil {
+				return nil, fmt.Errorf("resolve source %s inputs: %w", alias, err)
+			}
+			result[alias] = item
+		}
 	}
 	return result, nil
 }
 
 func (s *Service) lock(key string) func() {
 	s.mu.Lock()
+	if s.locks == nil {
+		s.locks = map[string]*sync.Mutex{}
+	}
 	lock := s.locks[key]
 	if lock == nil {
 		lock = &sync.Mutex{}

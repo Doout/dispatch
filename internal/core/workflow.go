@@ -51,11 +51,12 @@ type WorkflowResource struct {
 }
 
 type WorkflowSourceRevision struct {
-	Alias      string `json:"alias"`
-	Repository string `json:"repository"`
-	Branch     string `json:"branch"`
-	CommitSHA  string `json:"commitSha"`
-	Path       string `json:"path,omitempty"`
+	ContentHashes map[string]string `json:"contentHashes,omitempty"`
+	Alias         string            `json:"alias"`
+	Repository    string            `json:"repository"`
+	Branch        string            `json:"branch"`
+	CommitSHA     string            `json:"commitSha"`
+	Path          string            `json:"path,omitempty"`
 }
 
 type WorkflowRevision struct {
