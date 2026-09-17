@@ -73,6 +73,9 @@ spec:
 			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "app-1"})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/owner/config/git/trees/config-"):
 			entries := []map[string]any{{"path": ".dispatch/app.yaml", "type": "blob", "sha": "config-blob", "size": 256}}
+			if version.Load() == 2 {
+				entries = append(entries, map[string]any{"path": ".dispatch/healthy.yaml", "type": "blob", "sha": "healthy-blob", "size": 256}, map[string]any{"path": ".dispatch/broken.yaml", "type": "blob", "sha": "broken-blob", "size": 256})
+			}
 			if version.Load() >= 5 {
 				entries[0]["path"] = ".dispatch/slots.template.yaml"
 				if version.Load() != 6 {
@@ -94,6 +97,14 @@ spec:
 					contents += "    " + line + "\n"
 				}
 			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(contents)), "size": len(contents)})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/app/commits/missing":
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/config/git/blobs/broken-blob":
+			contents := strings.Replace(strings.Replace(valid("./build.sh"), "name: example", "name: broken", 1), "repository: owner/app", "repository: owner/app\n      branch: missing", 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(contents)), "size": len(contents)})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/config/git/blobs/healthy-blob":
+			contents := strings.Replace(valid("./healthy.sh"), "name: example", "name: healthy", 1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(contents)), "size": len(contents)})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/config/git/blobs/slot-blob":
 			contents := "replicas: 1"
@@ -135,6 +146,16 @@ spec:
 	if !resources[0].Active || resources[0].State != "ready" {
 		t.Fatalf("new resource was not enabled for automatic deployment: %#v", resources[0])
 	}
+	listExample := func() ([]core.WorkflowResource, error) {
+		all, err := data.ListWorkflowResources(ctx, source.ID)
+		var found []core.WorkflowResource
+		for _, item := range all {
+			if item.Name == "example" {
+				found = append(found, item)
+			}
+		}
+		return found, err
+	}
 	initialDigest := resources[0].SpecDigest
 	resources[0].Active = true
 	resources[0].State = "ready"
@@ -142,18 +163,46 @@ spec:
 		t.Fatal(err)
 	}
 	version.Store(2)
-	if _, err := service.SyncSource(ctx, source.ID); err == nil {
-		t.Fatal("expected invalid repository configuration")
+	if synced, err := service.SyncSource(ctx, source.ID); err != nil || synced.State != "degraded" {
+		t.Fatalf("expected partial sync warning: %v %+v", err, synced)
 	}
-	resources, err = data.ListWorkflowResources(ctx, source.ID)
+	resources, err = listExample()
 	if err != nil || len(resources) != 1 || resources[0].SpecDigest != initialDigest || !resources[0].Active {
 		t.Fatalf("invalid sync replaced the last valid set: %#v err=%v", resources, err)
+	}
+	all, _ := data.ListWorkflowResources(ctx, source.ID)
+	healthy := false
+	for _, item := range all {
+		if item.Name == "healthy" && item.State == "ready" && item.ConfigSHA == "config-2" {
+			healthy = true
+		}
+	}
+	broken := false
+	for _, item := range all {
+		if item.Name == "broken" && item.State == "invalid" && strings.Contains(item.LastError, "missing") {
+			broken = true
+		}
+	}
+	if !broken {
+		t.Fatal("missing branch did not get its own application error")
+	}
+	if !healthy {
+		t.Fatal("broken file prevented healthy file from syncing")
+	}
+	if resources[0].State != "invalid" || resources[0].LastError == "" {
+		t.Fatal("missing application-specific error")
+	}
+	if _, _, err := service.Activate(ctx, resources[0].ID); err == nil {
+		t.Fatal("activation bypassed invalid configuration")
+	}
+	if _, err := service.Start(ctx, resources[0].ID, "manual"); err == nil {
+		t.Fatal("manual run bypassed invalid configuration")
 	}
 	version.Store(3)
 	if _, err := service.SyncSource(ctx, source.ID); err != nil {
 		t.Fatal(err)
 	}
-	resources, err = data.ListWorkflowResources(ctx, source.ID)
+	resources, err = listExample()
 	if err != nil || len(resources) != 1 || resources[0].SpecDigest == initialDigest || !resources[0].Active {
 		t.Fatalf("valid update was not reconciled: %#v err=%v", resources, err)
 	}
@@ -164,7 +213,7 @@ spec:
 	if _, err := service.SyncSource(ctx, source.ID); err != nil {
 		t.Fatal(err)
 	}
-	resources, err = data.ListWorkflowResources(ctx, source.ID)
+	resources, err = listExample()
 	if err != nil || len(resources) != 1 || resources[0].Active || resources[0].State != "paused" {
 		t.Fatalf("repository sync did not preserve the explicit pause: %#v err=%v", resources, err)
 	}
@@ -174,7 +223,7 @@ spec:
 		if _, err := service.SyncSource(ctx, source.ID); err != nil {
 			t.Fatal(err)
 		}
-		resources, err = data.ListWorkflowResources(ctx, source.ID)
+		resources, err = listExample()
 		if err != nil || len(resources) != 1 || resources[0].ID != stableID || resources[0].Active {
 			t.Fatalf("identity or pause lost at version %d: %#v %v", v, resources, err)
 		}

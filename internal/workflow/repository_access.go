@@ -58,7 +58,17 @@ func (s *Service) repositoryHead(ctx context.Context, source core.ConfigSource, 
 	output.limit = maxJobLogBytes
 	cmd.Stdout, cmd.Stderr = &output, &output
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("resolve repository branch: %w: %s", err, strings.TrimSpace(output.String()))
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 2 {
+			return "", fmt.Errorf("branch or tag %q was not found in %s", branch, repository)
+		}
+		lines := []string{}
+		for _, line := range strings.Split(output.String(), "\n") {
+			if !strings.Contains(line, "Permanently added") && strings.TrimSpace(line) != "" {
+				lines = append(lines, line)
+			}
+		}
+		return "", fmt.Errorf("cannot access %s at %q: %w: %s", repository, branch, err, strings.Join(lines, "\n"))
 	}
 	for _, ref := range refs {
 		if sha, err := parseRepositoryHead(output.String(), ref+"^{}"); err == nil {

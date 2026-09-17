@@ -87,11 +87,9 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 	if err != nil {
 		return s.sourceError(ctx, source, err)
 	}
-	parsed, err := s.parseConfiguration(ctx, source, head, files)
-	if err != nil {
-		return s.sourceError(ctx, source, err)
-	}
-	validatedSources := map[string]bool{}
+	parsed, fileFailures := s.parsePartialConfiguration(ctx, source, head, files)
+	validationErrors := map[string]error{}
+	resourceFailures := map[string]string{}
 	for _, value := range parsed {
 		sources := map[string]SourceSpec{}
 		if value.document.Spec != nil {
@@ -100,14 +98,16 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 			sources = value.document.Pipeline.Sources
 		}
 		for alias, spec := range sources {
-			key := normalizeRepository(spec.Repository) + "@" + sourceRevisionRef(spec)
-			if validatedSources[key] {
-				continue
+			key := spec.Repository + "@" + sourceRevisionRef(spec)
+			cause, checked := validationErrors[key]
+			if !checked {
+				_, cause = s.repositoryHead(ctx, source, spec.Repository, sourceRevisionRef(spec))
+				validationErrors[key] = cause
 			}
-			if _, err := s.repositoryHead(ctx, source, spec.Repository, sourceRevisionRef(spec)); err != nil {
-				return s.sourceError(ctx, source, fmt.Errorf("validate source %s in %s: %w", alias, value.path, err))
+			if cause != nil {
+				resourceFailures[value.document.Kind+"/"+value.document.Metadata.Name] = fmt.Sprintf("%s: source %s (%s): %s", value.path, alias, sourceRevisionRef(spec), cause)
+				break
 			}
-			validatedSources[key] = true
 		}
 	}
 	existing, err := s.Store.ListWorkflowResources(ctx, source.ID)
@@ -116,6 +116,17 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 	}
 	now := time.Now().UTC()
 	desired := make([]core.WorkflowResource, 0, len(parsed))
+	var issues []string
+	for path, message := range fileFailures {
+		issues = append(issues, path+": "+message)
+		for _, item := range existing {
+			if item.Path == path && item.State != "removed" {
+				item.State, item.LastError, item.UpdatedAt = "invalid", message, now
+				desired = append(desired, item)
+			}
+		}
+	}
+
 	for _, value := range parsed {
 		digest, err := value.document.Digest()
 		if err != nil {
@@ -133,12 +144,24 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 			item = core.WorkflowResource{ID: ulid.Make().String(), ConfigSourceID: source.ID, CreatedAt: now, Active: true, State: "ready"}
 		} else if item.Active {
 			item.State = "ready"
+		} else if item.State == "invalid" {
+			item.State = "paused"
 		} else if item.State != "paused" {
 			item.State = "pending"
 		}
 		item.APIVersion, item.Kind, item.Name, item.Path = value.document.APIVersion, value.document.Kind, value.document.Metadata.Name, value.path
 		item.Document, item.SpecDigest, item.ConfigSHA = string(contents), digest, head
 		item.LastError, item.UpdatedAt = "", now
+		if message := resourceFailures[value.document.Kind+"/"+value.document.Metadata.Name]; message != "" {
+			issues = append(issues, message)
+			// Keep the last accepted definition and revision until the repair validates.
+			if found {
+				previous, _, _ := existingApplication(existing, value.path, value.document.Kind, value.document.Metadata.Name)
+				item = previous
+			}
+			item.State, item.LastError, item.UpdatedAt = "invalid", message, now
+		}
+
 		desired = append(desired, item)
 	}
 	source.LastSeenSHA, source.LastSyncedAt, source.UpdatedAt = head, &now, now
@@ -150,6 +173,10 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 			source.State, source.LastError = "degraded", "Polling is active. "+webhookErr.Error()
 		}
 	}
+	if len(issues) > 0 {
+		source.State = "degraded"
+		source.LastError = partialSyncMessage(issues)
+	}
 	if err := s.Store.ReplaceWorkflowResources(ctx, source, desired); err != nil {
 		return source, err
 	}
@@ -158,7 +185,7 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 	}
 	if source.Active {
 		for _, resource := range desired {
-			if !resource.Active || resource.Kind != KindApplication {
+			if !resource.Active || resource.State == "invalid" || resource.Kind != KindApplication {
 				continue
 			}
 			snapshot, err := s.resolveResourceSources(ctx, source, resource)
@@ -166,8 +193,18 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 				_, err = s.startIfChanged(ctx, resource, source, snapshot, "configuration sync")
 			}
 			if err != nil {
-				return s.sourceError(ctx, source, fmt.Errorf("start application %s: %w", resource.Name, err))
+				resource.State, resource.LastError = "invalid", err.Error()
+				if updateErr := s.Store.UpdateWorkflowResource(ctx, resource); updateErr != nil {
+					return source, updateErr
+				}
+				issues = append(issues, fmt.Sprintf("%s: %s", resource.Path, err))
 			}
+		}
+	}
+	if len(issues) > 0 {
+		source.State, source.LastError = "degraded", partialSyncMessage(issues)
+		if err := s.Store.UpdateConfigSource(ctx, source); err != nil {
+			return source, err
 		}
 	}
 	return source, nil
@@ -275,7 +312,7 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
 		resources, listErr := s.Store.ListWorkflowResources(ctx, source.ID)
 		err = listErr
 		for _, resource := range resources {
-			if err != nil || !resource.Active || resource.Kind != KindApplication {
+			if err != nil || !resource.Active || resource.State == "invalid" || resource.Kind != KindApplication {
 				continue
 			}
 			configChanged := sameSource(event.Repository, event.Branch, source.Repository, source.Branch)
@@ -367,7 +404,7 @@ func (s *Service) PollOnce(ctx context.Context) error {
 			joined = errors.Join(joined, recordErr)
 			continue
 		}
-		configChanged := head != source.LastSeenSHA
+		configChanged := head != source.LastSeenSHA || source.State == "degraded" || source.State == "invalid"
 		if configChanged {
 			if _, err := s.SyncSource(ctx, source.ID); err != nil {
 				joined = errors.Join(joined, err)
@@ -380,7 +417,7 @@ func (s *Service) PollOnce(ctx context.Context) error {
 			continue
 		}
 		for _, resource := range resources {
-			if !resource.Active || resource.Kind != KindApplication {
+			if !resource.Active || resource.State == "invalid" || resource.Kind != KindApplication {
 				continue
 			}
 			snapshot, err := s.resolveResourceSources(ctx, source, resource)
@@ -471,6 +508,9 @@ func (s *Service) Activate(ctx context.Context, id string) (core.WorkflowResourc
 	if err != nil {
 		return resource, core.WorkflowRevision{}, err
 	}
+	if resource.State == "invalid" {
+		return resource, core.WorkflowRevision{}, fmt.Errorf("fix the application configuration before activating it: %s", resource.LastError)
+	}
 	resource.Active, resource.State, resource.LastError, resource.UpdatedAt = true, "ready", "", time.Now().UTC()
 	if err := s.Store.UpdateWorkflowResource(ctx, resource); err != nil {
 		return resource, core.WorkflowRevision{}, err
@@ -487,7 +527,11 @@ func (s *Service) Deactivate(ctx context.Context, id string) (core.WorkflowResou
 	if err != nil {
 		return resource, err
 	}
-	resource.Active, resource.State, resource.UpdatedAt = false, "paused", time.Now().UTC()
+	state := "paused"
+	if resource.State == "invalid" {
+		state = "invalid"
+	}
+	resource.Active, resource.State, resource.UpdatedAt = false, state, time.Now().UTC()
 	return resource, s.Store.UpdateWorkflowResource(ctx, resource)
 }
 
@@ -495,6 +539,9 @@ func (s *Service) Start(ctx context.Context, resourceID, trigger string) (core.W
 	resource, err := s.Store.GetWorkflowResource(ctx, resourceID)
 	if err != nil {
 		return core.WorkflowRevision{}, err
+	}
+	if resource.State == "invalid" {
+		return core.WorkflowRevision{}, fmt.Errorf("fix the application configuration before running it: %s", resource.LastError)
 	}
 	if !resource.Active || resource.Kind != KindApplication {
 		return core.WorkflowRevision{}, errors.New("application resource is not active")

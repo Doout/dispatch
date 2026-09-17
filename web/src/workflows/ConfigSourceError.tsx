@@ -15,10 +15,10 @@ export function ConfigSourceError({ source }: { source: ConfigSource }) {
   return <div className="configuration-sync-error" role="alert">
     <WarningCircle size={18} weight="fill" aria-hidden="true" />
     <div>
-      <strong>{duplicate ? `Duplicate ${duplicate[1].toLowerCase()} name` : source.state === "degraded" ? "Sync warning" : "Configuration sync blocked"} · {source.name}</strong>
+      <strong>{duplicate ? `Duplicate ${duplicate[1].toLowerCase()} name` : source.state === "degraded" ? (detail.startsWith("Some applications") ? "Some applications need attention" : "Sync warning") : "Configuration sync blocked"} · {source.name}</strong>
       <p>{detail}</p>
       {hint && <p className="configuration-sync-hint">{hint}</p>}
-      {duplicate && source.lastSyncedAt && <p className="configuration-sync-context">The previously imported configuration is still in use.</p>}
+      {duplicate && source.lastSyncedAt && <p className="configuration-sync-context">Affected applications keep their last accepted configuration.</p>}
     </div>
   </div>;
 }
