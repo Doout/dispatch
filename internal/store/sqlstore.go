@@ -901,10 +901,18 @@ func (s *SQLStore) DeleteApp(ctx context.Context, id string) error {
 }
 
 func (s *SQLStore) ListApps(ctx context.Context) ([]core.App, error) {
+	return s.listApps(ctx, false)
+}
+
+// ListActiveApps includes generated applications for project access checks.
+func (s *SQLStore) ListActiveApps(ctx context.Context) ([]core.App, error) {
+	return s.listApps(ctx, true)
+}
+func (s *SQLStore) listApps(ctx context.Context, includeGenerated bool) ([]core.App, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
         dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
         helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template FROM apps
-        WHERE state <> 'closed' AND generated=? ORDER BY name`), false)
+        WHERE state <> 'closed' AND (generated=? OR ?) ORDER BY name`), false, includeGenerated)
 	if err != nil {
 		return nil, err
 	}

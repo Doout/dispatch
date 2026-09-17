@@ -489,7 +489,7 @@ func (a *API) serverPermission(next http.HandlerFunc) http.HandlerFunc {
 			a.internal(w, err)
 			return
 		}
-		apps, err := a.store.ListApps(r.Context())
+		apps, err := a.store.ListActiveApps(r.Context())
 		if err != nil {
 			a.internal(w, err)
 			return
@@ -994,7 +994,19 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 	}
 	overview.Projects = projects
 
+	// Generated workflow and preview apps belong to projects too, even though
+	// ListApps omits them from the standalone application list.
+	allApps, err := a.store.ListActiveApps(ctx)
+	if err != nil {
+		return overview, err
+	}
 	appIDs, serverIDs := map[string]bool{}, map[string]bool{}
+	for _, app := range allApps {
+		if projectIDs[app.ProjectID] {
+			appIDs[app.ID] = true
+			serverIDs[app.ServerID] = true
+		}
+	}
 	apps := overview.Apps[:0]
 	for _, app := range overview.Apps {
 		if projectIDs[app.ProjectID] {
