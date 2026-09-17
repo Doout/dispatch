@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,8 @@ func TestGeneratedApplicationsRespectProjectVisibility(t *testing.T) {
 	for _, id := range []string{"allowed", "closed"} {
 		must(a.store.UpsertRoleAssignment(ctx, core.RoleAssignment{ID: id, PrincipalType: core.PrincipalUser, PrincipalID: user.ID, ScopeType: core.ScopeProject, ScopeID: id, Role: core.RoleViewer, CreatedAt: now, UpdatedAt: now}))
 	}
+	must(a.store.CreateApp(ctx, core.App{ID: "hidden-neighbor", ProjectID: "hidden", ServerID: "allowed", Name: "Hidden neighbor", Generated: true, State: "ready", CreatedAt: now}))
+	must(a.store.CreateDeployment(ctx, core.Deployment{ID: "hidden-neighbor", AppID: "hidden-neighbor", State: core.DeploymentSucceeded, CreatedAt: now}))
 	request := httptest.NewRequest("GET", "/api/v1/overview", nil)
 	request.Header.Set("Authorization", "Bearer secret")
 	request.Header.Set("Impersonate-User", user.ID)
@@ -72,6 +75,14 @@ func TestGeneratedApplicationsRespectProjectVisibility(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("server %s: got %d want %d", id, w.Code, want)
 		}
+	}
+	request = httptest.NewRequest("GET", "/api/v1/servers/allowed/topology", nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("Impersonate-User", user.ID)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != 200 || strings.Contains(response.Body.String(), "hidden-neighbor") || !strings.Contains(response.Body.String(), "release:allowed") {
+		t.Fatalf("shared target topology crossed project boundary: %d %s", response.Code, response.Body.String())
 	}
 	request = httptest.NewRequest("DELETE", "/api/v1/servers/allowed", nil)
 	request.Header.Set("Authorization", "Bearer secret")

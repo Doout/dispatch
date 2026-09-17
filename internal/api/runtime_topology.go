@@ -424,6 +424,11 @@ func (a *API) getServerTopology(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	visibleProjects, err := a.visibleProjectIDs(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
 	apps, err := a.store.ListApps(r.Context())
 	if err != nil {
 		a.internal(w, err)
@@ -465,7 +470,7 @@ func (a *API) getServerTopology(w http.ResponseWriter, r *http.Request) {
 	graph.Nodes = append(graph.Nodes, topologyNode{ID: root, Column: "target", Kind: "target", Label: server.Name, Detail: string(server.Runtime), State: string(server.State)})
 	namespaces := map[string]string{}
 	for _, app := range apps {
-		if app.ServerID != server.ID || app.Template {
+		if app.ServerID != server.ID || app.Template || !visibleProjects[app.ProjectID] {
 			continue
 		}
 		namespace := app.HelmNamespace
