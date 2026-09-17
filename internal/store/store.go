@@ -146,6 +146,7 @@ type Store interface {
 	UpdateDeploymentSnapshot(context.Context, string, core.DeploymentSnapshot) error
 	GetDeployment(context.Context, string) (core.Deployment, error)
 	ListDeployments(context.Context, int) ([]core.Deployment, error)
+	ListDeploymentSummaries(context.Context, int) ([]core.Deployment, error)
 	ActiveDeploymentForApp(context.Context, string) (*core.Deployment, error)
 
 	AppendDeploymentLog(context.Context, core.DeploymentLog) error

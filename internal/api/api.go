@@ -611,7 +611,7 @@ func (a *API) overviewData(r *http.Request) (core.Overview, error) {
 	if err != nil {
 		return core.Overview{}, err
 	}
-	deployments, err := a.store.ListDeployments(r.Context(), 100)
+	deployments, err := a.store.ListDeploymentSummaries(r.Context(), 100)
 	if err != nil {
 		return core.Overview{}, err
 	}

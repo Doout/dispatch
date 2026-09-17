@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/doout/dispatch/internal/core"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDeploymentHistoryUsesDateIndex(t *testing.T) {
@@ -41,5 +44,42 @@ func TestDeploymentHistoryUsesDateIndex(t *testing.T) {
 	joined := strings.Join(plan, "\n")
 	if !strings.Contains(joined, "deployments_created_at") || strings.Contains(joined, "TEMP B-TREE") {
 		t.Fatalf("history sorts snapshots instead of using date index:\n%s", joined)
+	}
+}
+
+func TestDeploymentSummariesPreservePublicResponse(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "summaries.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(data.Migrate(ctx))
+	must(data.SeedDemo(ctx))
+	apps, err := data.ListApps(ctx)
+	must(err)
+	must(data.CreateDeployment(ctx, core.Deployment{ID: "large-snapshot", AppID: apps[0].ID, State: core.DeploymentSucceeded, CreatedAt: time.Now().Add(time.Hour), Snapshot: core.DeploymentSnapshot{Chart: "chart", Values: map[string]any{"payload": strings.Repeat("x", 1<<20)}}}))
+	full, err := data.ListDeployments(ctx, 100)
+	must(err)
+	summaries, err := data.ListDeploymentSummaries(ctx, 100)
+	must(err)
+	a, err := json.Marshal(full)
+	must(err)
+	b, err := json.Marshal(summaries)
+	must(err)
+	if string(a) != string(b) {
+		t.Fatal("summary changed public response")
+	}
+	if full[0].ID != "large-snapshot" || full[0].Snapshot.Values["payload"] == nil {
+		t.Fatal("detailed history lost snapshot")
+	}
+	if summaries[0].Snapshot.Values != nil {
+		t.Fatal("summary loaded internal snapshot")
 	}
 }

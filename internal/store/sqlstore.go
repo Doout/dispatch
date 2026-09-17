@@ -1003,11 +1003,24 @@ func (s *SQLStore) GetDeployment(ctx context.Context, id string) (core.Deploymen
 }
 
 func (s *SQLStore) ListDeployments(ctx context.Context, limit int) ([]core.Deployment, error) {
+	return s.listDeployments(ctx, limit, true)
+}
+
+// ListDeploymentSummaries omits internal snapshots, which are not serialized in
+// API responses. Detailed deployment reads retain the complete saved snapshot.
+func (s *SQLStore) ListDeploymentSummaries(ctx context.Context, limit int) ([]core.Deployment, error) {
+	return s.listDeployments(ctx, limit, false)
+}
+func (s *SQLStore) listDeployments(ctx context.Context, limit int, includeSnapshot bool) ([]core.Deployment, error) {
 	if limit < 1 || limit > 200 {
 		limit = 100
 	}
+	snapshot := "'{}'"
+	if includeSnapshot {
+		snapshot = "spec_snapshot"
+	}
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
-        started_at,finished_at,lease_until,outputs,spec_snapshot FROM deployments ORDER BY created_at DESC LIMIT ?`), limit)
+ started_at,finished_at,lease_until,outputs,`+snapshot+` FROM deployments ORDER BY created_at DESC LIMIT ?`), limit)
 	if err != nil {
 		return nil, err
 	}
