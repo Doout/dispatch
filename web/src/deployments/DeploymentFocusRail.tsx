@@ -1,3 +1,4 @@
+import { BuildLogs } from "./BuildLogs";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowSquareOut, CaretDown, CaretRight, CaretUp, CheckCircle, Circle, CircleNotch, GitBranch, WarningCircle } from "@phosphor-icons/react";
 import type { App, Deployment, Overview, WorkflowResource, WorkflowRevision, WorkflowStageRun } from "../api";
@@ -13,6 +14,7 @@ type RailSource = {
 };
 
 type RailStage = {
+  workflowRevisionID?: string;
   name: string;
   label: string;
   target: string;
@@ -84,6 +86,7 @@ function buildManagedRail(resource: WorkflowResource, allRevisions: WorkflowRevi
     const state = preparing ? (latestRevision.state === "running" ? "building" : latestRevision.state) : run?.state ?? deployment?.state ?? "not_deployed";
     return {
       name,
+      workflowRevisionID: latestRevision?.id,
       label: humanize(name),
       target: run?.targetRef || resource.targetRefs?.[index] || humanize(name),
       state,
@@ -279,6 +282,7 @@ function StageInspector({ rail, stage, onSelectDeployment }: { rail: DeploymentR
         <div><dt>Updated</dt><dd>{stage.updatedAt ? relative(stage.updatedAt) : "Not deployed"}</dd></div>
         <div><dt>Trigger</dt><dd>{humanize(stage.trigger)}</dd></div>
       </dl>
+      {stage.workflowRevisionID && <BuildLogs revisionID={stage.workflowRevisionID} />}
       {stage.error && <p className="deployment-stage-error" title={stage.error}>{stage.error}</p>}
       <ol className="deployment-stage-progress" aria-label={`${stage.label} progress`}>
         <ProgressStep

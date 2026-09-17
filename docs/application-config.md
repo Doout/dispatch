@@ -133,6 +133,8 @@ Successful builds recorded before path matching was enabled can be reused after 
 
 A scoped job must not depend on undeclared files, the scoped repository's commit metadata, or mutable external state. Explicit commit templates retain commit matching. Use `reuse: never` for side effects or inputs that cannot be represented by the declared source files. Missing selected paths fail with an error rather than silently skipping work.
 
+Open an application on the Deployments page and expand **Build logs** to read output before deployment starts. Dispatch saves running command output about once per second. The viewer streams changed text, closes its connection when collapsed, and supports following output or scrolling back. Bound secret values are masked, and each job retains up to 1 MiB of output. Commands that buffer their own output may not print immediately.
+
 Jobs receive `DISPATCH_OUTPUT_FILE` and `GITHUB_OUTPUT`. Write either JSON:
 
 ```json

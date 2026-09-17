@@ -2054,3 +2054,10 @@ code { font-family: var(--mono); }
 .value-raw { margin-top: 6px; }
 .value-raw summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .value-raw code { display: block; margin-top: 6px; white-space: pre-wrap; }
+
+.build-logs { margin-top: 16px; border-top: 1px solid var(--border, #dce2e8); padding-top: 12px; }
+.build-logs summary { cursor: pointer; font-weight: 600; }
+.build-logs section { margin-top: 12px; min-width: 0; }
+.build-logs section header, .build-log-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0; }
+.build-logs pre { max-height: 360px; overflow: auto; padding: 14px; border-radius: 6px; background: #17212b; color: #e5ebf0; font: 12px/1.6 monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.build-logs p, .build-log-status { font-size: 12px; color: var(--muted, #627180); }

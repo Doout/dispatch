@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
@@ -147,7 +148,12 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 	if err := r.service.Store.CreateWorkflowJobResult(ctx, result); err != nil {
 		return nil, err
 	}
-	outputs, logText, err := r.runJobCommand(ctx, job, secrets)
+	outputs, logText, err := r.runJobCommand(ctx, job, secrets, func(logText string) {
+		result.Log = logText
+		if err := r.service.Store.UpdateWorkflowJobResult(ctx, result); err != nil && r.service.Logger != nil {
+			r.service.Logger.Warn("Persist build logs", "job", result.ID, "error", err)
+		}
+	})
 	finished := time.Now().UTC()
 	result.Log, result.FinishedAt = logText, &finished
 	if err != nil {
@@ -162,11 +168,14 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 	return outputs, nil
 }
 
-func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map[string]string) (map[string]string, string, error) {
+func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map[string]string, progress func(string)) (map[string]string, string, error) {
+	prelude := ""
 	aliases := jobSourceAliases(job)
 	for _, alias := range aliases {
+		prelude += "Preparing source " + alias + "...\n"
+		progress(prelude)
 		if _, err := r.checkout(ctx, alias); err != nil {
-			return nil, "", err
+			return nil, prelude, err
 		}
 	}
 	jobRevision := r.revision
@@ -178,11 +187,11 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 	}
 	command, err := renderRuntime(job.Run, jobPaths, jobRevision.Sources, r.inputs, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, prelude, err
 	}
 	cwd := r.paths[job.RunFrom]
 	if cwd == "" {
-		return nil, "", fmt.Errorf("source %s was not checked out", job.RunFrom)
+		return nil, prelude, fmt.Errorf("source %s was not checked out", job.RunFrom)
 	}
 	outputPath := filepath.Join(r.root, "output-"+safePathPart(job.RunFrom)+"-"+ulid.Make().String()+".env")
 	environment := workflowEnvironment(jobRevision, jobPaths, outputPath)
@@ -191,10 +200,34 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 	}
 	var logs limitedBuffer
 	logs.limit = maxJobLogBytes
+	_, _ = logs.Write([]byte(prelude + "Running command...\n"))
+	progress(logs.String())
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-eu", "-c", command)
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, environment, &logs, &logs
+	done := make(chan struct{})
+	flushed := make(chan struct{})
+	go func() {
+		defer close(flushed)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		previous := ""
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				current := redactJobLog(logs.String(), secrets)
+				if current != previous {
+					progress(current)
+					previous = current
+				}
+			}
+		}
+	}()
 	err = cmd.Run()
-	logText := logs.String()
+	close(done)
+	<-flushed
+	logText := redactJobLog(logs.String(), secrets)
 	if err != nil {
 		return nil, logText, fmt.Errorf("command failed: %w", err)
 	}
@@ -457,12 +490,15 @@ func safePathPart(value string) string {
 }
 
 type limitedBuffer struct {
+	mu     sync.Mutex
 	buffer bytes.Buffer
 	limit  int
 	full   bool
 }
 
 func (b *limitedBuffer) Write(value []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	written := len(value)
 	remaining := b.limit - b.buffer.Len()
 	if remaining > 0 {
@@ -478,9 +514,45 @@ func (b *limitedBuffer) Write(value []byte) (int, error) {
 }
 
 func (b *limitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	value := b.buffer.String()
 	if b.full {
 		value += "\n[log truncated]"
 	}
 	return value
+}
+
+// Hide complete secrets and an unfinished secret at the end of a write.
+func redactJobLog(value string, secrets map[string]string) string {
+	marker := ""
+	if strings.HasSuffix(value, "\n[log truncated]") {
+		value = strings.TrimSuffix(value, "\n[log truncated]")
+		marker = "\n[log truncated]"
+	}
+	values := make([]string, 0, len(secrets))
+	for _, value := range secrets {
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	slices.SortFunc(values, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(b) - len(a)
+		}
+		return strings.Compare(a, b)
+	})
+	for _, secret := range values {
+		if secret == "" {
+			continue
+		}
+		value = strings.ReplaceAll(value, secret, "[redacted]")
+		for n := min(len(secret)-1, len(value)); n > 0; n-- {
+			if strings.HasSuffix(value, secret[:n]) {
+				value = value[:len(value)-n]
+				break
+			}
+		}
+	}
+	return value + marker
 }

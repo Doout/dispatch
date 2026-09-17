@@ -237,6 +237,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Get("/workflow/revisions", a.listWorkflowRevisions)
 			r.Get("/workflow/revisions/{id}", a.workflowRevisionPermission(core.PermissionProjectView, a.getWorkflowRevision))
 			r.Get("/workflow/revisions/{id}/jobs", a.workflowRevisionPermission(core.PermissionProjectView, a.listWorkflowJobs))
+			r.Get("/workflow/revisions/{id}/logs/watch", a.workflowRevisionPermission(core.PermissionProjectView, a.watchWorkflowLogs))
 			r.Get("/workflow/revisions/{id}/stages", a.workflowRevisionPermission(core.PermissionProjectView, a.listWorkflowStages))
 			r.Post("/workflow/stages/{id}/approve", a.workflowStagePermission(core.PermissionStageApprove, a.approveWorkflowStage))
 			r.Post("/workflow/validate", a.validateWorkflowDocument)
