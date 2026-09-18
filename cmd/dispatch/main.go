@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/doout/dispatch/internal/analytics"
 	"github.com/doout/dispatch/internal/api"
 	"github.com/doout/dispatch/internal/config"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
@@ -86,11 +87,20 @@ func run(logger *slog.Logger) error {
 	deployments := deploy.NewService(data, executor)
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	var history analytics.Reader
+	if cfg.AnalyticsEnabled {
+		worker := analytics.New(data, cfg.AnalyticsDirectory, logger)
+		history = worker
+		workerCtx, workerCancel := context.WithCancel(shutdownCtx)
+		workerDone := make(chan struct{})
+		go func() { defer close(workerDone); worker.Run(workerCtx) }()
+		defer func() { workerCancel(); <-workerDone }()
+	}
 	controller := api.New(data, deployments, cfg.Demo, api.AuthConfig{
 		AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword, PublicURL: cfg.PublicURL,
 	}, logger, api.EventConfig{WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
 		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps, SecretResolver: secretResolver,
-		Edge: edgeBroker, RepositoryCache: cfg.RepositoryCache})
+		Edge: edgeBroker, RepositoryCache: cfg.RepositoryCache, Analytics: history})
 	go controller.RunRelayConsumers(shutdownCtx)
 	go controller.RunWorkflowPoller(shutdownCtx)
 	server := &http.Server{

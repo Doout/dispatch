@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/doout/dispatch/internal/analytics"
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
@@ -61,6 +62,7 @@ type EventConfig struct {
 	SecretResolver  *secretvalue.Resolver
 	Edge            *edge.Broker
 	RepositoryCache string
+	Analytics       analytics.Reader
 }
 
 type githubEventServices struct {
@@ -195,6 +197,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Post("/role-assignments", a.upsertRoleAssignment)
 			r.Delete("/role-assignments/{id}", a.deleteRoleAssignment)
 			r.Get("/overview", a.overview)
+			r.Get("/analytics", a.analyticsSummary)
 			r.Get("/overview/watch", a.watchOverview)
 			r.Get("/secrets", a.ownerOnly(a.listSecrets))
 			r.Post("/secrets", a.ownerOnly(a.createSecret))

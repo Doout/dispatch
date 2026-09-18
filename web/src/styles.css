@@ -2061,3 +2061,15 @@ code { font-family: var(--mono); }
 .build-logs section header, .build-log-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0; }
 .build-logs pre { max-height: 360px; overflow: auto; padding: 14px; border-radius: 6px; background: #17212b; color: #e5ebf0; font: 12px/1.6 monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .build-logs p, .build-log-status { font-size: 12px; color: var(--muted, #627180); }
+
+.analytics-controls { display: flex; align-items: center; gap: 16px; }
+.analytics-controls label { display: flex; align-items: center; gap: 8px; }
+.analytics-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 24px 0; border-block: 1px solid var(--border); padding: 24px 0; gap: 24px; }
+.analytics-metrics dt, .analytics-updated { color: var(--muted); font-size: 13px; }
+.analytics-metrics dd { margin: 8px 0; font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.analytics-metrics small { color: var(--muted); }
+.analytics-table { width: 100%; font-variant-numeric: tabular-nums; }
+.analytics-table caption { text-align: left; padding: 16px; font-weight: 600; }
+.analytics-table th, .analytics-table td { padding: 12px 16px; text-align: right; border-bottom: 1px solid var(--border); }
+.analytics-table th:first-child { text-align: left; }
+@media (max-width: 680px) { .analytics-metrics { grid-template-columns: 1fr; } .analytics-controls { flex-wrap: wrap; } .analytics-page .table-wrap { overflow-x: auto; } }

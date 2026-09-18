@@ -218,3 +218,6 @@ Database migrations are ordered SQL files under `internal/store/migrations`.
 See [contributing](CONTRIBUTING.md) for development and review guidance, and [security](SECURITY.md) for the trust model and vulnerability reporting.
 
 Dispatch uses Apache License 2.0. Keep private provider code and credentials outside this repository.
+
+Historical reporting uses embedded DuckDB with asynchronous Parquet exports. See
+[analytics](docs/analytics.md) for storage, recovery, and native build requirements.

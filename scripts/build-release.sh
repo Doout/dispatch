@@ -7,7 +7,11 @@ case "$version" in *[!a-zA-Z0-9._-]*|'') echo 'Invalid release version.' >&2; ex
 mkdir -p "$output/edge" "$output/relay"
 for arch in amd64 arm64; do
   mkdir -p "$output/$arch"
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/doout/dispatch/internal/installation.Version=$version" -o "$output/$arch/dispatch" ./cmd/dispatch
+  case "$arch" in
+    amd64) compiler=x86_64-linux-gnu-gcc; cpp_compiler=x86_64-linux-gnu-g++ ;;
+    arm64) compiler=aarch64-linux-gnu-gcc; cpp_compiler=aarch64-linux-gnu-g++ ;;
+  esac
+  CGO_ENABLED=1 CC="$compiler" CXX="$cpp_compiler" GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/doout/dispatch/internal/installation.Version=$version" -o "$output/$arch/dispatch" ./cmd/dispatch
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatch-hook" ./cmd/dispatch-hook
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/edge/linux-$arch" ./cmd/dispatch-agent
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/relay/linux-$arch" ./cmd/dispatch-relay

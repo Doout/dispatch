@@ -1,3 +1,4 @@
+import { AnalyticsPage } from "./AnalyticsPage";
 import { subscribeOverview } from "./overviewStream";
 import {
   ChangeEvent,
@@ -17,6 +18,7 @@ import {
   CaretDown,
   Check,
   Cloud,
+  ChartBar,
   Copy,
   FolderSimple,
   GithubLogo,
@@ -697,6 +699,7 @@ export default function DispatchApp() {
                 }
               />
             )}
+          {!loading && overview && view === "analytics" && <AnalyticsPage key={overview.identity?.id} />}
           {!loading && overview && view === "servers" && !route.serverID && (
             <ServersPage
               overview={overview}
@@ -937,6 +940,7 @@ export function Nav({
           icon: <AppWindow size={18} />,
           count: overview?.apps.length ?? 0,
         },
+        { id: "analytics", label: "Analytics", icon: <ChartBar size={18} />, count: 0 },
         {
           id: "events",
           label: "Events",

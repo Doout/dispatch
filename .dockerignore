@@ -10,6 +10,9 @@ dispatch-relay
 repository-cache
 relay.db*
 dispatch.db*
+analytics
+*.duckdb*
+*.parquet
 data
 kubeconfigs
 .env*

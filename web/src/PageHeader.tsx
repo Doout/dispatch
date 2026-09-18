@@ -4,6 +4,7 @@ import { shouldHandleNavigation, View } from "./routes";
 
 export const pageTitles: Record<View, string> = {
   deployments: "Deployments",
+  analytics: "Analytics",
   applications: "Applications",
   events: "Events",
   projects: "Projects",

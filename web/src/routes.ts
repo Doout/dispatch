@@ -1,4 +1,4 @@
-export type View = "deployments" | "applications" | "events" | "projects" | "servers" | "secrets" | "connections" | "access";
+export type View = "analytics" | "deployments" | "applications" | "events" | "projects" | "servers" | "secrets" | "connections" | "access";
 export type ApplicationSection = "applications" | "templates" | "helm" | "groups";
 export type EventSection = "rules" | "activity";
 export type DeploymentSection = "summary" | "topology" | "values" | "manifests";
@@ -16,7 +16,7 @@ export type AppRoute = {
   eventSection?: EventSection;
 };
 
-const views = new Set<View>(["deployments", "applications", "events", "projects", "servers", "secrets", "connections", "access"]);
+const views = new Set<View>(["analytics","deployments", "applications", "events", "projects", "servers", "secrets", "connections", "access"]);
 
 export function readRoute(location: Pick<Location, "pathname" | "search"> = window.location): AppRoute {
   const segments = location.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
