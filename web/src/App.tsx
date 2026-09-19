@@ -152,7 +152,6 @@ export default function DispatchApp() {
     useState<Server["runtime"]>("docker");
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deployAppID, setDeployAppID] = useState("");
-  const [quickViewID, setQuickViewID] = useState("");
   const [logs, setLogs] = useState<DeploymentLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState("");
@@ -380,10 +379,7 @@ export default function DispatchApp() {
   const deleteAuthorized = Boolean(
     overview && deleteTarget && canDeleteResource(overview, deleteTarget),
   );
-  const quickViewDeployment = !route.deploymentID
-    ? overview?.deployments.find((item) => item.id === quickViewID)
-    : undefined;
-  const selectedDeployment = routeDeployment ?? quickViewDeployment;
+  const selectedDeployment = routeDeployment;
   useEffect(() => {
     if (!selectedDeployment?.id) {
       setLogs([]);
@@ -610,7 +606,10 @@ export default function DispatchApp() {
                     { replace: true, preserveScroll: true },
                   )
                 }
-                onSelect={setQuickViewID}
+                onSelect={(id) => navigateRoute(
+                  { view: "deployments", deploymentID: id },
+                  { state: { deploymentEntry: true } },
+                )}
                 onOpen={(next) => {
                   setDeployAppID("");
                   setDialog(next);
@@ -855,38 +854,6 @@ export default function DispatchApp() {
             await load();
             setDeleteTarget(null);
           }}
-        />
-      )}
-      {quickViewDeployment && (
-        <DeploymentQuickView
-          deployment={quickViewDeployment}
-          logs={logs}
-          logsLoading={logsLoading}
-          logsError={logsError}
-          onClose={() => setQuickViewID("")}
-          onOpenDetails={() => {
-            setQuickViewID("");
-            navigateRoute(
-              { view: "deployments", deploymentID: quickViewDeployment.id },
-              { state: { deploymentEntry: true } },
-            );
-          }}
-          onCancel={async () => {
-            try {
-              await api.cancel(quickViewDeployment.id);
-              await load();
-            } catch (cause) {
-              setError((cause as Error).message);
-            }
-          }}
-          canCancel={Boolean(
-            quickViewDeployment.app?.projectId &&
-              canManageProject(
-                overview!,
-                quickViewDeployment.app.projectId,
-                "deployment.cancel",
-              ),
-          )}
         />
       )}
       {changingPassword && (

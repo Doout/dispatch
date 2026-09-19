@@ -1,6 +1,6 @@
 # Roadmap
 
-This file tracks unfinished work. Current behavior belongs in the README and the feature documents.
+This file tracks unfinished infrastructure work. The [product priorities](product-priorities.md) describe the proposed UX and operational backlog. Current behavior belongs in the README and the feature documents.
 
 ## Deployment reliability
 

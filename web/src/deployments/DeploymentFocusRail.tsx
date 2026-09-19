@@ -208,22 +208,22 @@ function DeploymentFocusRail({ rail, expanded, selectedStage, onToggle, onSelect
   return <article className={`deployment-focus-card ${expanded ? "expanded" : "compact"}`} id={`deployment-application-${safeID(rail.id)}`} aria-labelledby={headingID}>
     <header className="deployment-focus-heading">
       <div className="deployment-focus-identity"><h2 id={headingID}>{rail.name}</h2><span>{rail.detail}</span></div>
-      <CompactPromotionSummary rail={rail} />
+      <CompactPromotionSummary rail={rail} onSelectDeployment={onSelectDeployment} onSelectStage={onSelectStage} />
       <div className="deployment-focus-actions">
         <RailStatus state={summaryState} tone={stateTone(summaryState)} />
         <span className="deployment-stage-count">{readyStages}/{rail.stages.length} ready</span>
-        <span className="deployment-disclosure-icon" aria-hidden="true">
+        <button
+          type="button"
+          className="deployment-focus-toggle"
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${rail.name} deployment`}
+          aria-expanded={expanded}
+          aria-controls={contentID}
+          onClick={onToggle}
+          title={expanded ? "Hide stage details" : "Show stage details"}
+        >
           {expanded ? <CaretUp size={15} /> : <CaretDown size={15} />}
-        </span>
+        </button>
       </div>
-      <button
-        type="button"
-        className="deployment-focus-toggle"
-        aria-label={`${expanded ? "Collapse" : "Expand"} ${rail.name} deployment`}
-        aria-expanded={expanded}
-        aria-controls={contentID}
-        onClick={onToggle}
-      />
     </header>
 
     {expanded && <div id={contentID}>
@@ -251,18 +251,33 @@ function DeploymentFocusRail({ rail, expanded, selectedStage, onToggle, onSelect
   </article>;
 }
 
-function CompactPromotionSummary({ rail }: { rail: DeploymentRail }) {
+function CompactPromotionSummary({ rail, onSelectDeployment, onSelectStage }: { rail: DeploymentRail; onSelectDeployment: (id: string) => void; onSelectStage: (name: string) => void }) {
   return <div className="deployment-compact-route" aria-label={`${rail.name} deployment summary`}>
     <div className="deployment-compact-source">
       <GitBranch size={15} aria-hidden="true" />
       <span><strong>Source</strong><code title={rail.source.title}>{rail.source.revision}</code></span>
     </div>
-    {rail.stages.map((stage) => <div className={`deployment-compact-stage ${stage.tone}`} key={stage.name}>
-      <CaretRight size={13} aria-hidden="true" />
-      <RailStatusIcon tone={stage.tone} />
-      <span><strong>{stage.label}</strong><small>{stage.target}</small></span>
-      <code title={stage.revisionTitle}>{stage.revision}</code>
-    </div>)}
+    {rail.stages.map((stage) => {
+      const content = <>
+        <CaretRight size={13} aria-hidden="true" />
+        <RailStatusIcon tone={stage.tone} />
+        <span><strong>{stage.label}</strong><small>{stage.target}</small></span>
+        <code title={stage.revisionTitle}>{stage.revision}</code>
+      </>;
+      const className = `deployment-compact-stage ${stage.tone}`;
+      return stage.deployment ? <a
+        key={stage.name}
+        className={className}
+        href={routePath({ view: "deployments", deploymentID: stage.deployment.id })}
+        aria-label={`Open ${rail.name} ${stage.label} latest deployment`}
+        title="Open latest deployment"
+        onClick={event => {
+          if (!shouldHandleNavigation(event)) return;
+          event.preventDefault();
+          onSelectDeployment(stage.deployment!.id);
+        }}
+      >{content}</a> : <button key={stage.name} type="button" className={className} aria-label={`Inspect ${rail.name} ${stage.label} stage`} title="Show stage details" onClick={() => onSelectStage(stage.name)}>{content}</button>;
+    })}
   </div>;
 }
 

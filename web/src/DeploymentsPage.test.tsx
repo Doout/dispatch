@@ -60,6 +60,37 @@ function DeploymentPreview({ onClose = () => undefined, onOpenDetails = () => un
 }
 
 describe("deployment navigation", () => {
+  it("opens a deployment from the collapsed environment link", async () => {
+    const onSelect = vi.fn();
+    render(<DeploymentList onSelect={onSelect} />);
+    const link = screen.getByRole("link", { name: "Open Checkout API Development latest deployment" });
+    expect(link.getAttribute("href")).toBe("/deployments/deployment-1");
+    expect(screen.queryByLabelText("Checkout API promotion stages")).toBeNull();
+    await userEvent.setup().click(link);
+    expect(onSelect).toHaveBeenCalledWith("deployment-1");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand Checkout API deployment" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("preserves native modified-click navigation on environment links", async () => {
+    const onSelect = vi.fn();
+    render(<DeploymentList onSelect={onSelect} />);
+    const user = userEvent.setup();
+    await user.keyboard("{Control>}");
+    await user.click(screen.getByRole("link", { name: "Open Checkout API Development latest deployment" }));
+    await user.keyboard("{/Control}");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("opens details directly for an environment without a deployment", async () => {
+    const onSelect = vi.fn();
+    render(<DeploymentList data={{...overview, deployments:[]}} onSelect={onSelect} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Inspect Checkout API Development stage" }));
+    expect(screen.getByLabelText("Checkout API promotion stages")).not.toBeNull();
+    expect(screen.getByText("No deployments yet.")).not.toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("keeps an older failure in recent runs without replacing the current state", async () => {
     const user = userEvent.setup();
     const olderFailure = { ...deployment, id: "older-failure", state: "failed", createdAt: "2026-08-18T10:00:00Z", finishedAt: "2026-08-18T10:01:00Z" } as Deployment;
