@@ -1,6 +1,6 @@
 # Application sync and drift
 
-Open **Sync and drift** from a Helm application's menu or its deployment details.
+Open **Sync and drift** from a Helm application's menu. Deployment details show a compact **Application status** strip with icons and labels; expand **Details** for timestamps, revision IDs, resource differences, and reapply controls. This strip always describes the current application, including when viewing an older deployment.
 The four indicators describe different things:
 
 | Indicator | Meaning |
@@ -61,7 +61,7 @@ application endpoints or external dependencies.
 ## Reapply deployed configuration
 
 Users with deployment permission can explicitly reapply the current successful
-baseline. The UI displays the deployment ID and requires confirmation. A newer
+baseline. The UI requires confirmation before restoring the last successful deployment. A newer
 successful deployment invalidates a stale reapply request.
 
 Reapply restores saved fields and recreates missing resources. It preserves saved
@@ -106,3 +106,24 @@ The cluster test installs a unique Helm release, edits its image, replicas and
 configuration, deletes resources, reapplies the encrypted baseline, and verifies
 credential preservation and ownership protection. It deletes its namespace on
 completion. The PostgreSQL test requires an empty database.
+
+## Deployment history and comparisons
+
+Open **History** in deployment details to browse this application's saved runs.
+History loads 50 runs at a time and includes successful, failed, cancelled, and
+in-progress deployments. **Load older deployments** retrieves the next page.
+
+Choose **From** and **To** to compare saved inputs, including supplied Helm values,
+release settings, code revisions, and applied service configuration revisions.
+Added, removed, and changed fields are listed with before/after values and a path
+filter. Comparisons use snapshots, never the application's current editable
+settings or the cluster's current release. A failed deployment's snapshot describes
+its attempted inputs, not a successful rollout. Chart defaults and live resource
+changes are outside this comparison.
+
+Sensitive fields are excluded. Their presence does not establish whether a hidden
+value changed. Older records without saved inputs show **Comparison unavailable**.
+The response includes at most 1,000 changed fields and identifies truncation.
+
+- `GET /api/v1/apps/{id}/deployment-history?before={deploymentId}`: paginated saved runs for an application. The response contains `items` and an optional `next` cursor.
+- `GET /api/v1/deployments/{id}/compare?from={deploymentId}`: compare two deployments belonging to the same application. Requires project view permission, as does history.

@@ -161,6 +161,7 @@ type Store interface {
 	UpdateDeploymentOutputs(context.Context, string, map[string]string) error
 	UpdateDeploymentSnapshot(context.Context, string, core.DeploymentSnapshot) error
 	GetDeployment(context.Context, string) (core.Deployment, error)
+	ListApplicationHistory(context.Context, string, string, int) ([]core.Deployment, error)
 	ListDeployments(context.Context, int) ([]core.Deployment, error)
 	ListDeploymentSummaries(context.Context, int) ([]core.Deployment, error)
 	ActiveDeploymentForApp(context.Context, string) (*core.Deployment, error)

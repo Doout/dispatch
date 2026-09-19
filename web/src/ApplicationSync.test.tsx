@@ -10,7 +10,7 @@ const status:ApplicationSyncStatus={appId:"app",deploymentId:"success-1",support
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
 it("separates runtime drift from health and asks before reapply",async()=>{
  vi.spyOn(api,"applicationSync").mockResolvedValue(status);const apply=vi.spyOn(api,"reapplyApplication").mockResolvedValue({...status,drift:{...status.drift,state:"synced"}});
- render(<ApplicationSync application={app} overview={overview}/>);expect(await screen.findByText("Runtime drift")).toBeTruthy();expect(screen.getByText("Resource health")).toBeTruthy();expect(screen.getByText("Out of sync")).toBeTruthy();expect(screen.getByText("Healthy")).toBeTruthy();expect(screen.getByText("/spec/replicas")).toBeTruthy();
+ render(<ApplicationSync application={app} overview={overview}/>);expect(await screen.findByText("Runtime drift")).toBeTruthy();expect(screen.getByText("Resource health")).toBeTruthy();expect(screen.getAllByText("Out of sync").length).toBeGreaterThan(0);expect(screen.getByText("Healthy")).toBeTruthy();expect(screen.getByText("/spec/replicas")).toBeTruthy();
  const user=userEvent.setup();await user.click(screen.getByRole("button",{name:"Reapply deployed configuration"}));expect(apply).not.toHaveBeenCalled();await user.click(screen.getByRole("button",{name:"Confirm reapply"}));await waitFor(()=>expect(apply).toHaveBeenCalledWith("app","success-1"));
 });
 it("lets viewers inspect saved results without mutation controls",async()=>{
@@ -20,4 +20,15 @@ it("lets viewers inspect saved results without mutation controls",async()=>{
 it("shows Unknown after a failed check while keeping the prior successful time",async()=>{
  vi.spyOn(api,"applicationSync").mockResolvedValue(status);vi.spyOn(api,"checkApplicationDrift").mockResolvedValue({...status,drift:{...status.drift,state:"unknown",health:"unknown",message:"Target unavailable.",resources:[]}});
  render(<ApplicationSync application={app} overview={overview}/>);const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Check now"}));await screen.findByText("Target unavailable.");expect(screen.getAllByText("Unknown")).toHaveLength(2);expect(screen.getByText(/Last successful check:/)).toBeTruthy();expect((screen.getByRole("button",{name:"Reapply deployed configuration"}) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("keeps compact status icons visible and moves details behind a disclosure", async () => {
+ vi.spyOn(api,"applicationSync").mockResolvedValue(status);
+ render(<ApplicationSync application={app} overview={overview} compact />);
+ await screen.findByText("Runtime drift");
+ expect(screen.getAllByText("Out of sync")).toHaveLength(1);
+ expect(screen.queryByText("/spec/replicas")).toBeNull();
+ expect(document.querySelectorAll(".sync-indicators .sync-state svg")).toHaveLength(4);
+ await userEvent.setup().click(screen.getByRole("button", {name:"Details"}));
+ expect(screen.getByText("/spec/replicas")).toBeTruthy();
 });

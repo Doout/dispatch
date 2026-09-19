@@ -1,3 +1,4 @@
+import { DeploymentHistory } from "./deployments/DeploymentHistory";
 import { RuntimeSyncDisclosure } from "./ApplicationSync";
 import { AnalyticsPage } from "./AnalyticsPage";
 import { ServicesPage } from "./ServicesPage";
@@ -1310,6 +1311,7 @@ export function DeploymentDetailsPage({
           deploymentID={deployment.id}
           onSelect={onSectionChange}
         />
+        <DeploymentSectionLink id="history" label="History" current={section} deploymentID={deployment.id} onSelect={onSectionChange} />
         <DeploymentSectionLink
           id="manifests"
           label="Manifests"
@@ -1336,7 +1338,8 @@ export function DeploymentDetailsPage({
         </section>
       )}
       {overview && deployment.app?.buildType === "helm" && <RuntimeSyncDisclosure key={deployment.appId} application={deployment.app} overview={overview} />}
-      {section !== "summary" && (
+      {section === "history" && <DeploymentHistory key={deployment.id} deployment={deployment} />}
+      {section !== "summary" && section !== "history" && (
         <DeploymentRuntime deployment={deployment} section={section} />
       )}
     </div>

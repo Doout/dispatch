@@ -1,7 +1,7 @@
 export type View = "analytics" | "deployments" | "applications" | "events" | "projects" | "servers" | "services" | "secrets" | "connections" | "access";
 export type ApplicationSection = "applications" | "templates" | "helm" | "groups";
 export type EventSection = "rules" | "activity";
-export type DeploymentSection = "summary" | "topology" | "values" | "manifests";
+export type DeploymentSection = "summary" | "topology" | "values" | "manifests" | "history";
 
 export type AppRoute = {
   view: View;
@@ -26,7 +26,7 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
     return {
       view: "deployments",
       deploymentID: segments[1] || undefined,
-      ...(segments[2] === "topology" ? { deploymentSection: "topology" as const } : segments[2] === "values" ? { deploymentSection: "values" as const } : segments[2] === "manifests" ? { deploymentSection: "manifests" as const } : {}),
+      ...(segments[2] === "topology" ? { deploymentSection: "topology" as const } : segments[2] === "values" ? { deploymentSection: "values" as const } : segments[2] === "history" ? { deploymentSection: "history" as const } : segments[2] === "manifests" ? { deploymentSection: "manifests" as const } : {}),
       ...(!segments[1] && params.get("application") ? { deploymentApplicationID: params.get("application") || undefined } : {}),
       ...(!segments[1] && params.get("stage") ? { deploymentStage: params.get("stage") || undefined } : {}),
     };
