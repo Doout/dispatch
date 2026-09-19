@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowsLeftRight, CheckCircle, ClockCounterClockwise, CircleNotch, WarningCircle } from "@phosphor-icons/react";
 import { api, Deployment, DeploymentComparison } from "../api";
 import { relative, short } from "../presentation";
-import { routePath } from "../routes";
+import { routePath, shouldHandleNavigation } from "../routes";
 
 const versionLabel = (d: Deployment) => `${short(d.commitSha) || "No revision"} · ${new Date(d.createdAt).toLocaleString()} · ${d.id.slice(-6)}`;
 const display = (v: unknown) => typeof v === "string" ? v : JSON.stringify(v);
 
-export function DeploymentHistory({ deployment }: { deployment: Deployment }) {
+export function DeploymentHistory({ deployment, onSelectDeployment }: { deployment: Deployment; onSelectDeployment?: (id: string) => void | Promise<void> }) {
  const [items, setItems] = useState<Deployment[]>([]);
  const [next, setNext] = useState("");
  const [loading, setLoading] = useState(true);
@@ -18,16 +18,32 @@ export function DeploymentHistory({ deployment }: { deployment: Deployment }) {
  const [comparing, setComparing] = useState(false);
  const [compareError, setCompareError] = useState("");
  const [filter, setFilter] = useState("");
+ const selectedVersion = useRef("");
+ const [opening, setOpening] = useState("");
+ async function openVersion(id: string) {
+  if (!onSelectDeployment || opening) return;
+  setOpening(id); setError("");
+  try { await onSelectDeployment(id); }
+  catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  finally { setOpening(""); }
+ }
+
  useEffect(() => {
   let alive = true;
   void api.applicationHistory(deployment.appId).then(page => {
    if (!alive) return;
    setItems(page.items); setNext(page.next ?? "");
-   const older = page.items.find(item => item.id !== deployment.id && item.createdAt <= deployment.createdAt);
-   setFrom(older?.id ?? "");
+
   }).catch(e => { if (alive) setError(e.message); }).finally(() => { if (alive) setLoading(false); });
   return () => { alive = false; };
- }, [deployment.appId, deployment.id, deployment.createdAt]);
+ }, [deployment.appId]);
+ useEffect(() => {
+  if (!items.length || selectedVersion.current === deployment.id) return;
+  selectedVersion.current = deployment.id;
+  const index = items.findIndex(item => item.id === deployment.id);
+  const older = index >= 0 ? items[index + 1] : items.find(item => item.createdAt < deployment.createdAt);
+  setTo(deployment.id); setFrom(older?.id ?? "");
+ }, [deployment.id, deployment.createdAt, items]);
  useEffect(() => {
   let alive = true; setComparison(undefined); setCompareError("");
   if (!from || !to || from === to) { setComparing(false); return; }
@@ -53,7 +69,10 @@ export function DeploymentHistory({ deployment }: { deployment: Deployment }) {
     const Icon = item.state === "succeeded" ? CheckCircle : item.state === "failed" || item.state === "cancelled" ? WarningCircle : CircleNotch;
     return <div key={item.id} className={`history-run${item.id === to ? " selected" : ""}`}>
      <Icon className={`history-state ${item.state}`} size={17} weight="fill" aria-hidden="true" />
-     <div><a href={routePath({ view: "deployments", deploymentID: item.id, deploymentSection: "history" })} title={item.id}><code>{short(item.commitSha) || "No revision"}</code>{item.id === deployment.id && <small>Viewing</small>}</a><span>{item.state} · <time dateTime={item.createdAt} title={new Date(item.createdAt).toLocaleString()}>{relative(item.createdAt)}</time></span></div>
+     <div><a href={routePath({ view: "deployments", deploymentID: item.id, deploymentSection: "history" })} title={item.id} aria-busy={opening === item.id || undefined} onClick={event => {
+      if (!onSelectDeployment || !shouldHandleNavigation(event)) return;
+      event.preventDefault(); void openVersion(item.id);
+     }}><code>{short(item.commitSha) || "No revision"}</code>{item.id === deployment.id && <small>Viewing</small>}</a><span>{item.state} · <time dateTime={item.createdAt} title={new Date(item.createdAt).toLocaleString()}>{relative(item.createdAt)}</time></span></div>
      <button title="Compare with this deployment" aria-label={`Compare deployment ${item.id}`} onClick={() => { setTo(item.id); if (from === item.id) setFrom(""); }}><ArrowsLeftRight size={15} aria-hidden="true" /></button>
     </div>;
    })}
