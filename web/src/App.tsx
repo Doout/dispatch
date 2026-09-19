@@ -194,11 +194,16 @@ export default function DispatchApp() {
         window.location.href,
       );
       const nextScroll = options.preserveScroll ? currentScroll : 0;
-      const nextState = {
+      const currentRoute = readRoute();
+      const returnDepth = window.history.state?.deploymentReturnDepth;
+      const nextState: Record<string, unknown> = {
         dispatchRoute: true,
         scrollTop: nextScroll,
         ...(options.state ?? {}),
       };
+      if (next.view === "deployments" && next.deploymentID && currentRoute.view === "deployments" && currentRoute.deploymentID && Number.isSafeInteger(returnDepth) && returnDepth > 0) {
+        nextState.deploymentReturnDepth = returnDepth + (options.replace ? 0 : 1);
+      }
       if (options.replace)
         window.history.replaceState(nextState, "", routePath(next));
       else window.history.pushState(nextState, "", routePath(next));
@@ -556,8 +561,9 @@ export default function DispatchApp() {
                 logsLoading={logsLoading}
                 logsError={logsError}
                 onBack={() => {
-                  if (window.history.state?.deploymentEntry)
-                    window.history.back();
+                  const returnDepth = window.history.state?.deploymentReturnDepth;
+                  if (Number.isSafeInteger(returnDepth) && returnDepth > 0)
+                    window.history.go(-returnDepth);
                   else
                     navigateRoute({ view: "deployments" }, { replace: true });
                 }}
@@ -608,7 +614,7 @@ export default function DispatchApp() {
                 }
                 onSelect={(id) => navigateRoute(
                   { view: "deployments", deploymentID: id },
-                  { state: { deploymentEntry: true } },
+                  { state: { deploymentReturnDepth: 1 } },
                 )}
                 onOpen={(next) => {
                   setDeployAppID("");
