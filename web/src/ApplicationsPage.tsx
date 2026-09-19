@@ -1,3 +1,4 @@
+import { ApplicationSync } from "./ApplicationSync";
 import { ApplicationServices } from "./ApplicationServices";
 import { ConfigSourceError } from "./workflows/ConfigSourceError";
 import { Fragment, ReactNode, useCallback, useEffect, useState } from "react";
@@ -60,6 +61,7 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const [configSourceEdit, setConfigSourceEdit] = useState<ConfigSource | "new" | null>(null);
   const [workflowDetail, setWorkflowDetail] = useState<WorkflowResource | null>(null);
+  const [syncApplication,setSyncApplication] = useState<AppModel | null>(null);
   const [serviceApplication, setServiceApplication] = useState<AppModel | null>(null);
   const [hookApplication, setHookApplication] = useState<AppModel | null>(null);
   const [helmValuesApplication, setHelmValuesApplication] = useState<AppModel | null>(null);
@@ -107,6 +109,7 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
     return <WorkflowTopologyPage resource={resource} source={source} canRun={Boolean(source && canManageProject(overview, source.projectId, "deployment.run"))} onBack={onCloseTopology} onRun={async () => { await api.runWorkflowResource(resource.id); await onChanged(); }} />;
   }
 
+  if (syncApplication) return <ApplicationSync application={syncApplication} overview={overview} onBack={() => setSyncApplication(null)} />;
   if (serviceApplication) return <ApplicationServices application={serviceApplication} overview={overview} onChanged={onChanged} onBack={() => setServiceApplication(null)} />;
 
   if (hookApplication) return <div className="page-layout applications-page editor-page">
@@ -125,7 +128,7 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
     {creatingTemplate && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-template-title"><div className="inline-create-body"><h2 className="sr-only" id="new-template-title">New template</h2><AppForm data={overview} onChanged={async () => { await onChanged(); setCreatingTemplate(false); }} focusName initialSourceType="repository" template /></div></section>}
     {creatingHelm && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-helm-source-title"><div className="inline-create-body"><h2 className="sr-only" id="new-helm-source-title">New Helm source</h2><AppForm data={overview} onChanged={async () => { await onChanged(); setCreatingHelm(false); }} focusName initialSourceType="helm" sourceTypeLocked /></div></section>}
     {configSourceEdit && <section className="inline-create focused-editor compact-editor" aria-labelledby="configuration-source-title"><div className="inline-create-body"><h2 className="sr-only" id="configuration-source-title">Repository configuration</h2><WorkflowConfigSourceForm overview={overview} source={configSourceEdit === "new" ? undefined : configSourceEdit} onCancel={() => setConfigSourceEdit(null)} onSaved={async () => { await onChanged(); setConfigSourceEdit(null); }} /></div></section>}
-    {!editorTitle && !previewGroupEditing && <ApplicationInventory overview={overview} onDeploy={onDeploy} onServices={setServiceApplication} onHooks={setHookApplication} onValues={setHelmValuesApplication} onEditGroup={setPreviewGroupEdit} onEditConfig={setConfigSourceEdit} onOpenWorkflow={setWorkflowDetail} onOpenTopology={onOpenTopology} onOpenConfigurationTopology={onOpenConfigurationTopology} onOpenWorkflowStage={onOpenWorkflowStage} onOpenDeploymentManifests={onOpenDeploymentManifests} onDelete={onDelete} onDeleteGroup={onDeleteGroup} onChanged={onChanged} hasReadyServer={dockerReady || kubernetesReady} hasProject={hasProject} onNavigate={onNavigate} />}
+    {!editorTitle && !previewGroupEditing && <ApplicationInventory overview={overview} onDeploy={onDeploy} onSync={setSyncApplication} onServices={setServiceApplication} onHooks={setHookApplication} onValues={setHelmValuesApplication} onEditGroup={setPreviewGroupEdit} onEditConfig={setConfigSourceEdit} onOpenWorkflow={setWorkflowDetail} onOpenTopology={onOpenTopology} onOpenConfigurationTopology={onOpenConfigurationTopology} onOpenWorkflowStage={onOpenWorkflowStage} onOpenDeploymentManifests={onOpenDeploymentManifests} onDelete={onDelete} onDeleteGroup={onDeleteGroup} onChanged={onChanged} hasReadyServer={dockerReady || kubernetesReady} hasProject={hasProject} onNavigate={onNavigate} />}
     {!editorTitle && <div className="preview-group-editor-host"><PreviewGroupsArea overview={overview} onChanged={onChanged} embedded hideInventory requestedEdit={previewGroupEdit} onEditingChange={handlePreviewGroupEditing} /></div>}
     {workflowDetail && <WorkflowResourceDialog resource={workflowDetail} overview={overview} onClose={() => setWorkflowDetail(null)} onChanged={onChanged} onOpenDeploymentManifests={onOpenDeploymentManifests} />}
   </div>;
@@ -195,7 +198,7 @@ function MenuAction({ icon, label, danger = false, disabled = false, onClick }: 
 
 
 
-function ApplicationInventory({ overview, onDeploy, onServices, onHooks, onValues, onEditGroup, onEditConfig, onOpenWorkflow, onOpenTopology, onOpenConfigurationTopology, onOpenWorkflowStage, onOpenDeploymentManifests, onDelete, onDeleteGroup, onChanged, hasReadyServer, hasProject, onNavigate }: { overview: Overview; onDeploy: (id: string) => void; onServices: (application: AppModel) => void; onHooks: (application: AppModel) => void; onValues: (application: AppModel) => void; onEditGroup: (group: PreviewGroup) => void; onEditConfig: (source: ConfigSource) => void; onOpenWorkflow: (resource: WorkflowResource) => void; onOpenTopology: (resource: WorkflowResource) => void; onOpenConfigurationTopology: (source: ConfigSource) => void; onOpenWorkflowStage: (applicationID: string, stageName: string) => void; onOpenDeploymentManifests: (deploymentID: string) => void; onDelete: (application: AppModel) => void; onDeleteGroup: (group: PreviewGroup) => void; onChanged: () => Promise<void>; hasReadyServer: boolean; hasProject: boolean; onNavigate: (view: View) => void }) {
+function ApplicationInventory({ overview, onDeploy, onSync, onServices, onHooks, onValues, onEditGroup, onEditConfig, onOpenWorkflow, onOpenTopology, onOpenConfigurationTopology, onOpenWorkflowStage, onOpenDeploymentManifests, onDelete, onDeleteGroup, onChanged, hasReadyServer, hasProject, onNavigate }: { overview: Overview; onDeploy: (id: string) => void; onSync: (application: AppModel) => void; onServices: (application: AppModel) => void; onHooks: (application: AppModel) => void; onValues: (application: AppModel) => void; onEditGroup: (group: PreviewGroup) => void; onEditConfig: (source: ConfigSource) => void; onOpenWorkflow: (resource: WorkflowResource) => void; onOpenTopology: (resource: WorkflowResource) => void; onOpenConfigurationTopology: (source: ConfigSource) => void; onOpenWorkflowStage: (applicationID: string, stageName: string) => void; onOpenDeploymentManifests: (deploymentID: string) => void; onDelete: (application: AppModel) => void; onDeleteGroup: (group: PreviewGroup) => void; onChanged: () => Promise<void>; hasReadyServer: boolean; hasProject: boolean; onNavigate: (view: View) => void }) {
   const [busyID, setBusyID] = useState("");
   const [error, setError] = useState("");
   const [deleteSource, setDeleteSource] = useState<ConfigSource | null>(null);
@@ -353,6 +356,7 @@ function ApplicationInventory({ overview, onDeploy, onServices, onHooks, onValue
       const canDeployApplication = canManageProject(overview, application.projectId, "deployment.run");
       return <tr key={application.id}><td data-label="Name"><strong>{application.name}</strong><small>{project}</small></td><td data-label="Type"><strong className="cell-secondary-heading">{type}</strong><small>{method}</small></td><td data-label="Source"><span className="truncate-cell" title={source}>{source}</span><small className="truncate-cell" title={sourceDetail}>{sourceDetail}</small></td><td data-label="Target">{target}</td><td data-label="Status"><span className={`status-label ${application.state}`}><i />{application.state}</span></td><td className="row-actions">{(canDeployApplication || canConfigureApplication || (!application.template && application.buildType === "helm")) && <RowActionMenu name={application.name}>
         {canDeployApplication && !application.template && <MenuAction icon={<RocketLaunch size={16} />} label="Deploy" onClick={() => onDeploy(application.id)} />}
+        {!application.template && application.buildType === "helm" && <MenuAction icon={<SlidersHorizontal size={16} />} label="Sync and drift" onClick={() => onSync(application)} />}
         {!application.template && <MenuAction icon={<PlugsConnected size={16} />} label="Services" onClick={() => onServices(application)} />}
         {!application.template && application.buildType === "helm" && <MenuAction icon={<SlidersHorizontal size={16} />} label="Helm values" onClick={() => onValues(application)} />}
         {canConfigureApplication && !application.template && <MenuAction icon={<Lightning size={16} />} label="Build hook" onClick={() => onHooks(application)} />}

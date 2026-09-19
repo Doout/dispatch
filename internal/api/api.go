@@ -26,6 +26,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/drift"
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/events"
 	"github.com/doout/dispatch/internal/githubapp"
@@ -71,6 +72,7 @@ type githubEventServices struct {
 }
 
 type API struct {
+	drift              *drift.Service
 	overviewSnapshots  overviewCache
 	handler            http.Handler
 	store              store.Store
@@ -144,6 +146,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		}(), nil), eventConfig: eventConfig, secretResolver: eventConfig.SecretResolver, openShift: openshift.New(), lifecycle: lifecycle,
 		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState), authManifestStates: make(map[string]authProviderManifestState)}
 	deployments.ConfigureServices(eventConfig.Vault, eventConfig.SecretResolver)
+	a.drift = drift.New(data, eventConfig.Vault)
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
@@ -206,6 +209,9 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Put("/services/{id}", a.directUserOnly(a.updateService))
 			r.Delete("/services/{id}", a.deleteService)
 			r.Post("/services/{id}/verify", a.verifyService)
+			r.Get("/apps/{id}/sync", a.appPermission(core.PermissionProjectView, a.getApplicationSync))
+			r.Post("/apps/{id}/drift/check", a.appPermission(core.PermissionProjectConfigure, a.checkApplicationDrift))
+			r.Post("/apps/{id}/reapply", a.appPermission(core.PermissionDeploymentRun, a.reapplyApplication))
 			r.Get("/apps/{id}/service-bindings", a.appPermission(core.PermissionProjectView, a.getAppServiceBindings))
 			r.Put("/apps/{id}/service-bindings", a.appPermission(core.PermissionProjectConfigure, a.updateAppServiceBindings))
 			r.Get("/secrets", a.ownerOnly(a.listSecrets))
