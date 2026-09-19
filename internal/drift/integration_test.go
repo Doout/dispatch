@@ -21,7 +21,9 @@ import (
 	"time"
 )
 
-func TestHelmDriftReapplyIntegration(t *testing.T) {
+func TestHelmDriftReapplyIntegration(t *testing.T) { testHelmDriftIntegration(t, false) }
+func TestHelmLegacyDriftIntegration(t *testing.T)  { testHelmDriftIntegration(t, true) }
+func testHelmDriftIntegration(t *testing.T, legacy bool) {
 	config := os.Getenv("DISPATCH_DRIFT_KUBECONFIG")
 	if config == "" {
 		t.Skip("set DISPATCH_DRIFT_KUBECONFIG to a disposable Kubernetes cluster")
@@ -81,7 +83,9 @@ spec:
 	}
 	app := core.App{ID: "application", ProjectID: "project", ServerID: server.ID, Name: "drift-check", BuildType: core.BuildTypeHelm, SourceRepo: "file://" + chart, Branch: "main", HelmChart: ".", HelmNamespace: namespace, HelmRelease: "drift-check", CreatedAt: now}
 	binding := core.ServiceBinding{Alias: "db", Helm: &core.ServiceHelmBinding{Keys: map[string]string{"password": "password"}, SecretNameValues: []string{"database.existingSecret"}}}
-	app.ServiceRuntime = []core.ServiceRuntimeBinding{{Binding: binding, Values: map[string]string{"password": "original-service-credential"}}}
+	if !legacy {
+		app.ServiceRuntime = []core.ServiceRuntimeBinding{{Binding: binding, Values: map[string]string{"password": "original-service-credential"}}}
+	}
 	for _, err := range []error{data.CreateProject(ctx, core.Project{ID: app.ProjectID, Name: app.ProjectID, CreatedAt: now}), data.CreateServer(ctx, server), data.CreateApp(ctx, app)} {
 		if err != nil {
 			t.Fatal(err)
@@ -92,7 +96,10 @@ spec:
 		t.Fatal(err)
 	}
 	s := drift.New(data, vault)
-	executor := deploy.HelmExecutor{Capture: s.Capture}
+	var executor deploy.Executor = deploy.HelmExecutor{Capture: s.Capture}
+	if legacy {
+		executor = deploy.SnapshotExecutor{Next: deploy.HelmExecutor{}, Store: data}
+	}
 	conn, err := drift.Connect(ctx, server)
 	if err != nil {
 		t.Fatal(err)
@@ -105,6 +112,17 @@ spec:
 	}()
 	if err = executor.Deploy(ctx, d, app, server, func(core.DeploymentState, string) error { return nil }); err != nil {
 		t.Fatal(err)
+	}
+	if legacy {
+		d, err = data.GetDeployment(ctx, d.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finished := time.Now().UTC()
+		d.FinishedAt = &finished
+		if _, err := data.GetDriftBaseline(ctx, d.ID); err == nil {
+			t.Fatal("legacy deployment unexpectedly captured a baseline")
+		}
 	}
 	d.State = core.DeploymentSucceeded
 	if err = data.UpdateDeployment(ctx, d); err != nil {
@@ -136,6 +154,17 @@ spec:
 	}
 	if err = maps.Delete(ctx, "settings", metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	if legacy {
+		check, err = s.Check(ctx, app.ID)
+		if err != nil || check.State != "out_of_sync" || check.Health != "degraded" {
+			t.Fatalf("missing legacy resource: %+v %v", check, err)
+		}
+		check, err = s.Reapply(ctx, app.ID, d.ID, "integration-operator")
+		if err != nil || check.State != "synced" {
+			t.Fatalf("legacy recovery: %+v %v", check, err)
+		}
+		return
 	}
 	if err = secrets.Delete(ctx, secretName, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)

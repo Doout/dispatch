@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/store"
 	jsonpatch "github.com/evanphx/json-patch"
 	"github.com/oklog/ulid/v2"
@@ -18,9 +20,10 @@ import (
 )
 
 type Service struct {
-	Store   store.Store
-	Vault   *secretcrypto.Vault
-	Connect Factory
+	Store       store.Store
+	Vault       *secretcrypto.Vault
+	Connect     Factory
+	ReadRelease func(context.Context, core.Server, string, string, core.Deployment) (deploy.HelmDriftRelease, error)
 }
 
 func New(data store.Store, vault *secretcrypto.Vault) *Service {
@@ -130,18 +133,22 @@ func (s *Service) Check(ctx context.Context, app string) (core.DriftCheck, error
 	if old, err := s.Store.GetDriftCheck(ctx, app); err == nil {
 		result.LastSuccessfulCheckAt = old.LastSuccessfulCheckAt
 	}
-	b, server, objects, err := s.load(ctx, app)
+	b, server, objects, comparable, comparisonMessage, err := s.loadForCheck(ctx, app)
 	result.DeploymentID = b.DeploymentID
 	if err != nil {
 		result.Message = err.Error()
+		result.HealthMessage = "Readiness was not checked: " + err.Error()
 	} else {
 		conn, e := s.Connect(ctx, server)
 		if e != nil {
 			result.Message = "Target unavailable or resource discovery denied."
+			result.HealthMessage = "Readiness could not be read from the deployment target."
 		} else {
 			defer conn.Close()
 			result.State, result.Health = "synced", "not_applicable"
 			unknownHealth := false
+			unsupportedHealth := 0
+			assessedHealth := 0
 			for _, want := range objects {
 				item := core.DriftResource{APIVersion: want.GetAPIVersion(), Kind: want.GetKind(), Namespace: want.GetNamespace(), Name: want.GetName(), State: "synced", Health: "unknown", Differences: []core.DriftDifference{}}
 				client, e := conn.resource(want, b.Namespace)
@@ -154,11 +161,21 @@ func (s *Service) Check(ctx context.Context, app string) (core.DriftCheck, error
 					item.State, item.Health = "missing", "degraded"
 				case e != nil:
 					item.State = "unknown"
+					item.Message = resourceReadReason(e)
 				case !owned(want, live, b):
 					item.State = "unknown"
+					item.Message = "Resource ownership no longer matches this Helm release."
 				default:
 					item.Health = health(live)
-					Merge(clean(want).Object, clean(live).Object, "", &item.Differences)
+					if item.Health == "unknown" {
+						unsupportedHealth++
+						item.Message = "This resource kind has no supported readiness check."
+					}
+					if comparable {
+						Merge(clean(want).Object, clean(live).Object, "", &item.Differences)
+					} else {
+						item.State = "unknown"
+					}
 					if len(item.Differences) > 0 {
 						item.State = "out_of_sync"
 					}
@@ -180,19 +197,32 @@ func (s *Service) Check(ctx context.Context, app string) (core.DriftCheck, error
 					result.Health = "degraded"
 				} else if item.Health == "progressing" && result.Health != "degraded" {
 					result.Health = "progressing"
-				} else if item.Health == "unknown" {
+				} else if item.Health == "unknown" && (e != nil || live == nil || !owned(want, live, b)) {
 					unknownHealth = true
+				}
+				if item.Health != "unknown" && item.Health != "not_applicable" {
+					assessedHealth++
 				}
 				result.Resources = append(result.Resources, item)
 			}
-			if unknownHealth && (result.Health == "healthy" || result.Health == "not_applicable") {
+			if (unknownHealth || unsupportedHealth > 0 && assessedHealth == 0) && (result.Health == "healthy" || result.Health == "not_applicable") {
 				result.Health = "unknown"
 			}
-			if result.State == "unknown" {
-				result.Message = "Some resources could not be read or no longer belong to this deployment."
+			result.HealthMessage = fmt.Sprintf("Read readiness for %d resources.", assessedHealth)
+			if unsupportedHealth > 0 {
+				result.HealthMessage += fmt.Sprintf(" %d resources have no supported readiness check.", unsupportedHealth)
+			}
+			if unknownHealth {
+				result.HealthMessage += " Some resources could not be read or verified; expand Details for their reasons."
+			}
+			if !comparable {
+				result.State = "unknown"
+				result.Message = comparisonMessage
+			} else if result.State == "unknown" {
+				result.Message = "Some resources could not be read or no longer belong to this deployment. Expand Details for their reasons."
 			} else {
 				result.LastSuccessfulCheckAt = &now
-				result.Message = "Compared fields saved with the last successful deployment."
+				result.Message = comparisonMessage
 			}
 		}
 	}
@@ -314,4 +344,14 @@ func (s *Service) Reapply(ctx context.Context, app, deployment, actor string) (c
 		return result, applyErr
 	}
 	return result, err
+}
+
+func resourceReadReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "The resource read timed out or was cancelled."
+	}
+	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+		return "The deployment target denied permission to read this resource."
+	}
+	return "This resource could not be read from the deployment target."
 }

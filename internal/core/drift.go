@@ -18,6 +18,7 @@ type DriftDifference struct {
 	Redacted bool   `json:"redacted,omitempty"`
 }
 type DriftResource struct {
+	Message     string            `json:"message,omitempty"`
 	APIVersion  string            `json:"apiVersion"`
 	Kind        string            `json:"kind"`
 	Namespace   string            `json:"namespace,omitempty"`
@@ -28,6 +29,7 @@ type DriftResource struct {
 	Differences []DriftDifference `json:"differences"`
 }
 type DriftCheck struct {
+	HealthMessage         string          `json:"healthMessage,omitempty"`
 	DeploymentID          string          `json:"deploymentId,omitempty"`
 	State                 string          `json:"state"`
 	Health                string          `json:"health"`

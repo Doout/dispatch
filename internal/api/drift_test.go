@@ -38,6 +38,17 @@ func TestApplicationSyncStatusPermissionsAndMissingBaseline(t *testing.T) {
 	if status.Drift.State != "unknown" || status.ReapplyAvailable || status.Revision.State != "current" {
 		t.Fatal(status)
 	}
+	// A missing comparison baseline must not erase a completed health observation.
+	for _, health := range []string{"healthy", "unknown"} {
+		check := core.DriftCheck{DeploymentID: d.ID, State: "unknown", Health: health, CheckedAt: &now, Message: "No matching stored revision.", HealthMessage: "Readiness observation."}
+		if err := a.store.SaveDriftCheck(ctx, app.ID, check); err != nil {
+			t.Fatal(err)
+		}
+		observed, err := a.applicationSync(ctx, app.ID)
+		if err != nil || observed.Drift.CheckedAt == nil || observed.Drift.Health != health || observed.Drift.Message != check.Message || observed.Drift.HealthMessage != check.HealthMessage || observed.ReapplyAvailable {
+			t.Fatalf("lost observation without baseline: %+v %v", observed, err)
+		}
+	}
 	serviceRequestTest(t, a, "POST", "/api/v1/apps/"+app.ID+"/reapply", map[string]string{"deploymentId": d.ID}, 409)
 	user := core.User{ID: "drift-member", Username: "drift-member", SystemRole: "member", State: "active", CreatedAt: now, UpdatedAt: now}
 	if err := a.store.CreateUser(ctx, user); err != nil {

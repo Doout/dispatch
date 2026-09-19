@@ -30,10 +30,19 @@ Dispatch-owned service binding Secrets. The copy is separate from public deploym
 snapshots, and is bound to the deployment ID by authenticated encryption.
 
 If baseline capture fails, the deployment remains successful and its log records a
-sanitized warning. Drift stays Unknown and reapply is unavailable for that deployment.
+sanitized warning. On the next manual check, Dispatch tries to recover the original
+rendered resources from retained Helm release history. It requires exactly one
+successful revision matching the deployment's saved values, target, release, and
+completion interval. The recovered baseline is encrypted. Live resource
+configuration is never adopted as the desired configuration.
 
-Existing deployments without this baseline show Unknown. Deploy once after
-upgrading to enable checks for that application. Docker/Compose runtimes and
+Older deployments can therefore be checked without redeploying. If no retained
+revision can be uniquely matched, Dispatch still inspects resource readiness but
+reports Unknown for drift with the reason. Deployments with service bindings need
+their original credential baseline or a new deployment; Helm history alone cannot
+recover Dispatch-owned service Secrets. Before the first check the UI shows
+Not checked. Failed checks preserve their timestamp and explain why the result is
+unavailable. Docker/Compose runtimes and
 workflow jobs/hooks are outside this feature. Helm hook resources are excluded.
 Charts must emit individually named resources rather than Kubernetes List objects.
 Checks support up to 500 resources per deployment.
@@ -55,7 +64,10 @@ resource and labels truncated results.
 
 Deployment, StatefulSet, DaemonSet, Pod, Job, and PVC readiness is evaluated.
 Configuration-only resources show Not applicable; resource kinds without a known
-readiness rule show Unknown. Missing resources are degraded. This does not test
+readiness rule show Unknown individually and are listed in the health explanation.
+They do not hide known readiness for supported workloads. When no readiness can be
+assessed, aggregate health remains Unknown. Unreadable resources or unverified
+ownership also prevent a Healthy result. Missing resources are degraded. This does not test
 application endpoints or external dependencies.
 
 ## Reapply deployed configuration
@@ -97,14 +109,15 @@ Use disposable infrastructure only:
 
 ```sh
 DISPATCH_DRIFT_KUBECONFIG=/path/to/disposable/kubeconfig \
-  go test -race ./internal/drift -run TestHelmDriftReapplyIntegration -v
+  go test -race ./internal/drift -run 'TestHelm.*Integration' -v
 DISPATCH_DRIFT_POSTGRES_URL='postgres://user:password@localhost/drift_test?sslmode=disable' \
   go test -race ./internal/drift -run TestDriftPostgresPersistenceIntegration -v
 ```
 
 The cluster test installs a unique Helm release, edits its image, replicas and
 configuration, deletes resources, reapplies the encrypted baseline, and verifies
-credential preservation and ownership protection. It deletes its namespace on
+credential preservation and ownership protection. It also installs a release without
+baseline capture and verifies recovery from Helm history. It deletes its namespace on
 completion. The PostgreSQL test requires an empty database.
 
 ## Deployment history and comparisons
