@@ -140,6 +140,8 @@ function restorePageScroll(scrollTop: number) {
 
 export default function DispatchApp() {
   const [overview, setOverview] = useState<Overview | null>(null);
+  const [historicalDeployments, setHistoricalDeployments] = useState<Record<string, Deployment>>({});
+  const [historicalError, setHistoricalError] = useState("");
   const [route, setRoute] = useState<AppRoute>(() => readRoute());
   const view = route.view;
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -334,9 +336,20 @@ export default function DispatchApp() {
     }
   }, [load, navigateRoute, needsAuth, overview]);
 
+  // History can include runs older than the overview's bounded inventory.
+  const cachedDeployment = route.deploymentID ? historicalDeployments[`${overview?.identity?.id ?? ""}:${route.deploymentID}`] : undefined;
   const routeDeployment = overview?.deployments.find(
     (item) => item.id === route.deploymentID,
-  );
+  ) ?? (overview && cachedDeployment?.app && canManageProject(overview, cachedDeployment.app.projectId, "project.view") ? cachedDeployment : undefined);
+  useEffect(() => { setHistoricalDeployments({}); }, [overview?.identity?.id]);
+  useEffect(() => {
+    let alive = true; setHistoricalError("");
+    if (!overview || !route.deploymentID || routeDeployment) return;
+    void api.deployment(route.deploymentID).then(item => {
+      if (alive) setHistoricalDeployments(current => ({ ...current, [`${overview?.identity?.id ?? ""}:${item.id}`]: item }));
+    }).catch(cause => { if (alive) setHistoricalError(cause.message); });
+    return () => { alive = false; };
+  }, [route.deploymentID, Boolean(routeDeployment), Boolean(overview), overview?.identity?.id]);
   const routeServer = overview?.servers.find(
     (item) => item.id === route.serverID,
   );
@@ -528,6 +541,14 @@ export default function DispatchApp() {
                 overview={overview}
                 deployment={routeDeployment}
                 section={route.deploymentSection ?? "summary"}
+                onSelectDeployment={async id => {
+                  if (id === routeDeployment.id) return;
+                  if (!overview.deployments.some(item => item.id === id) && !historicalDeployments[`${overview.identity?.id ?? ""}:${id}`]) {
+                    const item = await api.deployment(id);
+                    setHistoricalDeployments(current => ({ ...current, [`${overview.identity?.id ?? ""}:${id}`]: item }));
+                  }
+                  navigateRoute({ view: "deployments", deploymentID: id, deploymentSection: "history" }, { preserveScroll: true });
+                }}
                 onSectionChange={(section) =>
                   navigateRoute({
                     view: "deployments",
@@ -567,11 +588,9 @@ export default function DispatchApp() {
             view === "deployments" &&
             route.deploymentID &&
             !routeDeployment && (
-              <MissingDeploymentPage
-                onBack={() =>
-                  navigateRoute({ view: "deployments" }, { replace: true })
-                }
-              />
+              historicalError ? <MissingDeploymentPage
+                onBack={() => navigateRoute({ view: "deployments" }, { replace: true })}
+              /> : <p role="status" className="runtime-loading">Loading deployment…</p>
             )}
           {!loading &&
             overview &&
@@ -1254,6 +1273,7 @@ export function DeploymentDetailsPage({
   deployment,
   section = "summary",
   onSectionChange = () => undefined,
+  onSelectDeployment,
   logs,
   logsLoading,
   logsError,
@@ -1265,6 +1285,7 @@ export function DeploymentDetailsPage({
   deployment: Deployment;
   section?: DeploymentSection;
   onSectionChange?: (section: DeploymentSection) => void;
+  onSelectDeployment?: (id: string) => void | Promise<void>;
   logs: DeploymentLog[];
   logsLoading: boolean;
   logsError: string;
@@ -1338,7 +1359,7 @@ export function DeploymentDetailsPage({
         </section>
       )}
       {overview && deployment.app?.buildType === "helm" && <RuntimeSyncDisclosure key={deployment.appId} application={deployment.app} overview={overview} />}
-      {section === "history" && <DeploymentHistory key={deployment.id} deployment={deployment} />}
+      {section === "history" && <DeploymentHistory key={deployment.appId} deployment={deployment} onSelectDeployment={onSelectDeployment} />}
       {section !== "summary" && section !== "history" && (
         <DeploymentRuntime deployment={deployment} section={section} />
       )}

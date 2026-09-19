@@ -933,6 +933,7 @@ export const api = {
     request<void>(`/api/v1/role-assignments/${id}`, { method: "DELETE" }),
   logs: (id: string) =>
     request<DeploymentLog[]>(`/api/v1/deployments/${id}/logs`),
+  deployment: (id: string) => request<Deployment>(`/api/v1/deployments/${encodeURIComponent(id)}`),
   applicationHistory: (id: string, before = "") => request<{ items: Deployment[]; next?: string }>(`/api/v1/apps/${id}/deployment-history${before ? `?before=${encodeURIComponent(before)}` : ""}`),
   compareDeployments: (to: string, from: string) => request<DeploymentComparison>(`/api/v1/deployments/${to}/compare?from=${encodeURIComponent(from)}`),
   deploymentTopology: (id: string, chartValues = false) =>

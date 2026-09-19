@@ -21,3 +21,30 @@ it("does not claim no changes when a snapshot is unavailable", async () => {
  vi.spyOn(api, "compareDeployments").mockResolvedValue({ fromId: "old", toId: "new", available: false, hidden: 0, truncated: false, message: "Saved inputs are unavailable.", changes: [] });
  render(<DeploymentHistory deployment={current} />); await screen.findByText("Comparison unavailable"); expect(screen.queryByText(/No visible input changes/)).toBeNull();
 });
+it("navigates in-app while retaining loaded history, filters, and the list element", async () => {
+ const oldest = { ...older, id: "oldest", commitSha: "oldest-sha", createdAt: "2026-09-17T00:00:00Z" };
+ const history = vi.spyOn(api, "applicationHistory").mockResolvedValueOnce({ items: [current, older], next: "old" }).mockResolvedValueOnce({ items: [oldest] });
+ vi.spyOn(api, "compareDeployments").mockResolvedValue({ fromId: "old", toId: "new", available: true, hidden: 0, truncated: false, message: "Saved inputs.", changes: [{ path: "/values/replicas", kind: "changed", before: 2, after: 3 }] });
+ const navigate = vi.fn();
+ const view = render(<DeploymentHistory deployment={current} onSelectDeployment={navigate} />);
+ const user = userEvent.setup(); await screen.findByText("/values/replicas");
+ await user.type(screen.getByRole("textbox", { name: "Filter changed fields" }), "replicas");
+ await user.click(screen.getByRole("button", { name: "Load older deployments" }));
+ const link = await screen.findByRole("link", { name: "oldest-s" });
+ const list = document.querySelector(".history-runs")!; list.scrollTop = 170;
+ let prevented = false;
+ const observeClick = (event: MouseEvent) => { prevented = event.defaultPrevented; event.preventDefault(); };
+ document.addEventListener("click", observeClick);
+ try {
+  await user.click(link); expect(prevented).toBe(true); expect(navigate).toHaveBeenCalledWith("oldest");
+  navigate.mockClear();
+  link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
+  expect(prevented).toBe(false); expect(navigate).not.toHaveBeenCalled();
+ } finally { document.removeEventListener("click", observeClick); }
+ view.rerender(<DeploymentHistory deployment={older} onSelectDeployment={navigate} />);
+ await waitFor(() => expect((screen.getByRole("combobox", { name: "Compare to deployment" }) as HTMLSelectElement).value).toBe("old"));
+ expect(history).toHaveBeenCalledTimes(2);
+ expect(document.querySelector(".history-runs")).toBe(list); expect(list.scrollTop).toBe(170);
+ expect((screen.getByRole("textbox", { name: "Filter changed fields" }) as HTMLInputElement).value).toBe("replicas");
+ expect(screen.getByRole("link", { name: "oldest-s" })).toBeTruthy();
+});
