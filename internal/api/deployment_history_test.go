@@ -18,10 +18,10 @@ func TestDeploymentComparisonUsesSavedInputsAndRedacts(t *testing.T) {
 	snapshot := func(values map[string]any) core.DeploymentSnapshot {
 		return core.DeploymentSnapshot{TargetID: "cluster", Values: values}
 	}
-	from := core.Deployment{ID: "old", CommitSHA: "old-sha", Snapshot: snapshot(map[string]any{"replicas": float64(2), "removed": true, "null": nil, "password": "old-private", "env": []any{map[string]any{"name": "AUTH", "value": "old-private"}}, "endpoint": "postgres://admin:old-private@db/app", "nested": map[string]any{"image": "api:v1"}})}
-	to := core.Deployment{ID: "new", CommitSHA: "new-sha", Snapshot: snapshot(map[string]any{"replicas": float64(3), "added": true, "null": nil, "password": "new-private", "env": []any{map[string]any{"name": "AUTH", "value": "new-private"}}, "endpoint": "postgres://admin:new-private@db/app", "nested": map[string]any{"image": "api:v2"}})}
+	from := core.Deployment{ID: "old", CommitSHA: "old-sha", Snapshot: snapshot(map[string]any{"replicas": float64(2), "removed": true, "database": map[string]any{"host": "old-db", "password": "old-private"}, "null": nil, "password": "old-private", "env": []any{map[string]any{"name": "AUTH", "value": "old-private"}}, "endpoint": "postgres://admin:old-private@db/app", "nested": map[string]any{"image": "api:v1"}})}
+	to := core.Deployment{ID: "new", CommitSHA: "new-sha", Snapshot: snapshot(map[string]any{"replicas": float64(3), "added": true, "database": map[string]any{"host": "new-db", "password": "new-private"}, "null": nil, "password": "new-private", "env": []any{map[string]any{"name": "AUTH", "value": "new-private"}}, "endpoint": "postgres://admin:new-private@db/app", "nested": map[string]any{"image": "api:v2"}})}
 	result := compareDeploymentSnapshots(from, to)
-	if !result.Available || len(result.Changes) != 5 || result.Hidden != 3 {
+	if !result.Available || len(result.Changes) != 6 || result.Hidden != 4 {
 		t.Fatalf("unexpected comparison: %+v", result)
 	}
 	raw, _ := json.Marshal(result)

@@ -144,7 +144,7 @@ func flattenHistorical(path string, value any, fields map[string]any) {
 	// Some chart values contain environment entries, URLs, or entire YAML documents.
 	// Never expose those in a comparison even when a chart uses an ordinary key.
 	lower := strings.ToLower(path)
-	if sensitivePath(path) || strings.Contains(lower, "/env") || strings.Contains(lower, "connection") || strings.Contains(lower, "/data") || strings.Contains(lower, "/stringdata") {
+	if sensitivePath(path) || strings.Contains(lower, "connection") || hiddenHistoryPath(lower) {
 		fields[path] = hiddenHistoryValue
 		return
 	}
@@ -176,4 +176,14 @@ func flattenHistorical(path string, value any, fields map[string]any) {
 		_ = json.Unmarshal(raw, &normalized)
 		fields[path] = normalized
 	}
+}
+
+func hiddenHistoryPath(path string) bool {
+	for _, part := range strings.Split(path, "/") {
+		switch part {
+		case "env", "envfrom", "extraenv", "extraenvvars", "environment", "data", "stringdata", "authorization", "auth", "dsn":
+			return true
+		}
+	}
+	return false
 }
