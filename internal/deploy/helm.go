@@ -30,6 +30,7 @@ import (
 const helmOperationTimeout = 5 * time.Minute
 
 type HelmExecutor struct {
+	Capture          func(context.Context, core.Deployment, core.App, core.Server, string) error
 	newClient        helmClientFactory
 	newServiceClient func(core.Server) (kubernetes.Interface, error)
 }
@@ -43,6 +44,7 @@ type helmClient interface {
 }
 
 type sdkHelmClient struct {
+	lastManifest  string
 	configuration *action.Configuration
 	registry      *registry.Client
 	settings      *cli.EnvSettings
@@ -138,6 +140,37 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 	if err := client.Status(ctx, release); err != nil {
 		return fmt.Errorf("check Helm release: %w", err)
 	}
+	if e.Capture != nil {
+		captureErr := func() error {
+			sdk, ok := client.(*sdkHelmClient)
+			if !ok {
+				return errors.New("rendered deployment baseline is unavailable")
+			}
+			manifest := sdk.lastManifest
+			for i, b := range app.ServiceRuntime {
+				data := map[string][]byte{}
+				for key, field := range b.Binding.Helm.Keys {
+					data[key] = []byte(b.Values[field])
+				}
+				secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceSecretName(deployment.ID, i), "namespace": namespace, "labels": map[string]string{"dispatch.app": app.ID, "dispatch.deployment": deployment.ID, "dispatch.service-binding": "true", "dispatch.release": release}}, "type": "Opaque", "immutable": true, "data": data}
+				raw, err := json.Marshal(secret)
+				if err != nil {
+					return errors.New("cannot save service resource baseline")
+				}
+				manifest += "\n---\n" + string(raw)
+			}
+			if err := e.Capture(ctx, deployment, app, server, manifest); err != nil {
+				return errors.New("cannot save encrypted deployment baseline")
+			}
+			return nil
+		}()
+		if captureErr != nil {
+			if err := progress(core.DeploymentChecking, "Deployment applied; drift baseline unavailable. Check target read permissions and encrypted storage."); err != nil {
+				return err
+			}
+		}
+	}
+
 	return progress(core.DeploymentRouting, routeMessage(app))
 }
 
@@ -338,7 +371,11 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 		install.Atomic = true
 		install.Wait = true
 		install.Timeout = helmOperationTimeout
-		_, err = install.RunWithContext(ctx, chart, values)
+		var installed *helmrelease.Release
+		installed, err = install.RunWithContext(ctx, chart, values)
+		if err == nil && installed != nil {
+			c.lastManifest = installed.Manifest
+		}
 		return err
 	}
 	if err != nil {
@@ -354,7 +391,11 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	upgrade.Wait = true
 	upgrade.Timeout = helmOperationTimeout
 	upgrade.MaxHistory = c.settings.MaxHistory
-	_, err = upgrade.RunWithContext(ctx, release, chart, values)
+	var installed *helmrelease.Release
+	installed, err = upgrade.RunWithContext(ctx, release, chart, values)
+	if err == nil && installed != nil {
+		c.lastManifest = installed.Manifest
+	}
 	return err
 }
 

@@ -206,3 +206,26 @@ func (s *Service) fail(deployment core.Deployment, err error) {
 func (s *Service) log(ctx context.Context, deploymentID, level, message string) error {
 	return s.store.AppendDeploymentLog(ctx, core.DeploymentLog{DeploymentID: deploymentID, Level: level, Message: message, CreatedAt: time.Now().UTC()})
 }
+
+// WithIdleApplication excludes checks and repairs from deployment/cleanup changes.
+func (s *Service) WithIdleApplication(ctx context.Context, appID string, fn func() error) error {
+	s.mu.Lock()
+	lock := s.appLocks[appID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.appLocks[appID] = lock
+	}
+	s.mu.Unlock()
+	if !lock.TryLock() {
+		return ErrDeploymentActive
+	}
+	defer lock.Unlock()
+	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if active != nil {
+		return ErrDeploymentActive
+	}
+	return fn()
+}

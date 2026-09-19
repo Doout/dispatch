@@ -17,6 +17,7 @@ import (
 	"github.com/doout/dispatch/internal/config"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/drift"
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/installation"
@@ -79,7 +80,11 @@ func run(logger *slog.Logger) error {
 	}
 	var executor deploy.Executor = deploy.SimulationExecutor{}
 	if cfg.Executor == "docker" {
-		runtime := deploy.RuntimeExecutor{Default: deploy.DockerExecutor{}, Helm: deploy.HelmExecutor{}}
+		helmExecutor := deploy.HelmExecutor{}
+		if vault != nil {
+			helmExecutor.Capture = drift.New(data, vault).Capture
+		}
+		runtime := deploy.RuntimeExecutor{Default: deploy.DockerExecutor{}, Helm: helmExecutor}
 		snapshots := deploy.SnapshotExecutor{Next: runtime, Store: data}
 		executor = deploy.HookExecutor{Next: snapshots, Outputs: data, Vault: vault, Resolver: secretResolver}
 	}

@@ -777,6 +777,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+ applicationSync: (id: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/sync`),
+ checkApplicationDrift: (id: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/drift/check`,{method:"POST"}),
+ reapplyApplication: (id: string,deploymentId: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/reapply`,{method:"POST",body:JSON.stringify({deploymentId})}),
  services: () => request<ServiceConnection[]>("/api/v1/services"),
  saveService: (id: string | undefined, data: ServiceInput) => request<ServiceConnection>(`/api/v1/services${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(data) }),
  deleteService: (id: string) => request<void>(`/api/v1/services/${id}`, { method: "DELETE" }),
@@ -1396,4 +1399,13 @@ export type ServiceInput = {
 export type ServiceBinding = {
  alias: string; serviceRef: string; environment?: Record<string,string>; compose?: Record<string,Record<string,string>>;
  helm?: { keys: Record<string,string>; secretNameValues: string[]; keyValues?: Record<string,string> };
+};
+
+export type ApplicationSyncStatus = {
+ appId: string; deploymentId?: string; supported: boolean; reapplyAvailable: boolean;
+ configuration: {state: string; message: string; sourceId?: string; lastSyncedAt?: string};
+ revision: {state: string; applied?: string; observed?: string};
+ drift: {deploymentId?: string; state: string; health: string; message: string; checkedAt?: string; lastSuccessfulCheckAt?: string; location: string;
+ resources: {apiVersion: string; kind: string; namespace?: string; name: string; state: string; health: string; truncated?: boolean; differences: {path: string; expected: unknown; actual: unknown; redacted?: boolean}[]}[]};
+ actions: {id: string; state: string; message: string; actor: string; createdAt: string}[];
 };

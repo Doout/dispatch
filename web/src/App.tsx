@@ -1,3 +1,4 @@
+import { RuntimeSyncDisclosure } from "./ApplicationSync";
 import { AnalyticsPage } from "./AnalyticsPage";
 import { ServicesPage } from "./ServicesPage";
 import { subscribeOverview } from "./overviewStream";
@@ -523,6 +524,7 @@ export default function DispatchApp() {
             route.deploymentID &&
             routeDeployment && (
               <DeploymentDetailsPage
+                overview={overview}
                 deployment={routeDeployment}
                 section={route.deploymentSection ?? "summary"}
                 onSectionChange={(section) =>
@@ -1247,6 +1249,7 @@ export function DeploymentsPage({
 }
 
 export function DeploymentDetailsPage({
+  overview,
   deployment,
   section = "summary",
   onSectionChange = () => undefined,
@@ -1257,6 +1260,7 @@ export function DeploymentDetailsPage({
   onCancel,
   canCancel = true,
 }: {
+  overview?: Overview;
   deployment: Deployment;
   section?: DeploymentSection;
   onSectionChange?: (section: DeploymentSection) => void;
@@ -1331,6 +1335,7 @@ export function DeploymentDetailsPage({
           />
         </section>
       )}
+      {overview && deployment.app?.buildType === "helm" && <RuntimeSyncDisclosure key={deployment.appId} application={deployment.app} overview={overview} />}
       {section !== "summary" && (
         <DeploymentRuntime deployment={deployment} section={section} />
       )}

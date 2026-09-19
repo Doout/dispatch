@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,5 +185,27 @@ func TestValidateHelmTargetRejectsUnsafeOrIncompleteConfiguration(t *testing.T) 
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestUnavailableDriftBaselineDoesNotFailAppliedHelmDeployment(t *testing.T) {
+	client := &recordingHelmClient{}
+	executor := HelmExecutor{newClient: func(core.Server, string, string) (helmClient, error) { return client, nil }, Capture: func(context.Context, core.Deployment, core.App, core.Server, string) error {
+		return errors.New("sensitive-cluster-error")
+	}}
+	app := core.App{ID: "drift-app", Name: "drift", BuildType: core.BuildTypeHelm, HelmChart: "chart", HelmRepository: "https://charts.example.test", HelmNamespace: "default", HelmRelease: "drift"}
+	server := core.Server{Name: "cluster", Runtime: core.ServerRuntimeKubernetes, Kubernetes: &core.KubernetesServerConfig{KubeconfigPath: "/config/cluster"}}
+	warned := false
+	err := executor.Deploy(context.Background(), core.Deployment{}, app, server, func(_ core.DeploymentState, message string) error {
+		if strings.Contains(message, "sensitive-cluster-error") {
+			t.Fatal("baseline failure leaked")
+		}
+		if strings.Contains(message, "drift baseline unavailable") {
+			warned = true
+		}
+		return nil
+	})
+	if err != nil || !warned {
+		t.Fatal("applied deployment failed or capture failure was hidden", err)
 	}
 }

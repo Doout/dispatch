@@ -2099,3 +2099,27 @@ code { font-family: var(--mono); }
 .service-form span, .service-form p { font-weight: 400; }
 .service-filter { max-width: 300px; margin: 12px 0 20px; }
 @media (max-width: 640px) { .service-form-grid { grid-template-columns: 1fr; } .service-card, .service-form { padding: 16px; } .service-fields > div { grid-template-columns: 1fr; gap: 3px; } }
+
+.application-sync { padding: 24px; max-width: 1240px; }
+.application-sync > header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.application-sync h2 { margin: 0; }
+.sync-indicators { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--border); gap: 24px; padding: 20px 0; margin: 24px 0; }
+.sync-indicators dt, .sync-observation { color: var(--muted); font-size: 13px; }
+.sync-indicators dd { margin: 8px 0; font-size: 17px; font-weight: 600; }
+.sync-indicators small { display: block; color: var(--muted); margin: 6px 0; overflow-wrap: anywhere; }
+.sync-resources { display: grid; gap: 18px; margin-top: 24px; }
+.sync-resource, .sync-confirm { border: 1px solid var(--border); padding: 18px; border-radius: 8px; }
+.sync-confirm { margin-top: 18px; }
+.sync-resource h3 { margin: 0; font-size: 15px; }
+.sync-table-scroll { overflow-x: auto; }
+.sync-resource table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sync-resource th, .sync-resource td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); padding: 10px 12px; overflow-wrap: anywhere; }
+.runtime-sync-disclosure { margin: 16px 0; }
+@media (max-width: 900px) { .sync-indicators { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 550px) { .sync-indicators { grid-template-columns: 1fr; } .application-sync { padding: 16px; } .application-sync > header { flex-direction: column; } }
+@media (max-width: 550px) {
+ .sync-resource thead { display: none; }
+ .sync-resource tr { display: block; border-bottom: 1px solid var(--border); padding: 10px 0; }
+ .sync-resource td { display: block; border: 0; padding: 6px 0; }
+ .sync-resource td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+}

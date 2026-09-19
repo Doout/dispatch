@@ -14,6 +14,13 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	SaveDriftBaseline(context.Context, core.DriftBaseline) error
+	GetDriftBaseline(context.Context, string) (core.DriftBaseline, error)
+	LatestSuccessfulDeployment(context.Context, string) (core.Deployment, error)
+	SaveDriftCheck(context.Context, string, core.DriftCheck) error
+	GetDriftCheck(context.Context, string) (core.DriftCheck, error)
+	SaveDriftAction(context.Context, core.DriftAction) error
+	ListDriftActions(context.Context, string) ([]core.DriftAction, error)
 	CreateService(context.Context, core.Service) error
 	UpdateService(context.Context, core.Service, int64) error
 	GetService(context.Context, string) (core.Service, error)

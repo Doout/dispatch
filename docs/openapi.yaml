@@ -9,6 +9,58 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /apps/{id}/sync:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getApplicationSync
+      description: Saved runtime observation, repository sync, deployment revision, and recent reapply history. Requires project.view.
+      responses:
+        "200":
+          description: Separate sync, drift, and health indicators. Does not contact the target.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApplicationSync" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /apps/{id}/drift/check:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: checkApplicationDrift
+      description: Manual controller-side Kubernetes/OpenShift check with a 30-second deadline. Requires project.configure.
+      responses:
+        "200":
+          description: Saved observation. Target failures produce Unknown and preserve the last successful check time.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApplicationSync" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /apps/{id}/reapply:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: reapplyApplication
+      description: Explicitly restore the saved successful deployment after dry-run validation. Requires deployment.run. Does not adopt new Git revisions or credentials. Multi-resource writes are not transactional.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deploymentId]
+              properties:
+                deploymentId: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Reapply recorded and runtime checked again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApplicationSync" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
   /services:
     get:
       operationId: listServices
@@ -1347,6 +1399,70 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    ApplicationSync:
+      type: object
+      required: [appId, supported, reapplyAvailable, configuration, revision, drift, actions]
+      properties:
+        appId: { type: string }
+        deploymentId: { type: string }
+        supported: { type: boolean }
+        reapplyAvailable: { type: boolean }
+        configuration:
+          type: object
+          properties:
+            state: { type: string }
+            message: { type: string }
+            sourceId: { type: string }
+            lastSyncedAt: { type: string, format: date-time }
+        revision:
+          type: object
+          properties:
+            state: { type: string }
+            applied: { type: string }
+            observed: { type: string }
+        drift:
+          type: object
+          properties:
+            deploymentId: { type: string }
+            state: { type: string, enum: [synced, out_of_sync, unknown] }
+            health: { type: string, enum: [healthy, progressing, degraded, unknown, not_applicable] }
+            message: { type: string }
+            checkedAt: { type: string, format: date-time }
+            lastSuccessfulCheckAt: { type: string, format: date-time }
+            location: { type: string, const: Dispatch controller }
+            resources:
+              type: array
+              items:
+                type: object
+                properties:
+                  apiVersion: { type: string }
+                  kind: { type: string }
+                  namespace: { type: string }
+                  name: { type: string }
+                  state: { type: string, enum: [synced, out_of_sync, missing, unknown] }
+                  health: { type: string }
+                  truncated: { type: boolean }
+                  differences:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: { type: string }
+                        expected: {}
+                        actual: {}
+                        redacted: { type: boolean }
+        actions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              appId: { type: string }
+              deploymentId: { type: string }
+              actor: { type: string }
+              state: { type: string, enum: [running, succeeded, failed] }
+              message: { type: string }
+              createdAt: { type: string, format: date-time }
     ServiceInput:
       type: object
       description: Project, name and type are required at creation and immutable thereafter. Omitted fields are preserved. Only the controller owner can attach global secret references.

@@ -230,3 +230,5 @@ Dispatch uses Apache License 2.0. Keep private provider code and credentials out
 
 Historical reporting uses embedded DuckDB with asynchronous Parquet exports. See
 [analytics](docs/analytics.md) for storage, recovery, and native build requirements.
+
+Application [sync and drift checks](docs/application-drift.md) compare saved Helm deployments with Kubernetes/OpenShift resources and support explicit reapply.
