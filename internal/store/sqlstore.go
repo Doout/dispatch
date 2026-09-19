@@ -159,10 +159,27 @@ func (s *SQLStore) UpdateSecret(ctx context.Context, secret core.Secret) error {
 	if secret.Source == "" {
 		secret.Source = core.SecretSourceLocal
 	}
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE secrets SET name=?,secret_type=?,secret_source=?,environment_variable=?,public_value=?,encrypted_value=?,external_store_id=?,external_secret_id=?,external_field=?,updated_at=? WHERE id=?`),
+	previous, err := s.GetSecret(ctx, secret.ID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE secrets SET name=?,secret_type=?,secret_source=?,environment_variable=?,public_value=?,encrypted_value=?,external_store_id=?,external_secret_id=?,external_field=?,updated_at=? WHERE id=?`),
 		secret.Name, secret.Type, secret.Source, secret.EnvironmentVariable, secret.PublicValue, secret.EncryptedValue,
 		nullString(secret.ExternalStoreID), secret.ExternalSecretID, secret.ExternalField, stamp(secret.UpdatedAt), secret.ID)
-	return changed(result, err)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	if previous.EncryptedValue != secret.EncryptedValue || previous.Source != secret.Source || previous.ExternalStoreID != secret.ExternalStoreID || previous.ExternalSecretID != secret.ExternalSecretID || previous.ExternalField != secret.ExternalField {
+		if err = s.updateServiceSecretRevisions(ctx, tx, secret.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) DeleteSecret(ctx context.Context, id string) error {
@@ -962,14 +979,25 @@ func scanApp(row scanner) (core.App, error) {
 }
 
 func (s *SQLStore) CreateDeployment(ctx context.Context, deployment core.Deployment) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	outputs, _ := json.Marshal(deployment.Outputs)
 	snapshot, _ := json.Marshal(deployment.Snapshot)
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO deployments(
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployments(
         id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`), deployment.ID, deployment.AppID, deployment.CommitSHA,
 		deployment.SpecDigest, string(deployment.State), deployment.Message, stamp(deployment.CreatedAt),
 		nullTime(deployment.StartedAt), nullTime(deployment.FinishedAt), nullTime(deployment.LeaseUntil), string(outputs), string(snapshot))
-	return err
+	if err != nil {
+		return err
+	}
+	if err = s.captureServiceBindings(ctx, tx, deployment); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) UpdateDeployment(ctx context.Context, deployment core.Deployment) error {

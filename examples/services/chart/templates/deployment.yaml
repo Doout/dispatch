@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: check
+          image: postgres:17-alpine
+          command: [sh, -c, 'psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -tAc "SELECT 1" > /tmp/connected && sleep infinity']
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "Set database.existingSecret through a service binding" .Values.database.existingSecret }}
+                  key: {{ .Values.database.urlKey }}
+          readinessProbe:
+            exec:
+              command: [sh, -c, 'test "$(cat /tmp/connected)" = 1']
+            initialDelaySeconds: 1
+            periodSeconds: 5

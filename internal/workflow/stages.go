@@ -141,6 +141,10 @@ func (s *Service) resolveTarget(ctx context.Context, ref string) (core.Server, e
 }
 
 func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, deploymentName string, spec DeploymentSpec, server core.Server) (string, error) {
+	bindings, err := s.effectiveServiceBindings(ctx, source.ProjectID, spec, stage)
+	if err != nil {
+		return "", err
+	}
 	chart, ok := revision.Sources[spec.Helm.SourceRef]
 	if !ok {
 		return "", fmt.Errorf("chart source %s is missing", spec.Helm.SourceRef)
@@ -217,6 +221,9 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 		err = s.Store.UpdateApp(ctx, app)
 	}
 	if err != nil {
+		return "", err
+	}
+	if err := s.Store.ReplaceAppServiceBindings(ctx, app.ID, bindings); err != nil {
 		return "", err
 	}
 	deployment, err := s.Deployments.Start(ctx, app.ID, chart.CommitSHA)

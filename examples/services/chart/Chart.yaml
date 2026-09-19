@@ -1,0 +1,4 @@
+apiVersion: v2
+name: service-connection-example
+version: 0.1.0
+description: Check an existing PostgreSQL connection supplied by a Dispatch service binding.

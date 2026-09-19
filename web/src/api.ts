@@ -506,6 +506,7 @@ export type DeploymentResource = {
   warning?: string;
 };
 export type Overview = {
+  services?: ServiceConnection[];
   demo: boolean;
   secretStorageConfigured: boolean;
   identity?: Identity;
@@ -776,6 +777,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+ services: () => request<ServiceConnection[]>("/api/v1/services"),
+ saveService: (id: string | undefined, data: ServiceInput) => request<ServiceConnection>(`/api/v1/services${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(data) }),
+ deleteService: (id: string) => request<void>(`/api/v1/services/${id}`, { method: "DELETE" }),
+ verifyService: (id: string) => request<ServiceCheck>(`/api/v1/services/${id}/verify`, { method: "POST" }),
+ serviceBindings: (id: string) => request<ServiceBinding[]>(`/api/v1/apps/${id}/service-bindings`),
+ saveServiceBindings: (id: string, bindings: ServiceBinding[]) => request<ServiceBinding[]>(`/api/v1/apps/${id}/service-bindings`, { method: "PUT", body: JSON.stringify(bindings) }),
   authStatus: () => request<AuthStatus>("/api/v1/auth/status"),
   setupAdmin: (username: string, password: string) =>
     request<{ username: string }>("/api/v1/auth/setup", {
@@ -1373,3 +1380,20 @@ export const api = {
 export type AnalyticsCounts = { runs: number; succeeded: number; failed: number; cancelled: number; reused: number; durationSeconds: number };
 export type AnalyticsDay = { date: string; deployments: AnalyticsCounts; workflows: AnalyticsCounts; jobs: AnalyticsCounts };
 export type AnalyticsSummary = { state: string; updatedAt?: string; days: number; daily: AnalyticsDay[]; totals: AnalyticsDay };
+export type ServiceField = { value?: string; sensitive: boolean; configured: boolean; secretRef?: string };
+export type ServiceCheck = { state: "succeeded" | "failed" | "untested"; message: string; location: string; checkedAt: string; durationMs: number };
+export type ServiceConnection = {
+ id: string; projectId: string; name: string; description: string; type: "postgresql" | "generic";
+ fields: Record<string, ServiceField>; availableFields: string[]; revision: number;
+ probeHost?: string; probePort?: number; check?: ServiceCheck;
+ consumers: { appId: string; appName: string; alias: string; appliedRevision: number; redeploymentRequired: boolean }[];
+};
+export type ServiceInput = {
+ projectId: string; name: string; description: string; type: ServiceConnection["type"]; revision?: number;
+ connectionUrl?: string; probeHost?: string; probePort?: number;
+ fields: Record<string, { value?: string; sensitive?: boolean; secretRef?: string; remove?: boolean }>;
+};
+export type ServiceBinding = {
+ alias: string; serviceRef: string; environment?: Record<string,string>; compose?: Record<string,Record<string,string>>;
+ helm?: { keys: Record<string,string>; secretNameValues: string[]; keyValues?: Record<string,string> };
+};

@@ -9,6 +9,93 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /services:
+    get:
+      operationId: listServices
+      parameters:
+        - { name: projectId, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Services in visible projects, including consumers and last manual check.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Service" } }
+    post:
+      operationId: createService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceInput" }
+      responses:
+        "201": { description: Connection registered. No external resource is provisioned. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /services/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getService
+      responses:
+        "200":
+          description: Connection metadata. Sensitive values are never returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Service" }
+    put:
+      operationId: updateService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceInput" }
+      responses:
+        "200": { description: Updated. Connection edits increment revision and clear the check result. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteService
+      responses:
+        "204": { description: Registration removed. The external dependency is untouched. }
+        "409": { $ref: "#/components/responses/Problem" }
+  /services/{id}/verify:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: verifyService
+      responses:
+        "200":
+          description: Manual controller-side check result, including failures. Maximum duration ten seconds.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceCheck" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /apps/{id}/service-bindings:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getApplicationServiceBindings
+      responses:
+        "200":
+          description: Configured service bindings without credentials.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ServiceBinding" } }
+    put:
+      operationId: replaceApplicationServiceBindings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: array, items: { $ref: "#/components/schemas/ServiceBinding" } }
+      responses:
+        "200": { description: Bindings replaced. Does not redeploy the application. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { description: Repository-managed bindings must be edited in YAML. }
   /auth/status:
     get:
       operationId: getAuthenticationStatus
@@ -1260,6 +1347,83 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    ServiceInput:
+      type: object
+      description: Project, name and type are required at creation and immutable thereafter. Omitted fields are preserved. Only the controller owner can attach global secret references.
+      properties:
+        projectId: { type: string }
+        name: { type: string, pattern: "^[a-z0-9][a-z0-9.-]{0,62}$" }
+        type: { type: string, enum: [postgresql, generic] }
+        description: { type: string }
+        revision: { type: integer, description: Expected current revision for optimistic concurrency. }
+        connectionUrl: { type: string, writeOnly: true, description: PostgreSQL URL input instead of individual fields. }
+        probeHost: { type: string }
+        probePort: { type: integer }
+        fields:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              value: { type: string, writeOnly: true, maxLength: 65536 }
+              sensitive: { type: boolean }
+              secretRef: { type: string }
+              remove: { type: boolean }
+    Service:
+      type: object
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [postgresql, generic] }
+        description: { type: string }
+        revision: { type: integer }
+        fields:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              value: { type: string, description: Ordinary fields only. }
+              sensitive: { type: boolean }
+              configured: { type: boolean }
+              secretRef: { type: string, description: Visible only to the controller owner. }
+        availableFields: { type: array, items: { type: string } }
+        check: { $ref: "#/components/schemas/ServiceCheck" }
+        consumers:
+          type: array
+          items:
+            type: object
+            properties:
+              appId: { type: string }
+              appName: { type: string }
+              alias: { type: string }
+              appliedRevision: { type: integer }
+              redeploymentRequired: { type: boolean }
+    ServiceCheck:
+      type: object
+      properties:
+        state: { type: string, enum: [succeeded, failed, untested] }
+        message: { type: string }
+        location: { type: string, const: Dispatch controller }
+        checkedAt: { type: string, format: date-time }
+        durationMs: { type: integer }
+    ServiceBinding:
+      type: object
+      required: [alias, serviceRef]
+      description: Select exactly one runtime mapping. Destinations map to service field names.
+      properties:
+        alias: { type: string }
+        serviceRef: { type: string, description: Service ID in app APIs; project-local name or ID in repository YAML. }
+        environment: { type: object, additionalProperties: { type: string } }
+        compose:
+          type: object
+          additionalProperties: { type: object, additionalProperties: { type: string } }
+        helm:
+          type: object
+          required: [keys, secretNameValues]
+          properties:
+            keys: { type: object, additionalProperties: { type: string } }
+            secretNameValues: { type: array, items: { type: string } }
+            keyValues: { type: object, additionalProperties: { type: string } }
     ConfigSourceInput:
       type: object
       required: [projectId, githubAppId, name, repository, branch, path, syncMode, pollIntervalSeconds]

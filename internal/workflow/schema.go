@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/doout/dispatch/internal/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -96,7 +97,8 @@ type SecretBinding struct {
 }
 
 type DeploymentSpec struct {
-	Helm HelmDeploymentSpec `json:"helm" yaml:"helm"`
+	ServiceBindings []core.ServiceBinding `json:"serviceBindings,omitempty" yaml:"serviceBindings,omitempty"`
+	Helm            HelmDeploymentSpec    `json:"helm" yaml:"helm"`
 }
 
 type HelmValuesFile struct {
@@ -119,12 +121,13 @@ type OutputBinding struct {
 }
 
 type StageSpec struct {
-	Name      string               `json:"name" yaml:"name"`
-	TargetRef string               `json:"targetRef" yaml:"targetRef"`
-	Deploy    []string             `json:"deploy" yaml:"deploy"`
-	URL       string               `json:"url,omitempty" yaml:"url,omitempty"`
-	Checks    map[string]CheckSpec `json:"checks,omitempty" yaml:"checks,omitempty"`
-	Approval  string               `json:"approval,omitempty" yaml:"approval,omitempty"`
+	ServiceBindings map[string]string    `json:"serviceBindings,omitempty" yaml:"serviceBindings,omitempty"`
+	Name            string               `json:"name" yaml:"name"`
+	TargetRef       string               `json:"targetRef" yaml:"targetRef"`
+	Deploy          []string             `json:"deploy" yaml:"deploy"`
+	URL             string               `json:"url,omitempty" yaml:"url,omitempty"`
+	Checks          map[string]CheckSpec `json:"checks,omitempty" yaml:"checks,omitempty"`
+	Approval        string               `json:"approval,omitempty" yaml:"approval,omitempty"`
 }
 
 type CheckSpec struct {
@@ -275,6 +278,9 @@ func validateApplication(document ApplicationDocument) error {
 		return err
 	}
 	for name, deployment := range document.Spec.Deployments {
+		if err := validateServiceDestinations(deployment); err != nil {
+			return fmt.Errorf("deployment %s: %w", name, err)
+		}
 		if !aliasPattern.MatchString(name) {
 			return fmt.Errorf("spec.deployments.%s has an invalid name", name)
 		}

@@ -346,7 +346,16 @@ func parseReleaseManifests(document string) []deploymentManifest {
 }
 
 func encodeDeploymentManifest(object *unstructured.Unstructured) deploymentManifest {
-	document, _ := yaml.Marshal(manifestObject(object))
+	safe := object.DeepCopy()
+	if strings.EqualFold(safe.GetKind(), "Secret") {
+		delete(safe.Object, "data")
+		delete(safe.Object, "stringData")
+		// Last-applied annotations can contain a complete copy of the Secret.
+		annotations := safe.GetAnnotations()
+		delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
+		safe.SetAnnotations(annotations)
+	}
+	document, _ := yaml.Marshal(manifestObject(safe))
 	return deploymentManifest{Name: object.GetName(), Kind: object.GetKind(), APIVersion: object.GetAPIVersion(), Document: string(document)}
 }
 

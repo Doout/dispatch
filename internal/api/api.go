@@ -143,6 +143,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			return nil
 		}(), nil), eventConfig: eventConfig, secretResolver: eventConfig.SecretResolver, openShift: openshift.New(), lifecycle: lifecycle,
 		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState), authManifestStates: make(map[string]authProviderManifestState)}
+	deployments.ConfigureServices(eventConfig.Vault, eventConfig.SecretResolver)
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
@@ -199,6 +200,14 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Get("/overview", a.overview)
 			r.Get("/analytics", a.analyticsSummary)
 			r.Get("/overview/watch", a.watchOverview)
+			r.Get("/services", a.listServices)
+			r.Post("/services", a.directUserOnly(a.createService))
+			r.Get("/services/{id}", a.getService)
+			r.Put("/services/{id}", a.directUserOnly(a.updateService))
+			r.Delete("/services/{id}", a.deleteService)
+			r.Post("/services/{id}/verify", a.verifyService)
+			r.Get("/apps/{id}/service-bindings", a.appPermission(core.PermissionProjectView, a.getAppServiceBindings))
+			r.Put("/apps/{id}/service-bindings", a.appPermission(core.PermissionProjectConfigure, a.updateAppServiceBindings))
 			r.Get("/secrets", a.ownerOnly(a.listSecrets))
 			r.Post("/secrets", a.ownerOnly(a.createSecret))
 			r.Put("/secrets/{id}", a.ownerOnly(a.updateSecret))
@@ -696,7 +705,19 @@ func (a *API) overviewData(r *http.Request) (core.Overview, error) {
 	if err != nil {
 		return core.Overview{}, err
 	}
-	overview := core.Overview{Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Identity: currentIdentity(r.Context()), Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
+	serviceItems, err := a.store.ListServices(r.Context(), "")
+	if err != nil {
+		return core.Overview{}, err
+	}
+	services := []core.ServiceOverview{}
+	for _, item := range serviceItems {
+		value, err := a.serviceResponse(r.Context(), item, currentIdentity(r.Context()).SystemRole == core.UserRoleOwner)
+		if err != nil {
+			return core.Overview{}, err
+		}
+		services = append(services, value)
+	}
+	overview := core.Overview{Services: services, Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Identity: currentIdentity(r.Context()), Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
 		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets, SecretStores: secretStores, PrivateNetworks: privateNetworks, GitHubApps: githubApps, RelayWebhooks: relayWebhooks,
 		ConfigSources: configSources, WorkflowResources: workflowResources, WorkflowRevisions: workflowRevisions, WorkflowStageRuns: workflowStageRuns}
 	if impersonator, ok := currentImpersonator(r.Context()); ok {

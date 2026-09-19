@@ -1,4 +1,5 @@
 import { AnalyticsPage } from "./AnalyticsPage";
+import { ServicesPage } from "./ServicesPage";
 import { subscribeOverview } from "./overviewStream";
 import {
   ChangeEvent,
@@ -728,6 +729,7 @@ export default function DispatchApp() {
               }
             />
           )}
+          {!loading && overview && view === "services" && <ServicesPage overview={overview} onChanged={load} />}
           {!loading && overview && view === "secrets" && canManageSecrets && (
             <SecretsPage
               overview={overview}
@@ -959,6 +961,12 @@ export function Nav({
           label: "Projects",
           icon: <FolderSimple size={18} />,
           count: overview?.projects.length ?? 0,
+        },
+        {
+          id: "services",
+          label: "Services",
+          icon: <PlugsConnected size={18} />,
+          count: overview?.services?.length ?? 0,
         },
         {
           id: "servers",

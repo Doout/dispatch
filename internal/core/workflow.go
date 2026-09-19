@@ -30,6 +30,7 @@ type ConfigSource struct {
 }
 
 type WorkflowResource struct {
+	ServiceIDs     []string  `json:"-"`
 	ID             string    `json:"id"`
 	ConfigSourceID string    `json:"configSourceId"`
 	APIVersion     string    `json:"apiVersion"`

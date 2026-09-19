@@ -170,13 +170,21 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 				return fmt.Errorf("compose path: %w", err)
 			}
 		}
-		if err := e.commandWithOutput(ctx, "docker", "compose", "-p", name, "-f", composePath, "config", "--quiet"); err != nil {
+		override, err := composeServiceOverride(workspace, composePath, app.ServiceRuntime)
+		if err != nil {
+			return err
+		}
+		composeArgs := []string{"compose", "-p", name, "-f", composePath}
+		if override != "" {
+			composeArgs = append(composeArgs, "-f", override)
+		}
+		if err := e.commandWithOutput(ctx, "docker", append(append([]string{}, composeArgs...), "config", "--quiet")...); err != nil {
 			return fmt.Errorf("validate compose: %w", err)
 		}
 		if err := progress(core.DeploymentStarting, "Applying Compose project on "+server.Name); err != nil {
 			return err
 		}
-		if err := e.commandWithOutput(ctx, "docker", "compose", "-p", name, "-f", composePath, "up", "-d", "--build", "--remove-orphans"); err != nil {
+		if err := e.commandWithOutput(ctx, "docker", append(append([]string{}, composeArgs...), "up", "-d", "--build", "--remove-orphans")...); err != nil {
 			return fmt.Errorf("deploy compose: %w", err)
 		}
 	} else {
@@ -198,10 +206,17 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if err := progress(core.DeploymentStarting, "Starting candidate container on "+server.Name); err != nil {
 			return err
 		}
+		serviceEnv, err := dockerServiceEnv(workspace, app.ServiceRuntime)
+		if err != nil {
+			return err
+		}
 		_ = e.command(ctx, nil, io.Discard, "docker", "rm", "-f", name)
 		args := []string{"run", "-d", "--name", name, "--label", "dispatch.app=" + app.ID, "--label", "dispatch.deployment=" + deployment.ID}
 		if app.ContainerPort > 0 {
 			args = append(args, "-p", fmt.Sprintf("%d:%d", app.ContainerPort, app.ContainerPort))
+		}
+		if serviceEnv != "" {
+			args = append(args, "--env-file", serviceEnv)
 		}
 		args = append(args, image)
 		if err := e.command(ctx, nil, io.Discard, "docker", args...); err != nil {

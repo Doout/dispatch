@@ -1,0 +1,7 @@
+services:
+  check:
+    image: postgres:17-alpine
+    command: [sh, -c, "psql \"$$DATABASE_URL\" -v ON_ERROR_STOP=1 -tAc 'SELECT 1' && sleep infinity"]
+  unrelated:
+    image: postgres:17-alpine
+    command: [sleep, infinity]

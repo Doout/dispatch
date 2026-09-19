@@ -351,3 +351,6 @@ sync the new template and verify their IDs before resuming them.
 A malformed configuration file does not prevent other files from syncing. Dispatch retains the affected file's last accepted resources and marks them invalid until the file is fixed. Duplicate application names reject both conflicting files. Template expansion errors retain that template file's previous resources.
 
 An unavailable source branch rejects only the application that references it. Healthy applications continue syncing and deploying. The source shows a sync warning with the failing file and source; polling retries rejected configurations even when the configuration commit has not changed. Existing deployments remain in place, and rejected definitions do not start new runs.
+## Service connections
+
+Deployment `serviceBindings` select project-scoped Services registered in Dispatch. Stage `serviceBindings` map an alias to a different service for that environment. Generated applications keep these bindings read-only in the UI. See [services](services.md#repository-managed-applications) for the schema and a PostgreSQL promotion example.

@@ -993,6 +993,13 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 		}
 	}
 	overview.Projects = projects
+	services := overview.Services[:0]
+	for _, service := range overview.Services {
+		if projectIDs[service.ProjectID] {
+			services = append(services, service)
+		}
+	}
+	overview.Services = services
 
 	// Generated workflow and preview apps belong to projects too, even though
 	// ListApps omits them from the standalone application list.

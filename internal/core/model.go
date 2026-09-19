@@ -99,14 +99,15 @@ const (
 )
 
 type App struct {
-	ID                 string `json:"id"`
-	ProjectID          string `json:"projectId"`
-	ServerID           string `json:"serverId"`
-	Name               string `json:"name"`
-	SourceRepo         string `json:"sourceRepo"`
-	Branch             string `json:"branch"`
-	SourceAuthType     string `json:"sourceAuthType,omitempty"`
-	SourceCredentialID string `json:"sourceCredentialId,omitempty"`
+	ServiceRuntime     []ServiceRuntimeBinding `json:"-"`
+	ID                 string                  `json:"id"`
+	ProjectID          string                  `json:"projectId"`
+	ServerID           string                  `json:"serverId"`
+	Name               string                  `json:"name"`
+	SourceRepo         string                  `json:"sourceRepo"`
+	Branch             string                  `json:"branch"`
+	SourceAuthType     string                  `json:"sourceAuthType,omitempty"`
+	SourceCredentialID string                  `json:"sourceCredentialId,omitempty"`
 	// SourceCredential is decrypted only for the duration of a deployment. It
 	// is never persisted, returned by the API, or included in the spec digest.
 	SourceCredential string    `json:"-"`
@@ -206,14 +207,15 @@ type Deployment struct {
 }
 
 type DeploymentSnapshot struct {
-	TargetID     string            `json:"targetId,omitempty"`
-	TargetName   string            `json:"targetName,omitempty"`
-	Runtime      string            `json:"runtime,omitempty"`
-	Namespace    string            `json:"namespace,omitempty"`
-	Release      string            `json:"release,omitempty"`
-	Chart        string            `json:"chart,omitempty"`
-	Values       map[string]any    `json:"values,omitempty"`
-	ValueSources map[string]string `json:"valueSources,omitempty"`
+	ServiceBindings []AppliedServiceBinding `json:"serviceBindings,omitempty"`
+	TargetID        string                  `json:"targetId,omitempty"`
+	TargetName      string                  `json:"targetName,omitempty"`
+	Runtime         string                  `json:"runtime,omitempty"`
+	Namespace       string                  `json:"namespace,omitempty"`
+	Release         string                  `json:"release,omitempty"`
+	Chart           string                  `json:"chart,omitempty"`
+	Values          map[string]any          `json:"values,omitempty"`
+	ValueSources    map[string]string       `json:"valueSources,omitempty"`
 }
 
 type PreviewGroupState string
@@ -595,6 +597,7 @@ type EventResult struct {
 }
 
 type Overview struct {
+	Services                []ServiceOverview       `json:"services"`
 	Demo                    bool                    `json:"demo"`
 	SecretStorageConfigured bool                    `json:"secretStorageConfigured"`
 	Identity                Identity                `json:"identity"`

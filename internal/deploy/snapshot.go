@@ -32,7 +32,7 @@ func (e SnapshotExecutor) Deploy(ctx context.Context, deployment core.Deployment
 	if release == "" {
 		release = app.Name
 	}
-	snapshot := core.DeploymentSnapshot{TargetID: server.ID, TargetName: server.Name, Runtime: server.Runtime, Namespace: namespace, Release: release, Chart: app.HelmChart, Values: redactSnapshotValues("", values).(map[string]any)}
+	snapshot := core.DeploymentSnapshot{ServiceBindings: deployment.Snapshot.ServiceBindings, TargetID: server.ID, TargetName: server.Name, Runtime: server.Runtime, Namespace: namespace, Release: release, Chart: app.HelmChart, Values: redactSnapshotValues("", values).(map[string]any)}
 	if e.Store != nil {
 		if err := e.Store.UpdateDeploymentSnapshot(ctx, deployment.ID, snapshot); err != nil {
 			return err

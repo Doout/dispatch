@@ -15,6 +15,7 @@ Dispatch is a self-hosted deployment controller for private infrastructure. It c
 - GitHub Apps for GitHub.com and GitHub Enterprise Server
 - Repository polling, signed webhooks, and a durable webhook relay
 - Pull request previews across one or more repositories
+- Project-scoped PostgreSQL and generic services with application connection bindings
 - Encrypted local secrets and IBM Cloud Secrets Manager references
 - Outbound edge nodes for private provider endpoints
 - Laneway application and private-network connections
@@ -75,6 +76,14 @@ Each run resolves source branches to exact commits before any job starts. Promot
 Add a GitHub configuration from **Applications > Add > GitHub configuration**. Applications deploy automatically after a valid import. Paused applications stay paused. Polling works without a public controller URL. Webhooks can start the same sync sooner.
 
 See [repository configuration](docs/application-config.md) for the schema and a promotion example.
+
+## Services
+
+Register an existing PostgreSQL database or generic dependency under **Services**. Connect it to an application through environment mappings for Docker and Compose, or Kubernetes Secret references for Helm. Each deployment captures its bindings. Connection changes show which applications need redeployment.
+
+Service credentials are encrypted and write-only. Manual connection checks run from the controller. Dispatch does not provision or delete the external service.
+
+See [services and application bindings](docs/services.md) for setup, stage overrides, APIs, and integration tests.
 
 ## Secrets
 

@@ -91,6 +91,10 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 	validationErrors := map[string]error{}
 	resourceFailures := map[string]string{}
 	for _, value := range parsed {
+		if err := s.validateApplicationServices(ctx, source.ProjectID, value.document); err != nil {
+			resourceFailures[value.document.Kind+"/"+value.document.Metadata.Name] = fmt.Sprintf("%s: %s", value.path, err)
+			continue
+		}
 		sources := map[string]SourceSpec{}
 		if value.document.Spec != nil {
 			sources = value.document.Spec.Sources
@@ -152,6 +156,12 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 		item.APIVersion, item.Kind, item.Name, item.Path = value.document.APIVersion, value.document.Kind, value.document.Metadata.Name, value.path
 		item.Document, item.SpecDigest, item.ConfigSHA = string(contents), digest, head
 		item.LastError, item.UpdatedAt = "", now
+		if resourceFailures[value.document.Kind+"/"+value.document.Metadata.Name] == "" {
+			item.ServiceIDs, err = s.applicationServiceIDs(ctx, source.ProjectID, value.document)
+			if err != nil {
+				resourceFailures[value.document.Kind+"/"+value.document.Metadata.Name] = fmt.Sprintf("%s: %s", value.path, err)
+			}
+		}
 		if message := resourceFailures[value.document.Kind+"/"+value.document.Metadata.Name]; message != "" {
 			issues = append(issues, message)
 			// Keep the last accepted definition and revision until the repair validates.

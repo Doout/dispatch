@@ -14,6 +14,15 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	CreateService(context.Context, core.Service) error
+	UpdateService(context.Context, core.Service, int64) error
+	GetService(context.Context, string) (core.Service, error)
+	ListServices(context.Context, string) ([]core.Service, error)
+	DeleteService(context.Context, string) error
+	GetAppServiceBindings(context.Context, string) ([]core.ServiceBinding, error)
+	ReplaceAppServiceBindings(context.Context, string, []core.ServiceBinding) error
+	GetDeploymentServiceBindings(context.Context, string) ([]core.CapturedServiceBinding, error)
+	ListServiceConsumers(context.Context, string) ([]core.ServiceConsumer, error)
 	Close() error
 	Migrate(context.Context) error
 	SeedDemo(context.Context) error

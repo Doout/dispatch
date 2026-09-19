@@ -148,6 +148,32 @@ func (s *SQLStore) ReplaceWorkflowResources(ctx context.Context, source core.Con
 				return err
 			}
 		}
+		// Invalid resources retain their last accepted service dependencies.
+		if item.State == "invalid" {
+			continue
+		}
+		if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM workflow_service_references WHERE resource_id=?`), item.ID); err != nil {
+			return err
+		}
+		for _, serviceID := range item.ServiceIDs {
+			var payload string
+			if err = tx.QueryRowContext(ctx, s.q(s.serviceLockQuery()), serviceID).Scan(&payload); err != nil {
+				return err
+			}
+			connection, decodeErr := decodeService(payload)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if connection.ProjectID != source.ProjectID {
+				return errors.New("service is outside the configuration project")
+			}
+			if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_service_references(resource_id,service_id) VALUES(?,?)`), item.ID, serviceID); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM workflow_service_references WHERE resource_id IN (SELECT id FROM workflow_resources WHERE config_source_id=? AND state='removed')`), source.ID); err != nil {
+		return err
 	}
 	result, err := tx.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=? WHERE id=?`),
 		source.ProjectID, nullString(source.GitHubAppID), nullString(source.CredentialSecretID), source.Name, source.Repository, source.Branch, source.Path, source.SyncMode, source.PollIntervalSeconds,

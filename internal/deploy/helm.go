@@ -24,12 +24,14 @@ import (
 	"helm.sh/helm/v3/pkg/registry"
 	helmrelease "helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	"k8s.io/client-go/kubernetes"
 )
 
 const helmOperationTimeout = 5 * time.Minute
 
 type HelmExecutor struct {
-	newClient helmClientFactory
+	newClient        helmClientFactory
+	newServiceClient func(core.Server) (kubernetes.Interface, error)
 }
 
 type helmClientFactory func(core.Server, string, string) (helmClient, error)
@@ -103,6 +105,9 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 	if err != nil {
 		return err
 	}
+	if err := helmServiceValues(deployment, app, values); err != nil {
+		return err
+	}
 	if err := progress(core.DeploymentBuilding, "Validating Helm release inputs"); err != nil {
 		return err
 	}
@@ -114,6 +119,15 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 	}
 	if err := progress(core.DeploymentStarting, "Installing Helm release "+release+" on "+server.Name); err != nil {
 		return err
+	}
+	if len(app.ServiceRuntime) > 0 {
+		kubeClient, err := e.serviceClient(server)
+		if err != nil {
+			return errors.New("cannot connect to Kubernetes for service bindings")
+		}
+		if err := createServiceSecrets(ctx, kubeClient, deployment, app, namespace, release); err != nil {
+			return err
+		}
 	}
 	if err := client.UpgradeInstall(ctx, release, app, values); err != nil {
 		return fmt.Errorf("install Helm release: %w", err)
@@ -154,6 +168,9 @@ func (e HelmExecutor) Cleanup(ctx context.Context, app core.App, server core.Ser
 	}
 	if err := client.Uninstall(ctx, release); err != nil {
 		return fmt.Errorf("uninstall Helm release: %w", err)
+	}
+	if err := e.cleanupServiceSecrets(ctx, server, app, namespace, release); err != nil {
+		return err
 	}
 	return progress(core.DeploymentSucceeded, "Helm release removed")
 }

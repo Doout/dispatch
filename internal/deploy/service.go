@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/serviceconn"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
@@ -18,6 +19,7 @@ var (
 )
 
 type Service struct {
+	services serviceconn.Resolver
 	store    store.Store
 	executor Executor
 	mu       sync.Mutex
@@ -63,6 +65,10 @@ func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Depl
 	if err := s.store.CreateDeployment(ctx, deployment); err != nil {
 		return core.Deployment{}, err
 	}
+	deployment, err = s.store.GetDeployment(ctx, deployment.ID)
+	if err != nil {
+		return core.Deployment{}, err
+	}
 	if err := s.log(ctx, deployment.ID, "info", "Deployment accepted for "+app.Name); err != nil {
 		return core.Deployment{}, err
 	}
@@ -70,7 +76,7 @@ func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Depl
 	s.mu.Lock()
 	s.cancels[deployment.ID] = cancel
 	s.mu.Unlock()
-	go s.run(jobCtx, deployment)
+	go s.run(jobCtx, deployment, app)
 	return deployment, nil
 }
 
@@ -125,19 +131,24 @@ func (s *Service) lockApp(appID string) func() {
 	return lock.Unlock
 }
 
-func (s *Service) run(ctx context.Context, deployment core.Deployment) {
+func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.App) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.cancels, deployment.ID)
 		s.mu.Unlock()
 	}()
-	app, err := s.store.GetApp(ctx, deployment.AppID)
+	server, err := s.store.GetServer(ctx, app.ServerID)
 	if err != nil {
 		s.fail(deployment, err)
 		return
 	}
-	server, err := s.store.GetServer(ctx, app.ServerID)
+	applied, err := s.resolveServices(ctx, deployment, &app)
 	if err != nil {
+		s.fail(deployment, err)
+		return
+	}
+	deployment.Snapshot.ServiceBindings = applied
+	if err := s.store.UpdateDeploymentSnapshot(ctx, deployment.ID, deployment.Snapshot); err != nil {
 		s.fail(deployment, err)
 		return
 	}
@@ -154,14 +165,14 @@ func (s *Service) run(ctx context.Context, deployment core.Deployment) {
 		return
 	}
 	err = s.executor.Deploy(ctx, deployment, app, server, func(state core.DeploymentState, message string) error {
-		return s.transition(ctx, &deployment, state, message)
+		return s.transition(ctx, &deployment, state, redactServiceMessage(message, app.ServiceRuntime))
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			s.finish(&deployment, core.DeploymentCancelled, "Deployment cancelled by operator")
 			return
 		}
-		s.fail(deployment, err)
+		s.fail(deployment, errors.New(redactServiceMessage(err.Error(), app.ServiceRuntime)))
 		return
 	}
 	s.finish(&deployment, core.DeploymentSucceeded, "Deployment is live")

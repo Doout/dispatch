@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/doout/dispatch/internal/core"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type recordingHelmClient struct {
@@ -112,7 +114,7 @@ func TestHelmExecutorChecksOutGitBackedChart(t *testing.T) {
 func TestHelmExecutorCleansUpRelease(t *testing.T) {
 	client := &recordingHelmClient{}
 	configuredNamespace := ""
-	executor := HelmExecutor{newClient: func(_ core.Server, namespace, _ string) (helmClient, error) {
+	executor := HelmExecutor{newServiceClient: func(core.Server) (kubernetes.Interface, error) { return fake.NewClientset(), nil }, newClient: func(_ core.Server, namespace, _ string) (helmClient, error) {
 		configuredNamespace = namespace
 		return client, nil
 	}}
