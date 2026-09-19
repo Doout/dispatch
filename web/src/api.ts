@@ -1408,8 +1408,8 @@ export type ApplicationSyncStatus = {
  appId: string; deploymentId?: string; supported: boolean; reapplyAvailable: boolean;
  configuration: {state: string; message: string; sourceId?: string; lastSyncedAt?: string};
  revision: {state: string; applied?: string; observed?: string};
- drift: {deploymentId?: string; state: string; health: string; message: string; checkedAt?: string; lastSuccessfulCheckAt?: string; location: string;
- resources: {apiVersion: string; kind: string; namespace?: string; name: string; state: string; health: string; truncated?: boolean; differences: {path: string; expected: unknown; actual: unknown; redacted?: boolean}[]}[]};
+ drift: {deploymentId?: string; state: string; health: string; message: string; healthMessage?: string; checkedAt?: string; lastSuccessfulCheckAt?: string; location: string;
+ resources: {apiVersion: string; kind: string; namespace?: string; name: string; state: string; health: string; message?: string; truncated?: boolean; differences: {path: string; expected: unknown; actual: unknown; redacted?: boolean}[]}[]};
  actions: {id: string; state: string; message: string; actor: string; createdAt: string}[];
 };
 

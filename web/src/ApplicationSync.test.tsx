@@ -32,3 +32,23 @@ it("keeps compact status icons visible and moves details behind a disclosure", a
  await userEvent.setup().click(screen.getByRole("button", {name:"Details"}));
  expect(screen.getByText("/spec/replicas")).toBeTruthy();
 });
+
+it("distinguishes untested resources and preserves health without a drift baseline", async () => {
+ vi.spyOn(api,"applicationSync").mockResolvedValue({...status,reapplyAvailable:false,drift:{...status.drift,state:"unknown",health:"unknown",checkedAt:undefined,lastSuccessfulCheckAt:undefined,resources:[]}});
+ vi.spyOn(api,"checkApplicationDrift").mockResolvedValue({...status,reapplyAvailable:false,drift:{...status.drift,state:"unknown",health:"healthy",message:"No matching stored revision.",healthMessage:"Read readiness for 2 resources.",resources:[]}});
+ render(<ApplicationSync application={app} overview={overview} compact />);
+ await screen.findByText("Runtime drift");
+ expect(screen.getAllByText("Not checked")).toHaveLength(3);
+ expect(screen.queryByText("Unknown")).toBeNull();
+ await userEvent.setup().click(screen.getByRole("button",{name:"Check now"}));
+ expect(await screen.findByText("Healthy")).toBeTruthy();
+ expect(screen.getAllByText("Unknown")).toHaveLength(1);
+ expect(screen.getByText("No matching stored revision.")).toBeTruthy();
+ expect(screen.queryByText("Not checked")).toBeNull();
+});
+it("explains unreadable resources even with compact details collapsed", async () => {
+ vi.spyOn(api,"applicationSync").mockResolvedValue({...status,drift:{...status.drift,state:"unknown",health:"unknown",message:"Target unavailable.",healthMessage:"Readiness could not be read from the deployment target.",resources:[]}});
+ render(<ApplicationSync application={app} overview={overview} compact />);
+ expect(await screen.findByText("Readiness could not be read from the deployment target.")).toBeTruthy();
+ expect(screen.getAllByText("Unknown")).toHaveLength(2);
+});

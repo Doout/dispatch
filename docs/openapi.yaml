@@ -1482,6 +1482,7 @@ components:
             deploymentId: { type: string }
             state: { type: string, enum: [synced, out_of_sync, unknown] }
             health: { type: string, enum: [healthy, progressing, degraded, unknown, not_applicable] }
+            healthMessage: { type: string, description: Readiness coverage or the reason it could not be determined. }
             message: { type: string }
             checkedAt: { type: string, format: date-time }
             lastSuccessfulCheckAt: { type: string, format: date-time }
@@ -1497,6 +1498,7 @@ components:
                   name: { type: string }
                   state: { type: string, enum: [synced, out_of_sync, missing, unknown] }
                   health: { type: string }
+                  message: { type: string, description: Sanitized resource access or readiness limitation. }
                   truncated: { type: boolean }
                   differences:
                     type: array

@@ -4,7 +4,7 @@ import { api, App, ApplicationSyncStatus, Overview } from "./api";
 import { canManageProject } from "./permissions";
 import { relative } from "./presentation";
 
-const labels: Record<string, string> = { synced: "Synced", out_of_sync: "Out of sync", unknown: "Unknown", current: "Current", ready: "Synced", degraded: "Degraded", invalid: "Configuration error", paused: "Paused", deploying: "Deploying", not_deployed: "Not deployed", not_applicable: "Not applicable", redeployment_required: "Redeploy needed", newer_revision_available: "Update available", healthy: "Healthy", progressing: "Progressing", missing: "Missing" };
+const labels: Record<string, string> = { not_checked: "Not checked", not_supported: "Not supported", synced: "Synced", out_of_sync: "Out of sync", unknown: "Unknown", current: "Current", ready: "Synced", degraded: "Degraded", invalid: "Configuration error", paused: "Paused", deploying: "Deploying", not_deployed: "Not deployed", not_applicable: "Not applicable", redeployment_required: "Redeploy needed", newer_revision_available: "Update available", healthy: "Healthy", progressing: "Progressing", missing: "Missing" };
 const label = (value: string) => labels[value] ?? value;
 const date = (value?: string) => value ? new Date(value).toLocaleString() : "Never";
 const value = (v: unknown) => v === null || v === undefined ? "Not present" : typeof v === "string" ? v : JSON.stringify(v);
@@ -48,22 +48,24 @@ export function ApplicationSync({ application, overview, onBack, compact = false
    <dl className="sync-indicators">
     <div><dt>Configuration sync</dt><dd><SyncState state={status.configuration.state} /></dd></div>
     <div><dt>Deployment revision</dt><dd><SyncState state={status.revision.state} /></dd></div>
-    <div><dt>Runtime drift</dt><dd><SyncState state={status.drift.state} /></dd></div>
-    <div><dt>Resource health</dt><dd><SyncState state={status.drift.health} /></dd></div>
+    <div><dt>Runtime drift</dt><dd><SyncState state={!status.supported ? "not_supported" : !status.drift.checkedAt ? "not_checked" : status.drift.state} /></dd></div>
+    <div><dt>Resource health</dt><dd><span title={status.drift.healthMessage}><SyncState state={!status.supported ? "not_supported" : !status.drift.checkedAt ? "not_checked" : status.drift.health} /></span></dd></div>
    </dl>
    {(status.drift.state === "unknown" || status.drift.state === "out_of_sync") && <div className="sync-notice"><Info size={14} aria-hidden="true" /><span>{status.drift.message}</span></div>}
+   {status.drift.health === "unknown" && status.drift.checkedAt && status.drift.healthMessage && <div className="sync-notice"><Info size={14} aria-hidden="true" /><span>{status.drift.healthMessage}</span></div>}
    {expanded && <div className="sync-detail-body">
     <dl className="sync-metadata"><div><dt>Configuration</dt><dd>{status.configuration.message}{status.configuration.sourceId && <> Last sync: {date(status.configuration.lastSyncedAt)}.</>}</dd></div>
      <div><dt>Applied revision</dt><dd><code>{status.revision.applied || "Not deployed"}</code></dd></div>
      {status.revision.observed && <div><dt>Observed revision</dt><dd><code>{status.revision.observed}</code></dd></div>}
      <div><dt>Observation</dt><dd>Last check: {date(status.drift.checkedAt)} · Last successful check: {date(status.drift.lastSuccessfulCheckAt)} · {status.drift.location}</dd></div>
     </dl>
+    {status.drift.healthMessage && <p className="sync-observation">{status.drift.healthMessage}</p>}
     <p className="sync-observation">Manual observation against the last successful deployment. Health reports readiness separately. The runtime may have changed since this check.</p>
     {canApply && status.supported && <button className="quiet-button" disabled={busy || !status.reapplyAvailable || status.drift.state !== "out_of_sync"} onClick={() => setConfirm(true)}>Reapply deployed configuration</button>}
     {confirm && <section className="sync-confirm" role="group" aria-label="Confirm reapply"><h3>Reapply the last successful deployment?</h3><p>This restores its saved resource fields and recreates missing resources. It can restart workloads. New Git changes and updated service credentials require a separate deployment.</p><div className="service-actions"><button className="primary-button" disabled={busy} onClick={() => void run(true)}>Confirm reapply</button><button className="quiet-button" onClick={() => setConfirm(false)}>Cancel</button></div></section>}
     <div className="sync-resources">{status.drift.resources.map(resource => <details key={`${resource.apiVersion}/${resource.kind}/${resource.namespace}/${resource.name}`} className="sync-resource" open={resource.differences.length > 0}>
      <summary><span><strong>{resource.name}</strong><small>{resource.kind} · {resource.namespace || "Cluster scoped"}</small></span><span title="Runtime drift"><SyncState state={resource.state} /></span></summary>
-     <p className="sync-observation">Health: {label(resource.health)}</p>
+     <p className="sync-observation">Health: {label(resource.health)}{resource.message && <> · {resource.message}</>}</p>
      {resource.truncated && <p>Showing the first 200 differences.</p>}
      {!!resource.differences.length && <div className="sync-table-scroll"><table><thead><tr><th>Field</th><th>Deployed configuration</th><th>Live value</th></tr></thead><tbody>{resource.differences.map(diff => <tr key={diff.path}><td data-label="Field"><code>{diff.path}</code></td><td data-label="Deployed configuration">{value(diff.expected)}</td><td data-label="Live value">{value(diff.actual)}</td></tr>)}</tbody></table></div>}
     </details>)}</div>

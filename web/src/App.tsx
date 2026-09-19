@@ -1358,8 +1358,8 @@ export function DeploymentDetailsPage({
           />
         </section>
       )}
-      {overview && deployment.app?.buildType === "helm" && <RuntimeSyncDisclosure key={deployment.appId} application={deployment.app} overview={overview} />}
-      {section === "history" && <DeploymentHistory key={deployment.appId} deployment={deployment} onSelectDeployment={onSelectDeployment} />}
+      {overview && deployment.app?.buildType === "helm" && <RuntimeSyncDisclosure key={`sync:${deployment.appId}`} application={deployment.app} overview={overview} />}
+      {section === "history" && <DeploymentHistory key={`history:${deployment.appId}`} deployment={deployment} onSelectDeployment={onSelectDeployment} />}
       {section !== "summary" && section !== "history" && (
         <DeploymentRuntime deployment={deployment} section={section} />
       )}

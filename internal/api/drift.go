@@ -68,8 +68,8 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 	}
 	if _, e := a.store.GetDriftBaseline(ctx, d.ID); e == nil {
 		out.ReapplyAvailable = out.Supported
-	} else if errors.Is(e, store.ErrNotFound) && out.Supported {
-		out.Drift.State, out.Drift.Health, out.Drift.Message = "unknown", "unknown", "No saved resource baseline. Deploy once to enable drift checks."
+	} else if errors.Is(e, store.ErrNotFound) && out.Supported && out.Drift.CheckedAt == nil {
+		out.Drift.Message = "Not checked yet. Check now to inspect the retained Helm release and live resources."
 	} else if e != nil && !errors.Is(e, store.ErrNotFound) {
 		return out, e
 	}
