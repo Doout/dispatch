@@ -9,6 +9,62 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /apps/{id}/deployment-history:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getApplicationDeploymentHistory
+      description: Saved runs for one application, newest first. Requires project.view. Returns up to 50 items without credential values or snapshot bodies.
+      parameters:
+        - { name: before, in: query, schema: { type: string }, description: Deployment ID returned as the previous page's next cursor. }
+      responses:
+        "200":
+          description: A page of runs and an optional next cursor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { type: object } }
+                  next: { type: string }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /deployments/{id}/compare:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: compareDeploymentInputs
+      description: Compare saved inputs of two deployments of the same application. Requires project.view. Excludes sensitive fields, chart defaults, and live state. Missing snapshots return available false. At most 1000 changes are returned.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string }, description: Earlier deployment ID. }
+      responses:
+        "200":
+          description: Snapshot comparison, including availability and redaction notices.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [fromId, toId, available, changes, hidden, truncated, message]
+                properties:
+                  fromId: { type: string }
+                  toId: { type: string }
+                  available: { type: boolean }
+                  changes:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, kind, before, after]
+                      properties:
+                        path: { type: string }
+                        kind: { type: string, enum: [added, removed, changed] }
+                        before: {}
+                        after: {}
+                  hidden: { type: integer }
+                  truncated: { type: boolean }
+                  message: { type: string }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /apps/{id}/sync:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }

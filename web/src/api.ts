@@ -933,6 +933,8 @@ export const api = {
     request<void>(`/api/v1/role-assignments/${id}`, { method: "DELETE" }),
   logs: (id: string) =>
     request<DeploymentLog[]>(`/api/v1/deployments/${id}/logs`),
+  applicationHistory: (id: string, before = "") => request<{ items: Deployment[]; next?: string }>(`/api/v1/apps/${id}/deployment-history${before ? `?before=${encodeURIComponent(before)}` : ""}`),
+  compareDeployments: (to: string, from: string) => request<DeploymentComparison>(`/api/v1/deployments/${to}/compare?from=${encodeURIComponent(from)}`),
   deploymentTopology: (id: string, chartValues = false) =>
     request<DeploymentTopology>(`/api/v1/deployments/${id}/topology${chartValues ? "?values=chart" : ""}`),
   deploymentManifests: (id: string) =>
@@ -1408,4 +1410,9 @@ export type ApplicationSyncStatus = {
  drift: {deploymentId?: string; state: string; health: string; message: string; checkedAt?: string; lastSuccessfulCheckAt?: string; location: string;
  resources: {apiVersion: string; kind: string; namespace?: string; name: string; state: string; health: string; truncated?: boolean; differences: {path: string; expected: unknown; actual: unknown; redacted?: boolean}[]}[]};
  actions: {id: string; state: string; message: string; actor: string; createdAt: string}[];
+};
+
+export type DeploymentComparison = {
+ fromId: string; toId: string; available: boolean; hidden: number; truncated: boolean; message: string;
+ changes: { path: string; kind: "added" | "removed" | "changed"; before: unknown; after: unknown }[];
 };

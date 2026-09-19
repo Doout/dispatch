@@ -296,6 +296,8 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Post("/preview-group-runs/{id}/cleanup", a.previewGroupRunPermission(core.PermissionDeploymentRun, a.cleanupPreviewGroupRun))
 			r.Post("/apps/{id}/cleanup", a.appPermission(core.PermissionDeploymentRun, a.cleanupApp))
 			r.Get("/deployments", a.listDeployments)
+			r.Get("/apps/{id}/deployment-history", a.appPermission(core.PermissionProjectView, a.applicationDeploymentHistory))
+			r.Get("/deployments/{id}/compare", a.deploymentPermission(core.PermissionProjectView, a.compareDeployments))
 			r.Get("/deployments/{id}", a.deploymentPermission(core.PermissionProjectView, a.getDeployment))
 			r.Get("/deployments/{id}/topology", a.deploymentPermission(core.PermissionProjectView, a.getDeploymentTopology))
 			r.Get("/deployments/{id}/manifests", a.deploymentPermission(core.PermissionProjectView, a.getDeploymentManifests))
