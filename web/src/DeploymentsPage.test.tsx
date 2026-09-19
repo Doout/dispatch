@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DeploymentDetailsPage, DeploymentQuickView, DeploymentsPage } from "./App";
-import type { Deployment, Overview } from "./api";
+import DispatchApp, { DeploymentDetailsPage, DeploymentQuickView, DeploymentsPage } from "./App";
+import { api, type Deployment, type Overview } from "./api";
+vi.mock("./overviewStream", () => ({ subscribeOverview: () => () => undefined }));
 
 const deployment: Deployment = {
   id: "deployment-1",
@@ -35,7 +36,7 @@ const overview: Overview = {
 
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
+  vi.restoreAllMocks();
   window.history.replaceState({}, "", "/deployments");
 });
 
@@ -60,6 +61,58 @@ function DeploymentPreview({ onClose = () => undefined, onOpenDetails = () => un
 }
 
 describe("deployment navigation", () => {
+  it("returns to the selected environment and scroll after using deployment tabs", async () => {
+    const run = {...deployment,app:{...deployment.app!,buildType:"dockerfile" as const}};
+    const data = {...overview,apps:[run.app],deployments:[run]};
+    vi.spyOn(api,"overview").mockResolvedValue(data);
+    vi.spyOn(api,"logs").mockResolvedValue([]);
+    vi.spyOn(api,"applicationHistory").mockResolvedValue({items:[]});
+    window.history.replaceState(null,"","/deployments?application=app-1&stage=development");
+    render(<DispatchApp />);
+    const link = await screen.findByRole("link",{name:"Open Checkout API Development latest deployment"});
+    document.getElementById("page-content")!.scrollTop = 420;
+    const user = userEvent.setup();
+    await user.click(link);
+    await user.click(await screen.findByRole("link",{name:"History"}));
+    await user.click(screen.getByRole("link",{name:"Summary"}));
+    await user.click(screen.getByRole("link",{name:"Back to deployments"}));
+    await waitFor(() => expect(window.location.pathname).toBe("/deployments"));
+    expect(new URLSearchParams(window.location.search).get("stage")).toBe("development");
+    expect(screen.getByRole("button",{name:"Collapse Checkout API deployment"}).getAttribute("aria-expanded")).toBe("true");
+    await waitFor(() => expect(document.getElementById("page-content")!.scrollTop).toBe(420));
+  });
+
+  it("opens a deployment from the collapsed environment link", async () => {
+    const onSelect = vi.fn();
+    render(<DeploymentList onSelect={onSelect} />);
+    const link = screen.getByRole("link", { name: "Open Checkout API Development latest deployment" });
+    expect(link.getAttribute("href")).toBe("/deployments/deployment-1");
+    expect(screen.queryByLabelText("Checkout API promotion stages")).toBeNull();
+    await userEvent.setup().click(link);
+    expect(onSelect).toHaveBeenCalledWith("deployment-1");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand Checkout API deployment" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("preserves native modified-click navigation on environment links", async () => {
+    const onSelect = vi.fn();
+    render(<DeploymentList onSelect={onSelect} />);
+    const user = userEvent.setup();
+    await user.keyboard("{Control>}");
+    await user.click(screen.getByRole("link", { name: "Open Checkout API Development latest deployment" }));
+    await user.keyboard("{/Control}");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("opens details directly for an environment without a deployment", async () => {
+    const onSelect = vi.fn();
+    render(<DeploymentList data={{...overview, deployments:[]}} onSelect={onSelect} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Inspect Checkout API Development stage" }));
+    expect(screen.getByLabelText("Checkout API promotion stages")).not.toBeNull();
+    expect(screen.getByText("No deployments yet.")).not.toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("keeps an older failure in recent runs without replacing the current state", async () => {
     const user = userEvent.setup();
     const olderFailure = { ...deployment, id: "older-failure", state: "failed", createdAt: "2026-08-18T10:00:00Z", finishedAt: "2026-08-18T10:01:00Z" } as Deployment;
