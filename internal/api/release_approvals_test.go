@@ -106,6 +106,7 @@ func TestOverviewKeepsPendingApprovalsBeyondRecentRevisionsAndProjectScope(t *te
 
 func TestApprovalAuditUsesWorkflowProjectAndFiltersForeignActions(t *testing.T) {
 	a := serviceTestAPI(t)
+	enableOperationsForTest(t, a)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	project, _, _, stage := approvalFixture(t, a, "audit-approval", now)

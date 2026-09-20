@@ -507,7 +507,9 @@ export type DeploymentResource = {
   events: DeploymentResourceEvent[];
   warning?: string;
 };
+export type ControllerSettings = { operationsEnabled: boolean };
 export type Overview = {
+  controllerSettings?: ControllerSettings;
   services?: ServiceConnection[];
   demo: boolean;
   secretStorageConfigured: boolean;

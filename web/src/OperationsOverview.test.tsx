@@ -9,7 +9,7 @@ vi.mock("./operations/Activity", () => ({Activity: () => <div>Activity tool</div
 vi.mock("./operations/Ownership", () => ({Ownership: () => <div>Ownership tool</div>}));
 vi.mock("./operations/IdentityMappings", () => ({IdentityMappings: () => <div>Mapping tool</div>}));
 vi.mock("./operations/Maintenance", () => ({Backups: () => <div>Backup tool</div>, RetentionControls: () => <div>Cleanup tool</div>}));
-const overview = {identity:{id:"owner",systemRole:"owner"}, projects:[{id:"p",name:"Platform"},{id:"q",name:"Commerce"}], projectPermissions:{}} as unknown as Overview;
+const overview = {controllerSettings:{operationsEnabled:true},identity:{id:"owner",systemRole:"owner"}, projects:[{id:"p",name:"Platform"},{id:"q",name:"Commerce"}], projectPermissions:{}} as unknown as Overview;
 const summary: OperationsSummary = {observedAt:"2026-09-20T12:00:00Z",audit:{since:"2026-09-19T12:00:00Z",total:12,rejected:3,recent:[{id:"event",actorId:"person",actorName:"Alex",projectId:"p",action:"PUT /apps/{id}/owner",outcome:"succeeded",createdAt:"2026-09-20T11:00:00Z"}]},ownership:{total:8,unassigned:2},backups:{configured:true,recorded:0}};
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
 
@@ -79,4 +79,27 @@ it("flags incomplete backup records and never infers verification from a stale t
  fireEvent.click(screen.getByRole("button",{name:"Refresh"}));
  await screen.findByText("The latest backup needs review");
  expect(screen.queryByText("Verified",{exact:true})).toBeNull();
+});
+
+
+it("blocks direct Operations navigation by default and only links owners to Settings",()=>{
+ const request=vi.spyOn(operationsClient,"summary");const onNavigate=vi.fn();
+ const disabled={...overview,controllerSettings:undefined};
+ const view=render(<OperationsPage overview={disabled} filters={{section:"backups"}} onNavigate={onNavigate}/>);
+ expect(screen.getByRole("heading",{name:"Operations is disabled"})).toBeTruthy();
+ expect(screen.queryByRole("tab")).toBeNull();expect(request).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole("link",{name:"Open settings"}));expect(onNavigate).toHaveBeenCalledWith({view:"settings"});
+ view.rerender(<OperationsPage overview={{...disabled,identity:{...disabled.identity!,systemRole:"member"}}}/>);
+ expect(screen.queryByRole("link",{name:"Open settings"})).toBeNull();
+ expect(screen.getByRole("link",{name:"Back to deployments"})).toBeTruthy();
+});
+
+it("closes an open Operations tool immediately when the feature is switched off",async()=>{
+ const request=vi.spyOn(operationsClient,"summary").mockResolvedValue(summary);
+ const view=render(<OperationsPage overview={overview}/>);
+ await screen.findByText("3 requests were rejected");
+ view.rerender(<OperationsPage overview={{...overview,controllerSettings:{operationsEnabled:false}}}/>);
+ expect(screen.queryByText("3 requests were rejected")).toBeNull();
+ expect(screen.getByRole("heading",{name:"Operations is disabled"})).toBeTruthy();
+ expect(request).toHaveBeenCalledTimes(1);
 });

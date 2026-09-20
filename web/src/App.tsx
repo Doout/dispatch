@@ -1,5 +1,6 @@
 import { releaseClient, type ReleasePreview } from "./deployments/releaseClient";
 import { OperationsPage } from "./OperationsPage";
+import { SettingsPage } from "./SettingsPage";
 import { ReleaseTools, PromotionWorkspace } from "./deployments/ReleaseTools";
 import { DeploymentCatalogProvider, DeploymentIdentity, catalogOverview, useDeploymentCatalog } from "./deployments/DeploymentCatalog";
 import { DeploymentWorkspace } from "./deployments/DeploymentWorkspace";
@@ -30,6 +31,7 @@ import {
   ChartBar,
   Copy,
   FolderSimple,
+  GearSix,
   GithubLogo,
   HardDrives,
   Key,
@@ -745,6 +747,7 @@ export default function DispatchApp() {
                 }
               />
             )}
+          {!loading && overview && view === "settings" && <SettingsPage key={overview.identity?.id} overview={overview} onChanged={() => load(true)} />}
           {!loading && overview && view === "operations" && <OperationsPage key={overview.identity?.id} overview={overview} filters={route.operationsFilters ?? {}} onFilters={filters => navigateRoute({view: "operations", operationsFilters: filters}, {replace: true, preserveScroll: true})} onNavigate={navigateRoute} onChanged={() => load(true)} />}
           {!loading && overview && view === "analytics" && <AnalyticsPage key={overview.identity?.id} overview={overview} filters={route.analyticsFilters ?? {}} onFilters={filters => navigateRoute({view: "analytics", analyticsFilters: filters}, {replace: true, preserveScroll: true})} onNavigate={navigateRoute} />}
           {!loading && overview && view === "servers" && !route.serverID && (
@@ -956,7 +959,7 @@ export function Nav({
           icon: <AppWindow size={18} />,
           count: overview?.apps.length ?? 0,
         },
-        { id: "operations", label: "Operations", icon: <Wrench size={18} />, count: 0 },
+        ...(overview?.controllerSettings?.operationsEnabled === true ? [{ id: "operations" as View, label: "Operations", icon: <Wrench size={18} />, count: 0 }] : []),
         { id: "analytics", label: "Analytics", icon: <ChartBar size={18} />, count: 0 },
         {
           id: "events",
@@ -1009,6 +1012,12 @@ export function Nav({
                 id: "access" as View,
                 label: "Access",
                 icon: <UsersThree size={18} />,
+                count: 0,
+              },
+              {
+                id: "settings" as View,
+                label: "Settings",
+                icon: <GearSix size={18} />,
                 count: 0,
               },
             ]

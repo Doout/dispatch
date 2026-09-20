@@ -14,6 +14,7 @@ import (
 
 func TestOperationsAuditIsolationAndExpiredGrants(t *testing.T) {
 	a := serviceTestAPI(t)
+	enableOperationsForTest(t, a)
 	ctx := context.Background()
 	projects, err := a.store.ListProjects(ctx)
 	if err != nil {
@@ -67,6 +68,7 @@ func TestOperationsAuditIsolationAndExpiredGrants(t *testing.T) {
 }
 func TestOperationsAuditNeverRecordsRequestCredentials(t *testing.T) {
 	a := serviceTestAPI(t)
+	enableOperationsForTest(t, a)
 	projects, _ := a.store.ListProjects(context.Background())
 	serviceRequestTest(t, a, "POST", "/api/v1/services", map[string]any{"projectId": projects[0].ID, "name": "audit-safe", "type": "generic", "fields": map[string]any{"token": map[string]any{"value": "private-audit-fixture-value", "sensitive": true}}}, 201)
 	out := serviceRequestTest(t, a, "GET", "/api/v1/audit", nil, 200)
@@ -79,6 +81,7 @@ func TestOperationsAuditNeverRecordsRequestCredentials(t *testing.T) {
 }
 func TestOperationsRetentionRequiresConfirmationAndOwnerMetadata(t *testing.T) {
 	a := serviceTestAPI(t)
+	enableOperationsForTest(t, a)
 	ctx := context.Background()
 	projects, _ := a.store.ListProjects(ctx)
 	apps, _ := a.store.ListApps(ctx)
@@ -95,6 +98,7 @@ func TestOperationsRetentionRequiresConfirmationAndOwnerMetadata(t *testing.T) {
 
 func TestRoleUpdatesPreserveOmittedExpiryAndAllowExplicitRemoval(t *testing.T) {
 	a := serviceTestAPI(t)
+	enableOperationsForTest(t, a)
 	ctx := context.Background()
 	projects, _ := a.store.ListProjects(ctx)
 	now := time.Now().UTC()
@@ -133,6 +137,7 @@ func TestRoleUpdatesPreserveOmittedExpiryAndAllowExplicitRemoval(t *testing.T) {
 
 func TestApplicationOwnershipRejectsUnrelatedProjectPrincipals(t *testing.T) {
 	a := serviceTestAPI(t)
+	enableOperationsForTest(t, a)
 	ctx := context.Background()
 	apps, err := a.store.ListApps(ctx)
 	if err != nil || len(apps) == 0 {

@@ -14,6 +14,8 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	GetControllerSettings(context.Context) (core.ControllerSettings, error)
+	SaveControllerSettings(context.Context, core.ControllerSettings) error
 	SearchDeploymentHistory(context.Context, core.DeploymentSearch) ([]core.Deployment, error)
 	SaveDriftBaseline(context.Context, core.DriftBaseline) error
 	GetDriftBaseline(context.Context, string) (core.DriftBaseline, error)

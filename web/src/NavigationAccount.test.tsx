@@ -3,7 +3,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AccountMenu, ImpersonationBanner } from "./App";
+import { AccountMenu, ImpersonationBanner, Nav } from "./App";
 import type { Overview } from "./api";
 
 afterEach(cleanup);
@@ -146,5 +146,23 @@ describe("account menu", () => {
     expect(
       screen.queryByRole("menuitem", { name: "Change password" }),
     ).toBeNull();
+  });
+});
+
+
+describe("optional Operations navigation", () => {
+  it("hides Operations until enabled and limits Settings to controller owners", () => {
+    const owner = overview({id:"owner",username:"owner",displayName:"Owner",systemRole:"owner",permissions:[]});
+    const props = {open:false,view:"deployments" as const,onClose:vi.fn(),onNavigate:vi.fn()};
+    const view=render(<Nav {...props} overview={owner}/>);
+    expect(screen.queryByRole("link",{name:"Operations"})).toBeNull();
+    expect(screen.getByRole("link",{name:"Settings"}).getAttribute("href")).toBe("/settings");
+    view.rerender(<Nav {...props} overview={{...owner,controllerSettings:{operationsEnabled:true}}}/>);
+    expect(screen.getByRole("link",{name:"Operations"}).getAttribute("href")).toBe("/operations");
+    view.rerender(<Nav {...props} overview={{...owner,identity:{...owner.identity!,systemRole:"member"},controllerSettings:{operationsEnabled:true}}}/>);
+    expect(screen.queryByRole("link",{name:"Settings"})).toBeNull();
+    expect(screen.getByRole("link",{name:"Operations"})).toBeTruthy();
+    view.rerender(<Nav {...props} overview={{...owner,controllerSettings:{operationsEnabled:false}}}/>);
+    expect(screen.queryByRole("link",{name:"Operations"})).toBeNull();
   });
 });

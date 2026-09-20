@@ -3,7 +3,7 @@ import { ArrowClockwise, ArrowRight, CheckCircle, Clock, ClockCounterClockwise, 
 import { type Overview } from "./api";
 import { canManageProject } from "./permissions";
 import { relative } from "./presentation";
-import { type AppRoute, type OperationsFilters, type OperationsSection } from "./routes";
+import { type AppRoute, type OperationsFilters, type OperationsSection, routePath, shouldHandleNavigation } from "./routes";
 import { Activity, auditActionLabel } from "./operations/Activity";
 import { Ownership } from "./operations/Ownership";
 import { IdentityMappings } from "./operations/IdentityMappings";
@@ -21,7 +21,16 @@ const sections = [
   { id: "identity", label: "Access mappings", Icon: ShieldCheck, owner: true },
 ] as const;
 
-export function OperationsPage({ overview, filters, onFilters, onNavigate, onChanged }: Props) {
+export function OperationsPage(props: Props) {
+  if (props.overview.controllerSettings?.operationsEnabled !== true) {
+    const owner = props.overview.identity?.systemRole === "owner";
+    const target: AppRoute = {view: owner ? "settings" : "deployments"};
+    return <div className="page-layout operations-page"><header className="page-header operations-header"><h1>Operations</h1></header><section className="empty-state"><ShieldCheck size={28} /><div><h2>Operations is disabled</h2><p>{owner ? "Enable Operations in Settings to use activity, ownership, and maintenance tools." : "A controller owner can enable Operations in Settings."}</p></div><a className="quiet-button" href={routePath(target)} onClick={event => { if (props.onNavigate && shouldHandleNavigation(event)) {event.preventDefault(); props.onNavigate(target);} }}>{owner ? "Open settings" : "Back to deployments"}<ArrowRight size={14} /></a></section></div>;
+  }
+  return <EnabledOperationsPage {...props} />;
+}
+
+function EnabledOperationsPage({ overview, filters, onFilters, onNavigate, onChanged }: Props) {
   const [local, setLocal] = useState<OperationsFilters>(filters ?? {});
   const [refresh, setRefresh] = useState(0);
   const selected = onFilters ? filters ?? {} : local;

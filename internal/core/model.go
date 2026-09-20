@@ -601,6 +601,7 @@ type EventResult struct {
 }
 
 type Overview struct {
+	ControllerSettings      ControllerSettings      `json:"controllerSettings"`
 	Services                []ServiceOverview       `json:"services"`
 	Demo                    bool                    `json:"demo"`
 	SecretStorageConfigured bool                    `json:"secretStorageConfigured"`
