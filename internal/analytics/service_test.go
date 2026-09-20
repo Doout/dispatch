@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -102,5 +103,75 @@ func TestSummaryDoesNotWaitForExporter(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Fatal("summary is doing blocking work")
+	}
+}
+
+type catchupSource struct {
+	events  []core.AnalyticsEvent
+	service *Service
+	reads   int
+}
+
+func (s *catchupSource) ListAnalyticsEvents(_ context.Context, limit int) ([]core.AnalyticsEvent, error) {
+	s.reads++
+	if s.reads == 1 {
+		// Model a previously ready cache just before a fresh full backlog arrives.
+		s.service.setState("ready")
+	} else if s.reads <= 3 {
+		snapshot := s.service.Summary(map[string]bool{"project": true}, 7)
+		if snapshot.State != "catching_up" || snapshot.Totals.Deployments.Runs != 0 {
+			return nil, errors.New("full import batch recomputed history before refresh interval")
+		}
+	}
+	n := len(s.events)
+	if n > limit {
+		n = limit
+	}
+	return append([]core.AnalyticsEvent(nil), s.events[:n]...), nil
+}
+func (s *catchupSource) AckAnalyticsEvents(_ context.Context, events []core.AnalyticsEvent) error {
+	if len(events) == 250 && s.service.current.Load().State != "catching_up" {
+		return errors.New("full backlog import left the public snapshot ready")
+	}
+	s.events = s.events[len(events):]
+	return nil
+}
+func TestCatchupThrottlesFullScansAndPublishesFinalBatch(t *testing.T) {
+	now := time.Now().UTC()
+	source := &catchupSource{}
+	for i := 1; i <= 501; i++ {
+		source.events = append(source.events, core.AnalyticsEvent{ID: int64(i), Kind: "deployment", EntityID: fmt.Sprint(i), ProjectID: "project", Name: "checkout", State: "succeeded", StartedAt: now.Add(-time.Minute), FinishedAt: now})
+	}
+	service := New(source, t.TempDir(), nil)
+	source.service = service
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- service.run(ctx) }()
+	defer func() { cancel(); <-done }()
+	deadline := time.After(10 * time.Second)
+	for {
+		out := service.Summary(map[string]bool{"project": true}, 7)
+		if out.State == "ready" && out.Totals.Deployments.Runs == 501 {
+			return
+		}
+		select {
+		case err := <-done:
+			done <- err
+			t.Fatalf("worker: %v", err)
+		case <-deadline:
+			t.Fatal("final partial batch did not publish immediately")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+func TestCatchupRefreshIntervalAndIdlePeriodAdvance(t *testing.T) {
+	if refreshDue(250, 14*time.Second) || refreshDue(500, 0) {
+		t.Fatal("full batches repeatedly scan retained history")
+	}
+	if !refreshDue(250, 15*time.Second) {
+		t.Fatal("catch-up observations stayed stale beyond interval")
+	}
+	if !refreshDue(249, 0) || !refreshDue(1, 0) || !refreshDue(0, 0) {
+		t.Fatal("final and idle polls must refresh counts and rolling boundaries")
 	}
 }

@@ -18,7 +18,7 @@ const overview={identity:{id:"owner",systemRole:"owner"},projects:[{id:"p",name:
 beforeEach(()=>{localStorage.clear();vi.spyOn(catalogClient,"catalog").mockResolvedValue({items});});
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
 it("round trips URL filters independently of selected stage and ignores invalid layouts",()=>{
- const route={view:"deployments" as const,deploymentApplicationID:"checkout",deploymentStage:"production",deploymentFilters:{query:"abc / sha",project:"p",app:"prod",environment:"production",target:"cluster",status:"failed",revision:"a1",layout:"list" as const,pinned:true}};
+ const route={view:"deployments" as const,deploymentApplicationID:"checkout",deploymentStage:"production",deploymentFilters:{query:"abc / sha",project:"p",app:"prod",environment:"production",target:"cluster",status:"failed",revision:"a1",completedFrom:"2026-09-01T00:00:00Z",completedTo:"2026-09-08T00:00:00Z",layout:"list" as const,pinned:true}};
  const url=new URL(routePath(route),"https://dispatch.test");expect(readRoute(url)).toEqual({...route,deploymentID:undefined});expect(readRoute({pathname:"/deployments",search:"?layout=malicious"}).deploymentFilters?.layout).toBeUndefined();
 });
 it("shows the historical saved target and preserves the running release when a later attempt fails",async()=>{
@@ -51,4 +51,16 @@ it("opens quiet generated environments whose deployment and revision are outside
  const quiet={...overview,deployments:[],workflowRevisions:[],workflowStageRuns:[],workflowResources:[{id:"checkout",name:"Checkout",kind:"Application",stageNames:["development"],targetRefs:["cluster"]}]} as unknown as Overview;
  const open=vi.fn();render(<DeploymentCatalogProvider overview={quiet}><DeploymentFocusRails overview={quiet} onSelectDeployment={open}/></DeploymentCatalogProvider>);
  const link=await screen.findByRole("link",{name:"Open Checkout Development latest deployment"});expect(link.getAttribute("href")).toBe("/deployments/failed");await userEvent.setup().click(link);expect(open).toHaveBeenCalledWith("failed");
+});
+
+it("keeps analytics completion bounds on pagination and clears them when switching to current releases",async()=>{
+ const from="2026-09-01T00:00:00Z",to="2026-09-08T00:00:00Z";
+ vi.spyOn(catalogClient,"search").mockResolvedValueOnce({items:[failed],next:"failed"}).mockResolvedValueOnce({items:[current]});
+ const onFilters=vi.fn(),user=userEvent.setup();
+ render(<DeploymentCatalogProvider overview={overview}><DeploymentWorkspace overview={overview} filters={{layout:"list",project:"p",completedFrom:from,completedTo:to}} onFilters={onFilters} onOpen={()=>{}}>{()=>null}</DeploymentWorkspace></DeploymentCatalogProvider>);
+ await screen.findByRole("link",{name:"Topology"});
+ const query=vi.mocked(catalogClient.search).mock.calls[0][0];expect(query.get("completedFrom")).toBe(from);expect(query.get("completedTo")).toBe(to);
+ await user.click(screen.getByRole("button",{name:"Load older deployments"}));await screen.findByText("Running release");
+ expect(vi.mocked(catalogClient.search).mock.calls[1][0].get("completedFrom")).toBe(from);
+ await user.click(screen.getByRole("button",{name:"Board"}));expect(onFilters).toHaveBeenLastCalledWith({layout:"board",project:"p",completedFrom:undefined,completedTo:undefined});
 });

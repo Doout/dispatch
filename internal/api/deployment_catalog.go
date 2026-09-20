@@ -148,12 +148,31 @@ func (a *API) deploymentCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deploymentSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var completedFrom, completedTo *time.Time
+	for _, bound := range []struct {
+		name  string
+		value **time.Time
+	}{{"completedFrom", &completedFrom}, {"completedTo", &completedTo}} {
+		if q.Has(bound.name) {
+			parsed, err := time.Parse(time.RFC3339Nano, q.Get(bound.name))
+			if err != nil || parsed.Year() < 1 || parsed.Year() > 9999 {
+				problem(w, 400, "Invalid completion range", "Use RFC3339 timestamps for completedFrom and completedTo.")
+				return
+			}
+			utc := parsed.UTC()
+			*bound.value = &utc
+		}
+	}
+	if completedFrom != nil && completedTo != nil && !completedFrom.Before(*completedTo) {
+		problem(w, 400, "Invalid completion range", "The completion range end must be after its start.")
+		return
+	}
 	items, err := a.catalogItems(r)
 	if err != nil {
 		a.internal(w, err)
 		return
 	}
-	q := r.URL.Query()
 	ids := []string{}
 	for _, item := range items {
 		if q.Get("project") != "" && q.Get("project") != item.ProjectID {
@@ -192,7 +211,7 @@ func (a *API) deploymentSearch(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Search too long", "Use no more than 200 characters.")
 		return
 	}
-	results, err := a.store.SearchDeploymentHistory(r.Context(), core.DeploymentSearch{AppIDs: ids, Before: before, Query: strings.TrimSpace(q.Get("q")), State: q.Get("status"), Revision: q.Get("revision"), Limit: 51})
+	results, err := a.store.SearchDeploymentHistory(r.Context(), core.DeploymentSearch{AppIDs: ids, Before: before, Query: strings.TrimSpace(q.Get("q")), State: q.Get("status"), Revision: q.Get("revision"), CompletedFrom: completedFrom, CompletedTo: completedTo, Limit: 51})
 	if err != nil {
 		a.internal(w, err)
 		return

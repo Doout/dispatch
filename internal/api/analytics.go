@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/doout/dispatch/internal/analytics"
 )
@@ -22,9 +23,16 @@ func (a *API) analyticsSummary(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	if project := strings.TrimSpace(r.URL.Query().Get("projectId")); project != "" {
+		if !projects[project] {
+			problem(w, http.StatusForbidden, "Access denied", "Project view permission is required.")
+			return
+		}
+		projects = map[string]bool{project: true}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	if a.eventConfig.Analytics == nil {
-		writeJSON(w, http.StatusOK, analytics.Summary{State: "disabled", Days: days, Daily: []analytics.Day{}})
+		writeJSON(w, http.StatusOK, analytics.EmptySummary("disabled", days))
 		return
 	}
 	// A permission-filtered memory read, with no DuckDB work on the request path.

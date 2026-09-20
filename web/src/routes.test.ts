@@ -50,6 +50,14 @@ describe("application routes", () => {
     expect(readRoute({ pathname: "/", search: "?view=applications&section=helm" })).toEqual({ view: "applications", applicationSection: "helm" });
   });
 
+  it("restores analytics filters from a shared link and ignores unsupported values", () => {
+    const route = {view: "analytics" as const, analyticsFilters: {days: 7 as const, projectId: "team/project", kind: "job" as const, section: "data" as const}};
+    const url = new URL(routePath(route), "https://dispatch.example");
+    expect(readRoute(url)).toEqual(route);
+    expect(readRoute({pathname: "/analytics", search: "?days=100&kind=incident&section=unknown"})).toEqual({view: "analytics"});
+    expect(routePath({view: "analytics"})).toBe("/analytics");
+  });
+
   it("keeps the selected deployment stage in the URL", () => {
     const path = routePath({ view: "deployments", deploymentApplicationID: "checkout/app", deploymentStage: "quality gate" });
     const url = new URL(path, "https://dispatch.example");

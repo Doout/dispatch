@@ -9,6 +9,34 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /analytics:
+    get:
+      operationId: getAnalytics
+      description: >-
+        Reads a cached historical summary filtered by current project permissions.
+        Current and previous periods are adjacent equal rolling windows ending at
+        updatedAt. Daily bins use UTC and can contain partial boundary days.
+        Success rates exclude cancellations; duration metrics include successful,
+        non-reused runs with valid timing. Median and p95 are histogram estimates.
+        Archived counts can include deployments removed from operational history.
+      parameters:
+      - name: days
+        in: query
+        schema: { type: integer, enum: [7, 30, 90], default: 30 }
+      - name: projectId
+        in: query
+        description: Optional visible project. An unreadable project returns 403.
+        schema: { type: string }
+      responses:
+        '200':
+          description: Permission-filtered summary, including collection state and coverage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyticsSummary' }
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
   /deployment-catalog:
     get:
       operationId: getDeploymentCatalog
@@ -94,6 +122,17 @@ paths:
         in: query
         schema:
           type: string
+      - name: completedFrom
+        in: query
+        description: >-
+          Inclusive RFC3339 completion time. Restricts results to terminal runs;
+          legacy runs without a finish timestamp use their creation timestamp.
+          Must precede completedTo when both are supplied.
+        schema: { type: string, format: date-time }
+      - name: completedTo
+        in: query
+        description: Exclusive RFC3339 completion time. Restricts results to terminal runs.
+        schema: { type: string, format: date-time }
   /deployments/{id}/identity:
     parameters:
     - name: id
@@ -2502,6 +2541,101 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    AnalyticsCounts:
+      type: object
+      required: [runs, succeeded, failed, cancelled, reused, durationSeconds, durationSamples, successRate, meanDurationSeconds, medianDurationSeconds, p95DurationSeconds]
+      properties:
+        runs: { type: integer, minimum: 0 }
+        succeeded: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        cancelled: { type: integer, minimum: 0 }
+        reused: { type: integer, minimum: 0 }
+        durationSeconds:
+          type: number
+          description: Legacy total valid elapsed seconds across all completed outcomes.
+        durationSamples: { type: integer, minimum: 0 }
+        successRate:
+          type: [number, 'null']
+          description: Percentage succeeded among succeeded and failed runs; null for no denominator.
+        meanDurationSeconds: { type: [number, 'null'] }
+        medianDurationSeconds: { type: [number, 'null'], description: Estimated nearest-rank median. }
+        p95DurationSeconds: { type: [number, 'null'], description: Estimated nearest-rank p95. }
+    AnalyticsDay:
+      type: object
+      required: [date, deployments, workflows, jobs]
+      properties:
+        date: { type: string, description: UTC calendar date; empty for period totals. }
+        deployments: { $ref: '#/components/schemas/AnalyticsCounts' }
+        workflows: { $ref: '#/components/schemas/AnalyticsCounts' }
+        jobs: { $ref: '#/components/schemas/AnalyticsCounts' }
+    AnalyticsPeriod:
+      type: object
+      required: [start, end]
+      properties:
+        start: { type: string, format: date-time, description: Inclusive boundary. }
+        end: { type: string, format: date-time, description: Exclusive boundary. }
+    AnalyticsFailureHotspot:
+      type: object
+      required: [projectId, kind, name, runs, succeeded, failed, cancelled, failureRate]
+      properties:
+        projectId: { type: string }
+        kind: { type: string, enum: [deployment, workflow, job] }
+        name: { type: string, description: Recorded workload name, not an immutable application identifier. }
+        runs: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        cancelled: { type: integer }
+        failureRate: { type: number, description: Percentage failed among succeeded and failed runs. }
+        latestFailedAt: { type: string, format: date-time }
+        latestFailedDeploymentId: { type: string, description: Deployment facts only; operational retention may have removed this run. }
+    AnalyticsSlowWorkload:
+      type: object
+      required: [projectId, kind, name, runs, durationSamples, meanDurationSeconds]
+      properties:
+        projectId: { type: string }
+        kind: { type: string, enum: [deployment, workflow, job] }
+        name: { type: string }
+        runs: { type: integer }
+        durationSamples: { type: integer }
+        meanDurationSeconds: { type: number }
+        latestDeploymentId: { type: string, description: Latest timed successful deployment; operational retention may have removed it. }
+    AnalyticsSummary:
+      type: object
+      required: [state, days, daily, totals, period, previousPeriod, previousTotals, failureHotspots, slowWorkloads, capabilities, coverage]
+      properties:
+        state: { type: string, enum: [disabled, starting, catching_up, ready, unavailable] }
+        updatedAt: { type: string, format: date-time, description: Last published snapshot time; retained when the worker is unavailable. }
+        days: { type: integer, enum: [7, 30, 90] }
+        daily: { type: array, items: { $ref: '#/components/schemas/AnalyticsDay' } }
+        totals: { $ref: '#/components/schemas/AnalyticsDay' }
+        period: { $ref: '#/components/schemas/AnalyticsPeriod' }
+        previousPeriod: { $ref: '#/components/schemas/AnalyticsPeriod' }
+        previousTotals: { $ref: '#/components/schemas/AnalyticsDay' }
+        failureHotspots:
+          type: array
+          maxItems: 30
+          description: Up to ten entries per kind, ordered by failed count then failure rate.
+          items: { $ref: '#/components/schemas/AnalyticsFailureHotspot' }
+        slowWorkloads:
+          type: array
+          maxItems: 30
+          description: Up to ten entries per kind, ordered by mean duration then sample count.
+          items: { $ref: '#/components/schemas/AnalyticsSlowWorkload' }
+        capabilities:
+          type: object
+          properties:
+            durationPercentiles: { type: string, const: histogram }
+            durationPercentileMaxErrorPercent: { type: integer, const: 5 }
+            durationPercentileResolutionSeconds: { type: number, const: 0.01 }
+            durationPopulation: { type: string, const: successful_non_reused }
+            stageTiming: { type: boolean, const: false }
+            environmentBreakdown: { type: boolean, const: false }
+        coverage:
+          type: object
+          description: Observed completion range in visible projects; does not guarantee continuous collection.
+          properties:
+            firstCompletedAt: { type: string, format: date-time }
+            lastCompletedAt: { type: string, format: date-time }
     DeploymentReview:
       type: object
       required: [expectedAppName, projectId, appSpecDigest, bindingsDigest, serviceRevisions]

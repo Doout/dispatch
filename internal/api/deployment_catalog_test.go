@@ -164,3 +164,33 @@ func TestDeploymentCatalogProjectIsolationAndEnvironmentComparison(t *testing.T)
 		t.Fatal("cross project comparison accepted")
 	}
 }
+
+func TestDeploymentSearchCompletionRange(t *testing.T) {
+	a := serviceTestAPI(t)
+	ctx := context.Background()
+	apps, err := a.store.ListApps(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)
+	inside := from.Add(time.Second)
+	end := from.Add(time.Hour)
+	for i, finished := range []time.Time{from.Add(-time.Second), from, inside, end} {
+		if err = a.store.CreateDeployment(ctx, core.Deployment{ID: fmt.Sprintf("completion-api-%d", i), AppID: apps[0].ID, CommitSHA: "completion-range", State: core.DeploymentSucceeded, CreatedAt: from.Add(-time.Hour), FinishedAt: &finished}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw := serviceRequestTest(t, a, "GET", "/api/v1/deployment-search?revision=completion-range&completedFrom=2030-01-02T01:00:00%2B01:00&completedTo=2030-01-02T01:00:00Z", nil, 200)
+	var page struct {
+		Items []core.Deployment `json:"items"`
+	}
+	if err = json.Unmarshal(raw, &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || page.Items[0].ID != "completion-api-2" || page.Items[1].ID != "completion-api-1" {
+		t.Fatalf("completion bounds were not forwarded: %s", raw)
+	}
+	for _, query := range []string{"completedFrom=bad", "completedTo=", "completedFrom=2030-01-02T00:00:00Z&completedTo=2030-01-02T00:00:00Z", "completedFrom=2030-01-03T00:00:00Z&completedTo=2030-01-02T00:00:00Z"} {
+		serviceRequestTest(t, a, "GET", "/api/v1/deployment-search?"+query, nil, 400)
+	}
+}

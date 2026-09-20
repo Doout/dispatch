@@ -66,4 +66,19 @@ func TestAnalyticsUsesCurrentProjectPermissions(t *testing.T) {
 	if reader.calls != 1 {
 		t.Fatal("overview waited on analytics")
 	}
+	if status := request("/api/v1/analytics?days=7&projectId=allowed", true); status != 200 || len(reader.projects) != 1 || !reader.projects["allowed"] {
+		t.Fatal("explicit project filter did not narrow cached analytics")
+	}
+	for _, project := range []string{"hidden", "missing"} {
+		if status := request("/api/v1/analytics?projectId="+project, true); status != 403 {
+			t.Fatalf("unreadable project status %d", status)
+		}
+	}
+	if reader.calls != 2 {
+		t.Fatal("forbidden project reached the analytics reader")
+	}
+	must(a.store.DeleteRoleAssignment(ctx, "grant"))
+	if status := request("/api/v1/analytics", true); status != 200 || len(reader.projects) != 0 {
+		t.Fatal("revoked project access survived in analytics scope")
+	}
 }
