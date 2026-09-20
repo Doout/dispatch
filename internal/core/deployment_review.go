@@ -7,9 +7,10 @@ import (
 	"sort"
 )
 
-// DeploymentReview contains only digests and revision identifiers. The store
+// DeploymentReview contains application identity, digests, and revision identifiers. The store
 // validates it in the transaction that captures the actual runtime bindings.
 type DeploymentReview struct {
+	ExpectedAppName  string           `json:"expectedAppName"`
 	ProjectID        string           `json:"projectId"`
 	AppSpecDigest    string           `json:"appSpecDigest"`
 	BindingsDigest   string           `json:"bindingsDigest"`

@@ -2504,8 +2504,9 @@ components:
   schemas:
     DeploymentReview:
       type: object
-      required: [projectId, appSpecDigest, bindingsDigest, serviceRevisions]
+      required: [expectedAppName, projectId, appSpecDigest, bindingsDigest, serviceRevisions]
       properties:
+        expectedAppName: { type: string, description: Application name used when previewing release identity. }
         projectId: { type: string }
         appSpecDigest: { type: string }
         bindingsDigest: { type: string }

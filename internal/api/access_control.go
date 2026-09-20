@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -983,6 +984,14 @@ func (a *API) deleteRoleAssignment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.Overview, error) {
+	// Approvals remain actionable even when newer runs move their revision out
+	// of the recent-history window. Include their immutable context before the
+	// normal resource and project filters are applied.
+	var err error
+	overview.WorkflowRevisions, err = a.includePendingApprovalRevisions(ctx, overview.WorkflowRevisions, overview.WorkflowStageRuns, overview.WorkflowResources)
+	if err != nil {
+		return overview, err
+	}
 	identity := currentIdentity(ctx)
 	overview.ProjectPermissions = make(map[string][]core.Permission)
 	if identity.SystemRole == core.UserRoleOwner {
@@ -1152,4 +1161,40 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 	overview.GitHubApps = []core.GitHubAppConnection{}
 	overview.RelayWebhooks = []core.RelayWebhook{}
 	return overview, nil
+}
+
+func (a *API) includePendingApprovalRevisions(ctx context.Context, revisions []core.WorkflowRevision, stages []core.WorkflowStageRun, resources []core.WorkflowResource) ([]core.WorkflowRevision, error) {
+	known := make(map[string]bool, len(revisions))
+	for _, revision := range revisions {
+		known[revision.ID] = true
+	}
+	currentResources := make(map[string]bool, len(resources))
+	for _, resource := range resources {
+		if resource.State != "removed" {
+			currentResources[resource.ID] = true
+		}
+	}
+	for _, stage := range stages {
+		if stage.State != "awaiting_approval" || known[stage.RevisionID] {
+			continue
+		}
+		known[stage.RevisionID] = true
+		revision, err := a.store.GetWorkflowRevision(ctx, stage.RevisionID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if currentResources[revision.ResourceID] {
+			revisions = append(revisions, revision)
+		}
+	}
+	sort.SliceStable(revisions, func(i, j int) bool {
+		if revisions[i].CreatedAt.Equal(revisions[j].CreatedAt) {
+			return revisions[i].ID > revisions[j].ID
+		}
+		return revisions[i].CreatedAt.After(revisions[j].CreatedAt)
+	})
+	return revisions, nil
 }

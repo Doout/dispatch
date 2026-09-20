@@ -11,6 +11,15 @@ import (
 // application fields. Compare with its captured revisions so credential rotation
 // does not look like an unrelated application edit.
 func (a *API) deploymentAppInputsMatch(ctx context.Context, app core.App, d core.Deployment) (bool, error) {
+	if app.BuildType == core.BuildTypeHelm && d.Snapshot.Release != "" {
+		release := app.HelmRelease
+		if release == "" {
+			release = app.Name
+		}
+		if release != d.Snapshot.Release {
+			return false, nil
+		}
+	}
 	captured, err := a.store.GetDeploymentServiceBindings(ctx, d.ID)
 	if err != nil {
 		return false, err
@@ -41,7 +50,7 @@ func (a *API) reviewServiceConsumer(ctx context.Context, app core.App) (core.Dep
 	if err != nil {
 		return core.DeploymentReview{}, err
 	}
-	review := core.DeploymentReview{ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), BindingsDigest: core.ServiceBindingConfigurationDigest(bindings), ServiceRevisions: map[string]int64{}}
+	review := core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), BindingsDigest: core.ServiceBindingConfigurationDigest(bindings), ServiceRevisions: map[string]int64{}}
 	for _, b := range bindings {
 		service, err := a.store.GetService(ctx, b.ServiceRef)
 		if err != nil {

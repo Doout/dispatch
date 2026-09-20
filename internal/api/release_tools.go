@@ -283,9 +283,27 @@ func (a *API) applicationReleaseActivity(w http.ResponseWriter, r *http.Request)
 			items = append(items, releaseActivity{ID: event.ID, Kind: "audit", State: event.Outcome, Message: event.Action, Actor: actor, CreatedAt: event.CreatedAt})
 		}
 	}
-	// Match stages by their retained deployment IDs, never by user-visible names.
-	revisions, err := a.store.ListWorkflowRevisions(r.Context(), "", 100)
+	// Match stages by retained deployment IDs, including revisions outside the
+	// controller's recent-history window. User-visible names are not identity.
+	allStages, err := a.store.ListWorkflowStageRuns(r.Context(), "")
+	matchedStages := map[string]string{}
 	if err == nil {
+		revisions := []core.WorkflowRevision{}
+		seenRevisions := map[string]bool{}
+		for _, stage := range allStages {
+			if seenRevisions[stage.RevisionID] {
+				continue
+			}
+			for _, id := range stage.DeploymentIDs {
+				if deploymentIDs[id] {
+					seenRevisions[stage.RevisionID] = true
+					if revision, e := a.store.GetWorkflowRevision(r.Context(), stage.RevisionID); e == nil {
+						revisions = append(revisions, revision)
+					}
+					break
+				}
+			}
+		}
 		visibleResources := map[string]bool{}
 		checkedResources := map[string]bool{}
 		for _, revision := range revisions {
@@ -309,6 +327,7 @@ func (a *API) applicationReleaseActivity(w http.ResponseWriter, r *http.Request)
 				for _, id := range stage.DeploymentIDs {
 					if deploymentIDs[id] {
 						matched = true
+						matchedStages[stage.ID] = id
 						items = append(items, releaseActivity{ID: stage.ID, Kind: "stage", State: stage.State, Message: stage.StageName + ": " + stage.State + "; approval " + stage.Approval, DeploymentID: id, Revision: revision.ID, CreatedAt: stage.CreatedAt})
 						break
 					}
@@ -321,6 +340,26 @@ func (a *API) applicationReleaseActivity(w http.ResponseWriter, r *http.Request)
 					for _, job := range jobs {
 						items = append(items, releaseActivity{ID: job.ID, Kind: "build", State: job.State, Message: job.JobName + ": " + job.State, Revision: revision.ID, CreatedAt: job.CreatedAt})
 					}
+				}
+			}
+		}
+	}
+	if len(matchedStages) > 0 {
+		if audit, ok := a.store.(interface {
+			ListAuditEvents(context.Context, core.AuditFilter) ([]core.AuditEvent, error)
+		}); ok {
+			rows, e := audit.ListAuditEvents(r.Context(), core.AuditFilter{ProjectIDs: []string{app.ProjectID}, Action: "POST /api/v1/workflow/stages/{id}/approve", Limit: 100})
+			if e != nil {
+				a.internal(w, e)
+				return
+			}
+			for _, event := range rows {
+				if deploymentID, matched := matchedStages[event.ResourceID]; matched && event.AppID == "" {
+					actor := event.ActorName
+					if actor == "" {
+						actor = event.ActorID
+					}
+					items = append(items, releaseActivity{ID: event.ID, Kind: "audit", State: event.Outcome, Message: event.Action, Actor: actor, DeploymentID: deploymentID, CreatedAt: event.CreatedAt})
 				}
 			}
 		}

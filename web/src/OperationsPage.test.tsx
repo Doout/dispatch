@@ -3,6 +3,8 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import * as client from "./api";
+import * as catalog from "./deployments/DeploymentCatalog";
+import type { CatalogItem } from "./deployments/catalogClient";
 import { type Overview, type ServiceConnection } from "./api";
 import { OperationsPage } from "./OperationsPage";
 import { ServiceOperations } from "./ServiceOperations";
@@ -38,4 +40,18 @@ it("refreshes service impact for consumer deployments while retaining selection 
  view.rerender(<ServiceOperations {...props} overview={{...overview,deployments:[unrelated]}}/>);expect(request).toHaveBeenCalledTimes(1);expect((screen.getByRole("checkbox",{name:"Redeploy API binding db"}) as HTMLInputElement).checked).toBe(true);
  request.mockResolvedValue({...impact,consumers:[{...impact.consumers[0],canRedeploy:false,reason:"Deployment active"}]});const active={...unrelated,id:"active",appId:"app"};view.rerender(<ServiceOperations {...props} overview={{...overview,deployments:[unrelated,active]}}/>);await waitFor(()=>expect(request).toHaveBeenCalledTimes(2));await waitFor(()=>expect((screen.getByRole("checkbox",{name:"Redeploy API binding db"}) as HTMLInputElement).disabled).toBe(true));
  request.mockResolvedValue({...impact,consumers:[{...impact.consumers[0],appliedRevision:2,redeploymentRequired:false}]});view.rerender(<ServiceOperations {...props} service={{...service,consumers:[{...consumer,appliedRevision:2,redeploymentRequired:false}]}} overview={{...overview,deployments:[{...active,state:"succeeded"}]}}/>);await waitFor(()=>expect(request).toHaveBeenCalledTimes(3));await screen.findByText("Current",{exact:true});
+});
+
+it("assigns ownership to generated environments without granting project viewers configuration access",async()=>{
+ const managed={appId:"generated",appName:"Orders production",projectId:"p",environment:"production"} as CatalogItem;
+ vi.spyOn(catalog,"useDeploymentCatalog").mockReturnValue({items:[managed,{...managed,appId:"view-only",appName:"Read-only environment",projectId:"q"}],loading:false,error:""});
+ const member={...overview,identity:{...overview.identity!,systemRole:"member" as const},projectPermissions:{p:["project.view" as const,"project.configure" as const],q:["project.view" as const]}};
+ const request=vi.spyOn(client,"request").mockImplementation(async <T,>(path:string)=>path.endsWith("owner-candidates")?{users:[{id:"operator",displayName:"Operator"}],teams:[]} as T:path.endsWith("/owner")?{principalType:"user",principalId:""} as T:[] as T);
+ const user=userEvent.setup();render(<OperationsPage overview={member}/>);await user.click(screen.getByRole("tab",{name:"Ownership"}));expect(screen.getByRole("option",{name:"Orders production"})).toBeTruthy();expect(screen.queryByRole("option",{name:"Read-only environment"})).toBeNull();await screen.findByRole("option",{name:"Operator"});await user.selectOptions(screen.getByLabelText("Owner",{exact:true}),"operator");await user.click(screen.getByRole("button",{name:"Save owner"}));await waitFor(()=>expect(request).toHaveBeenCalledWith("/api/v1/apps/generated/owner",{method:"PUT",body:JSON.stringify({principalType:"user",principalId:"operator"})}));
+});
+it("opens generated consumer bindings as repository managed read-only details",async()=>{
+ vi.spyOn(catalog,"useDeploymentCatalog").mockReturnValue({items:[{appId:"generated",appName:"Orders production",projectId:"p"} as CatalogItem],loading:false,error:""});
+ const service={id:"db",projectId:"p",name:"Database",type:"generic",revision:2,fields:{},consumers:[]} as unknown as ServiceConnection;
+ vi.spyOn(client,"request").mockResolvedValue({serviceId:"db",revision:2,consumers:[{appId:"generated",appName:"Orders production",alias:"database",appliedRevision:2,canRedeploy:false}]});vi.spyOn(client.api,"serviceBindings").mockResolvedValue([{alias:"database",serviceRef:"db",environment:{DATABASE_URL:"connectionUrl"}}]);
+ const user=userEvent.setup();render(<ServicesPage overview={{...overview,services:[service]}} onChanged={async()=>{}}/>);await user.click(await screen.findByRole("button",{name:"Bindings"}));await screen.findByRole("heading",{name:"Orders production services"});expect(await screen.findByText("DATABASE_URL")).toBeTruthy();expect(screen.getByText(/Bindings are managed in repository configuration/)).toBeTruthy();expect(screen.queryByRole("button",{name:"Edit binding"})).toBeNull();expect(screen.queryByRole("button",{name:"Connect service"})).toBeNull();
 });

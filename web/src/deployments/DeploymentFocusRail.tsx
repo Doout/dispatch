@@ -158,11 +158,19 @@ export function DeploymentFocusRails({ overview, visibleItems, selectedApplicati
   onSelectStage?: (applicationID?: string, stageName?: string) => void;
   onSelectDeployment: (id: string) => void;
 }) {
+  const {items: catalog} = useDeploymentCatalog();
   const rails = useMemo(() => {
-    const all = buildDeploymentRails(overview);
+    const all = buildDeploymentRails(overview).map(rail => ({...rail, stages: rail.stages.map(stage => {
+      if (stage.deployment) return stage;
+      const item = catalog.find(item => item.resourceId === rail.id && item.environment === stage.name);
+      const deployment = item?.latest ?? item?.current;
+      if (!deployment) return stage;
+      const state = stage.state === "not_deployed" ? deployment.state : stage.state;
+      return {...stage, deployment, deployments: [deployment], state, tone: stateTone(state), revision: short(deployment.commitSha), revisionTitle: deployment.commitSha, updatedAt: stage.updatedAt ?? deployment.finishedAt ?? deployment.createdAt};
+    })}));
     if (!visibleItems) return all;
     return all.map(rail => ({ ...rail, stages: rail.stages.filter(stage => visibleItems.some(item => item.appId === stage.deployment?.appId || (item.resourceId === rail.id && item.environment === stage.name) || item.appId === rail.id)) })).filter(rail => rail.stages.length);
-  }, [overview, visibleItems]);
+  }, [overview, visibleItems, catalog]);
   const [localSelection, setLocalSelection] = useState<{ applicationID: string; stageName: string } | null>(null);
 
   useEffect(() => {

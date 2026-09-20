@@ -49,7 +49,7 @@ func TestReviewedAcceptanceRejectsEditsBeforeCapture(t *testing.T) {
 			must(data.CreateService(ctx, service))
 			bindings := []core.ServiceBinding{{Alias: "dependency", ServiceRef: service.ID, Environment: map[string]string{"DEPENDENCY_URL": "url"}}}
 			must(data.ReplaceAppServiceBindings(ctx, app.ID, bindings))
-			review := core.DeploymentReview{ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), BindingsDigest: core.ServiceBindingConfigurationDigest(bindings), ServiceRevisions: map[string]int64{service.ID: 1}}
+			review := core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), BindingsDigest: core.ServiceBindingConfigurationDigest(bindings), ServiceRevisions: map[string]int64{service.ID: 1}}
 			wrapped := changeBeforeCapture{Store: data, change: func() error {
 				switch kind {
 				case "app":

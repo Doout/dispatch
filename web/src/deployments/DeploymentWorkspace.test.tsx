@@ -8,6 +8,7 @@ import { useState } from "react";
 import { catalogClient, type CatalogItem } from "./catalogClient";
 import { DeploymentCatalogProvider, DeploymentIdentity } from "./DeploymentCatalog";
 import { DeploymentWorkspace, EnvironmentComparison } from "./DeploymentWorkspace";
+import { DeploymentFocusRails } from "./DeploymentFocusRail";
 import { NavigationShortcuts } from "./NavigationShortcuts";
 
 const run=(id:string,appId="app",state:Deployment["state"]="succeeded"):Deployment=>({id,appId,state,commitSha:id,specDigest:"digest",createdAt:"2026-09-19T00:00:00Z",message:""});
@@ -44,4 +45,10 @@ it("compares saved environment values only within the selected project",async()=
 it("opens command navigation with keyboard and pins an environment without leaving the page",async()=>{
  const user=userEvent.setup();const navigate=vi.fn();render(<DeploymentCatalogProvider overview={overview}><NavigationShortcuts overview={overview} route={{view:"deployments"}} onNavigate={navigate}/></DeploymentCatalogProvider>);
  fireEvent.keyDown(window,{key:"k",ctrlKey:true});const dialog=await screen.findByRole("dialog",{name:"Jump to an environment"});expect(dialog).toBeTruthy();await user.click(await screen.findByRole("button",{name:"Pin Checkout dev development"}));expect(localStorage.getItem("dispatch.navigation.v1:owner")).toContain('"pins":["app"]');await user.click(screen.getByRole("link",{name:"Open Checkout development on Cluster"}));expect(navigate).toHaveBeenCalledWith({view:"deployments",deploymentID:"running"});await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("opens quiet generated environments whose deployment and revision are outside the overview window",async()=>{
+ const quiet={...overview,deployments:[],workflowRevisions:[],workflowStageRuns:[],workflowResources:[{id:"checkout",name:"Checkout",kind:"Application",stageNames:["development"],targetRefs:["cluster"]}]} as unknown as Overview;
+ const open=vi.fn();render(<DeploymentCatalogProvider overview={quiet}><DeploymentFocusRails overview={quiet} onSelectDeployment={open}/></DeploymentCatalogProvider>);
+ const link=await screen.findByRole("link",{name:"Open Checkout Development latest deployment"});expect(link.getAttribute("href")).toBe("/deployments/failed");await userEvent.setup().click(link);expect(open).toHaveBeenCalledWith("failed");
 });

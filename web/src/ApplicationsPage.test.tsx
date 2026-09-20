@@ -4,6 +4,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationsPage } from "./ApplicationsPage";
+import { observationsClient } from "./observationsClient";
 import { api, type App, type Overview } from "./api";
 
 const application = (values: Partial<App>): App => ({
@@ -316,4 +317,22 @@ describe("configuration sync errors", () => {
     expect(await screen.findByText(`slots: ${detail}`)).not.toBeNull();
     expect(onChanged).toHaveBeenCalledTimes(1);
   });
+});
+
+it.each(["dockerfile", "compose"] as const)("opens endpoint checks for %s applications without navigation", async (buildType) => {
+  const configured: Overview = { ...overview, apps: [application({ buildType })], previewGroups: [] };
+  vi.spyOn(api, "applicationSync").mockResolvedValue({ appId: "app-1", supported: false, reapplyAvailable: false, configuration: { state: "not_applicable", message: "Managed in Dispatch." }, revision: { state: "current" }, drift: { state: "unknown", health: "unknown", message: "Runtime drift checks support Helm applications on Kubernetes and OpenShift.", location: "Dispatch controller", resources: [] }, actions: [] });
+  vi.spyOn(observationsClient, "get").mockResolvedValue({ configuration: { appId: "app-1", projectId: "project-1", revision: 0, scheduled: false, intervalSeconds: 300, staleAfterSeconds: 900, notificationsEnabled: false, webhookConfigured: false, updatedAt: "" }, observation: { appId: "app-1", projectId: "project-1", configurationRevision: 0, source: "manual", state: "not_supported", drift: "not_supported", health: "not_supported", endpoint: { state: "not_configured", tls: "not_checked", durationMs: 0, message: "", location: "Dispatch controller" }, consecutiveFailures: 0, location: "Dispatch controller" }, freshness: "not_checked", checking: false, events: [] });
+  const onNavigate = vi.fn();
+  render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={onNavigate} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByLabelText("Options for Checkout API"));
+  await user.click(await screen.findByRole("menuitem", { name: "Checks" }));
+  expect(await screen.findByRole("heading", { name: "Checks and notifications" })).toBeTruthy();
+  expect(screen.getAllByText("Not supported")).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Reapply deployed configuration" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Configure checks" }));
+  expect(screen.getByRole("textbox", { name: /Public endpoint URL/ })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Check endpoint" })).toBeTruthy();
+  expect(onNavigate).not.toHaveBeenCalled();
 });

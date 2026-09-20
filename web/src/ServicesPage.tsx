@@ -3,12 +3,14 @@ import { api, Overview, ServiceConnection, ServiceInput } from "./api";
 import { PageHeader } from "./PageHeader";
 import { canManageAnyProject, canManageProject } from "./permissions";
 import { ApplicationServices } from "./ApplicationServices";
+import { useDeploymentCatalog } from "./deployments/DeploymentCatalog";
 import { ServiceOperations } from "./ServiceOperations";
 
 type FieldRow = { name: string; value: string; sensitive: boolean; secretRef: string; source: "value" | "secret"; changed: boolean; saved: boolean };
 const pgFields = ["host", "port", "database", "username", "password", "sslmode", "caCert"];
 
 export function ServicesPage({ overview, onChanged }: { overview: Overview; onChanged: () => Promise<void> }) {
+ const {items:catalog}=useDeploymentCatalog();
  const [project, setProject] = useState("");
  const [rotation,setRotation] = useState(false);
  const [editing, setEditing] = useState<ServiceConnection | "new" | null>(null);
@@ -22,7 +24,8 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
   try { if (action === "check") await api.verifyService(id); else { await api.deleteService(id); setRemoving(null); } await onChanged(); }
   catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(""); }
  }
- const app = overview.apps.find(a => a.id === application);
+ const managed=catalog.find(a=>a.appId===application);
+ const app = overview.apps.find(a => a.id === application) ?? (managed ? {id:managed.appId,name:managed.appName,projectId:managed.projectId,generated:true,template:false} : undefined);
  if (app) return <ApplicationServices application={app} overview={overview} onChanged={onChanged} onBack={() => setApplication(null)} />;
  if (editing) return <ServiceEditor rotation={rotation} key={editing === "new" ? "new" : editing.id} item={editing === "new" ? undefined : editing} overview={overview} initialProject={project} onBack={() => setEditing(null)} onSaved={async () => { await onChanged(); setEditing(null); }} />;
  return <div className="page-layout services-page">

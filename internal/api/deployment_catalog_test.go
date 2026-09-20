@@ -22,6 +22,12 @@ func TestDeploymentCatalogRetainsRunningReleaseAndSearchesOlderHistory(t *testin
 		t.Fatal(err)
 	}
 	app := apps[0]
+	app.ID = "catalog-generated-app"
+	app.Name = "Generated development environment"
+	app.Generated = true
+	if err = a.store.CreateApp(ctx, app); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC().Add(time.Hour)
 	for i := 0; i < 130; i++ {
 		state := core.DeploymentFailed
@@ -108,12 +114,14 @@ func TestDeploymentCatalogProjectIsolationAndEnvironmentComparison(t *testing.T)
 	other.ID = "catalog-private-app"
 	other.ProjectID = private.ID
 	other.Name = "private-hidden"
+	other.Generated = true
 	if err := a.store.CreateApp(ctx, other); err != nil {
 		t.Fatal(err)
 	}
 	stage := base
 	stage.ID = "catalog-stage"
 	stage.Name = "production"
+	stage.Generated = true
 	if err := a.store.CreateApp(ctx, stage); err != nil {
 		t.Fatal(err)
 	}
@@ -135,6 +143,9 @@ func TestDeploymentCatalogProjectIsolationAndEnvironmentComparison(t *testing.T)
 	rr := call(a.deploymentCatalog, "/", "")
 	if rr.Code != 200 || strings.Contains(rr.Body.String(), "private-hidden") {
 		t.Fatalf("catalog isolation: %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "catalog-stage") {
+		t.Fatal("generated application missing from catalog")
 	}
 	rr = call(a.deploymentSearch, "/?q=private-hidden", "")
 	if rr.Code != 200 || strings.Contains(rr.Body.String(), "catalog-env-2") {

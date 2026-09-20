@@ -37,7 +37,7 @@ func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Depl
 	return s.start(ctx, appID, commitSHA, nil)
 }
 func (s *Service) StartReviewed(ctx context.Context, appID, commitSHA string, review core.DeploymentReview) (core.Deployment, error) {
-	if review.ProjectID == "" || review.AppSpecDigest == "" || review.BindingsDigest == "" || review.ServiceRevisions == nil {
+	if review.ExpectedAppName == "" || review.ProjectID == "" || review.AppSpecDigest == "" || review.BindingsDigest == "" || review.ServiceRevisions == nil {
 		return core.Deployment{}, store.ErrDeploymentReviewChanged
 	}
 	return s.start(ctx, appID, commitSHA, &review)
@@ -60,9 +60,9 @@ func (s *Service) start(ctx context.Context, appID, commitSHA string, review *co
 		return core.Deployment{}, ErrApplicationTemplate
 	}
 	if review == nil {
-		review = &core.DeploymentReview{ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest()}
+		review = &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest()}
 	}
-	if review.ProjectID != app.ProjectID || review.AppSpecDigest != app.SpecDigest() {
+	if review.ExpectedAppName != app.Name || review.ProjectID != app.ProjectID || review.AppSpecDigest != app.SpecDigest() {
 		return core.Deployment{}, store.ErrDeploymentReviewChanged
 	}
 	if commitSHA == "" {

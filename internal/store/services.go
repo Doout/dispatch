@@ -249,7 +249,7 @@ func (s *SQLStore) captureServiceBindings(ctx context.Context, tx *changeTx, d c
 		if err != nil {
 			return err
 		}
-		if current.ProjectID != d.Acceptance.ProjectID || current.SpecDigest() != d.Acceptance.AppSpecDigest || current.Name != d.ExecutionAppName || current.Template != d.ExecutionTemplate || current.Generated != d.ExecutionGenerated {
+		if current.Name != d.Acceptance.ExpectedAppName || current.ProjectID != d.Acceptance.ProjectID || current.SpecDigest() != d.Acceptance.AppSpecDigest || current.Name != d.ExecutionAppName || current.Template != d.ExecutionTemplate || current.Generated != d.ExecutionGenerated {
 			return ErrDeploymentReviewChanged
 		}
 	}

@@ -52,7 +52,7 @@ type ReleasePreview struct {
 func (s *Service) PreviewRelease(ctx context.Context, app core.App, server core.Server, revision string, sourceAuth SourceAuthExecutor) ReleasePreview {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	out := ReleasePreview{Review: core.DeploymentReview{ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), ServiceRevisions: map[string]int64{}}, Revision: revision, SpecDigest: app.SpecDigest(), Checks: []ReleaseValidation{}, Resources: []ReleaseResource{}}
+	out := ReleasePreview{Review: core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), ServiceRevisions: map[string]int64{}}, Revision: revision, SpecDigest: app.SpecDigest(), Checks: []ReleaseValidation{}, Resources: []ReleaseResource{}}
 	add := func(name, state, message string) {
 		out.Checks = append(out.Checks, ReleaseValidation{name, state, message})
 	}

@@ -175,6 +175,10 @@ func (a *API) redeployServiceConsumers(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			v.Error = "Deployment was not accepted. Refresh the application before retrying."
 		} else {
+			if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner && d.App != nil {
+				app := redactAppCredentials(*d.App)
+				d.App = &app
+			}
 			v.Deployment = &d
 		}
 		out = append(out, v)

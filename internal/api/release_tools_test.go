@@ -57,7 +57,16 @@ func TestReviewedDeploymentRejectsStaleInputs(t *testing.T) {
 	if err = a.store.CreateApp(ctx, app); err != nil {
 		t.Fatal(err)
 	}
-	review := core.DeploymentReview{ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), BindingsDigest: core.ServiceBindingConfigurationDigest(nil), ServiceRevisions: map[string]int64{}}
+	review := core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), BindingsDigest: core.ServiceBindingConfigurationDigest(nil), ServiceRevisions: map[string]int64{}}
+	app.Name = "renamed-after-preview"
+	if app.SpecDigest() != review.AppSpecDigest {
+		t.Fatal("rename fixture must isolate name from settings digest")
+	}
+	if err = a.store.UpdateApp(ctx, app); err != nil {
+		t.Fatal(err)
+	}
+	serviceRequestTest(t, a, "POST", "/api/v1/apps/"+app.ID+"/deployments", map[string]any{"commitSha": "abcdef1234", "review": review}, 409)
+	review.ExpectedAppName = app.Name
 	app.Domain = "changed.example.test"
 	if err = a.store.UpdateApp(ctx, app); err != nil {
 		t.Fatal(err)

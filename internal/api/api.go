@@ -2421,7 +2421,7 @@ func (a *API) startDeployment(w http.ResponseWriter, r *http.Request) {
 	var item core.Deployment
 	var err error
 	if input.Review != nil {
-		if input.Review.ProjectID == "" || input.Review.AppSpecDigest == "" || input.Review.BindingsDigest == "" || input.Review.ServiceRevisions == nil {
+		if input.Review.ExpectedAppName == "" || input.Review.ProjectID == "" || input.Review.AppSpecDigest == "" || input.Review.BindingsDigest == "" || input.Review.ServiceRevisions == nil {
 			problem(w, 422, "Incomplete deployment review", "Preview the application again before deploying reviewed inputs.")
 			return
 		}

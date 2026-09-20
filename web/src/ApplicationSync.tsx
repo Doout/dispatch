@@ -43,7 +43,7 @@ export function ApplicationSync({ application, overview, onBack, compact = false
  return <section className={`application-sync${compact ? " compact" : ""}`} aria-label={`${application.name} sync and drift`}>
   <header className="sync-toolbar"><div><h2>Application status</h2>{!compact && <span className="sync-app-name" title={application.name}>{application.name}</span>}<span className="sync-observation" title={`Last check: ${date(status?.drift.checkedAt)}. Last successful check: ${date(status?.drift.lastSuccessfulCheckAt)}. Observations are recorded from the Dispatch controller.`}>{status?.observationChecking ? "Checking…" : status?.drift.checkedAt ? `${clock - new Date(status.drift.checkedAt).getTime() > (status.observationStaleAfterSeconds ?? 900) * 1000 ? "Stale · observed" : "Checked"} ${relative(status.drift.checkedAt)}` : "Not checked"}</span></div><div>
    {canCheck && status?.supported && <button className="quiet-button sync-check" disabled={busy || status.observationChecking || status.revision.state === "deploying"} onClick={() => void run(false)}><ArrowClockwise size={14} aria-hidden="true" />{busy ? "Checking…" : "Check now"}</button>}
-   <button className="sync-details-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>Details<CaretDown size={13} aria-hidden="true" /></button>
+   <button className="sync-details-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{application.buildType === "helm" ? "Details" : "Checks"}<CaretDown size={13} aria-hidden="true" /></button>
    {onBack && <button className="quiet-button" onClick={onBack}>Back to applications</button>}
   </div></header>
   {error && <p role="alert" className="error-message">{error}</p>}
@@ -73,7 +73,7 @@ export function ApplicationSync({ application, overview, onBack, compact = false
      {resource.truncated && <p>Showing the first 200 differences.</p>}
      {!!resource.differences.length && <div className="sync-table-scroll"><table><thead><tr><th>Field</th><th>Deployed configuration</th><th>Live value</th></tr></thead><tbody>{resource.differences.map(diff => <tr key={diff.path}><td data-label="Field"><code>{diff.path}</code></td><td data-label="Deployed configuration">{value(diff.expected)}</td><td data-label="Live value">{value(diff.actual)}</td></tr>)}</tbody></table></div>}
     </details>)}</div>
-    <ObservationSettings application={application} overview={overview} refreshToken={observationRefresh} onChecked={() => { void api.applicationSync(application.id).then(setStatus).catch(() => undefined); }} />
+    <ObservationSettings application={application} overview={overview} runtimeSupported={status.supported} refreshToken={observationRefresh} onChecked={() => { void api.applicationSync(application.id).then(setStatus).catch(() => undefined); }} />
     {!!status.actions.length && <details className="sync-action-history"><summary>Reapply history <span>{status.actions.length}</span></summary><ul>{status.actions.map(action => <li key={action.id}>{date(action.createdAt)} · {action.state} · {action.message}</li>)}</ul></details>}
    </div>}
   </>}

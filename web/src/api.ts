@@ -232,7 +232,7 @@ export type App = {
   state: string;
   createdAt: string;
 };
-export type DeploymentReview = { projectId: string; appSpecDigest: string; bindingsDigest: string; serviceRevisions: Record<string, number> };
+export type DeploymentReview = { expectedAppName: string; projectId: string; appSpecDigest: string; bindingsDigest: string; serviceRevisions: Record<string, number> };
 export type DeploymentState =
   | "queued"
   | "fetching"

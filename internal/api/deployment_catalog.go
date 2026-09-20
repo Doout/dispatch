@@ -43,7 +43,7 @@ func (a *API) catalogItems(r *http.Request) ([]deploymentCatalogItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	apps, err := a.store.ListApps(ctx)
+	apps, err := a.store.ListActiveApps(ctx)
 	if err != nil {
 		return nil, err
 	}

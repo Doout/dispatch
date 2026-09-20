@@ -99,6 +99,16 @@ func (a *API) auditMutation(next http.Handler) http.Handler {
 			}
 		case strings.Contains(route, "/projects/{id}"):
 			e.ProjectID = id
+		case strings.Contains(route, "/workflow/stages/{id}"):
+			if stage, err := a.store.GetWorkflowStageRun(ctx, id); err == nil {
+				if revision, err := a.store.GetWorkflowRevision(ctx, stage.RevisionID); err == nil {
+					if resource, err := a.store.GetWorkflowResource(ctx, revision.ResourceID); err == nil {
+						if source, err := a.store.GetConfigSource(ctx, resource.ConfigSourceID); err == nil {
+							e.ProjectID = source.ProjectID
+						}
+					}
+				}
+			}
 		}
 		if err := data.AppendAuditEvent(ctx, e); err != nil {
 			a.logger.Error("audit event could not be saved", "action", e.Action)
