@@ -209,8 +209,11 @@ export default function DispatchApp() {
         scrollTop: nextScroll,
         ...(options.state ?? {}),
       };
-      if (next.view === "deployments" && next.deploymentID && currentRoute.view === "deployments" && currentRoute.deploymentID && Number.isSafeInteger(returnDepth) && returnDepth > 0) {
-        nextState.deploymentReturnDepth = returnDepth + (options.replace ? 0 : 1);
+      if (next.view === "deployments" && next.deploymentID && currentRoute.view === "deployments") {
+        if (currentRoute.deploymentID && Number.isSafeInteger(returnDepth) && returnDepth > 0)
+          nextState.deploymentReturnDepth = returnDepth + (options.replace ? 0 : 1);
+        else if (!currentRoute.deploymentID && !options.replace)
+          nextState.deploymentReturnDepth = 1;
       }
       if (options.replace)
         window.history.replaceState(nextState, "", routePath(next));

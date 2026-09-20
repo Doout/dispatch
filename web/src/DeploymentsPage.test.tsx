@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { catalogClient } from "./deployments/catalogClient";
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -61,6 +62,30 @@ function DeploymentPreview({ onClose = () => undefined, onOpenDetails = () => un
 }
 
 describe("deployment navigation", () => {
+  it("restores board filters and scroll after opening a release through the command menu", async () => {
+    const run = { ...deployment, app: { ...deployment.app!, buildType: "dockerfile" as const } };
+    vi.spyOn(api, "overview").mockResolvedValue({ ...overview, apps: [run.app], deployments: [run] });
+    vi.spyOn(api, "logs").mockResolvedValue([]);
+    vi.spyOn(api, "applicationHistory").mockResolvedValue({ items: [] });
+    vi.spyOn(catalogClient, "catalog").mockResolvedValue({ items: [{ appId: run.appId, appName: "Checkout API", projectId: "project-1", targetId: "server-1", targetName: "development", environment: "development", current: run, latest: run }] });
+    window.history.replaceState(null, "", "/deployments?application=app-1&stage=development&q=Checkout&project=project-1");
+    render(<DispatchApp />);
+    await screen.findByRole("link", { name: "Open Checkout API Development latest deployment" });
+    document.getElementById("page-content")!.scrollTop = 420;
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Jump to/ }));
+    await user.click(await screen.findByRole("link", { name: "Open Checkout API development on development" }));
+    expect(window.history.state.deploymentReturnDepth).toBe(1);
+    await user.click(await screen.findByRole("link", { name: "History" }));
+    await user.click(screen.getByRole("link", { name: "Back to deployments" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/deployments"));
+    const query = new URLSearchParams(window.location.search);
+    expect(query.get("q")).toBe("Checkout");
+    expect(query.get("project")).toBe("project-1");
+    expect(query.get("stage")).toBe("development");
+    await waitFor(() => expect(document.getElementById("page-content")!.scrollTop).toBe(420));
+  });
+
   it("returns to the selected environment and scroll after using deployment tabs", async () => {
     const run = {...deployment,app:{...deployment.app!,buildType:"dockerfile" as const}};
     const data = {...overview,apps:[run.app],deployments:[run]};
