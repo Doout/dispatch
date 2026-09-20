@@ -32,6 +32,23 @@ func (s *SQLStore) SearchDeploymentHistory(ctx context.Context, filter core.Depl
 		query += ` AND d.state=?`
 		args = append(args, filter.State)
 	}
+	if filter.CompletedFrom != nil || filter.CompletedTo != nil {
+		// Completion events use created_at for legacy terminal runs without a
+		// finished_at. Match that rule, and exclude in-progress runs entirely.
+		query += ` AND d.state IN ('succeeded','failed','cancelled')`
+		// Stored timestamps are UTC RFC3339Nano text. Pad the optional fraction
+		// before comparing so .5Z sorts after Z, with no SQLite float rounding.
+		finished := `COALESCE(d.finished_at,d.created_at)`
+		sortable := `CASE WHEN length(` + finished + `)=20 THEN substr(` + finished + `,1,19)||'.000000000Z' ELSE substr(replace(` + finished + `,'Z','')||'000000000',1,29)||'Z' END`
+		if filter.CompletedFrom != nil {
+			query += ` AND (` + sortable + `)>=?`
+			args = append(args, filter.CompletedFrom.UTC().Format("2006-01-02T15:04:05.000000000Z"))
+		}
+		if filter.CompletedTo != nil {
+			query += ` AND (` + sortable + `)<?`
+			args = append(args, filter.CompletedTo.UTC().Format("2006-01-02T15:04:05.000000000Z"))
+		}
+	}
 	escape := func(value string) string {
 		return "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(strings.ToLower(value)) + "%"
 	}

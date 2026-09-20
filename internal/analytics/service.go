@@ -29,36 +29,6 @@ type Reader interface {
 	Summary(map[string]bool, int) Summary
 }
 
-type Counts struct {
-	Runs            int64   `json:"runs"`
-	Succeeded       int64   `json:"succeeded"`
-	Failed          int64   `json:"failed"`
-	Cancelled       int64   `json:"cancelled"`
-	Reused          int64   `json:"reused"`
-	DurationSeconds float64 `json:"durationSeconds"`
-}
-type Day struct {
-	Date        string `json:"date"`
-	Deployments Counts `json:"deployments"`
-	Workflows   Counts `json:"workflows"`
-	Jobs        Counts `json:"jobs"`
-}
-type Summary struct {
-	State     string     `json:"state"`
-	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
-	Days      int        `json:"days"`
-	Daily     []Day      `json:"daily"`
-	Totals    Day        `json:"totals"`
-}
-type row struct {
-	Project, Date, Kind string
-	Counts              Counts
-}
-type snapshot struct {
-	State     string
-	UpdatedAt *time.Time
-	Rows      []row
-}
 type Service struct {
 	source    Source
 	directory string
@@ -92,7 +62,9 @@ func (s *Service) Run(ctx context.Context) {
 }
 func (s *Service) setState(state string) {
 	old := s.current.Load()
-	s.current.Store(&snapshot{State: state, UpdatedAt: old.UpdatedAt, Rows: old.Rows})
+	next := *old
+	next.State = state
+	s.current.Store(&next)
 }
 func (s *Service) run(ctx context.Context) error {
 	if err := os.MkdirAll(s.directory, 0700); err != nil {
@@ -129,26 +101,37 @@ func (s *Service) run(ctx context.Context) error {
 	if err = s.refresh(ctx, db, "catching_up"); err != nil {
 		return err
 	}
+	lastRefresh := time.Now()
 	for ctx.Err() == nil {
 		// Bounded batches release SQLite between reads and keep live writes responsive.
 		batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		events, err := s.source.ListAnalyticsEvents(batchCtx, 250)
+		if err == nil && len(events) >= 250 {
+			// Publish backlog state before importing, while retaining the last
+			// completed snapshot. Full scans do not belong on every import batch.
+			s.setState("catching_up")
+		}
 		if err == nil && len(events) > 0 {
 			err = s.importBatch(batchCtx, db, events)
 		}
 		if err == nil {
 			state := "ready"
-			if len(events) == 250 {
+			if len(events) >= 250 {
 				state = "catching_up"
 			}
-			err = s.refresh(batchCtx, db, state)
+			if refreshDue(len(events), time.Since(lastRefresh)) {
+				err = s.refresh(batchCtx, db, state)
+				if err == nil {
+					lastRefresh = time.Now()
+				}
+			}
 		}
 		cancel()
 		if err != nil {
 			return err
 		}
 		pause := 15 * time.Second
-		if len(events) == 250 {
+		if len(events) >= 250 {
 			pause = 100 * time.Millisecond
 		}
 		select {
@@ -158,6 +141,12 @@ func (s *Service) run(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
+}
+
+func refreshDue(batchSize int, sinceLastRefresh time.Duration) bool {
+	// A partial or empty batch completes catch-up and advances rolling periods
+	// immediately. Ordinary empty polls still refresh on the 15-second cycle.
+	return batchSize < 250 || sinceLastRefresh >= 15*time.Second
 }
 
 func (s *Service) importBatch(ctx context.Context, db *sql.DB, events []core.AnalyticsEvent) error {
@@ -225,77 +214,6 @@ func (s *Service) importBatch(ctx context.Context, db *sql.DB, events []core.Ana
 		return err
 	}
 	return s.source.AckAnalyticsEvents(ctx, events)
-}
-
-func (s *Service) refresh(ctx context.Context, db *sql.DB, state string) error {
-	rows, err := db.QueryContext(ctx, `SELECT project_id,strftime(finished_at,'%Y-%m-%d'),kind,
- count(*),count(*) FILTER(WHERE state='succeeded'),count(*) FILTER(WHERE state='failed'),
- count(*) FILTER(WHERE state='cancelled'),count(*) FILTER(WHERE reused),
- sum(greatest(0,epoch(finished_at)-epoch(started_at)))
- FROM history WHERE finished_at>=? GROUP BY 1,2,3 ORDER BY 2`, time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -89))
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	values := []row{}
-	for rows.Next() {
-		var value row
-		c := &value.Counts
-		if err = rows.Scan(&value.Project, &value.Date, &value.Kind, &c.Runs, &c.Succeeded, &c.Failed, &c.Cancelled, &c.Reused, &c.DurationSeconds); err != nil {
-			return err
-		}
-		values = append(values, value)
-	}
-	if err = rows.Err(); err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	s.current.Store(&snapshot{State: state, UpdatedAt: &now, Rows: values})
-	return nil
-}
-func add(a *Counts, b Counts) {
-	a.Runs += b.Runs
-	a.Succeeded += b.Succeeded
-	a.Failed += b.Failed
-	a.Cancelled += b.Cancelled
-	a.Reused += b.Reused
-	a.DurationSeconds += b.DurationSeconds
-}
-func counts(day *Day, kind string) *Counts {
-	switch kind {
-	case "deployment":
-		return &day.Deployments
-	case "workflow":
-		return &day.Workflows
-	default:
-		return &day.Jobs
-	}
-}
-func (s *Service) Summary(projects map[string]bool, days int) Summary {
-	if days != 7 && days != 30 && days != 90 {
-		days = 30
-	}
-	current := s.current.Load()
-	result := Summary{State: current.State, UpdatedAt: current.UpdatedAt, Days: days, Daily: make([]Day, days)}
-	start := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, 1-days)
-	indices := map[string]int{}
-	for i := range result.Daily {
-		date := start.AddDate(0, 0, i).Format("2006-01-02")
-		result.Daily[i].Date = date
-		indices[date] = i
-	}
-	for _, row := range current.Rows {
-		if !projects[row.Project] {
-			continue
-		}
-		i, ok := indices[row.Date]
-		if !ok {
-			continue
-		}
-		add(counts(&result.Daily[i], row.Kind), row.Counts)
-		add(counts(&result.Totals, row.Kind), row.Counts)
-	}
-	return result
 }
 
 // Parquet is an independent, portable history copy. Rebuild a missing DuckDB

@@ -2,8 +2,9 @@ export type View = "operations" | "analytics" | "deployments" | "applications" |
 export type ApplicationSection = "applications" | "templates" | "helm" | "groups";
 export type EventSection = "rules" | "activity";
 export type DeploymentSection = "summary" | "topology" | "values" | "manifests" | "history";
+export type AnalyticsFilters = { days?: 7 | 30 | 90; projectId?: string; kind?: "deployment" | "workflow" | "job"; section?: "overview" | "data" };
 
-export type DeploymentFilters = { query?: string; project?: string; app?: string; environment?: string; target?: string; status?: string; revision?: string; layout?: "board" | "list" | "compare"; pinned?: boolean };
+export type DeploymentFilters = { query?: string; project?: string; app?: string; environment?: string; target?: string; status?: string; revision?: string; completedFrom?: string; completedTo?: string; layout?: "board" | "list" | "compare"; pinned?: boolean };
 
 export type AppRoute = {
   view: View;
@@ -12,6 +13,7 @@ export type AppRoute = {
   deploymentApplicationID?: string;
   deploymentStage?: string;
   deploymentFilters?: DeploymentFilters;
+  analyticsFilters?: AnalyticsFilters;
   serverID?: string;
   applicationID?: string;
   configurationSourceID?: string;
@@ -29,7 +31,7 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
     return {
       view: "deployments",
       deploymentID: segments[1] || undefined,
-      ...(!segments[1] && ["q", "project", "app", "environment", "target", "status", "revision", "layout", "pinned"].some(key => params.has(key)) ? { deploymentFilters: readDeploymentFilters(params) } : {}),
+      ...(!segments[1] && ["q", "project", "app", "environment", "target", "status", "revision", "completedFrom", "completedTo", "layout", "pinned"].some(key => params.has(key)) ? { deploymentFilters: readDeploymentFilters(params) } : {}),
       ...(segments[2] === "topology" ? { deploymentSection: "topology" as const } : segments[2] === "values" ? { deploymentSection: "values" as const } : segments[2] === "history" ? { deploymentSection: "history" as const } : segments[2] === "manifests" ? { deploymentSection: "manifests" as const } : {}),
       ...(!segments[1] && params.get("application") ? { deploymentApplicationID: params.get("application") || undefined } : {}),
       ...(!segments[1] && params.get("stage") ? { deploymentStage: params.get("stage") || undefined } : {}),
@@ -42,6 +44,17 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
   }
   if (first === "events") return { view: "events", eventSection: segments[1] === "activity" ? "activity" : "rules" };
   if (first === "servers") return { view: "servers", serverID: segments[1] || undefined };
+  if (first === "analytics") {
+    const params = new URLSearchParams(location.search);
+    const filters: AnalyticsFilters = {};
+    const days = Number(params.get("days"));
+    if (days === 7 || days === 30 || days === 90) filters.days = days;
+    if (params.get("projectId")) filters.projectId = params.get("projectId")!;
+    const kind = params.get("kind");
+    if (kind === "deployment" || kind === "workflow" || kind === "job") filters.kind = kind;
+    if (params.get("section") === "data") filters.section = "data";
+    return {view: "analytics", ...(Object.keys(filters).length ? {analyticsFilters: filters} : {})};
+  }
   if (first && views.has(first)) return { view: first };
 
   const params = new URLSearchParams(location.search);
@@ -56,6 +69,11 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
 }
 
 export function routePath(route: AppRoute) {
+  if (route.view === "analytics") {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(route.analyticsFilters ?? {})) if (value && value !== "overview") params.set(key, String(value));
+    return `/analytics${params.size ? `?${params}` : ""}`;
+  }
   if (route.view === "deployments") {
     if (route.deploymentID) return `/deployments/${encodeURIComponent(route.deploymentID)}${route.deploymentSection && route.deploymentSection !== "summary" ? `/${route.deploymentSection}` : ""}`;
     const params = new URLSearchParams();
@@ -96,7 +114,7 @@ export function shouldHandleNavigation(event: { button: number; metaKey: boolean
 
 function readDeploymentFilters(params: URLSearchParams): DeploymentFilters {
  const result: DeploymentFilters = {};
- for (const key of ["project", "app", "environment", "target", "status", "revision"] as const) if (params.get(key)) result[key] = params.get(key)!;
+ for (const key of ["project", "app", "environment", "target", "status", "revision", "completedFrom", "completedTo"] as const) if (params.get(key)) result[key] = params.get(key)!;
  if(params.get("q")) result.query=params.get("q")!;
  if(params.get("layout")==="list"||params.get("layout")==="compare") result.layout=params.get("layout") as "list"|"compare";
  if(params.get("pinned")==="true") result.pinned=true;
