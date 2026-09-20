@@ -759,6 +759,9 @@ func (a *API) overviewData(r *http.Request) (core.Overview, error) {
 	if err != nil {
 		return core.Overview{}, err
 	}
+	if err := a.enrichWorkflowEvaluations(r.Context(), overview.WorkflowResources); err != nil {
+		return core.Overview{}, err
+	}
 	return overview, nil
 }
 

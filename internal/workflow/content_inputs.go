@@ -16,6 +16,33 @@ import (
 	"github.com/doout/dispatch/internal/store"
 )
 
+var errSourceInputSymlink = errors.New("source input contains a symlink")
+
+// Git emits NUL-delimited tree entries. Inspect only their seven-byte mode
+// prefix so checking a large chart/repository never buffers the complete tree.
+type sourceSymlinkDetector struct {
+	prefix [7]byte
+	length int
+	found  bool
+}
+
+func (d *sourceSymlinkDetector) Write(value []byte) (int, error) {
+	for _, b := range value {
+		if b == 0 {
+			d.length = 0
+			continue
+		}
+		if d.length < len(d.prefix) {
+			d.prefix[d.length] = b
+			d.length++
+			if d.length == len(d.prefix) && string(d.prefix[:]) == "120000 " {
+				d.found = true
+			}
+		}
+	}
+	return len(value), nil
+}
+
 func validateInputPath(value string) error {
 	if strings.TrimSpace(value) == "" || path.IsAbs(value) || strings.ContainsAny(value, "\\\x00*?[") {
 		return fmt.Errorf("input path %q must be a relative file or directory without wildcards", value)
@@ -41,10 +68,12 @@ func jobInputPaths(job JobSpec, alias string) []string {
 	return slices.Compact(result)
 }
 
-// Only sources explicitly scoped by a job use content matching. Other sources
-// keep commit matching, including sources whose revision is used in templates.
+// Helm-only sources have explicit chart/value paths. Jobs can opt into content
+// matching with sourcePaths; unscoped job inputs keep their existing semantics.
+// Sources whose revision is used in templates always keep commit matching.
 func applicationInputPaths(spec ApplicationSpec) map[string][]string {
 	result := map[string][]string{}
+	unscopedJobs := map[string]bool{}
 	jobs := make([]JobSpec, 0, len(spec.Jobs)+len(spec.Finally))
 	for _, job := range spec.Jobs {
 		jobs = append(jobs, job)
@@ -53,6 +82,11 @@ func applicationInputPaths(spec ApplicationSpec) map[string][]string {
 		jobs = append(jobs, job)
 	}
 	for _, job := range jobs {
+		for _, alias := range jobSourceAliases(job) {
+			if len(job.SourcePaths[alias]) == 0 {
+				unscopedJobs[alias] = true
+			}
+		}
 		for alias := range job.SourcePaths {
 			result[alias] = []string{}
 		}
@@ -66,11 +100,11 @@ func applicationInputPaths(spec ApplicationSpec) map[string][]string {
 	}
 	for _, deployment := range spec.Deployments {
 		h := deployment.Helm
-		if _, ok := result[h.SourceRef]; ok {
+		if _, ok := result[h.SourceRef]; ok || !unscopedJobs[h.SourceRef] {
 			result[h.SourceRef] = append(result[h.SourceRef], path.Clean(h.ChartPath))
 		}
 		for _, file := range h.ValuesFiles {
-			if _, ok := result[file.SourceRef]; ok {
+			if _, ok := result[file.SourceRef]; ok || !unscopedJobs[file.SourceRef] {
 				result[file.SourceRef] = append(result[file.SourceRef], path.Clean(file.Path))
 			}
 		}
@@ -123,9 +157,22 @@ func (c *repositoryCache) contentHashes(ctx context.Context, repositoryURL, cred
 		if len(output) == 0 {
 			return nil, fmt.Errorf("source input %s does not exist at revision %s", relative, commit)
 		}
-		// Scoped symlinks could read an untracked target outside the selected input.
-		if strings.HasPrefix(string(output), "120000 ") {
-			return nil, fmt.Errorf("source input %s is a symlink; select its containing directory and target instead", relative)
+		// A nested symlink can read a target outside the selected chart/input
+		// directory. Its blob stays unchanged when that target changes, so a tree
+		// hash alone cannot establish equivalent input. Fall back to commit matching.
+		recursiveArgs := []string{"--git-dir", mirror, "ls-tree", "-r", "-z", commit}
+		if relative != "." {
+			recursiveArgs = append(recursiveArgs, "--", ":(literal)"+relative)
+		}
+		recursive := exec.CommandContext(ctx, "git", recursiveArgs...)
+		recursive.Env = environment
+		var symlinks sourceSymlinkDetector
+		recursive.Stdout = &symlinks
+		if err := recursive.Run(); err != nil {
+			return nil, fmt.Errorf("inspect source input %s: %w", relative, err)
+		}
+		if symlinks.found {
+			return nil, fmt.Errorf("%w: %s", errSourceInputSymlink, relative)
 		}
 		digest := sha256.Sum256(output)
 		result[path.Clean(value)] = "sha256:" + hex.EncodeToString(digest[:])

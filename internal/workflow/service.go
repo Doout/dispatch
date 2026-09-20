@@ -27,13 +27,19 @@ type Service struct {
 	Store        store.Store
 	GitHub       *githubapp.Manager
 	Secrets      *secretvalue.Resolver
-	Deployments  *deploy.Service
+	Deployments  DeploymentRunner
 	Logger       *slog.Logger
 	Repositories *repositoryCache
 
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
 	buildLocks map[string]*buildLock
+}
+
+type DeploymentRunner interface {
+	Start(context.Context, string, string) (core.Deployment, error)
+	StartIfChanged(context.Context, string, string) (core.Deployment, bool, error)
+	ReuseCandidateIfUnchanged(context.Context, core.App, string, string) (core.Deployment, bool, error)
 }
 
 type Push struct {
@@ -53,7 +59,11 @@ func NewService(data store.Store, github *githubapp.Manager, secrets *secretvalu
 	if len(cacheRoots) > 0 {
 		cacheRoot = cacheRoots[0]
 	}
-	return &Service{Store: data, GitHub: github, Secrets: secrets, Deployments: deployments, Logger: logger,
+	var runner DeploymentRunner
+	if deployments != nil {
+		runner = deployments
+	}
+	return &Service{Store: data, GitHub: github, Secrets: secrets, Deployments: runner, Logger: logger,
 		Repositories: newRepositoryCache(cacheRoot), locks: map[string]*sync.Mutex{}}
 }
 
@@ -576,6 +586,12 @@ func (s *Service) startIfChanged(ctx context.Context, resource core.WorkflowReso
 	if !s.snapshotChanged(ctx, resource, snapshot) {
 		return core.WorkflowRevision{}, nil
 	}
+	if automaticWorkflowTrigger(trigger) && s.reuseEquivalentWorkflow(ctx, resource, source, snapshot) {
+		return core.WorkflowRevision{}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return core.WorkflowRevision{}, err
+	}
 	return s.startWithSnapshot(ctx, resource, source, snapshot, trigger)
 }
 
@@ -605,6 +621,9 @@ func (s *Service) resolveResourceSources(ctx context.Context, source core.Config
 		if paths, ok := inputPaths[alias]; ok {
 			item := result[alias]
 			item.ContentHashes, err = s.hashSourceInputs(ctx, source, item, paths)
+			if errors.Is(err, errSourceInputSymlink) {
+				item.ContentHashes, err = nil, nil
+			}
 			if err != nil {
 				return nil, fmt.Errorf("resolve source %s inputs: %w", alias, err)
 			}

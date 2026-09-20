@@ -63,6 +63,26 @@ afterEach(() => {
 });
 
 describe("workflow resource run details", () => {
+  it("shows the latest unchanged source check without adding it to run history", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    const evaluated = { ...resource, lastEvaluation: { resourceId: resource.id, baselineRevisionId: "revision-1", checkedAt: "2026-09-02T20:00:00Z", sources: { chart: { alias: "chart", repository: "platform/charts", branch: "main", commitSha: "fedcba9876543210" } }, results: [] } };
+    render(<WorkflowResourceDialog resource={evaluated} overview={overview} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    expect(screen.getByText("No deployment changes")).not.toBeNull();
+    await userEvent.click(screen.getByText("No deployment changes"));
+    expect(screen.getByText("fedcba987654")).not.toBeNull();
+    expect(screen.getByRole("combobox", { name: "Workflow run" }).querySelectorAll("option")).toHaveLength(1);
+  });
+
+  it("links an unchanged stage result to its retained deployment", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([{ id: "stage", revisionId: "revision-1", stageName: "development", targetRef: "dev", state: "succeeded", approval: "automatic", createdAt: resource.createdAt, deploymentIds: ["retained-release"], deploymentResults: [{ deploymentName: "web", appId: "app", deploymentId: "retained-release", outcome: "unchanged", reason: "Rendered resources are unchanged.", checkedAt: resource.updatedAt }] }]);
+    const open = vi.fn();
+    render(<WorkflowResourceDialog resource={resource} overview={overview} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={open} />);
+    await userEvent.click(await screen.findByRole("button", { name: /Unchanged · Manifests/ }));
+    expect(open).toHaveBeenCalledWith("retained-release");
+  });
+
   it("opens the failed job output and lets operators inspect another job", async () => {
     vi.spyOn(api, "workflowJobs").mockResolvedValue([
       job({ log: "Installing dependencies\nauthorization denied\n", error: "command failed: exit status 1" }),

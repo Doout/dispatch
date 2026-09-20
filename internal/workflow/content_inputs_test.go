@@ -250,6 +250,100 @@ func TestSourcePathValidationAndConservativeMatching(t *testing.T) {
 	}
 }
 
+func TestHelmPathsAreInferredWithoutChangingJobCommitSemantics(t *testing.T) {
+	spec := ApplicationSpec{
+		Jobs:        map[string]JobSpec{"build": {RunFrom: "service", Sources: []string{"preview-config"}, Run: "build", Reuse: "onInputMatch"}},
+		Deployments: map[string]DeploymentSpec{"app": {Helm: HelmDeploymentSpec{SourceRef: "gitops", ChartPath: "charts/app", ValuesFiles: []HelmValuesFile{{SourceRef: "gitops", Path: "values/shared.yaml"}, {SourceRef: "preview-config", Path: "values/slot.yaml"}, {SourceRef: "values", Path: "slot.yaml"}}}}},
+	}
+	paths := applicationInputPaths(spec)
+	if !reflect.DeepEqual(paths["gitops"], []string{"charts/app", "values/shared.yaml"}) || !reflect.DeepEqual(paths["values"], []string{"slot.yaml"}) {
+		t.Fatal("Helm-only dependencies were not inferred", paths)
+	}
+	for _, alias := range []string{"service", "preview-config"} {
+		if _, ok := paths[alias]; ok {
+			t.Fatal("unscoped job became content matched", alias)
+		}
+	}
+	spec.Finally = map[string]JobSpec{"cleanup": {RunFrom: "gitops", Run: "cleanup"}}
+	if _, ok := applicationInputPaths(spec)["gitops"]; ok {
+		t.Fatal("unscoped finally job became content matched")
+	}
+	spec.Finally = nil
+	deployment := spec.Deployments["app"]
+	deployment.Helm.Values = map[string]any{"sourceRevision": "{{ sources.gitops.commit }}"}
+	spec.Deployments["app"] = deployment
+	if _, ok := applicationInputPaths(spec)["gitops"]; ok {
+		t.Fatal("rendered commit-dependent value became content matched")
+	}
+}
+
+func TestHelmOnlyContentSkipsUnrelatedCommitsAndTracksChartAndValues(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+	env := append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.test", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.test")
+	if err := runGit(ctx, env, "init", "--initial-branch=main", repo); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, value string) {
+		t.Helper()
+		full := filepath.Join(repo, "workspace", path)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func() string {
+		t.Helper()
+		if err := runGit(ctx, env, "-C", repo, "add", "."); err != nil {
+			t.Fatal(err)
+		}
+		if err := runGit(ctx, env, "-C", repo, "commit", "-m", "Update fixture"); err != nil {
+			t.Fatal(err)
+		}
+		return gitOutput(t, repo, "rev-parse", "HEAD")
+	}
+	write("charts/app/templates/deployment.yaml", "image: first")
+	write("values/common.yaml", "replicas: 1")
+	write("values/slot.yaml", "name: slot")
+	first := commit()
+	spec := ApplicationSpec{Deployments: map[string]DeploymentSpec{"app": {Helm: HelmDeploymentSpec{SourceRef: "config", ChartPath: "charts/app", ValuesFiles: []HelmValuesFile{{SourceRef: "config", Path: "values/common.yaml"}, {SourceRef: "config", Path: "values/slot.yaml"}}}}}}
+	paths := applicationInputPaths(spec)["config"]
+	cache := newRepositoryCache(t.TempDir())
+	hash := func(sha string) core.WorkflowSourceRevision {
+		t.Helper()
+		hashes, err := cache.contentHashes(ctx, repo, "fixture", "main", sha, "workspace", paths, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return core.WorkflowSourceRevision{Alias: "config", Repository: repo, Branch: "main", CommitSHA: sha, Path: "workspace", ContentHashes: hashes}
+	}
+	baseline := hash(first)
+	write("values/another-slot.yaml", "name: another")
+	unrelated := hash(commit())
+	if !sameSourceInput(baseline, unrelated) {
+		t.Fatal("unrelated Helm-only repository commit invalidated deployment")
+	}
+	write("charts/app/templates/deployment.yaml", "image: second")
+	chart := hash(commit())
+	if sameSourceInput(unrelated, chart) {
+		t.Fatal("chart template change was ignored")
+	}
+	write("values/common.yaml", "replicas: 2")
+	if sameSourceInput(chart, hash(commit())) {
+		t.Fatal("shared values change was ignored")
+	}
+	write("outside/template.yaml", "outside value")
+	if err := os.Symlink("../../../outside/template.yaml", filepath.Join(repo, "workspace", "charts/app/templates/shared.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	withSymlink := commit()
+	if _, err := cache.contentHashes(ctx, repo, "fixture", "main", withSymlink, "workspace", paths, env); !errors.Is(err, errSourceInputSymlink) {
+		t.Fatal("nested chart symlink was accepted as scoped content", err)
+	}
+}
+
 func TestAddingInputDeclarationsDoesNotChangeDeployment(t *testing.T) {
 	docs, err := Parse("app.yaml", []byte(`apiVersion: dispatch/v1alpha1
 kind: Application

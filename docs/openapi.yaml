@@ -1935,6 +1935,11 @@ paths:
   /workflow/resources:
     get:
       operationId: listWorkflowResources
+      description: >-
+        Project-filtered resources. An optional lastEvaluation contains the latest
+        still-valid unchanged Helm source check, including checkedAt, sources,
+        baselineRevisionId, and results. This observation creates no execution row;
+        private comparison digests and credential inputs are never returned.
       parameters:
         - { in: query, name: configSourceId, schema: { type: string } }
       responses:
@@ -1969,6 +1974,7 @@ paths:
   /workflow/resources/{resourceId}/runs:
     post:
       operationId: runWorkflowResource
+      description: Explicit manual run. Automatic Helm render suppression does not skip its deployments.
       parameters:
         - { in: path, name: resourceId, required: true, schema: { type: string } }
       responses:
@@ -1990,6 +1996,10 @@ paths:
   /workflow/revisions/{revisionId}/stages:
     get:
       operationId: listWorkflowStages
+      description: >-
+        Stage runs include optional deploymentResults. An unchanged result points
+        to the retained real deployment in deploymentIds; it creates no new
+        deployment, rewrites no snapshot, and does not refresh runtime health.
       parameters:
         - { in: path, name: revisionId, required: true, schema: { type: string } }
       responses:
@@ -3441,12 +3451,15 @@ components:
             message: { type: string }
             sourceId: { type: string }
             lastSyncedAt: { type: string, format: date-time }
+            lastEvaluatedAt: { type: string, format: date-time, description: Latest valid unchanged source evaluation; separate from runtime health observations. }
         revision:
           type: object
           properties:
             state: { type: string }
             applied: { type: string }
             observed: { type: string }
+            evaluatedCommit: { type: string, description: Chart commit evaluated as equivalent to the retained deployment. }
+            evaluatedAt: { type: string, format: date-time }
         drift:
           type: object
           properties:

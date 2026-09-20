@@ -87,11 +87,16 @@ func (s *Service) deployStage(ctx context.Context, resource core.WorkflowResourc
 	}
 	for _, name := range stage.Deploy {
 		deployment := document.Spec.Deployments[name]
-		id, err := s.deployHelm(ctx, resource, source, revision, stage, name, deployment, server)
+		id, unchanged, err := s.deployHelm(ctx, resource, source, revision, stage, name, deployment, server)
 		if err != nil {
 			return err
 		}
 		run.DeploymentIDs = append(run.DeploymentIDs, id)
+		result := core.WorkflowDeploymentResult{DeploymentName: name, AppID: managedAppID(resource.ID, name, stage.Name), DeploymentID: id, Outcome: "deployed", Reason: "Helm deployment completed.", CheckedAt: time.Now().UTC()}
+		if unchanged {
+			result.Outcome, result.Reason = "unchanged", "The effective Helm release is unchanged."
+		}
+		run.DeploymentResults = append(run.DeploymentResults, result)
 		if err := s.Store.UpdateWorkflowStageRun(ctx, *run); err != nil {
 			return err
 		}
@@ -140,18 +145,27 @@ func (s *Service) resolveTarget(ctx context.Context, ref string) (core.Server, e
 	return core.Server{}, fmt.Errorf("target %s was not found", ref)
 }
 
-func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, deploymentName string, spec DeploymentSpec, server core.Server) (string, error) {
+type preparedHelmDeployment struct {
+	app                   core.App
+	expectedAppSpecDigest string
+	bindings              []core.ServiceBinding
+	chart                 core.WorkflowSourceRevision
+	evidence              []string
+}
+
+func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, deploymentName string, spec DeploymentSpec, server core.Server) (preparedHelmDeployment, error) {
+	var prepared preparedHelmDeployment
 	bindings, err := s.effectiveServiceBindings(ctx, source.ProjectID, spec, stage)
 	if err != nil {
-		return "", err
+		return prepared, err
 	}
 	chart, ok := revision.Sources[spec.Helm.SourceRef]
 	if !ok {
-		return "", fmt.Errorf("chart source %s is missing", spec.Helm.SourceRef)
+		return prepared, fmt.Errorf("chart source %s is missing", spec.Helm.SourceRef)
 	}
 	values, evidence, err := s.deploymentValues(ctx, source, revision, stage, spec.Helm)
 	if err != nil {
-		return "", err
+		return prepared, err
 	}
 	bindingSources := map[string]string{}
 	for path, binding := range spec.Helm.Bindings {
@@ -159,10 +173,10 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 		jobName, outputName, _ := strings.Cut(binding.OutputRef, ".")
 		value, ok := revision.Outputs[jobName][outputName]
 		if !ok {
-			return "", fmt.Errorf("output %s is unavailable", binding.OutputRef)
+			return prepared, fmt.Errorf("output %s is unavailable", binding.OutputRef)
 		}
 		if err := setNestedValue(values, path, value); err != nil {
-			return "", err
+			return prepared, err
 		}
 	}
 	if len(bindingSources) > 0 {
@@ -171,18 +185,21 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 	}
 	valuesYAML, err := yaml.Marshal(values)
 	if err != nil {
-		return "", err
+		return prepared, err
 	}
 	repositoryURL, err := s.repositoryCloneURL(ctx, source, chart.Repository)
 	if err != nil {
-		return "", err
+		return prepared, err
 	}
 	appID := managedAppID(resource.ID, deploymentName, stage.Name)
 	app, err := s.Store.GetApp(ctx, appID)
+	expectedAppSpecDigest := ""
 	if errors.Is(err, store.ErrNotFound) {
 		app = core.App{ID: appID, ProjectID: source.ProjectID, CreatedAt: time.Now().UTC(), Generated: true}
 	} else if err != nil {
-		return "", err
+		return prepared, err
+	} else {
+		expectedAppSpecDigest = app.SpecDigest()
 	}
 	app.ServerID, app.Name, app.SourceRepo, app.Branch = server.ID, "managed-"+resource.Name+"-"+deploymentName+"-"+stage.Name, repositoryURL, chart.Branch
 	if source.GitHubAppID != "" {
@@ -190,7 +207,7 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 	} else {
 		secret, err := s.Store.GetSecret(ctx, source.CredentialSecretID)
 		if err != nil {
-			return "", err
+			return prepared, err
 		}
 		app.SourceAuthType, app.SourceCredentialID = deploy.SourceAuthGitHubToken, source.CredentialSecretID
 		if secret.Type == core.SecretTypeSSHPrivateKey {
@@ -208,30 +225,56 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 	app.BuildType, app.HelmChart, app.HelmValues, app.State = core.BuildTypeHelm, chartPath, string(valuesYAML), "ready"
 	app.HelmNamespace, err = renderRuntime(spec.Helm.Namespace, nil, revision.Sources, nil, &stage)
 	if err != nil {
-		return "", err
+		return prepared, err
 	}
 	app.HelmRelease, err = renderRuntime(spec.Helm.ReleaseName, nil, revision.Sources, nil, &stage)
 	if err != nil {
-		return "", err
+		return prepared, err
 	}
 	app.Domain = stage.URL
-	if _, getErr := s.Store.GetApp(ctx, appID); errors.Is(getErr, store.ErrNotFound) {
+	return preparedHelmDeployment{app: app, expectedAppSpecDigest: expectedAppSpecDigest, bindings: bindings, chart: chart, evidence: evidence}, nil
+}
+
+func automaticWorkflowTrigger(trigger string) bool {
+	return trigger == "configuration sync" || trigger == "github push" || trigger == "poll"
+}
+
+func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, deploymentName string, spec DeploymentSpec, server core.Server) (string, bool, error) {
+	prepared, err := s.prepareHelmDeployment(ctx, resource, source, revision, stage, deploymentName, spec, server)
+	if err != nil {
+		return "", false, err
+	}
+	app := prepared.app
+	if _, getErr := s.Store.GetApp(ctx, app.ID); errors.Is(getErr, store.ErrNotFound) {
 		err = s.Store.CreateApp(ctx, app)
+	} else if getErr != nil {
+		return "", false, getErr
 	} else {
 		err = s.Store.UpdateApp(ctx, app)
 	}
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	if err := s.Store.ReplaceAppServiceBindings(ctx, app.ID, bindings); err != nil {
-		return "", err
+	if err := s.Store.ReplaceAppServiceBindings(ctx, app.ID, prepared.bindings); err != nil {
+		return "", false, err
 	}
-	deployment, err := s.Deployments.Start(ctx, app.ID, chart.CommitSHA)
+	var deployment core.Deployment
+	var unchanged bool
+	if automaticWorkflowTrigger(revision.Trigger) {
+		deployment, unchanged, err = s.Deployments.StartIfChanged(ctx, app.ID, prepared.chart.CommitSHA)
+	} else {
+		deployment, err = s.Deployments.Start(ctx, app.ID, prepared.chart.CommitSHA)
+	}
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+	if unchanged {
+		// The retained deployment's logs, values provenance, and timestamps are
+		// immutable evidence of that deployment, not of this later evaluation.
+		return deployment.ID, true, nil
 	}
 	valueSources := map[string]string{}
-	for _, message := range evidence {
+	for _, message := range prepared.evidence {
 		if raw, ok := strings.CutPrefix(message, "Helm value sources: "); ok {
 			var layer map[string]string
 			if json.Unmarshal([]byte(raw), &layer) == nil {
@@ -242,17 +285,17 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 			continue
 		}
 		if err := s.Store.AppendDeploymentLog(ctx, core.DeploymentLog{DeploymentID: deployment.ID, Level: "info", Message: message, CreatedAt: time.Now().UTC()}); err != nil {
-			return deployment.ID, err
+			return deployment.ID, false, err
 		}
 	}
 	waitErr := s.waitDeployment(ctx, deployment.ID)
 	if saved, getErr := s.Store.GetDeployment(ctx, deployment.ID); getErr == nil && saved.Snapshot.TargetID != "" {
 		saved.Snapshot.ValueSources = valueSources
 		if err := s.Store.UpdateDeploymentSnapshot(ctx, deployment.ID, saved.Snapshot); err != nil && waitErr == nil {
-			return deployment.ID, err
+			return deployment.ID, false, err
 		}
 	}
-	return deployment.ID, waitErr
+	return deployment.ID, false, waitErr
 }
 
 func (s *Service) waitDeployment(ctx context.Context, id string) error {

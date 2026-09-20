@@ -61,6 +61,7 @@ export function ApplicationSync({ application, overview, onBack, compact = false
     <dl className="sync-metadata"><div><dt>Configuration</dt><dd>{status.configuration.message}{status.configuration.sourceId && <> Last sync: {date(status.configuration.lastSyncedAt)}.</>}</dd></div>
      <div><dt>Applied revision</dt><dd><code>{status.revision.applied || "Not deployed"}</code></dd></div>
      {status.revision.observed && <div><dt>Observed revision</dt><dd><code>{status.revision.observed}</code></dd></div>}
+     {(status.configuration.lastEvaluatedAt || status.revision.evaluatedAt) && <div><dt>Deployment input check</dt><dd>{date(status.configuration.lastEvaluatedAt || status.revision.evaluatedAt)}{status.revision.evaluatedCommit && <> · <code>{status.revision.evaluatedCommit.slice(0, 12)}</code></>}</dd></div>}
      <div><dt>Observation</dt><dd>Last check: {date(status.drift.checkedAt)} · Last successful check: {date(status.drift.lastSuccessfulCheckAt)} · {status.drift.location}</dd></div>
     </dl>
     {status.drift.healthMessage && <p className="sync-observation">{status.drift.healthMessage}</p>}

@@ -30,25 +30,26 @@ type ConfigSource struct {
 }
 
 type WorkflowResource struct {
-	ServiceIDs     []string  `json:"-"`
-	ID             string    `json:"id"`
-	ConfigSourceID string    `json:"configSourceId"`
-	APIVersion     string    `json:"apiVersion"`
-	Kind           string    `json:"kind"`
-	Name           string    `json:"name"`
-	Path           string    `json:"path"`
-	Document       string    `json:"document"`
-	SpecDigest     string    `json:"specDigest"`
-	ConfigSHA      string    `json:"configSha"`
-	Active         bool      `json:"active"`
-	State          string    `json:"state"`
-	LastError      string    `json:"lastError,omitempty"`
-	SourceCount    int       `json:"sourceCount"`
-	JobCount       int       `json:"jobCount"`
-	StageNames     []string  `json:"stageNames,omitempty"`
-	TargetRefs     []string  `json:"targetRefs,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	LastEvaluation *WorkflowEquivalence `json:"lastEvaluation,omitempty"`
+	ServiceIDs     []string             `json:"-"`
+	ID             string               `json:"id"`
+	ConfigSourceID string               `json:"configSourceId"`
+	APIVersion     string               `json:"apiVersion"`
+	Kind           string               `json:"kind"`
+	Name           string               `json:"name"`
+	Path           string               `json:"path"`
+	Document       string               `json:"document"`
+	SpecDigest     string               `json:"specDigest"`
+	ConfigSHA      string               `json:"configSha"`
+	Active         bool                 `json:"active"`
+	State          string               `json:"state"`
+	LastError      string               `json:"lastError,omitempty"`
+	SourceCount    int                  `json:"sourceCount"`
+	JobCount       int                  `json:"jobCount"`
+	StageNames     []string             `json:"stageNames,omitempty"`
+	TargetRefs     []string             `json:"targetRefs,omitempty"`
+	CreatedAt      time.Time            `json:"createdAt"`
+	UpdatedAt      time.Time            `json:"updatedAt"`
 }
 
 type WorkflowSourceRevision struct {
@@ -93,18 +94,19 @@ type WorkflowJobResult struct {
 }
 
 type WorkflowStageRun struct {
-	ID            string            `json:"id"`
-	RevisionID    string            `json:"revisionId"`
-	StageName     string            `json:"stageName"`
-	TargetRef     string            `json:"targetRef"`
-	State         string            `json:"state"`
-	Approval      string            `json:"approval"`
-	DeploymentIDs []string          `json:"deploymentIds,omitempty"`
-	CheckRuns     map[string]string `json:"checkRuns,omitempty"`
-	Error         string            `json:"error,omitempty"`
-	CreatedAt     time.Time         `json:"createdAt"`
-	StartedAt     *time.Time        `json:"startedAt,omitempty"`
-	FinishedAt    *time.Time        `json:"finishedAt,omitempty"`
+	DeploymentResults []WorkflowDeploymentResult `json:"deploymentResults,omitempty"`
+	ID                string                     `json:"id"`
+	RevisionID        string                     `json:"revisionId"`
+	StageName         string                     `json:"stageName"`
+	TargetRef         string                     `json:"targetRef"`
+	State             string                     `json:"state"`
+	Approval          string                     `json:"approval"`
+	DeploymentIDs     []string                   `json:"deploymentIds,omitempty"`
+	CheckRuns         map[string]string          `json:"checkRuns,omitempty"`
+	Error             string                     `json:"error,omitempty"`
+	CreatedAt         time.Time                  `json:"createdAt"`
+	StartedAt         *time.Time                 `json:"startedAt,omitempty"`
+	FinishedAt        *time.Time                 `json:"finishedAt,omitempty"`
 }
 
 type WorkflowEvent struct {
