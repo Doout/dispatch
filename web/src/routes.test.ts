@@ -58,6 +58,21 @@ describe("application routes", () => {
     expect(routePath({view: "analytics"})).toBe("/analytics");
   });
 
+  it("preserves Operations drilldowns and rejects unsupported sections and outcomes", () => {
+    const route = {view: "operations" as const, operationsFilters: {
+      section: "activity" as const, projectId: "team/project", query: "release & API",
+      outcome: "rejected" as const, actorId: "person", appId: "orders",
+      since: "2026-09-19T12:00:00Z", until: "2026-09-20T12:00:00Z",
+    }};
+    expect(readRoute(new URL(routePath(route), "https://dispatch.example"))).toEqual(route);
+    const ownership = {view: "operations" as const, operationsFilters: {section: "ownership" as const, unassigned: true}};
+    expect(readRoute(new URL(routePath(ownership), "https://dispatch.example"))).toEqual(ownership);
+    const assigned = {...ownership, operationsFilters: {...ownership.operationsFilters, unassigned: false}};
+    expect(readRoute(new URL(routePath(assigned), "https://dispatch.example"))).toEqual(assigned);
+    expect(readRoute({pathname: "/operations", search: "?section=invalid&outcome=failed&unassigned=no"})).toEqual({view: "operations"});
+    expect(routePath({view: "operations", operationsFilters: {section: "overview"}})).toBe("/operations");
+  });
+
   it("keeps the selected deployment stage in the URL", () => {
     const path = routePath({ view: "deployments", deploymentApplicationID: "checkout/app", deploymentStage: "quality gate" });
     const url = new URL(path, "https://dispatch.example");

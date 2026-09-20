@@ -3,6 +3,8 @@ export type ApplicationSection = "applications" | "templates" | "helm" | "groups
 export type EventSection = "rules" | "activity";
 export type DeploymentSection = "summary" | "topology" | "values" | "manifests" | "history";
 export type AnalyticsFilters = { days?: 7 | 30 | 90; projectId?: string; kind?: "deployment" | "workflow" | "job"; section?: "overview" | "data" };
+export type OperationsSection = "overview" | "activity" | "ownership" | "retention" | "backups" | "identity";
+export type OperationsFilters = { section?: OperationsSection; projectId?: string; query?: string; outcome?: "succeeded" | "rejected"; actorId?: string; action?: string; appId?: string; unassigned?: boolean; since?: string; until?: string };
 
 export type DeploymentFilters = { query?: string; project?: string; app?: string; environment?: string; target?: string; status?: string; revision?: string; completedFrom?: string; completedTo?: string; layout?: "board" | "list" | "compare"; pinned?: boolean };
 
@@ -14,6 +16,7 @@ export type AppRoute = {
   deploymentStage?: string;
   deploymentFilters?: DeploymentFilters;
   analyticsFilters?: AnalyticsFilters;
+  operationsFilters?: OperationsFilters;
   serverID?: string;
   applicationID?: string;
   configurationSourceID?: string;
@@ -44,6 +47,17 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
   }
   if (first === "events") return { view: "events", eventSection: segments[1] === "activity" ? "activity" : "rules" };
   if (first === "servers") return { view: "servers", serverID: segments[1] || undefined };
+  if (first === "operations") {
+    const params = new URLSearchParams(location.search);
+    const filters: OperationsFilters = {};
+    const section = params.get("section");
+    if (["activity", "ownership", "retention", "backups", "identity"].includes(section ?? "")) filters.section = section as OperationsSection;
+    for (const key of ["projectId", "actorId", "action", "appId", "since", "until"] as const) if (params.get(key)) filters[key] = params.get(key)!;
+    if (params.get("q")) filters.query = params.get("q")!;
+    if (params.get("outcome") === "succeeded" || params.get("outcome") === "rejected") filters.outcome = params.get("outcome") as OperationsFilters["outcome"];
+    if (["true", "false"].includes(params.get("unassigned") ?? "")) filters.unassigned = params.get("unassigned") === "true";
+    return {view: "operations", ...(Object.keys(filters).length ? {operationsFilters: filters} : {})};
+  }
   if (first === "analytics") {
     const params = new URLSearchParams(location.search);
     const filters: AnalyticsFilters = {};
@@ -69,6 +83,11 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
 }
 
 export function routePath(route: AppRoute) {
+  if (route.view === "operations") {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(route.operationsFilters ?? {})) if (value !== undefined && value !== "" && value !== "overview") params.set(key === "query" ? "q" : key, String(value));
+    return `/operations${params.size ? `?${params}` : ""}`;
+  }
   if (route.view === "analytics") {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(route.analyticsFilters ?? {})) if (value && value !== "overview") params.set(key, String(value));

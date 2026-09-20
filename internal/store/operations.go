@@ -15,36 +15,11 @@ func (s *SQLStore) AppendAuditEvent(ctx context.Context, e core.AuditEvent) erro
 	return err
 }
 func (s *SQLStore) ListAuditEvents(ctx context.Context, f core.AuditFilter) ([]core.AuditEvent, error) {
-	q := `SELECT id,actor_id,actor_name,impersonator_id,project_id,app_id,action,resource_id,outcome,created_at FROM audit_events WHERE 1=1`
-	args := []any{}
-	if f.ProjectIDs != nil {
-		q += ` AND project_id IN (`
-		for i, id := range f.ProjectIDs {
-			if i > 0 {
-				q += ","
-			}
-			q += "?"
-			args = append(args, id)
-		}
-		if len(f.ProjectIDs) == 0 {
-			q += "NULL"
-		}
-		q += ")"
-	}
-	for _, v := range []struct{ k, v string }{{"app_id", f.AppID}, {"actor_id", f.ActorID}, {"action", f.Action}} {
-		if v.v != "" {
-			q += " AND " + v.k + "=?"
-			args = append(args, v.v)
-		}
-	}
-	if f.Before != "" {
-		q += " AND id<?"
-		args = append(args, f.Before)
-	}
+	where, args := auditWhere(f)
 	if f.Limit < 1 || f.Limit > 200 {
 		f.Limit = 100
 	}
-	q += " ORDER BY id DESC LIMIT ?"
+	q := `SELECT id,actor_id,actor_name,impersonator_id,project_id,app_id,action,resource_id,outcome,created_at FROM audit_events WHERE ` + where + ` ORDER BY id DESC LIMIT ?`
 	args = append(args, f.Limit)
 	rows, err := s.db.QueryContext(ctx, s.q(q), args...)
 	if err != nil {
@@ -165,8 +140,19 @@ func (s *SQLStore) SaveRetentionPolicy(ctx context.Context, p core.RetentionPoli
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO retention_policies(project_id,payload) VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET payload=excluded.payload`), p.ProjectID, string(b))
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.lockRetentionProject(ctx, tx, p.ProjectID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO retention_policies(project_id,payload) VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET payload=excluded.payload`), p.ProjectID, string(b))
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *SQLStore) GetRetentionPolicy(ctx context.Context, id string) (core.RetentionPolicy, error) {
 	var b string
@@ -235,7 +221,27 @@ func (s *SQLStore) CheckSQLite(ctx context.Context) error {
 
 // Retention never removes a successful release, a baseline, an active run, or a run linked to a workflow/preview.
 // Retained runtime release history can still refer to that run's binding credentials.
+var ErrRetentionPolicyChanged = errors.New("retention policy changed after review")
+
 func (s *SQLStore) ApplyRetention(ctx context.Context, p core.RetentionPolicy, apply bool, now time.Time) (core.RetentionResult, error) {
+	return s.applyRetention(ctx, p, apply, now, false)
+}
+func (s *SQLStore) ApplyRetentionReviewed(ctx context.Context, p core.RetentionPolicy, apply bool, now time.Time) (core.RetentionResult, error) {
+	return s.applyRetention(ctx, p, apply, now, true)
+}
+func (s *SQLStore) lockRetentionProject(ctx context.Context, tx *changeTx, project string) error {
+	query := `SELECT id FROM projects WHERE id=?`
+	if s.postgres {
+		query += ` FOR UPDATE`
+	}
+	var id string
+	err := tx.QueryRowContext(ctx, s.q(query), project).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+func (s *SQLStore) applyRetention(ctx context.Context, p core.RetentionPolicy, apply bool, now time.Time, reviewed bool) (core.RetentionResult, error) {
 	out := core.RetentionResult{Applied: apply}
 	if p.LogDays < 1 || p.RunDays < 1 || p.KeepRuns < 1 {
 		return out, errors.New("retention limits must be positive")
@@ -245,6 +251,25 @@ func (s *SQLStore) ApplyRetention(ctx context.Context, p core.RetentionPolicy, a
 		return out, err
 	}
 	defer tx.Rollback()
+	if reviewed {
+		if err = s.lockRetentionProject(ctx, tx, p.ProjectID); err != nil {
+			return out, err
+		}
+		saved := core.RetentionPolicy{ProjectID: p.ProjectID, LogDays: 30, RunDays: 90, KeepRuns: 20}
+		var payload string
+		err = tx.QueryRowContext(ctx, s.q(`SELECT payload FROM retention_policies WHERE project_id=?`), p.ProjectID).Scan(&payload)
+		if err == nil {
+			if err = json.Unmarshal([]byte(payload), &saved); err != nil {
+				return out, err
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return out, err
+		}
+		if saved != p {
+			return out, ErrRetentionPolicyChanged
+		}
+	}
+
 	rows, err := tx.QueryContext(ctx, s.q(`SELECT d.id,d.app_id,d.state,d.created_at,
  CASE WHEN EXISTS(SELECT 1 FROM workflow_stage_runs w WHERE w.deployment_ids LIKE '%' || d.id || '%') OR EXISTS(SELECT 1 FROM preview_group_run_components p WHERE p.deployment_id=d.id) OR EXISTS(SELECT 1 FROM deployment_drift_baselines b WHERE b.deployment_id=d.id) THEN 1 ELSE 0 END
  FROM deployments d JOIN apps a ON a.id=d.app_id WHERE a.project_id=? ORDER BY d.created_at DESC,d.id DESC`), p.ProjectID)

@@ -1,0 +1,16 @@
+.service-impact { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--rule); }
+.service-impact p { font-size: 13px; line-height: 1.5; }
+.service-impact .operations-inline-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.service-impact .operations-inline-heading span { font-size: 12px; color: var(--muted); }
+.service-impact .operations-inline-heading h3 { margin: 0; font-size: 14px; }
+.service-impact .operations-table-scroll { overflow-x: auto; }
+.service-impact .operations-table-scroll table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.service-impact .operations-table-scroll th, .service-impact .operations-table-scroll td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.service-impact .operations-table-scroll th { font-size: 12px; color: var(--muted); font-weight: 500; }
+.service-impact .operations-table-scroll small { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
+.service-impact .operations-success, .service-impact .operations-warning { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.service-impact .operations-success { color: var(--green); }
+.service-impact .operations-warning { color: var(--amber); }
+.service-impact .operations-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.service-impact .operations-actions p { flex-basis: 100%; margin: 0; }
+@media(max-width: 600px) { .service-impact .operations-table-scroll th, .service-impact .operations-table-scroll td { padding: 8px; } }
