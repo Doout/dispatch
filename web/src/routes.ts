@@ -1,7 +1,9 @@
-export type View = "analytics" | "deployments" | "applications" | "events" | "projects" | "servers" | "services" | "secrets" | "connections" | "access";
+export type View = "operations" | "analytics" | "deployments" | "applications" | "events" | "projects" | "servers" | "services" | "secrets" | "connections" | "access";
 export type ApplicationSection = "applications" | "templates" | "helm" | "groups";
 export type EventSection = "rules" | "activity";
 export type DeploymentSection = "summary" | "topology" | "values" | "manifests" | "history";
+
+export type DeploymentFilters = { query?: string; project?: string; app?: string; environment?: string; target?: string; status?: string; revision?: string; layout?: "board" | "list" | "compare"; pinned?: boolean };
 
 export type AppRoute = {
   view: View;
@@ -9,6 +11,7 @@ export type AppRoute = {
   deploymentSection?: DeploymentSection;
   deploymentApplicationID?: string;
   deploymentStage?: string;
+  deploymentFilters?: DeploymentFilters;
   serverID?: string;
   applicationID?: string;
   configurationSourceID?: string;
@@ -16,7 +19,7 @@ export type AppRoute = {
   eventSection?: EventSection;
 };
 
-const views = new Set<View>(["analytics","deployments", "applications", "events", "projects", "servers", "services", "secrets", "connections", "access"]);
+const views = new Set<View>(["operations", "analytics","deployments", "applications", "events", "projects", "servers", "services", "secrets", "connections", "access"]);
 
 export function readRoute(location: Pick<Location, "pathname" | "search"> = window.location): AppRoute {
   const segments = location.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
@@ -26,6 +29,7 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
     return {
       view: "deployments",
       deploymentID: segments[1] || undefined,
+      ...(!segments[1] && ["q", "project", "app", "environment", "target", "status", "revision", "layout", "pinned"].some(key => params.has(key)) ? { deploymentFilters: readDeploymentFilters(params) } : {}),
       ...(segments[2] === "topology" ? { deploymentSection: "topology" as const } : segments[2] === "values" ? { deploymentSection: "values" as const } : segments[2] === "history" ? { deploymentSection: "history" as const } : segments[2] === "manifests" ? { deploymentSection: "manifests" as const } : {}),
       ...(!segments[1] && params.get("application") ? { deploymentApplicationID: params.get("application") || undefined } : {}),
       ...(!segments[1] && params.get("stage") ? { deploymentStage: params.get("stage") || undefined } : {}),
@@ -57,6 +61,8 @@ export function routePath(route: AppRoute) {
     const params = new URLSearchParams();
     if (route.deploymentApplicationID) params.set("application", route.deploymentApplicationID);
     if (route.deploymentStage) params.set("stage", route.deploymentStage);
+    const filters = route.deploymentFilters;
+    if (filters) for (const [key, value] of Object.entries(filters)) if (value && value !== "board") params.set(key === "query" ? "q" : key, String(value));
     return `/deployments${params.size ? `?${params.toString()}` : ""}`;
   }
   if (route.view === "applications") {
@@ -86,4 +92,13 @@ function applicationSectionFromPath(value?: string): ApplicationSection {
 
 export function shouldHandleNavigation(event: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }) {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
+function readDeploymentFilters(params: URLSearchParams): DeploymentFilters {
+ const result: DeploymentFilters = {};
+ for (const key of ["project", "app", "environment", "target", "status", "revision"] as const) if (params.get(key)) result[key] = params.get(key)!;
+ if(params.get("q")) result.query=params.get("q")!;
+ if(params.get("layout")==="list"||params.get("layout")==="compare") result.layout=params.get("layout") as "list"|"compare";
+ if(params.get("pinned")==="true") result.pinned=true;
+ return result;
 }

@@ -1,3 +1,9 @@
+import { releaseClient, type ReleasePreview } from "./deployments/releaseClient";
+import { OperationsPage } from "./OperationsPage";
+import { ReleaseTools, PromotionWorkspace } from "./deployments/ReleaseTools";
+import { DeploymentCatalogProvider, DeploymentIdentity, catalogOverview, useDeploymentCatalog } from "./deployments/DeploymentCatalog";
+import { DeploymentWorkspace } from "./deployments/DeploymentWorkspace";
+import { NavigationShortcuts } from "./deployments/NavigationShortcuts";
 import { DeploymentHistory } from "./deployments/DeploymentHistory";
 import { RuntimeSyncDisclosure } from "./ApplicationSync";
 import { AnalyticsPage } from "./AnalyticsPage";
@@ -42,6 +48,7 @@ import {
   UserSwitch,
   UsersThree,
   X,
+  Wrench,
 } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
@@ -72,6 +79,7 @@ import { readSecretTextFile } from "./fileUploads";
 import {
   AppRoute,
   DeploymentSection,
+  DeploymentFilters,
   EventSection,
   readRoute,
   routePath,
@@ -474,7 +482,7 @@ export default function DispatchApp() {
     );
 
   return (
-    <div className="shell">
+    <DeploymentCatalogProvider key={overview?.identity?.id ?? "anonymous"} overview={overview} onNavigate={navigateRoute}><div className="shell">
       <a className="skip-link" href="#page-content">
         Skip to content
       </a>
@@ -504,6 +512,7 @@ export default function DispatchApp() {
             </div>
           </div>
           <div className="workspace-location"><span>Workspace</span><span aria-hidden="true">/</span><strong>{pageTitles[view]}</strong></div>
+          {overview && <NavigationShortcuts overview={overview} route={route} onNavigate={navigateRoute} />}
           {overview?.identity && (
             <AccountMenu
               identity={overview.identity}
@@ -542,6 +551,7 @@ export default function DispatchApp() {
                 overview={overview}
                 deployment={routeDeployment}
                 section={route.deploymentSection ?? "summary"}
+                onOpenDeployment={id => navigateRoute({ view: "deployments", deploymentID: id })}
                 onSelectDeployment={async id => {
                   if (id === routeDeployment.id) return;
                   if (!overview.deployments.some(item => item.id === id) && !historicalDeployments[`${overview.identity?.id ?? ""}:${id}`]) {
@@ -600,6 +610,9 @@ export default function DispatchApp() {
             !route.deploymentID && (
               <DeploymentsPage
                 overview={overview}
+                onChanged={() => load(true)}
+                filters={route.deploymentFilters}
+                onFilters={filters => navigateRoute({ ...route, deploymentFilters: filters }, { replace: true, preserveScroll: true })}
                 selectedApplicationID={route.deploymentApplicationID}
                 selectedStageName={route.deploymentStage}
                 onSelectStage={(applicationID, stageName) =>
@@ -608,12 +621,13 @@ export default function DispatchApp() {
                       view: "deployments",
                       deploymentApplicationID: applicationID,
                       deploymentStage: stageName,
+                      deploymentFilters: route.deploymentFilters,
                     },
                     { replace: true, preserveScroll: true },
                   )
                 }
-                onSelect={(id) => navigateRoute(
-                  { view: "deployments", deploymentID: id },
+                onSelect={(id, section) => navigateRoute(
+                  { view: "deployments", deploymentID: id, deploymentSection: section },
                   { state: { deploymentReturnDepth: 1 } },
                 )}
                 onOpen={(next) => {
@@ -661,6 +675,7 @@ export default function DispatchApp() {
                   configurationSourceID: source.id,
                 })
               }
+              onOpenDeployment={id => navigateRoute({ view: "deployments", deploymentID: id })}
               onOpenWorkflowStage={(applicationID, stageName) =>
                 navigateRoute({
                   view: "deployments",
@@ -727,6 +742,7 @@ export default function DispatchApp() {
                 }
               />
             )}
+          {!loading && overview && view === "operations" && <OperationsPage overview={overview} />}
           {!loading && overview && view === "analytics" && <AnalyticsPage key={overview.identity?.id} />}
           {!loading && overview && view === "servers" && !route.serverID && (
             <ServersPage
@@ -877,7 +893,7 @@ export default function DispatchApp() {
           onClose={() => setViewingAccountProfile(false)}
         />
       )}
-    </div>
+    </div></DeploymentCatalogProvider>
   );
 }
 
@@ -937,6 +953,7 @@ export function Nav({
           icon: <AppWindow size={18} />,
           count: overview?.apps.length ?? 0,
         },
+        { id: "operations", label: "Operations", icon: <Wrench size={18} />, count: 0 },
         { id: "analytics", label: "Analytics", icon: <ChartBar size={18} />, count: 0 },
         {
           id: "events",
@@ -1163,7 +1180,10 @@ export function ImpersonationBanner({
 }
 
 export function DeploymentsPage({
-  overview,
+  overview: sourceOverview,
+  filters: controlledFilters,
+  onFilters,
+  onChanged,
   selectedApplicationID,
   selectedStageName,
   onSelectStage,
@@ -1172,13 +1192,21 @@ export function DeploymentsPage({
   onCreateApplication,
 }: {
   overview: Overview;
+  filters?: DeploymentFilters;
+  onFilters?: (filters: DeploymentFilters) => void;
+  onChanged?: () => void | Promise<void>;
   selectedApplicationID?: string;
   selectedStageName?: string;
   onSelectStage?: (applicationID?: string, stageName?: string) => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, section?: DeploymentSection) => void;
   onOpen: (dialog: Dialog) => void;
   onCreateApplication: () => void;
 }) {
+  const catalog = useDeploymentCatalog();
+  const overview = useMemo(() => catalogOverview(sourceOverview, catalog.items), [sourceOverview, catalog.items]);
+  const [localFilters, setLocalFilters] = useState<DeploymentFilters>({});
+  const filters = controlledFilters ?? localFilters;
+  const changeFilters = onFilters ?? setLocalFilters;
   const rails = useMemo(() => buildDeploymentRails(overview), [overview]);
   const runnableApps = overview.apps.filter(
     (app) =>
@@ -1213,7 +1241,14 @@ export function DeploymentsPage({
           <div className="danger"><dd>{rails.flatMap((rail) => rail.stages).filter((stage) => stage.tone === "danger").length}</dd><dt><i />Needs attention</dt></div>
         </dl>
       </section>}
-      <div className="deployment-workspace">
+      {overview.projects.map(project => {
+        const sourceIDs = new Set((overview.configSources ?? []).filter(source => source.projectId === project.id).map(source => source.id));
+        const resourceIDs = new Set((overview.workflowResources ?? []).filter(resource => sourceIDs.has(resource.configSourceId)).map(resource => resource.id));
+        const revisions = (overview.workflowRevisions ?? []).filter(revision => resourceIDs.has(revision.resourceId));
+        const revisionIDs = new Set(revisions.map(revision => revision.id));
+        return <PromotionWorkspace key={project.id} stages={(overview.workflowStageRuns ?? []).filter(stage => revisionIDs.has(stage.revisionId))} revisions={revisions} canApprove={canManageProject(overview, project.id, "stage.approve")} onRefresh={onChanged} />;
+      })}
+      <DeploymentWorkspace overview={overview} filters={filters} onFilters={changeFilters} onOpen={onSelect}>{visible => <div className="deployment-workspace">
         <section className="deployment-board" aria-label="Deployment activity">
           {rails.length === 0 && (
             <EmptyState
@@ -1229,6 +1264,7 @@ export function DeploymentsPage({
           {rails.length > 0 && (
             <DeploymentFocusRails
               overview={overview}
+              visibleItems={visible}
               selectedApplicationID={selectedApplicationID}
               selectedStageName={selectedStageName}
               onSelectStage={onSelectStage}
@@ -1236,7 +1272,7 @@ export function DeploymentsPage({
             />
           )}
         </section>
-      </div>
+      </div>}</DeploymentWorkspace>
     </div>
   );
 }
@@ -1247,6 +1283,7 @@ export function DeploymentDetailsPage({
   section = "summary",
   onSectionChange = () => undefined,
   onSelectDeployment,
+  onOpenDeployment,
   logs,
   logsLoading,
   logsError,
@@ -1259,6 +1296,7 @@ export function DeploymentDetailsPage({
   section?: DeploymentSection;
   onSectionChange?: (section: DeploymentSection) => void;
   onSelectDeployment?: (id: string) => void | Promise<void>;
+  onOpenDeployment?: (id: string) => void;
   logs: DeploymentLog[];
   logsLoading: boolean;
   logsError: string;
@@ -1280,6 +1318,7 @@ export function DeploymentDetailsPage({
           tone: "quiet",
         }}
       />
+      <DeploymentIdentity deployment={deployment} overview={overview} onNavigate={onOpenDeployment} />
       <nav
         className="application-sections deployment-sections"
         aria-label="Deployment details"
@@ -1332,6 +1371,7 @@ export function DeploymentDetailsPage({
         </section>
       )}
       {overview && deployment.app?.buildType === "helm" && <RuntimeSyncDisclosure key={`sync:${deployment.appId}`} application={deployment.app} overview={overview} />}
+      {overview && (section === "summary" || section === "history") && <ReleaseTools deployment={deployment} canDeploy={canManageProject(overview, deployment.app?.projectId ?? "", "deployment.run")} canConfigure={canManageProject(overview, deployment.app?.projectId ?? "", "project.configure")} onDeployment={run => onOpenDeployment?.(run.id)} onSelectDeployment={onOpenDeployment ?? onSelectDeployment} />}
       {section === "history" && <DeploymentHistory key={`history:${deployment.appId}`} deployment={deployment} onSelectDeployment={onSelectDeployment} />}
       {section !== "summary" && section !== "history" && (
         <DeploymentRuntime deployment={deployment} section={section} />
@@ -3688,7 +3728,7 @@ function Evidence({
   );
 }
 
-function DeployForm({
+export function DeployForm({
   apps,
   initialAppID,
   onComplete,
@@ -3707,6 +3747,10 @@ function DeployForm({
   const [commit, setCommit] = useState("HEAD");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState<ReleasePreview>();
+  const [acknowledged, setAcknowledged] = useState(false);
+  const selectedConfiguration = JSON.stringify(apps.find(app => app.id === appID));
+  useEffect(() => { setPreview(undefined); setAcknowledged(false); }, [appID, commit, selectedConfiguration]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -3719,10 +3763,19 @@ function DeployForm({
           : app?.sourceRepo
             ? commit
             : "inline";
-      const created = await api.deploy(appID, revision);
+      if (!preview || !preview.ready) {
+        const result = await releaseClient.preview(appID, revision);
+        setPreview(result);
+        setAcknowledged(false);
+        return;
+      }
+      if (preview.checks.some(check => check.state === "unavailable") && !acknowledged) return;
+      if (!preview.review) { setError("Refresh the preview before deployment."); setPreview(undefined); return; }
+      const created = await api.deploy(appID, preview.revision || revision, preview.review);
       await onComplete(created.id);
     } catch (cause) {
       setError((cause as Error).message);
+      if ((cause as Error & { status?: number }).status === 409) { setPreview(undefined); setAcknowledged(false); }
     } finally {
       setBusy(false);
     }
@@ -3736,6 +3789,7 @@ function DeployForm({
       <label>
         <span>Application</span>
         <select
+          disabled={busy}
           value={appID}
           onChange={(event) => setAppID(event.target.value)}
         >
@@ -3755,6 +3809,7 @@ function DeployForm({
         <label>
           <span>Source revision</span>
           <input
+            disabled={busy}
             value={commit}
             onChange={(event) => setCommit(event.target.value)}
             placeholder="Branch, tag, or commit"
@@ -3763,6 +3818,7 @@ function DeployForm({
           />
         </label>
       )}
+      {preview && <section className="deploy-preview wide" aria-label="Deployment preview"><h3>{preview.ready ? "Review deployment" : "Validation needs attention"}</h3><p>{preview.target} · {preview.namespace || "Local runtime"}{preview.release ? ` · ${preview.release}` : ""}</p><code>{preview.revision}</code><ul>{preview.checks.map(check => <li key={check.name} className={check.state}><strong>{check.name}: {check.state}</strong><span>{check.message}</span></li>)}</ul>{preview.bindings?.length > 0 && <p>Services: {preview.bindings.map(binding => `${binding.alias} (r${binding.revision})`).join(", ")}</p>}{preview.comparison?.available && <details><summary>{preview.comparison.changes.length} saved input changes</summary><div className="history-diff"><table><thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead><tbody>{preview.comparison.changes.map(change => <tr key={change.path}><td><code>{change.path}</code></td><td><code>{typeof change.before === "string" ? change.before : JSON.stringify(change.before)}</code></td><td><code>{typeof change.after === "string" ? change.after : JSON.stringify(change.after)}</code></td></tr>)}</tbody></table></div></details>}<p>{preview.message}</p>{preview.ready && preview.checks.some(check => check.state === "unavailable") && <label className="deploy-preview-acknowledge"><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the checks that can only run during deployment.</label>}<button type="button" className="quiet-button" disabled={busy} onClick={() => {setPreview(undefined);setAcknowledged(false);}}>Change inputs</button></section>}
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -3772,8 +3828,8 @@ function DeployForm({
         <button type="button" className="quiet-button" onClick={onCancel}>
           Cancel
         </button>
-        <button className="primary-button" disabled={busy || !appID}>
-          {busy ? "Starting deployment..." : "Deploy"}
+        <button className="primary-button" disabled={busy || !appID || !!(preview?.ready && preview.checks.some(check => check.state === "unavailable") && !acknowledged)}>
+          {busy ? preview?.ready ? "Starting deployment…" : "Checking deployment…" : preview?.ready ? "Deploy reviewed revision" : preview ? "Retry preview" : "Preview deployment"}
         </button>
       </div>
     </form>

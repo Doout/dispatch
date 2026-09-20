@@ -22,6 +22,7 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   api,
+  request,
   GitHubAppConnection,
   GitHubAppInstallation,
   GitHubRepository,
@@ -546,12 +547,13 @@ function PrivateNetworksSection({ networks, stores, githubApps, creating, editin
 	const [driver, setDriver] = useState<"dispatch_agent" | "laneway_connector">(() => editing?.driver === "laneway_connector" ? "laneway_connector" : initialDriver);
 	const [authority, setAuthority] = useState(() => editing?.config.authority ?? "");
 	const [routePrefix, setRoutePrefix] = useState(() => editing?.config.route ?? "");
-	const [installNode, setInstallNode] = useState<PrivateNetwork | null>(null);
+	const [installNode, setInstallNode] = useState<PrivateNetwork | null>(() => editing?.enrollmentToken ? editing : null);
 	const [bootstrapCommand, setBootstrapCommand] = useState("");
 	const [docker, setDocker] = useState(true);
 	const [copied, setCopied] = useState("");
 	const [busyID, setBusyID] = useState("");
 	const [confirmDelete, setConfirmDelete] = useState("");
+ const [credentialAction, setCredentialAction] = useState<{ network: PrivateNetwork; action: "rotate" | "revoke" } | null>(null);
 	const [error, setError] = useState("");
 
 	function open(network?: PrivateNetwork, install = false) {
@@ -593,13 +595,17 @@ function PrivateNetworksSection({ networks, stores, githubApps, creating, editin
 		}
 	}
 
-	async function rotate(network: PrivateNetwork) {
+	async function revoke(network: PrivateNetwork) {
+ setBusyID(network.id);setError("");try { await request(`/api/v1/private-networks/${encodeURIComponent(network.id)}/revoke`,{method:"POST"});setCredentialAction(null);await onChanged(); }catch(cause){setError((cause as Error).message);}finally{setBusyID("");}
+ }
+ async function rotate(network: PrivateNetwork) {
 		setBusyID(network.id);
 		setError("");
 		try {
 			const saved = await api.rotatePrivateNetworkToken(network.id);
+ setCredentialAction(null);
 			setInstallNode(saved);
-			onEditingChange(network);
+			onEditingChange(saved);
 			onCreatingChange(true);
 			setName(network.name);
 			setDriver("dispatch_agent");
@@ -670,7 +676,7 @@ function PrivateNetworksSection({ networks, stores, githubApps, creating, editin
 				<div className="edge-install-summary"><span><PlugsConnected size={19} /></span><div><strong>{installNode.name}</strong><small>Waiting for its first outbound connection</small></div></div>
 				<label className="edge-runtime"><input type="checkbox" checked={docker} onChange={(event) => setDocker(event.target.checked)} /><span><strong>Run with Docker Compose</strong><small>Turn off to install a systemd service.</small></span></label>
 				<div className="edge-command"><code>{installCommand}</code><button type="button" className="quiet-button" onClick={() => void copy(installCommand, "edge")}><Copy size={16} />{copied === "edge" ? "Copied" : "Copy command"}</button></div>
-				<div className="edge-install-note"><LockSimple size={16} /><span>The node connects to Dispatch. No inbound port is required.</span></div>
+				<div className="edge-install-note"><LockSimple size={16} /><span>The enrollment token expires in 15 minutes and works once. The node keeps a private identity key and renews ten-minute sessions over HTTPS. No inbound port is required.</span></div>
 				<div className="connection-actions"><button type="button" className="primary-button" onClick={close}>Done</button></div>
 			</div> : <form className="private-network-form" onSubmit={save} aria-busy={!!busyID}>
 				{!editing && <div className="connection-method network-method" role="radiogroup" aria-label="Private network type">
@@ -688,10 +694,11 @@ function PrivateNetworksSection({ networks, stores, githubApps, creating, editin
 	return <section className="connection-provider-group private-network-section" aria-labelledby="private-networks-title">
 		<header className="connection-provider-header"><span className="connection-provider-icon network"><PlugsConnected size={19} /></span><div><h2 id="private-networks-title">Private network</h2><span>Edge workers and controller access</span></div><strong>{networks.length}</strong></header>
 		{error && <p className="form-error connection-group-error" role="alert">{error}</p>}
+ {credentialAction && <section className="inline-confirm" role="group" aria-label="Confirm node credential change"><span>{credentialAction.action === "rotate" ? `Re-enroll ${credentialAction.network.name}? Its current credentials will stop working until the new enrollment completes.` : `Revoke ${credentialAction.network.name}? It will stop receiving private requests immediately.`}</span><button type="button" disabled={!!busyID} onClick={() => setCredentialAction(null)}>Cancel</button><button type="button" className="danger" disabled={!!busyID} onClick={() => void (credentialAction.action === "rotate" ? rotate(credentialAction.network) : revoke(credentialAction.network))}>{credentialAction.action === "rotate" ? "Create enrollment token" : "Revoke credentials"}</button></section>}
 		{networks.length ? <div className="resource-table-wrap"><table className="resource-table private-network-table"><thead><tr><th>Name</th><th>Role</th><th>Endpoint</th><th>Connections</th><th>Status</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead><tbody>{networks.map((network) => {
 			const usage = stores.filter((store) => store.config.privateNetworkId === network.id).length + githubApps.filter((connection) => connection.privateNetworkId === network.id).length;
 			const connector = network.driver === "laneway_connector";
-			return <tr key={network.id}><td data-label="Name"><strong>{network.name}</strong></td><td data-label="Role">{connector ? "Dispatch Connector" : network.driver === "dispatch_agent" ? "Edge worker" : "Laneway client"}</td><td data-label="Endpoint"><span className="connection">{connector ? network.config.authority : network.driver === "dispatch_agent" ? relative(network.details.lastSeenAt) : network.details.path || "None"}</span></td><td data-label="Connections">{connector ? "Controller access" : usage}</td><td data-label="Status"><StatusLabel state={network.state} /></td><td className="row-actions">{confirmDelete === network.id ? <div className="inline-confirm"><span>Remove?</span><button type="button" onClick={() => setConfirmDelete("")}>Cancel</button><button type="button" className="danger" disabled={busyID === network.id} onClick={() => void remove(network)}>Remove</button></div> : <div className="table-icon-actions"><TableIconAction label={`Verify ${network.name}`} tooltip="Verify" onClick={() => void verify(network)}><ArrowClockwise size={16} /></TableIconAction>{network.driver === "dispatch_agent" && <TableIconAction label={`Create install token for ${network.name}`} tooltip="Install" onClick={() => void rotate(network)}><Key size={16} /></TableIconAction>}{connector && !network.config.containerName && <TableIconAction label={`Install ${network.name}`} tooltip="Install" onClick={() => open(network, true)}><Key size={16} /></TableIconAction>}<TableIconAction label={`Edit ${network.name}`} tooltip="Edit" onClick={() => open(network)}><PencilSimple size={16} /></TableIconAction><TableIconAction label={`Delete ${network.name}`} tooltip="Delete" danger onClick={() => setConfirmDelete(network.id)}><Trash size={16} /></TableIconAction></div>}</td></tr>;
+			return <tr key={network.id}><td data-label="Name"><strong>{network.name}</strong></td><td data-label="Role">{connector ? "Dispatch Connector" : network.driver === "dispatch_agent" ? "Edge worker" : "Laneway client"}</td><td data-label="Endpoint"><span className="connection">{connector ? network.config.authority : network.driver === "dispatch_agent" ? relative(network.details.lastSeenAt) : network.details.path || "None"}</span></td><td data-label="Connections">{connector ? "Controller access" : usage}</td><td data-label="Status"><StatusLabel state={network.state} />{network.driver === "dispatch_agent" && <small title={network.details.keyFingerprint ? `Identity ${network.details.keyFingerprint}` : undefined}>{network.details.credentialMode === "short_session" ? "Renewable session" : network.details.credentialMode === "revoked" ? "Credentials revoked" : "Legacy token · re-enroll to upgrade"}</small>}</td><td className="row-actions">{confirmDelete === network.id ? <div className="inline-confirm"><span>Remove?</span><button type="button" onClick={() => setConfirmDelete("")}>Cancel</button><button type="button" className="danger" disabled={busyID === network.id} onClick={() => void remove(network)}>Remove</button></div> : <div className="table-icon-actions"><TableIconAction label={`Verify ${network.name}`} tooltip="Verify" onClick={() => void verify(network)}><ArrowClockwise size={16} /></TableIconAction>{network.driver === "dispatch_agent" && <TableIconAction label={`Create install token for ${network.name}`} tooltip="Install" onClick={() => setCredentialAction({network,action:"rotate"})}><Key size={16} /></TableIconAction>}{network.driver === "dispatch_agent" && network.state !== "revoked" && <TableIconAction label={`Revoke credentials for ${network.name}`} tooltip="Revoke credentials" danger onClick={() => setCredentialAction({network,action:"revoke"})}><LockSimple size={16} /></TableIconAction>}{connector && !network.config.containerName && <TableIconAction label={`Install ${network.name}`} tooltip="Install" onClick={() => open(network, true)}><Key size={16} /></TableIconAction>}<TableIconAction label={`Edit ${network.name}`} tooltip="Edit" onClick={() => open(network)}><PencilSimple size={16} /></TableIconAction><TableIconAction label={`Delete ${network.name}`} tooltip="Delete" danger onClick={() => setConfirmDelete(network.id)}><Trash size={16} /></TableIconAction></div>}</td></tr>;
 		})}</tbody></table></div> : <div className="connection-provider-empty">No private network connections</div>}
 	</section>;
 }

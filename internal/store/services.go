@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +16,7 @@ import (
 
 var ErrServiceInUse = errors.New("service is in use")
 var ErrServiceConflict = errors.New("service was changed; reload and retry")
+var ErrDeploymentReviewChanged = errors.New("deployment inputs changed after review; refresh before deploying")
 
 type storedService struct {
 	CapturedSecrets map[string]capturedSecret `json:"capturedSecrets,omitempty"`
@@ -237,6 +236,23 @@ type storedCapture struct {
 
 func (s *SQLStore) captureServiceBindings(ctx context.Context, tx *changeTx, d core.Deployment) error {
 	// Lock the app before reading its bindings, matching ReplaceAppServiceBindings.
+	// Validating the prefetched execution inputs inside this lock prevents a
+	// concurrent application edit from mixing old runtime inputs and new bindings.
+	if d.Acceptance != nil {
+		q := `SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
+   dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
+   helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template FROM apps WHERE id=?`
+		if s.postgres {
+			q += ` FOR UPDATE`
+		}
+		current, err := scanApp(tx.QueryRowContext(ctx, s.q(q), d.AppID))
+		if err != nil {
+			return err
+		}
+		if current.ProjectID != d.Acceptance.ProjectID || current.SpecDigest() != d.Acceptance.AppSpecDigest || current.Name != d.ExecutionAppName || current.Template != d.ExecutionTemplate || current.Generated != d.ExecutionGenerated {
+			return ErrDeploymentReviewChanged
+		}
+	}
 	var project, build string
 	query := `SELECT project_id,build_type FROM apps WHERE id=?`
 	if s.postgres {
@@ -268,6 +284,9 @@ func (s *SQLStore) captureServiceBindings(ctx context.Context, tx *changeTx, d c
 	if err != nil {
 		return err
 	}
+	if d.Acceptance != nil && d.Acceptance.BindingsDigest != "" && core.ServiceBindingConfigurationDigest(bindings) != d.Acceptance.BindingsDigest {
+		return ErrDeploymentReviewChanged
+	}
 	services := map[string]core.Service{}
 	for _, b := range bindings {
 		var data string
@@ -295,7 +314,15 @@ func (s *SQLStore) captureServiceBindings(ctx context.Context, tx *changeTx, d c
 				item.Fields[key] = field
 			}
 		}
+		if d.Acceptance != nil && d.Acceptance.ServiceRevisions != nil {
+			if expected, ok := d.Acceptance.ServiceRevisions[item.ID]; !ok || expected != item.Revision {
+				return ErrDeploymentReviewChanged
+			}
+		}
 		services[item.ID] = item
+	}
+	if d.Acceptance != nil && d.Acceptance.ServiceRevisions != nil && len(services) != len(d.Acceptance.ServiceRevisions) {
+		return ErrDeploymentReviewChanged
 	}
 	if err = serviceconn.ValidateBindings(bindings, core.BuildType(build), services); err != nil {
 		return err
@@ -310,12 +337,8 @@ func (s *SQLStore) captureServiceBindings(ctx context.Context, tx *changeTx, d c
 	}
 	if len(bindings) > 0 {
 		d.Snapshot.ServiceBindings = evidence
-		digest := sha256.Sum256([]byte(jsonText(struct {
-			App      string
-			Bindings []core.ServiceBinding
-			Services []core.AppliedServiceBinding
-		}{d.SpecDigest, bindings, evidence})))
-		_, err = tx.ExecContext(ctx, s.q(`UPDATE deployments SET spec_digest=?,spec_snapshot=? WHERE id=?`), "sha256:"+hex.EncodeToString(digest[:]), jsonText(d.Snapshot), d.ID)
+		digest := core.BoundDeploymentSpecDigest(d.SpecDigest, bindings, evidence)
+		_, err = tx.ExecContext(ctx, s.q(`UPDATE deployments SET spec_digest=?,spec_snapshot=? WHERE id=?`), digest, jsonText(d.Snapshot), d.ID)
 		return err
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/observe"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"net/http"
@@ -23,14 +24,17 @@ type revisionStatus struct {
 	Observed string `json:"observed,omitempty"`
 }
 type applicationSync struct {
-	AppID            string             `json:"appId"`
-	DeploymentID     string             `json:"deploymentId,omitempty"`
-	Configuration    configurationSync  `json:"configuration"`
-	Revision         revisionStatus     `json:"revision"`
-	Drift            core.DriftCheck    `json:"drift"`
-	Supported        bool               `json:"supported"`
-	ReapplyAvailable bool               `json:"reapplyAvailable"`
-	Actions          []core.DriftAction `json:"actions"`
+	ObservationFreshness         string             `json:"observationFreshness,omitempty"`
+	ObservationChecking          bool               `json:"observationChecking,omitempty"`
+	ObservationStaleAfterSeconds int                `json:"observationStaleAfterSeconds,omitempty"`
+	AppID                        string             `json:"appId"`
+	DeploymentID                 string             `json:"deploymentId,omitempty"`
+	Configuration                configurationSync  `json:"configuration"`
+	Revision                     revisionStatus     `json:"revision"`
+	Drift                        core.DriftCheck    `json:"drift"`
+	Supported                    bool               `json:"supported"`
+	ReapplyAvailable             bool               `json:"reapplyAvailable"`
+	Actions                      []core.DriftAction `json:"actions"`
 }
 
 func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, error) {
@@ -39,6 +43,13 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 		return applicationSync{}, err
 	}
 	out := applicationSync{AppID: id, Configuration: configurationSync{State: "not_applicable", Message: "Application configuration is managed in Dispatch."}, Revision: revisionStatus{State: "not_deployed"}, Drift: core.DriftCheck{State: "unknown", Health: "unknown", Location: "Dispatch controller", Message: "No successful deployment is available.", Resources: []core.DriftResource{}}, Actions: []core.DriftAction{}}
+	if a.observations != nil {
+		if observation, e := a.observations.Status(ctx, id); e == nil {
+			out.ObservationFreshness = observation.Freshness
+			out.ObservationChecking = observation.Checking
+			out.ObservationStaleAfterSeconds = observation.Configuration.StaleAfterSeconds
+		}
+	}
 	server, err := a.store.GetServer(ctx, app.ServerID)
 	if err != nil {
 		return out, err
@@ -56,7 +67,11 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 	}
 	out.DeploymentID = d.ID
 	out.Revision = revisionStatus{State: "current", Applied: d.CommitSHA}
-	if d.SpecDigest != app.SpecDigest() {
+	matching, err := a.deploymentAppInputsMatch(ctx, app, d)
+	if err != nil {
+		return out, err
+	}
+	if !matching {
 		out.Revision.State = "redeployment_required"
 	}
 	if old, e := a.store.GetDriftCheck(ctx, id); e == nil && old.DeploymentID == d.ID {
@@ -187,8 +202,12 @@ func (a *API) checkApplicationDrift(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Unsupported target", "Runtime checks require a Helm application on Kubernetes or OpenShift.")
 		return
 	}
-	err = a.deploy.WithIdleApplication(r.Context(), id, func() error { _, err := a.drift.Check(r.Context(), id); return err })
-	if errors.Is(err, deploy.ErrDeploymentActive) {
+	if a.observations != nil {
+		_, err = a.observations.Check(r.Context(), id, "manual")
+	} else {
+		err = a.deploy.WithIdleApplication(r.Context(), id, func() error { _, err := a.drift.Check(r.Context(), id); return err })
+	}
+	if errors.Is(err, deploy.ErrDeploymentActive) || errors.Is(err, observe.ErrBusy) {
 		problem(w, http.StatusConflict, "Application busy", "Wait for the deployment or runtime operation to finish.")
 		return
 	}
@@ -223,7 +242,7 @@ func (a *API) reapplyApplication(w http.ResponseWriter, r *http.Request) {
 		_, err := a.drift.Reapply(r.Context(), id, input.DeploymentID, currentIdentity(r.Context()).ID)
 		return err
 	})
-	if errors.Is(err, deploy.ErrDeploymentActive) {
+	if errors.Is(err, deploy.ErrDeploymentActive) || errors.Is(err, observe.ErrBusy) {
 		problem(w, http.StatusConflict, "Application busy", "Wait for the deployment or runtime operation to finish.")
 		return
 	}

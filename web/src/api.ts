@@ -58,6 +58,7 @@ export type TeamMember = {
   createdAt: string;
 };
 export type RoleAssignment = {
+  expiresAt?: string;
   id: string;
   principalType: "user" | "team";
   principalId: string;
@@ -231,6 +232,7 @@ export type App = {
   state: string;
   createdAt: string;
 };
+export type DeploymentReview = { projectId: string; appSpecDigest: string; bindingsDigest: string; serviceRevisions: Record<string, number> };
 export type DeploymentState =
   | "queued"
   | "fetching"
@@ -742,7 +744,7 @@ export const setToken = (value: string) => {
   window.dispatchEvent(new Event("dispatch-auth-change"));
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const impersonatedUserID = token ? getImpersonatedUserID() : "";
   const response = await fetch(path, {
@@ -920,6 +922,7 @@ export const api = {
   deleteTeam: (id: string) =>
     request<void>(`/api/v1/teams/${id}`, { method: "DELETE" }),
   upsertRoleAssignment: (body: {
+    expiresAt?: string | null;
     principalType: RoleAssignment["principalType"];
     principalId: string;
     projectId: string;
@@ -948,10 +951,10 @@ export const api = {
     request<WorkflowTopology>(`/api/v1/servers/${id}/topology`, {
       cache: "no-store",
     }),
-  deploy: (appId: string, commitSha: string) =>
+  deploy: (appId: string, commitSha: string, review?: DeploymentReview) =>
     request<Deployment>(`/api/v1/apps/${appId}/deployments`, {
       method: "POST",
-      body: JSON.stringify({ commitSha }),
+      body: JSON.stringify({ commitSha, review }),
     }),
   cleanup: (appId: string) =>
     request<void>(`/api/v1/apps/${appId}/cleanup`, { method: "POST" }),

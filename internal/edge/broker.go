@@ -46,6 +46,7 @@ type HTTPResponse struct {
 }
 
 type LeasedJob struct {
+	Kind       string      `json:"kind"`
 	ID         string      `json:"id"`
 	LeaseToken string      `json:"leaseToken"`
 	Request    HTTPRequest `json:"request"`
@@ -160,7 +161,7 @@ func (b *Broker) Lease(ctx context.Context, networkID string) (*LeasedJob, error
 	if err := json.Unmarshal(plaintext, &request); err != nil {
 		return nil, errors.New("edge job request is invalid")
 	}
-	return &LeasedJob{ID: job.ID, LeaseToken: job.LeaseToken, Request: request}, nil
+	return &LeasedJob{Kind: "https_request", ID: job.ID, LeaseToken: job.LeaseToken, Request: request}, nil
 }
 
 func (b *Broker) Complete(ctx context.Context, networkID, jobID string, completion Completion) error {
@@ -172,6 +173,9 @@ func (b *Broker) Complete(ctx context.Context, networkID, jobID string, completi
 		return store.ErrNotFound
 	}
 	state, encrypted, detail := "completed", "", strings.TrimSpace(completion.Error)
+	if detail != "" {
+		detail = "Private HTTPS request failed; inspect node connectivity and TLS."
+	}
 	if detail != "" || completion.Response == nil {
 		state = "failed"
 		if detail == "" {

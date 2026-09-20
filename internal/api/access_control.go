@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -125,6 +126,15 @@ func (a *API) effectiveAssignments(ctx context.Context, userID string) ([]core.R
 	if err != nil {
 		return nil, err
 	}
+	if data, ok := a.store.(interface {
+		ListIdentityTeamMembers(context.Context) ([]core.TeamMember, error)
+	}); ok {
+		managed, err := data.ListIdentityTeamMembers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, managed...)
+	}
 	teams := map[string]bool{}
 	for _, member := range members {
 		if member.UserID == userID {
@@ -133,6 +143,9 @@ func (a *API) effectiveAssignments(ctx context.Context, userID string) ([]core.R
 	}
 	result := []core.RoleAssignment{}
 	for _, assignment := range assignments {
+		if assignment.ExpiresAt != nil && !time.Now().Before(*assignment.ExpiresAt) {
+			continue
+		}
 		if assignment.PrincipalType == core.PrincipalUser && assignment.PrincipalID == userID || assignment.PrincipalType == core.PrincipalTeam && teams[assignment.PrincipalID] {
 			result = append(result, assignment)
 		}
@@ -877,10 +890,11 @@ func (a *API) deleteTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 type roleAssignmentRequest struct {
-	PrincipalType string `json:"principalType"`
-	PrincipalID   string `json:"principalId"`
-	ProjectID     string `json:"projectId"`
-	Role          string `json:"role"`
+	ExpiresAt     json.RawMessage `json:"expiresAt"`
+	PrincipalType string          `json:"principalType"`
+	PrincipalID   string          `json:"principalId"`
+	ProjectID     string          `json:"projectId"`
+	Role          string          `json:"role"`
 }
 
 func validProjectRole(role string) bool {
@@ -922,10 +936,33 @@ func (a *API) upsertRoleAssignment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now().UTC()
-	assignment := core.RoleAssignment{ID: ulid.Make().String(), PrincipalType: input.PrincipalType, PrincipalID: input.PrincipalID, ScopeType: core.ScopeProject, ScopeID: input.ProjectID, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+	var expires *time.Time
+	if len(input.ExpiresAt) > 0 {
+		if err := json.Unmarshal(input.ExpiresAt, &expires); err != nil {
+			problem(w, 400, "Invalid expiry", "Use an RFC3339 timestamp or null to remove expiry.")
+			return
+		}
+		if expires != nil && !expires.After(now) {
+			problem(w, 400, "Invalid expiry", "Choose a future expiry time.")
+			return
+		}
+	}
+	assignment := core.RoleAssignment{ExpiresAt: expires, PreserveExpiry: len(input.ExpiresAt) == 0, ID: ulid.Make().String(), PrincipalType: input.PrincipalType, PrincipalID: input.PrincipalID, ScopeType: core.ScopeProject, ScopeID: input.ProjectID, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+
 	if err := a.store.UpsertRoleAssignment(r.Context(), assignment); err != nil {
 		a.internal(w, err)
 		return
+	}
+	assignments, err := a.store.ListRoleAssignments(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	for _, saved := range assignments {
+		if saved.PrincipalType == input.PrincipalType && saved.PrincipalID == input.PrincipalID && saved.ScopeType == core.ScopeProject && saved.ScopeID == input.ProjectID {
+			assignment = saved
+			break
+		}
 	}
 	writeJSON(w, http.StatusOK, assignment)
 }

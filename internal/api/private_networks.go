@@ -32,6 +32,14 @@ type lanewayConnectorInstallRequest struct {
 
 func (a *API) listPrivateNetworks(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListPrivateNetworks(r.Context())
+	for i := range items {
+		if items[i].Driver == edge.DriverAgent && items[i].Details["credentialMode"] == "" {
+			if items[i].Details == nil {
+				items[i].Details = map[string]string{}
+			}
+			items[i].Details["credentialMode"] = "legacy_token"
+		}
+	}
 	a.list(w, items, err)
 }
 
@@ -48,18 +56,30 @@ func (a *API) createPrivateNetwork(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	item.ID, item.State, item.CreatedAt, item.UpdatedAt = ulid.Make().String(), "unverified", now, now
 	if item.Driver == edge.DriverAgent {
-		token, tokenHash, err := newEdgeToken()
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		item.TokenHash, item.EnrollmentToken, item.State = tokenHash, token, "waiting"
+		item.State = "waiting"
+		item.Details["credentialMode"] = "short_session"
+		item.Details["enrollmentExpiresAt"] = now.Add(edge.EnrollmentLifetime).Format(time.RFC3339)
 	} else if item.Driver == privateaccess.DriverLanewayConnector {
 		item.State = "waiting"
 	}
 	if err := a.store.CreatePrivateNetwork(r.Context(), item); err != nil {
 		a.internal(w, err)
 		return
+	}
+	if item.Driver == edge.DriverAgent {
+		data, ok := a.edgeCredentials()
+		if !ok {
+			_ = a.store.DeletePrivateNetwork(r.Context(), item.ID)
+			problem(w, http.StatusServiceUnavailable, "Enrollment unavailable", "Credential storage is unavailable.")
+			return
+		}
+		token, err := edge.RotateCredentials(r.Context(), data, item.ID, now)
+		if err != nil {
+			_ = a.store.DeletePrivateNetwork(r.Context(), item.ID)
+			a.internal(w, err)
+			return
+		}
+		item.EnrollmentToken = token
 	}
 	if item.Driver == laneway.DriverNetwork {
 		a.verifyLanewayNetwork(w, r, item)
@@ -111,6 +131,12 @@ func (a *API) verifyPrivateNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if item.Driver == edge.DriverAgent {
+		if data, ok := a.edgeCredentials(); ok {
+			if credential, e := data.GetEdgeCredential(r.Context(), item.ID); e == nil && credential.Revoked {
+				problem(w, http.StatusConflict, "Edge node revoked", "Issue a new enrollment token before reconnecting this node.")
+				return
+			}
+		}
 		lastSeen, err := time.Parse(time.RFC3339Nano, item.Details["lastSeenAt"])
 		if err != nil || time.Since(lastSeen) > 75*time.Second {
 			item.State, item.UpdatedAt = "offline", time.Now().UTC()

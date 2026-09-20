@@ -2,13 +2,1058 @@ openapi: 3.1.0
 info:
   title: Dispatch controller API
   version: 0.1.0
-  description: Private, single-operator deployment control-plane API.
+  description: Project-scoped application deployment and operations API.
 servers:
   - url: /api/v1
 security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /deployment-catalog:
+    get:
+      operationId: getDeploymentCatalog
+      description: Project-visible application environments and their latest attempts, last successful releases, and
+        saved status. No runtime connections are opened.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeploymentCatalogItem'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /deployment-search:
+    get:
+      operationId: searchDeploymentHistory
+      description: Search all retained history within accessible applications; filters apply before cursor pagination.
+        Returns at most 50 records without snapshots or credentials.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Deployment'
+                  next:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - name: q
+        in: query
+        schema:
+          type: string
+      - name: project
+        in: query
+        schema:
+          type: string
+      - name: application
+        in: query
+        schema:
+          type: string
+      - name: environment
+        in: query
+        schema:
+          type: string
+      - name: target
+        in: query
+        schema:
+          type: string
+      - name: status
+        in: query
+        schema:
+          type: string
+      - name: revision
+        in: query
+        schema:
+          type: string
+      - name: before
+        in: query
+        schema:
+          type: string
+  /deployments/{id}/identity:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getDeploymentIdentity
+      description: Requires project.view. Reads historical target and release metadata from the saved snapshot, with
+        current and latest run identities.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentCatalogItem'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /deployments/{id}/compare-environment:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: compareEnvironmentInputs
+      description: Requires project.view for both deployments in the same project. Compares immutable saved inputs
+        across different application environments; credentials and live state are excluded. Limited to 1000 changes.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedDeploymentComparison'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - name: from
+        in: query
+        schema:
+          type: string
+        required: true
+  /apps/{id}/observations:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getApplicationObservations
+      description: Requires project.view. Read configuration, separate workload and endpoint observations, freshness,
+        and delivery history. This read does not contact the target.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationStatus'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: configureApplicationObservations
+      description: Requires project.configure. Scheduled observations and notifications are opt-in. Revision guards
+        concurrent edits; sensitive delivery URLs are write-only. Stale threshold must be at least the interval.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationStatus'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObservationConfigurationInput'
+  /apps/{id}/observations/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: checkApplicationObservations
+      description: Requires project.configure. Manual bounded workload and HTTP/TLS check from Dispatch controller;
+        results are observations of that location only. Active runtime operations return conflict.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationStatus'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /apps/{id}/release-preview:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: previewApplicationRelease
+      description: Requires deployment.run and an idle application. Validates selected revision, binding resolution,
+        Helm rendering and server-side dry-run where supported. Preview performs no rollout and is not a reservation
+        of target state.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleasePreview'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                revision:
+                  type: string
+  /apps/{id}/activity:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getApplicationReleaseActivity
+      description: Requires project.view. Retained source/build/approval/deployment/runtime/operator activity with
+        sanitized details.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /deployments/{id}/release:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getDeploymentRelease
+      description: Requires project.view. Saved release notes, source links, and rollback availability explanation.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  note:
+                    $ref: '#/components/schemas/ReleaseNote'
+                  sourceLinks:
+                    type: array
+                    items:
+                      type: string
+                  rollbackMessage:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: updateDeploymentRelease
+      description: Requires project.configure. Store release notes and HTTPS pull-request/source links. Do not include credentials in notes; links cannot embed user information.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseNote'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes:
+                  type: string
+                  maxLength: 12000
+                links:
+                  type: array
+                  items:
+                    type: string
+  /deployments/{id}/rollback-preview:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: previewDeploymentRollback
+      description: Requires deployment.run. Review a retained successful Helm revision, original values and service
+        Secret references, current deployment, and server-side validation before rollback.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackPreview'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /deployments/{id}/rollback:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: rollbackDeploymentRelease
+      description: Requires deployment.run. Rechecks the expected current release and creates an audited deployment
+        using retained artifacts. Does not undo database migrations or external side effects.
+      responses:
+        '202':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - confirmDeploymentId
+              - expectedCurrentDeploymentId
+              - confirmDatabaseNotReverted
+              properties:
+                confirmDeploymentId:
+                  type: string
+                expectedCurrentDeploymentId:
+                  type: string
+                confirmDatabaseNotReverted:
+                  type: boolean
+                  const: true
+  /deployments/{id}/diagnosis:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: diagnoseDeploymentRelease
+      description: Requires project.view. Bounded live inspection of failing pods, scheduling/image-pull errors, restarts,
+        events, and relevant redacted logs with next steps. Does not mutate workloads.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /audit:
+    get:
+      operationId: listAuditEvents
+      description: Requires authentication. Owners see controller events; members see events only in projects they
+        can view. Returns at most 100 events.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - name: projectId
+        in: query
+        schema:
+          type: string
+      - name: appId
+        in: query
+        schema:
+          type: string
+      - name: actorId
+        in: query
+        schema:
+          type: string
+      - name: action
+        in: query
+        schema:
+          type: string
+      - name: before
+        in: query
+        schema:
+          type: string
+  /apps/{id}/owner:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getApplicationOwner
+      description: Requires project.view. Responsible person/team metadata and display name. Ownership does not grant
+        permissions.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationOwner'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: setApplicationOwner
+      description: Requires project.configure. Record responsible user/team, or clear principalId to remove the label.
+        Does not modify access grants.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationOwner'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                principalType:
+                  type: string
+                  enum:
+                  - user
+                  - team
+                principalId:
+                  type: string
+  /projects/{id}/owner-candidates:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: listApplicationOwnerCandidates
+      description: Requires project.configure. Lists eligible user/team metadata for ownership selection within the
+        project.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                  teams:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /identity-team-mappings:
+    get:
+      operationId: listIdentityTeamMappings
+      description: Controller owner only. List mappings from verified GitHub team memberships to Dispatch teams.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IdentityTeamMapping'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: saveIdentityTeamMapping
+      description: Controller owner only. Membership is refreshed on sign-in using verified provider claims. Manual
+        membership remains separate.
+      responses:
+        '201':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityTeamMapping'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityTeamMapping'
+  /identity-team-mappings/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    delete:
+      operationId: deleteIdentityTeamMapping
+      description: Controller owner only. Remove the mapping.
+      responses:
+        '204':
+          description: Successful operation.
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /projects/{id}/retention:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getProjectRetention
+      description: Requires project.manage. Read an explicit history policy; no automatic cleanup is enabled.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionPolicy'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: saveProjectRetention
+      description: Requires project.manage. Store a retention policy. Cleanup is a separate explicit operation.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionPolicy'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetentionPolicy'
+  /projects/{id}/retention/preview:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: previewProjectRetention
+      description: Requires project.manage. Count eligible historical logs/runs, preserving current, successful, baseline,
+        and workflow dependencies.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionResult'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /projects/{id}/retention/apply:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: applyProjectRetention
+      description: Requires project.manage. Reevaluate eligibility and delete only unprotected data in this project.
+        This operation is irreversible.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionResult'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - confirm
+              properties:
+                confirm:
+                  type: string
+                  description: Must equal the project ID.
+  /operations/backups:
+    get:
+      operationId: listControllerBackups
+      description: Controller owner only. Metadata and restore-verification outcomes, never backup paths, contents,
+        or credentials.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  backups:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BackupRecord'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: createControllerBackup
+      description: Controller owner only. Create a consistent controller database and encrypted credential key backup
+        in protected controller storage.
+      responses:
+        '201':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupRecord'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /operations/backups/{id}/verify:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: verifyControllerBackup
+      description: Controller owner only. Verify a backup in disposable storage/database. Does not replace the running
+        controller.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupRecord'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /services/{id}/impact:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getServiceImpact
+      description: Requires project.view. List dependent applications, environments, applied revisions and redeployment
+        availability.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceImpact'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /services/{id}/redeploy:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: redeployServiceConsumers
+      description: Requires project.configure and deployment.run. Explicitly redeploy selected consumers with the
+        last successful source revision and current service inputs. Repository-managed consumers use workflow promotion.
+      responses:
+        '202':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    appId:
+                      type: string
+                    deployment:
+                      $ref: '#/components/schemas/Deployment'
+                    error:
+                      type: string
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - revision
+              - appIds
+              - confirm
+              properties:
+                revision:
+                  type: integer
+                appIds:
+                  type: array
+                  items:
+                    type: string
+                confirm:
+                  type: boolean
+                  const: true
+  /role-assignments:
+    post:
+      operationId: saveRoleAssignment
+      description: Controller owner only. Create or update a project role; omitted expiry preserves the existing expiry
+        and null removes it.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleAssignmentInput'
+  /role-assignments/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    delete:
+      operationId: deleteRoleAssignment
+      description: Controller owner only. Delete a project grant.
+      responses:
+        '204':
+          description: Successful operation.
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /edge/nodes/{id}/enroll:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: enrollEdgeIdentity
+      description: Exchange a single-use expiring enrollment bearer token for a node identity and short-lived session.
+        Public key is Ed25519 encoded by the edge client. Response is no-store.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeSession'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - publicKey
+              properties:
+                publicKey:
+                  type: string
+      security:
+      - bearerAuth: []
+  /edge/nodes/{id}/challenge:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: challengeEdgeIdentity
+      description: Request a short-lived nonce for an enrolled node public key. Signed proof is required at session
+        exchange. Bounded outstanding challenges prevent unbounded issuance.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - publicKey
+              properties:
+                publicKey:
+                  type: string
+      security: []
+  /edge/nodes/{id}/session:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: exchangeEdgeSession
+      description: Exchange a single-use signed challenge for a short-lived node session. Signature and generation
+        must match the enrolled identity. Response is no-store.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeSession'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - challenge
+              - signature
+              - generation
+              properties:
+                challenge:
+                  type: string
+                signature:
+                  type: string
+                generation:
+                  type: integer
+      security: []
+  /private-networks/{id}/revoke:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: revokeEdgeIdentity
+      description: Controller owner only. Immediately revoke the enrolled node identity and sessions; rotate enrollment
+        to reconnect.
+      responses:
+        '200':
+          description: Successful result.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
   /apps/{id}/deployment-history:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -1334,6 +2379,7 @@ paths:
   /apps/{appId}/deployments:
     post:
       operationId: startDeployment
+      description: Requires deployment.run. When review is supplied, project membership, application settings, binding mappings, and service revisions must still match the preview at atomic acceptance; changes return 409 and require another preview.
       parameters:
         - $ref: "#/components/parameters/AppID"
       requestBody:
@@ -1343,6 +2389,7 @@ paths:
               type: object
               properties:
                 commitSha: { type: string, default: HEAD }
+                review: { $ref: "#/components/schemas/DeploymentReview" }
       responses:
         "202":
           description: Deployment accepted.
@@ -1455,6 +2502,537 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    DeploymentReview:
+      type: object
+      required: [projectId, appSpecDigest, bindingsDigest, serviceRevisions]
+      properties:
+        projectId: { type: string }
+        appSpecDigest: { type: string }
+        bindingsDigest: { type: string }
+        serviceRevisions:
+          type: object
+          additionalProperties: { type: integer }
+      description: Exact nonsecret input identity captured by preview. Supplied unchanged when accepting the reviewed deployment.
+    DeploymentCatalogStatus:
+      type: object
+      properties:
+        staleAfterSeconds:
+          type: integer
+          description: Configured application observation freshness threshold; defaults to 900.
+        configuration:
+          type: string
+        revision:
+          type: string
+        drift:
+          type: string
+        health:
+          type: string
+        supported:
+          type: boolean
+        checkedAt:
+          type: string
+          format: date-time
+        message:
+          type: string
+        healthMessage:
+          type: string
+    DeploymentCatalogItem:
+      type: object
+      required:
+      - appId
+      - appName
+      - projectId
+      - targetId
+      - targetName
+      - environment
+      properties:
+        appId:
+          type: string
+        appName:
+          type: string
+        projectId:
+          type: string
+        targetId:
+          type: string
+        targetName:
+          type: string
+        environment:
+          type: string
+        resourceId:
+          type: string
+        resourceName:
+          type: string
+        latest:
+          $ref: '#/components/schemas/Deployment'
+        current:
+          $ref: '#/components/schemas/Deployment'
+        sync:
+          $ref: '#/components/schemas/DeploymentCatalogStatus'
+    SavedDeploymentComparison:
+      type: object
+      properties:
+        fromId:
+          type: string
+        toId:
+          type: string
+        available:
+          type: boolean
+        hidden:
+          type: integer
+        truncated:
+          type: boolean
+        message:
+          type: string
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              kind:
+                type: string
+                enum:
+                - added
+                - removed
+                - changed
+              before: {}
+              after: {}
+    ObservationConfiguration:
+      type: object
+      properties:
+        appId:
+          type: string
+        projectId:
+          type: string
+        revision:
+          type: integer
+        scheduled:
+          type: boolean
+        intervalSeconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+        staleAfterSeconds:
+          type: integer
+          minimum: 60
+          maximum: 604800
+        endpointUrl:
+          type: string
+        notificationsEnabled:
+          type: boolean
+        webhookConfigured:
+          type: boolean
+        mutedUntil:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+    ObservationConfigurationInput:
+      type: object
+      required:
+      - revision
+      - scheduled
+      - intervalSeconds
+      - staleAfterSeconds
+      - notificationsEnabled
+      properties:
+        revision:
+          type: integer
+        scheduled:
+          type: boolean
+        intervalSeconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+        staleAfterSeconds:
+          type: integer
+          minimum: 60
+          maximum: 604800
+        endpointUrl:
+          type: string
+          description: Optional HTTP(S) endpoint without user information or query credentials.
+        notificationsEnabled:
+          type: boolean
+        webhookUrl:
+          type: string
+          writeOnly: true
+          description: Optional HTTPS delivery URL; omitted preserves the existing encrypted destination.
+        removeWebhook:
+          type: boolean
+        mutedUntil:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    EndpointObservation:
+      type: object
+      properties:
+        state:
+          type: string
+        tls:
+          type: string
+        httpStatus:
+          type: integer
+        certificateExpiresAt:
+          type: string
+          format: date-time
+        durationMs:
+          type: integer
+        message:
+          type: string
+        location:
+          type: string
+          const: Dispatch controller
+    ApplicationObservation:
+      type: object
+      properties:
+        appId:
+          type: string
+        projectId:
+          type: string
+        configurationRevision:
+          type: integer
+        deploymentId:
+          type: string
+        source:
+          type: string
+        state:
+          type: string
+        drift:
+          type: string
+        health:
+          type: string
+        endpoint:
+          $ref: '#/components/schemas/EndpointObservation'
+        checkedAt:
+          type: string
+          format: date-time
+        nextCheckAt:
+          type: string
+          format: date-time
+        consecutiveFailures:
+          type: integer
+        message:
+          type: string
+        location:
+          type: string
+    ObservationEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        appId:
+          type: string
+        projectId:
+          type: string
+        deploymentId:
+          type: string
+        configurationRevision:
+          type: integer
+        kind:
+          type: string
+        previousState:
+          type: string
+        state:
+          type: string
+        message:
+          type: string
+        link:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        delivery:
+          type: string
+        attempts:
+          type: integer
+        nextAttemptAt:
+          type: string
+          format: date-time
+        deliveredAt:
+          type: string
+          format: date-time
+        deliveryMessage:
+          type: string
+    ObservationStatus:
+      type: object
+      properties:
+        configuration:
+          $ref: '#/components/schemas/ObservationConfiguration'
+        observation:
+          $ref: '#/components/schemas/ApplicationObservation'
+        freshness:
+          type: string
+          enum:
+          - not_checked
+          - fresh
+          - stale
+          - checking
+        checking:
+          type: boolean
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObservationEvent'
+    ReleaseNote:
+      type: object
+      properties:
+        deploymentId:
+          type: string
+        notes:
+          type: string
+        links:
+          type: array
+          items:
+            type: string
+        actor:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+    ReleasePreview:
+      type: object
+      properties:
+        review: { $ref: "#/components/schemas/DeploymentReview" }
+        ready:
+          type: boolean
+        revision:
+          type: string
+        target:
+          type: string
+        namespace:
+          type: string
+        release:
+          type: string
+        bindings:
+          type: array
+          items:
+            type: object
+        comparison:
+          $ref: '#/components/schemas/SavedDeploymentComparison'
+        message:
+          type: string
+        checks:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              state:
+                type: string
+              message:
+                type: string
+        resources:
+          type: array
+          items:
+            type: object
+    RollbackPreview:
+      type: object
+      properties:
+        available:
+          type: boolean
+        deploymentId:
+          type: string
+        currentDeploymentId:
+          type: string
+        helmRevision:
+          type: integer
+        message:
+          type: string
+        bindings:
+          type: array
+          items:
+            type: object
+        resources:
+          type: array
+          items:
+            type: object
+    ApplicationOwner:
+      type: object
+      properties:
+        appId:
+          type: string
+        principalType:
+          type: string
+          enum:
+          - user
+          - team
+          - ''
+        principalId:
+          type: string
+        displayName:
+          type: string
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        actorId:
+          type: string
+        actorName:
+          type: string
+        impersonatorId:
+          type: string
+        projectId:
+          type: string
+        appId:
+          type: string
+        action:
+          type: string
+        resourceId:
+          type: string
+        outcome:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    IdentityTeamMapping:
+      type: object
+      properties:
+        id:
+          type: string
+        providerId:
+          type: string
+        externalGroup:
+          type: string
+          description: GitHub organization/team-slug.
+        teamId:
+          type: string
+    RetentionPolicy:
+      type: object
+      required:
+      - logDays
+      - runDays
+      - keepRuns
+      properties:
+        projectId:
+          type: string
+        logDays:
+          type: integer
+          minimum: 1
+          maximum: 36500
+        runDays:
+          type: integer
+          minimum: 1
+          maximum: 36500
+        keepRuns:
+          type: integer
+          minimum: 5
+          maximum: 10000
+    RetentionResult:
+      type: object
+      properties:
+        logs:
+          type: integer
+        runs:
+          type: integer
+        protectedRuns:
+          type: integer
+        applied:
+          type: boolean
+    BackupRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        engine:
+          type: string
+        state:
+          type: string
+        bytes:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        verifiedAt:
+          type: string
+          format: date-time
+        message:
+          type: string
+    ServiceImpact:
+      type: object
+      properties:
+        serviceId:
+          type: string
+        revision:
+          type: integer
+        consumers:
+          type: array
+          items:
+            type: object
+            properties:
+              appId:
+                type: string
+              appName:
+                type: string
+              alias:
+                type: string
+              appliedRevision:
+                type: integer
+              redeploymentRequired:
+                type: boolean
+              targetName:
+                type: string
+              environment:
+                type: string
+              deploymentId:
+                type: string
+              canRedeploy:
+                type: boolean
+              reason:
+                type: string
+    RoleAssignmentInput:
+      type: object
+      required:
+      - principalType
+      - principalId
+      - projectId
+      - role
+      properties:
+        principalType:
+          type: string
+          enum:
+          - user
+          - team
+        principalId:
+          type: string
+        projectId:
+          type: string
+        role:
+          type: string
+          enum:
+          - admin
+          - operator
+          - deployer
+          - viewer
+        expiresAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: Omit to preserve an existing expiry; null explicitly clears it. Expired grants do not authorize
+            new requests.
+    EdgeSession:
+      type: object
+      properties:
+        token:
+          type: string
+          readOnly: true
+          description: Returned once with Cache-Control no-store; keep only in protected process memory.
+        expiresAt:
+          type: string
+          format: date-time
+        generation:
+          type: integer
     ApplicationSync:
       type: object
       required: [appId, supported, reapplyAvailable, configuration, revision, drift, actions]

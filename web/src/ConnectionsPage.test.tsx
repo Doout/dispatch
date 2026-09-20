@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectionsPage } from "./ConnectionsPage";
-import type { Overview } from "./api";
+import { api, type Overview, type PrivateNetwork } from "./api";
 
 const overview: Overview = {
   demo: false,
@@ -22,7 +22,7 @@ const overview: Overview = {
   relayWebhooks: [],
 };
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("connections page", () => {
   it("shows one compact provider chooser without duplicate add actions", () => {
@@ -112,4 +112,16 @@ describe("connections page", () => {
       .toBe("https://github.example.com/github-apps/dispatch-dev/installations/new");
     expect(installLink.getAttribute("target")).toBeNull();
   });
+});
+
+
+it("labels legacy edge credentials and reviews rotation before invalidating the node", async () => {
+ const network: PrivateNetwork = { id: "node", name: "Private node", driver: "dispatch_agent", config: {}, details: {}, state: "ready", createdAt: "2026-09-20T00:00:00Z", updatedAt: "2026-09-20T00:00:00Z" };
+ const rotate = vi.spyOn(api,"rotatePrivateNetworkToken").mockResolvedValue({...network,enrollmentToken:"one-time-token",details:{credentialMode:"short_session"}});
+ render(<ConnectionsPage overview={{...overview,privateNetworks:[network]}} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+ expect(screen.getByText("Legacy token · re-enroll to upgrade")).toBeTruthy();
+ fireEvent.click(screen.getByRole("button",{name:"Create install token for Private node"}));
+ expect(screen.getByRole("group",{name:"Confirm node credential change"})).toBeTruthy();expect(rotate).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole("button",{name:"Create enrollment token"}));
+ await screen.findByText(/The enrollment token expires in 15 minutes/);expect(rotate).toHaveBeenCalledWith("node");
 });

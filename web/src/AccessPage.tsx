@@ -34,6 +34,7 @@ type Editor =
   { kind: "user"; item?: User } | { kind: "team"; item?: Team } | null;
 type DeleteTarget =
   { kind: "user"; item: User } | { kind: "team"; item: Team } | null;
+type ProjectExpiries = Record<string, string>;
 type ProjectRoles = Record<string, RoleAssignment["role"] | "">;
 
 function userAuthTypes(access: AccessOverview, user: User): Set<string> {
@@ -1132,6 +1133,7 @@ function GrantList({
           >
             <strong>{project?.name ?? "Unknown project"}</strong>
             <small>{role?.name ?? grant.role}</small>
+            {grant.expiresAt && <small title={new Date(grant.expiresAt).toLocaleString()}>{Date.parse(grant.expiresAt) <= Date.now() ? "Expired" : "Expires"} {new Date(grant.expiresAt).toLocaleDateString()}</small>}
           </span>
         );
       })}
@@ -1173,6 +1175,7 @@ function AccessEditor({
     [existingAssignments],
   );
   const [roles, setRoles] = useState<ProjectRoles>(initialRoles);
+  const [expiries, setExpiries] = useState<ProjectExpiries>(() => Object.fromEntries(existingAssignments.map(item => [item.scopeId, item.expiresAt ?? ""])));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -1213,6 +1216,8 @@ function AccessEditor({
               onChangePassword={onChangePassword}
               roles={roles}
               onRoles={setRoles}
+              expiries={expiries}
+              onExpiries={setExpiries}
               busy={busy}
               error={error}
               onCancel={onClose}
@@ -1232,6 +1237,7 @@ function AccessEditor({
                     saved.id,
                     roles,
                     existingAssignments,
+                    expiries,
                   );
                   onSaved();
                 } catch (cause) {
@@ -1246,6 +1252,8 @@ function AccessEditor({
               team={editor.item}
               roles={roles}
               onRoles={setRoles}
+              expiries={expiries}
+              onExpiries={setExpiries}
               busy={busy}
               error={error}
               onCancel={onClose}
@@ -1262,6 +1270,7 @@ function AccessEditor({
                     saved.id,
                     roles,
                     existingAssignments,
+                    expiries,
                   );
                   onSaved();
                 } catch (cause) {
@@ -1284,6 +1293,8 @@ function UserEditor({
   onChangePassword,
   roles,
   onRoles,
+  expiries,
+  onExpiries,
   busy,
   error,
   onCancel,
@@ -1295,6 +1306,8 @@ function UserEditor({
   onChangePassword: () => void;
   roles: ProjectRoles;
   onRoles: (roles: ProjectRoles) => void;
+  expiries: ProjectExpiries;
+  onExpiries: (expiries: ProjectExpiries) => void;
   busy: boolean;
   error: string;
   onCancel: () => void;
@@ -1408,7 +1421,7 @@ function UserEditor({
         </select>
       </label>
       {systemRole === "member" && (
-        <ProjectAccess access={access} roles={roles} onChange={onRoles} />
+        <ProjectAccess access={access} roles={roles} onChange={onRoles} expiries={expiries} onExpiries={onExpiries} />
       )}
       {error && (
         <p className="form-error" role="alert">
@@ -1448,6 +1461,8 @@ function TeamEditor({
   team,
   roles,
   onRoles,
+  expiries,
+  onExpiries,
   busy,
   error,
   onCancel,
@@ -1457,6 +1472,8 @@ function TeamEditor({
   team?: Team;
   roles: ProjectRoles;
   onRoles: (roles: ProjectRoles) => void;
+  expiries: ProjectExpiries;
+  onExpiries: (expiries: ProjectExpiries) => void;
   busy: boolean;
   error: string;
   onCancel: () => void;
@@ -1523,7 +1540,7 @@ function TeamEditor({
             ))}
         </div>
       </fieldset>
-      <ProjectAccess access={access} roles={roles} onChange={onRoles} />
+      <ProjectAccess access={access} roles={roles} onChange={onRoles} expiries={expiries} onExpiries={onExpiries} />
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -1545,10 +1562,14 @@ function ProjectAccess({
   access,
   roles,
   onChange,
+  expiries,
+  onExpiries,
 }: {
   access: AccessOverview;
   roles: ProjectRoles;
   onChange: (roles: ProjectRoles) => void;
+  expiries: ProjectExpiries;
+  onExpiries: (expiries: ProjectExpiries) => void;
 }) {
   return (
     <fieldset className="access-projects wide">
@@ -1558,7 +1579,7 @@ function ProjectAccess({
       ) : (
         <div>
           {access.projects.map((project) => (
-            <label key={project.id}>
+            <div className="access-project-grant" key={project.id}>
               <span>
                 <strong>{project.name}</strong>
                 {project.description && <small>{project.description}</small>}
@@ -1581,7 +1602,8 @@ function ProjectAccess({
                   </option>
                 ))}
               </select>
-            </label>
+              {roles[project.id] && <label className="access-grant-expiry">Expires (your local time)<input aria-label={`${project.name} access expiry`} type="datetime-local" step="1" value={localGrantTime(expiries[project.id])} onChange={event => onExpiries({ ...expiries, [project.id]: event.target.value ? new Date(event.target.value).toISOString() : "" })} /><small>Leave empty for no expiry.</small></label>}
+            </div>
           ))}
         </div>
       )}
@@ -1595,13 +1617,14 @@ async function syncAssignments(
   principalId: string,
   roles: ProjectRoles,
   previous: RoleAssignment[],
+  expiries: ProjectExpiries = {},
 ) {
   const removals = previous.filter((item) => !roles[item.scopeId]);
   const writes = access.projects.filter(
     (project) =>
       roles[project.id] &&
-      previous.find((item) => item.scopeId === project.id)?.role !==
-        roles[project.id],
+      (previous.find((item) => item.scopeId === project.id)?.role !==
+        roles[project.id] || grantExpiryChanged(previous.find(item => item.scopeId === project.id)?.expiresAt, expiries[project.id])),
   );
   await Promise.all(removals.map((item) => api.deleteRoleAssignment(item.id)));
   await Promise.all(
@@ -1611,7 +1634,17 @@ async function syncAssignments(
         principalId,
         projectId: project.id,
         role: roles[project.id] as RoleAssignment["role"],
+        ...(grantExpiryChanged(previous.find(item => item.scopeId === project.id)?.expiresAt, expiries[project.id]) ? { expiresAt: expiries[project.id] || null } : {}),
       }),
     ),
   );
+}
+
+function localGrantTime(value?: string) {
+ if (!value || !Number.isFinite(Date.parse(value))) return "";
+ const date = new Date(value);
+ return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+}
+function grantExpiryChanged(before?: string, after?: string) {
+ return (before ? Date.parse(before) : 0) !== (after ? Date.parse(after) : 0);
 }

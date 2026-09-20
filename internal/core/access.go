@@ -69,14 +69,16 @@ type TeamMember struct {
 }
 
 type RoleAssignment struct {
-	ID            string    `json:"id"`
-	PrincipalType string    `json:"principalType"`
-	PrincipalID   string    `json:"principalId"`
-	ScopeType     string    `json:"scopeType"`
-	ScopeID       string    `json:"scopeId"`
-	Role          string    `json:"role"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	PreserveExpiry bool       `json:"-"`
+	ID             string     `json:"id"`
+	PrincipalType  string     `json:"principalType"`
+	PrincipalID    string     `json:"principalId"`
+	ScopeType      string     `json:"scopeType"`
+	ScopeID        string     `json:"scopeId"`
+	Role           string     `json:"role"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+	ExpiresAt      *time.Time `json:"expiresAt,omitempty"`
 }
 
 type Identity struct {
