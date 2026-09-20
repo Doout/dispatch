@@ -18,7 +18,8 @@ run only during deployment because they can have side effects. A namespace that
 does not yet exist is an explicit admission-validation gap; deployment creates
 that namespace. Admission validation may also require CRDs to be installed first.
 Preview does not guarantee rollout success. Reviewed deployment requests include
-the project, application configuration digest, binding mapping digest, and service
+the application name used to select the release, project, application
+configuration digest, binding mapping digest, and service
 revisions. Dispatch checks those inputs in the same transaction that accepts the
 deployment and captures its bindings. Changed local inputs require another review.
 Git sources resolve to a fixed commit. External credentials and cluster state can
