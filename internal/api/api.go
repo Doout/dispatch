@@ -745,7 +745,11 @@ func (a *API) overviewData(r *http.Request) (core.Overview, error) {
 		}
 		services = append(services, value)
 	}
-	overview := core.Overview{Services: services, Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Identity: currentIdentity(r.Context()), Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
+	settings, err := a.store.GetControllerSettings(r.Context())
+	if err != nil {
+		return core.Overview{}, err
+	}
+	overview := core.Overview{ControllerSettings: settings, Services: services, Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Identity: currentIdentity(r.Context()), Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
 		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets, SecretStores: secretStores, PrivateNetworks: privateNetworks, GitHubApps: githubApps, RelayWebhooks: relayWebhooks,
 		ConfigSources: configSources, WorkflowResources: workflowResources, WorkflowRevisions: workflowRevisions, WorkflowStageRuns: workflowStageRuns}
 	if impersonator, ok := currentImpersonator(r.Context()); ok {

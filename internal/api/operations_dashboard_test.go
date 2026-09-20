@@ -16,6 +16,7 @@ import (
 
 func TestOperationsDashboardScopeSearchAndCursor(t *testing.T) {
 	a := serviceTestAPI(t)
+	enableOperationsForTest(t, a)
 	ctx := context.Background()
 	data := a.store.(operationsStore)
 	now := time.Now().UTC()
@@ -131,6 +132,7 @@ func TestOperationsDashboardScopeSearchAndCursor(t *testing.T) {
 
 func TestRetentionReviewRejectsChangedPolicyBeforePreviewOrApply(t *testing.T) {
 	a := serviceTestAPI(t)
+	enableOperationsForTest(t, a)
 	ctx := context.Background()
 	projects, _ := a.store.ListProjects(ctx)
 	project := projects[0].ID

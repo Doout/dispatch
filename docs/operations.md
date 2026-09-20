@@ -1,5 +1,33 @@
 # Controller operations
 
+Operations is disabled by default, including after upgrading an existing
+controller. A controller owner can enable it in **Settings**. The setting is saved
+in the controller database and survives restarts. Settings is visible only to
+owners; the Operations navigation entry appears when the feature is enabled.
+Opening an Operations URL while disabled shows its disabled state.
+
+`GET /api/v1/settings` and `PUT /api/v1/settings` require controller owner access
+and return `{ "operationsEnabled": false }` or `{ "operationsEnabled": true }`.
+PUT requires an explicit boolean; an omitted, null, or non-boolean value returns
+400. Non-owners receive 403, including an owner impersonating a non-owner.
+Concurrent updates use the last saved value. All authenticated clients receive
+the current flag as `controllerSettings.operationsEnabled` in overview responses
+and updates, so they can show the appropriate navigation.
+
+While disabled, Operations summary, ownership inventory and candidate selection,
+audit browsing, backup actions, retention management, ownership assignment, and
+identity mapping management APIs return 403 with the title `Operations disabled`.
+Their usual project permissions and owner restrictions still apply when enabled.
+Disabling the feature preserves its saved data. Audit collection continues;
+existing application owner labels remain readable. Service impact and consumer
+redeployment continue to work under their existing permissions.
+
+Existing sign-in mappings and the memberships they manage remain effective while
+Operations is disabled. Sign-in still verifies provider teams and refreshes those
+memberships, and authorization still uses them. To remove a mapping or change a
+retention policy, an owner must first enable Operations. The switch does not
+revoke access or delete mappings, assignments, policies, or backup records.
+
 The Operations page has an overview with recent activity and follow-up actions,
 plus separate Activity, Ownership, Cleanup, Backups, and Access mappings views.
 Project visibility applies to overview counts, audit results, and application

@@ -58,6 +58,12 @@ describe("application routes", () => {
     expect(routePath({view: "analytics"})).toBe("/analytics");
   });
 
+  it("supports direct and legacy Settings links", () => {
+    expect(readRoute({pathname:"/settings",search:""})).toEqual({view:"settings"});
+    expect(readRoute({pathname:"/",search:"?view=settings"})).toEqual({view:"settings"});
+    expect(routePath({view:"settings"})).toBe("/settings");
+  });
+
   it("preserves Operations drilldowns and rejects unsupported sections and outcomes", () => {
     const route = {view: "operations" as const, operationsFilters: {
       section: "activity" as const, projectId: "team/project", query: "release & API",

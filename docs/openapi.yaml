@@ -473,10 +473,54 @@ paths:
           $ref: '#/components/responses/Problem'
         '409':
           $ref: '#/components/responses/Problem'
+  /settings:
+    get:
+      operationId: getControllerSettings
+      description: >-
+        Controller owner only, using the effective identity during impersonation.
+        Read persisted controller settings. Operations defaults to disabled on new
+        and upgraded controllers until an owner explicitly enables it.
+      responses:
+        '200':
+          description: Current persisted controller settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControllerSettings' }
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: updateControllerSettings
+      description: >-
+        Controller owner only, using the effective identity during impersonation.
+        Persist an explicit operationsEnabled boolean; omitted, null, or non-boolean
+        values return 400. The last saved value wins. Disabling Operations blocks its
+        management and browsing APIs but preserves saved data, audit collection,
+        readable application owner labels, service impact and redeployment, and
+        existing sign-in mapping enforcement and memberships.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControllerSettings' }
+      responses:
+        '200':
+          description: Saved controller settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControllerSettings' }
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
   /operations/summary:
     get:
       operationId: getOperationsSummary
       description: >-
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
         Read-only summary using current project grants, including expiry and revocation.
         Audit totals count all recorded events in the exact trailing 24 hours from
         audit.since inclusive to observedAt exclusive; recent contains at most five
@@ -504,6 +548,7 @@ paths:
     get:
       operationId: listOperationsOwnership
       description: >-
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
         Read-only ownership inventory filtered by current project grants before
         pagination. Includes active applications that are not templates, including
         generated applications. Results sort by application name and ID and contain
@@ -541,6 +586,8 @@ paths:
     get:
       operationId: listAuditEvents
       description: >-
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
+        Audit collection continues while browsing is disabled.
         Requires authentication and checks current project grants on every request.
         Owners see controller events; members see events only in projects they can
         view. Every filter applies before pagination. Returns at most 100 events
@@ -607,7 +654,7 @@ paths:
     get:
       operationId: getApplicationOwner
       description: Requires project.view. Responsible person/team metadata and display name. Ownership does not grant
-        permissions.
+        permissions. Remains available when Operations is disabled.
       responses:
         '200':
           description: Successful result.
@@ -624,7 +671,7 @@ paths:
     put:
       operationId: setApplicationOwner
       description: Requires project.configure. Record responsible user/team, or clear principalId to remove the label.
-        Does not modify access grants.
+        Does not modify access grants. Requires Operations to be enabled; otherwise returns 403 Operations disabled.
       responses:
         '200':
           description: Successful result.
@@ -662,7 +709,7 @@ paths:
     get:
       operationId: listApplicationOwnerCandidates
       description: Requires project.configure. Lists eligible user/team metadata for ownership selection within the
-        project.
+        project. Requires Operations to be enabled; otherwise returns 403 Operations disabled.
       responses:
         '200':
           description: Successful result.
@@ -689,6 +736,8 @@ paths:
     get:
       operationId: listIdentityTeamMappings
       description: Controller owner only. List mappings from verified GitHub team memberships to Dispatch teams.
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
+        Existing mapping enforcement and managed memberships remain active while management is disabled.
       responses:
         '200':
           description: Successful result.
@@ -707,7 +756,7 @@ paths:
     post:
       operationId: saveIdentityTeamMapping
       description: Controller owner only. Membership is refreshed on sign-in using verified provider claims. Manual
-        membership remains separate.
+        membership remains separate. Requires Operations to be enabled; otherwise returns 403 Operations disabled.
       responses:
         '201':
           description: Successful result.
@@ -736,7 +785,8 @@ paths:
         type: string
     delete:
       operationId: deleteIdentityTeamMapping
-      description: Controller owner only. Remove the mapping.
+      description: Controller owner only. Remove the mapping. Requires Operations to be enabled; otherwise returns
+        403 Operations disabled. Disabling Operations itself does not delete mappings or revoke memberships.
       responses:
         '204':
           description: Successful operation.
@@ -756,6 +806,7 @@ paths:
     get:
       operationId: getProjectRetention
       description: Requires project.manage. Read an explicit history policy; no automatic cleanup is enabled.
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
       responses:
         '200':
           description: Successful result.
@@ -772,6 +823,7 @@ paths:
     put:
       operationId: saveProjectRetention
       description: Requires project.manage. Store a retention policy. Cleanup is a separate explicit operation.
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
       responses:
         '200':
           description: Successful result.
@@ -801,6 +853,7 @@ paths:
     post:
       operationId: previewProjectRetention
       description: >-
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
         Requires project.manage. Count eligible historical logs/runs while preserving
         current, successful, baseline, and workflow dependencies. Optional expectedPolicy
         is compared with the saved policy in the same transaction that evaluates
@@ -834,6 +887,7 @@ paths:
     post:
       operationId: applyProjectRetention
       description: >-
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
         Requires project.manage and explicit project confirmation. Reevaluate eligibility
         and delete only unprotected data in this project. Optional expectedPolicy is
         compared transactionally with the saved policy; a mismatch returns 409 without
@@ -864,6 +918,7 @@ paths:
     get:
       operationId: listControllerBackups
       description: >-
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
         Controller owner only. Returns up to 100 recorded backups, while the Operations
         summary counts all backup records. Both remain controller-wide regardless of
         project selection. Records contain metadata and restore-verification outcomes,
@@ -892,6 +947,7 @@ paths:
     post:
       operationId: createControllerBackup
       description: >-
+        Requires Operations to be enabled; otherwise returns 403 Operations disabled.
         Controller owner only. Create a consistent controller database, matching vault
         key, and checksum manifest in protected controller storage. The analytics
         directory, including DuckDB and Parquet history, is excluded and requires a
@@ -920,7 +976,7 @@ paths:
     post:
       operationId: verifyControllerBackup
       description: Controller owner only. Verify a backup in disposable storage/database. Does not replace the running
-        controller.
+        controller. Requires Operations to be enabled; otherwise returns 403 Operations disabled.
       responses:
         '200':
           description: Successful result.
@@ -944,7 +1000,7 @@ paths:
     get:
       operationId: getServiceImpact
       description: Requires project.view. List dependent applications, environments, applied revisions and redeployment
-        availability.
+        availability. Remains available when Operations is disabled.
       responses:
         '200':
           description: Successful result.
@@ -969,6 +1025,7 @@ paths:
       operationId: redeployServiceConsumers
       description: Requires project.configure and deployment.run. Explicitly redeploy selected consumers with the
         last successful source revision and current service inputs. Repository-managed consumers use workflow promotion.
+        Remains available when Operations is disabled.
       responses:
         '202':
           description: Successful result.
@@ -1447,6 +1504,7 @@ paths:
   /overview:
     get:
       operationId: getOverview
+      description: Includes controllerSettings for every authenticated client so feature visibility follows the persisted flag.
       responses:
         "200":
           description: Current inventory and recent deployment evidence.
@@ -3087,6 +3145,14 @@ components:
           type: array
           items:
             type: object
+    ControllerSettings:
+      type: object
+      required: [operationsEnabled]
+      properties:
+        operationsEnabled:
+          type: boolean
+          default: false
+          description: Persisted controller-wide feature flag. Only a controller owner can change it.
     OperationsSummary:
       type: object
       required: [observedAt, audit, ownership]
@@ -3807,9 +3873,13 @@ components:
             connectedAt: { type: string, format: date-time }
     Overview:
       type: object
-      required: [demo, projects, servers, apps, deployments, previewGroups, previewGroupRuns, githubApps, configSources, workflowResources, workflowRevisions, workflowStageRuns]
+      required: [demo, controllerSettings, projects, servers, apps, deployments, previewGroups, previewGroupRuns, githubApps, configSources, workflowResources, workflowRevisions, workflowStageRuns]
       properties:
         demo: { type: boolean }
+        controllerSettings:
+          allOf:
+          - $ref: '#/components/schemas/ControllerSettings'
+          description: Current feature settings exposed to every authenticated client, including members.
         projects: { type: array, items: { type: object } }
         servers: { type: array, items: { type: object } }
         apps: { type: array, items: { type: object } }
