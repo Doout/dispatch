@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/oklog/ulid/v2"
@@ -15,6 +17,8 @@ import (
 type operationsStore interface {
 	AppendAuditEvent(context.Context, core.AuditEvent) error
 	ListAuditEvents(context.Context, core.AuditFilter) ([]core.AuditEvent, error)
+	GetOperationsSummary(context.Context, []string, bool, time.Time) (core.OperationsSummary, error)
+	ListOperationsOwnership(context.Context, core.OwnershipFilter) ([]core.OwnershipItem, error)
 	GetApplicationOwner(context.Context, string) (core.ApplicationOwner, error)
 	SaveApplicationOwner(context.Context, core.ApplicationOwner) error
 	ListIdentityTeamMappings(context.Context) ([]core.IdentityTeamMapping, error)
@@ -23,12 +27,15 @@ type operationsStore interface {
 	GetRetentionPolicy(context.Context, string) (core.RetentionPolicy, error)
 	SaveRetentionPolicy(context.Context, core.RetentionPolicy) error
 	ApplyRetention(context.Context, core.RetentionPolicy, bool, time.Time) (core.RetentionResult, error)
+	ApplyRetentionReviewed(context.Context, core.RetentionPolicy, bool, time.Time) (core.RetentionResult, error)
 	SaveBackupRecord(context.Context, core.BackupRecord) error
 	ListBackupRecords(context.Context) ([]core.BackupRecord, error)
 }
 
 func (a *API) operationsRoutes(r chi.Router) {
 	r.Get("/audit", a.listAudit)
+	r.Get("/operations/summary", a.operationsSummary)
+	r.Get("/operations/ownership", a.operationsOwnership)
 	r.Get("/projects/{id}/owner-candidates", a.ownerCandidates)
 	r.Get("/apps/{id}/owner", a.appPermission(core.PermissionProjectView, a.getApplicationOwner))
 	r.Put("/apps/{id}/owner", a.appPermission(core.PermissionProjectConfigure, a.setApplicationOwner))
@@ -120,24 +127,11 @@ func (a *API) listAudit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	f := core.AuditFilter{AppID: r.URL.Query().Get("appId"), ActorID: r.URL.Query().Get("actorId"), Action: r.URL.Query().Get("action"), Before: r.URL.Query().Get("before"), Limit: 100}
-	project := r.URL.Query().Get("projectId")
-	if project != "" {
-		if !a.requireProject(w, r, core.PermissionProjectView, project) {
-			return
-		}
-		f.ProjectIDs = []string{project}
-	} else if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
-		visible, err := a.visibleProjectIDs(r.Context())
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		f.ProjectIDs = []string{}
-		for id := range visible {
-			f.ProjectIDs = append(f.ProjectIDs, id)
-		}
+	f, valid := a.operationsAuditFilter(w, r)
+	if !valid {
+		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	rows, err := data.ListAuditEvents(r.Context(), f)
 	if err != nil {
 		a.internal(w, err)
@@ -317,7 +311,7 @@ func (a *API) saveRetention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ProjectID = chi.URLParam(r, "id")
-	if p.LogDays < 1 || p.RunDays < 1 || p.KeepRuns < 5 || p.LogDays > 36500 || p.RunDays > 36500 || p.KeepRuns > 10000 {
+	if !validRetentionPolicy(p) {
 		problem(w, 400, "Invalid retention", "Keep at least five runs and at least one day of history and logs.")
 		return
 	}
@@ -326,6 +320,9 @@ func (a *API) saveRetention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, p)
+}
+func validRetentionPolicy(p core.RetentionPolicy) bool {
+	return p.LogDays >= 1 && p.LogDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000
 }
 func (a *API) previewRetention(w http.ResponseWriter, r *http.Request) { a.runRetention(w, r, false) }
 func (a *API) applyRetention(w http.ResponseWriter, r *http.Request)   { a.runRetention(w, r, true) }
@@ -342,19 +339,37 @@ func (a *API) runRetention(w http.ResponseWriter, r *http.Request, apply bool) {
 		a.internal(w, err)
 		return
 	}
-	if apply {
-		var input struct {
-			Confirm string `json:"confirm"`
-		}
+	var input struct {
+		Confirm        string                `json:"confirm"`
+		ExpectedPolicy *core.RetentionPolicy `json:"expectedPolicy"`
+	}
+	if apply || r.ContentLength != 0 {
 		if !decode(w, r, &input) {
 			return
 		}
-		if input.Confirm != p.ProjectID {
-			problem(w, 400, "Confirmation required", "Confirm the selected project before removing history.")
-			return
-		}
 	}
-	result, err := data.ApplyRetention(r.Context(), p, apply, time.Now().UTC())
+	if apply && input.Confirm != p.ProjectID {
+		problem(w, 400, "Confirmation required", "Confirm the selected project before removing history.")
+		return
+	}
+	if input.ExpectedPolicy != nil && input.ExpectedPolicy.ProjectID != p.ProjectID {
+		problem(w, 400, "Invalid retention policy", "Review the policy for the selected project.")
+		return
+	}
+	if input.ExpectedPolicy != nil && !validRetentionPolicy(*input.ExpectedPolicy) {
+		problem(w, 400, "Invalid retention", "Keep at least five runs and at least one day of history and logs.")
+		return
+	}
+	var result core.RetentionResult
+	if input.ExpectedPolicy != nil {
+		result, err = data.ApplyRetentionReviewed(r.Context(), *input.ExpectedPolicy, apply, time.Now().UTC())
+	} else {
+		result, err = data.ApplyRetention(r.Context(), p, apply, time.Now().UTC())
+	}
+	if errors.Is(err, store.ErrRetentionPolicyChanged) {
+		problem(w, 409, "Retention policy changed", "Reload the saved policy and review its impact again before applying it.")
+		return
+	}
 	if err != nil {
 		a.internal(w, err)
 		return

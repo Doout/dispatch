@@ -15,9 +15,10 @@ type AuditEvent struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 type AuditFilter struct {
-	ProjectIDs                     []string
-	AppID, ActorID, Action, Before string
-	Limit                          int
+	ProjectIDs                                     []string
+	AppID, ActorID, Action, Before, Query, Outcome string
+	Since, Until                                   *time.Time
+	Limit                                          int
 }
 type ApplicationOwner struct {
 	AppID         string    `json:"appId"`

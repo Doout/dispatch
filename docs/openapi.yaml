@@ -473,47 +473,130 @@ paths:
           $ref: '#/components/responses/Problem'
         '409':
           $ref: '#/components/responses/Problem'
+  /operations/summary:
+    get:
+      operationId: getOperationsSummary
+      description: >-
+        Read-only summary using current project grants, including expiry and revocation.
+        Audit totals count all recorded events in the exact trailing 24 hours from
+        audit.since inclusive to observedAt exclusive; recent contains at most five
+        events. Ownership includes active applications that are not templates,
+        including generated applications. Without projectId, owners also see
+        controller-wide audit events. Backups are omitted for members and remain
+        controller-wide for owners even when a project is selected. Responses use
+        Cache-Control no-store. No snapshots, credentials, or backup paths are returned.
+      parameters:
+      - name: projectId
+        in: query
+        description: Optional visible project. An unreadable project returns 403.
+        schema: { type: string }
+      responses:
+        '200':
+          description: Permission-scoped counts and recorded metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationsSummary' }
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+  /operations/ownership:
+    get:
+      operationId: listOperationsOwnership
+      description: >-
+        Read-only ownership inventory filtered by current project grants before
+        pagination. Includes active applications that are not templates, including
+        generated applications. Results sort by application name and ID and contain
+        no deployment snapshots or credentials. Ownership records responsibility
+        and grants no permission. Responses use Cache-Control no-store.
+      parameters:
+      - name: projectId
+        in: query
+        schema: { type: string }
+      - name: q
+        in: query
+        description: Literal case-insensitive search across application names/IDs and owner names/IDs.
+        schema: { type: string, maxLength: 200 }
+      - name: unassigned
+        in: query
+        description: Omit for all applications; true selects unassigned and false selects assigned applications.
+        schema: { type: boolean }
+      - name: before
+        in: query
+        description: Opaque next cursor from the preceding response. Reset when filters change.
+        schema: { type: string, maxLength: 4096 }
+      responses:
+        '200':
+          description: Up to 100 ownership rows and an optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationsOwnershipPage' }
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
   /audit:
     get:
       operationId: listAuditEvents
-      description: Requires authentication. Owners see controller events; members see events only in projects they
-        can view. Returns at most 100 events.
+      description: >-
+        Requires authentication and checks current project grants on every request.
+        Owners see controller events; members see events only in projects they can
+        view. Every filter applies before pagination. Returns at most 100 events
+        ordered by descending ID with Cache-Control no-store. An accepted request
+        can have background work that later fails; audit outcomes are HTTP request
+        outcomes, not deployment health. Request bodies and query strings are not recorded.
       responses:
         '200':
-          description: Successful result.
+          description: Filtered audit events. Continue with before equal to the last returned ID.
           content:
             application/json:
               schema:
                 type: array
+                maxItems: 100
                 items:
                   $ref: '#/components/schemas/AuditEvent'
         '400':
           $ref: '#/components/responses/Problem'
-        '403':
+        '401':
           $ref: '#/components/responses/Problem'
-        '409':
+        '403':
           $ref: '#/components/responses/Problem'
       parameters:
       - name: projectId
         in: query
-        schema:
-          type: string
+        schema: { type: string }
       - name: appId
         in: query
-        schema:
-          type: string
+        schema: { type: string }
       - name: actorId
         in: query
-        schema:
-          type: string
+        schema: { type: string }
       - name: action
         in: query
-        schema:
-          type: string
+        schema: { type: string }
+      - name: q
+        in: query
+        description: >-
+          Literal case-insensitive search across actor metadata, actions, resource,
+          application and project IDs, and current in-scope application/project names.
+        schema: { type: string, maxLength: 200 }
+      - name: outcome
+        in: query
+        schema: { type: string, enum: [succeeded, rejected] }
+      - name: since
+        in: query
+        description: Inclusive RFC3339 lower bound. Use summary.audit.since for its exact 24-hour window.
+        schema: { type: string, format: date-time }
+      - name: until
+        in: query
+        description: Exclusive RFC3339 upper bound; must be after since. Use summary.observedAt for its window.
+        schema: { type: string, format: date-time }
       - name: before
         in: query
-        schema:
-          type: string
+        description: Last event ID from the preceding response. Reset when filters change.
+        schema: { type: string }
   /apps/{id}/owner:
     parameters:
     - name: id
@@ -717,8 +800,17 @@ paths:
         type: string
     post:
       operationId: previewProjectRetention
-      description: Requires project.manage. Count eligible historical logs/runs, preserving current, successful, baseline,
-        and workflow dependencies.
+      description: >-
+        Requires project.manage. Count eligible historical logs/runs while preserving
+        current, successful, baseline, and workflow dependencies. Optional expectedPolicy
+        is compared with the saved policy in the same transaction that evaluates
+        eligibility. A mismatch returns 409. This does not save policy changes or
+        delete data; an empty request body remains supported.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetentionReviewInput' }
       responses:
         '200':
           description: Successful result.
@@ -741,8 +833,14 @@ paths:
         type: string
     post:
       operationId: applyProjectRetention
-      description: Requires project.manage. Reevaluate eligibility and delete only unprotected data in this project.
-        This operation is irreversible.
+      description: >-
+        Requires project.manage and explicit project confirmation. Reevaluate eligibility
+        and delete only unprotected data in this project. Optional expectedPolicy is
+        compared transactionally with the saved policy; a mismatch returns 409 without
+        cleanup. The reviewed policy is applied without substituting a newer policy.
+        Counts may change after preview. The UI saves policy before preview, then reviews
+        and confirms cleanup; applying never performs a policy PUT. Existing confirm-only
+        clients remain supported. Removal is irreversible.
       responses:
         '200':
           description: Successful result.
@@ -761,18 +859,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-              - confirm
-              properties:
-                confirm:
-                  type: string
-                  description: Must equal the project ID.
+              $ref: '#/components/schemas/RetentionApplyInput'
   /operations/backups:
     get:
       operationId: listControllerBackups
-      description: Controller owner only. Metadata and restore-verification outcomes, never backup paths, contents,
-        or credentials.
+      description: >-
+        Controller owner only. Returns up to 100 recorded backups, while the Operations
+        summary counts all backup records. Both remain controller-wide regardless of
+        project selection. Records contain metadata and restore-verification outcomes,
+        never paths, contents, or credentials, and do not establish current file availability.
       responses:
         '200':
           description: Successful result.
@@ -785,6 +880,7 @@ paths:
                     type: boolean
                   backups:
                     type: array
+                    maxItems: 100
                     items:
                       $ref: '#/components/schemas/BackupRecord'
         '400':
@@ -795,8 +891,12 @@ paths:
           $ref: '#/components/responses/Problem'
     post:
       operationId: createControllerBackup
-      description: Controller owner only. Create a consistent controller database and encrypted credential key backup
-        in protected controller storage.
+      description: >-
+        Controller owner only. Create a consistent controller database, matching vault
+        key, and checksum manifest in protected controller storage. The analytics
+        directory, including DuckDB and Parquet history, is excluded and requires a
+        separate backup. External workloads, databases, and separately supplied files
+        are not included.
       responses:
         '201':
           description: Successful result.
@@ -2987,6 +3087,96 @@ components:
           type: array
           items:
             type: object
+    OperationsSummary:
+      type: object
+      required: [observedAt, audit, ownership]
+      properties:
+        observedAt: { type: string, format: date-time }
+        audit:
+          type: object
+          required: [since, total, rejected, recent]
+          properties:
+            since:
+              type: string
+              format: date-time
+              description: Exactly 24 hours before observedAt; included in the audit window.
+            total: { type: integer, format: int64, minimum: 0 }
+            rejected: { type: integer, format: int64, minimum: 0 }
+            recent:
+              type: array
+              maxItems: 5
+              description: Recorded events in the same scope and window, newest first.
+              items: { $ref: '#/components/schemas/AuditEvent' }
+        ownership:
+          type: object
+          required: [total, unassigned]
+          properties:
+            total: { type: integer, format: int64, minimum: 0 }
+            unassigned: { type: integer, format: int64, minimum: 0 }
+        backups:
+          type: object
+          description: Omitted for members. Always controller-wide for owners, even with projectId.
+          required: [configured, recorded]
+          properties:
+            configured: { type: boolean }
+            recorded:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Count of all recorded backups; the separate inventory returns up to 100.
+            latest:
+              allOf:
+              - $ref: '#/components/schemas/BackupRecord'
+              description: Latest recorded backup by creation time.
+            latestVerified:
+              allOf:
+              - $ref: '#/components/schemas/BackupRecord'
+              description: Latest currently verified record by successful verification time.
+    OperationsOwnershipPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/OperationsOwnershipItem' }
+        next:
+          type: string
+          description: Opaque continuation cursor, omitted when no further rows are available.
+    OperationsOwnershipItem:
+      type: object
+      required: [appId, appName, projectId]
+      properties:
+        appId: { type: string }
+        appName: { type: string }
+        projectId: { type: string }
+        owner:
+          type: object
+          description: Omitted when unassigned. A removed principal retains its ID and has an empty display name.
+          required: [principalType, principalId, displayName, updatedAt]
+          properties:
+            principalType: { type: string, enum: [user, team] }
+            principalId: { type: string }
+            displayName: { type: string }
+            updatedAt: { type: string, format: date-time }
+    RetentionReviewInput:
+      type: object
+      properties:
+        expectedPolicy:
+          allOf:
+          - $ref: '#/components/schemas/RetentionPolicy'
+          - type: object
+            required: [projectId]
+          description: Optional saved policy captured for review. Project must match the route; changed saved inputs return 409.
+    RetentionApplyInput:
+      allOf:
+      - $ref: '#/components/schemas/RetentionReviewInput'
+      - type: object
+        required: [confirm]
+        properties:
+          confirm:
+            type: string
+            description: Must equal the selected project ID.
     ApplicationOwner:
       type: object
       properties:
@@ -3027,6 +3217,8 @@ components:
           type: string
         outcome:
           type: string
+          enum: [succeeded, rejected]
+          description: HTTP request acceptance or rejection, not the eventual background execution result.
         createdAt:
           type: string
           format: date-time

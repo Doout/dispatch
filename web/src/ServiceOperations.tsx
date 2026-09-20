@@ -3,7 +3,7 @@ import { ArrowsClockwise, CheckCircle, WarningCircle } from "@phosphor-icons/rea
 import { Overview, request, ServiceConnection } from "./api";
 import { ApplicationDeploymentLink } from "./deployments/DeploymentCatalog";
 import { canManageProject } from "./permissions";
-import "./OperationsPage.css";
+import "./ServiceOperations.css";
 
 type Consumer = { appId: string; appName: string; alias: string; appliedRevision: number; redeploymentRequired: boolean; targetName: string; environment: string; deploymentId?: string; canRedeploy: boolean; reason?: string };
 type Impact = { serviceId: string; revision: number; consumers: Consumer[] };

@@ -745,7 +745,7 @@ export default function DispatchApp() {
                 }
               />
             )}
-          {!loading && overview && view === "operations" && <OperationsPage overview={overview} />}
+          {!loading && overview && view === "operations" && <OperationsPage key={overview.identity?.id} overview={overview} filters={route.operationsFilters ?? {}} onFilters={filters => navigateRoute({view: "operations", operationsFilters: filters}, {replace: true, preserveScroll: true})} onNavigate={navigateRoute} onChanged={() => load(true)} />}
           {!loading && overview && view === "analytics" && <AnalyticsPage key={overview.identity?.id} overview={overview} filters={route.analyticsFilters ?? {}} onFilters={filters => navigateRoute({view: "analytics", analyticsFilters: filters}, {replace: true, preserveScroll: true})} onNavigate={navigateRoute} />}
           {!loading && overview && view === "servers" && !route.serverID && (
             <ServersPage

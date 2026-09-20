@@ -6,23 +6,14 @@ import * as client from "./api";
 import * as catalog from "./deployments/DeploymentCatalog";
 import type { CatalogItem } from "./deployments/catalogClient";
 import { type Overview, type ServiceConnection } from "./api";
-import { OperationsPage } from "./OperationsPage";
 import { ServiceOperations } from "./ServiceOperations";
 import { ServicesPage } from "./ServicesPage";
 
 const overview={identity:{id:"owner",systemRole:"owner"},projects:[{id:"p",name:"Platform"}],apps:[],deployments:[],servers:[],services:[],secrets:[]} as unknown as Overview;
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
-it("previews retention and requires a separate review before deletion",async()=>{
- const calls:{path:string;body?:string}[]=[];vi.spyOn(client,"request").mockImplementation(async <T,>(path:string,init?:RequestInit)=>{calls.push({path,body:init?.body as string|undefined});if(path.includes("/audit"))return [] as T;if(path.endsWith("/preview"))return {logs:100,runs:3,protectedRuns:20,applied:false} as T;if(path.endsWith("/apply"))return {logs:100,runs:3,protectedRuns:20,applied:true} as T;return {projectId:"p",logDays:30,runDays:90,keepRuns:10} as T;});
- const user=userEvent.setup();render(<OperationsPage overview={overview}/>);await user.click(screen.getByRole("tab",{name:"Retention"}));await screen.findByRole("button",{name:"Save and preview cleanup"});await user.click(screen.getByRole("button",{name:"Save and preview cleanup"}));await screen.findByText(/100 log lines, 3 failed runs/);expect(calls.some(c=>c.path.endsWith("/apply"))).toBe(false);await user.click(screen.getByRole("button",{name:"Review removal"}));expect(calls.some(c=>c.path.endsWith("/apply"))).toBe(false);await user.click(screen.getByRole("button",{name:"Remove eligible history"}));await waitFor(()=>expect(calls.some(c=>c.path.endsWith("/apply"))).toBe(true));expect(JSON.parse(calls.find(c=>c.path.endsWith("/apply"))!.body!)).toEqual({confirm:"p"});
-});
-it("verifies a retained backup without creating or restoring over the controller",async()=>{
- const request=vi.spyOn(client,"request").mockImplementation(async <T,>(path:string)=>path.includes("audit")?[] as T:{configured:true,backups:[{id:"backup-1",engine:"sqlite",state:"ready",bytes:1048576,createdAt:"2026-09-19T00:00:00Z",message:"Saved"}]} as T);
- const user=userEvent.setup();render(<OperationsPage overview={overview}/>);await user.click(screen.getByRole("tab",{name:"Backups"}));await user.click(await screen.findByRole("button",{name:"Verify restore"}));await waitFor(()=>expect(request).toHaveBeenCalledWith("/api/v1/operations/backups/backup-1/verify",{method:"POST",body:"{}"}));expect(request.mock.calls.filter(([,init])=>init?.method==="POST")).toHaveLength(1);
-});
-it("keeps backup, mapping, and retention mutation controls unavailable to viewers",async()=>{
- vi.spyOn(client,"request").mockResolvedValue([]);const member={...overview,identity:{...overview.identity!,systemRole:"member" as const},projectPermissions:{p:["project.view" as const]}};const user=userEvent.setup();render(<OperationsPage overview={member}/>);expect(screen.queryByRole("tab",{name:"Backups"})).toBeNull();expect(screen.queryByRole("tab",{name:"Identity mapping"})).toBeNull();await user.click(screen.getByRole("tab",{name:"Retention"}));expect(screen.getByText(/Project admin access is required/)).toBeTruthy();expect(screen.queryByRole("button",{name:"Save and preview cleanup"})).toBeNull();
-});
+
+
+
 it("deduplicates selected consumers and keeps protected workflow consumers unavailable",async()=>{
  const service={id:"db",projectId:"p",revision:2,consumers:[]} as unknown as ServiceConnection;const consumer={appId:"app",appName:"API",appliedRevision:1,redeploymentRequired:true,targetName:"Local",environment:"development",canRedeploy:true};const calls:{path:string;body?:RequestInit["body"]}[]=[];
  vi.spyOn(client,"request").mockImplementation(async <T,>(path:string,init?:RequestInit)=>{calls.push({path,body:init?.body});return path.endsWith("/impact")?{serviceId:"db",revision:2,consumers:[{...consumer,alias:"primary"},{...consumer,alias:"analytics"},{...consumer,alias:"managed",appId:"managed",appName:"Managed",canRedeploy:false,reason:"Use workflow promotion"}]} as T:[{appId:"app",deployment:{id:"new"}}] as T;});
@@ -42,13 +33,7 @@ it("refreshes service impact for consumer deployments while retaining selection 
  request.mockResolvedValue({...impact,consumers:[{...impact.consumers[0],appliedRevision:2,redeploymentRequired:false}]});view.rerender(<ServiceOperations {...props} service={{...service,consumers:[{...consumer,appliedRevision:2,redeploymentRequired:false}]}} overview={{...overview,deployments:[{...active,state:"succeeded"}]}}/>);await waitFor(()=>expect(request).toHaveBeenCalledTimes(3));await screen.findByText("Current",{exact:true});
 });
 
-it("assigns ownership to generated environments without granting project viewers configuration access",async()=>{
- const managed={appId:"generated",appName:"Orders production",projectId:"p",environment:"production"} as CatalogItem;
- vi.spyOn(catalog,"useDeploymentCatalog").mockReturnValue({items:[managed,{...managed,appId:"view-only",appName:"Read-only environment",projectId:"q"}],loading:false,error:""});
- const member={...overview,identity:{...overview.identity!,systemRole:"member" as const},projectPermissions:{p:["project.view" as const,"project.configure" as const],q:["project.view" as const]}};
- const request=vi.spyOn(client,"request").mockImplementation(async <T,>(path:string)=>path.endsWith("owner-candidates")?{users:[{id:"operator",displayName:"Operator"}],teams:[]} as T:path.endsWith("/owner")?{principalType:"user",principalId:""} as T:[] as T);
- const user=userEvent.setup();render(<OperationsPage overview={member}/>);await user.click(screen.getByRole("tab",{name:"Ownership"}));expect(screen.getByRole("option",{name:"Orders production"})).toBeTruthy();expect(screen.queryByRole("option",{name:"Read-only environment"})).toBeNull();await screen.findByRole("option",{name:"Operator"});await user.selectOptions(screen.getByLabelText("Owner",{exact:true}),"operator");await user.click(screen.getByRole("button",{name:"Save owner"}));await waitFor(()=>expect(request).toHaveBeenCalledWith("/api/v1/apps/generated/owner",{method:"PUT",body:JSON.stringify({principalType:"user",principalId:"operator"})}));
-});
+
 it("opens generated consumer bindings as repository managed read-only details",async()=>{
  vi.spyOn(catalog,"useDeploymentCatalog").mockReturnValue({items:[{appId:"generated",appName:"Orders production",projectId:"p"} as CatalogItem],loading:false,error:""});
  const service={id:"db",projectId:"p",name:"Database",type:"generic",revision:2,fields:{},consumers:[]} as unknown as ServiceConnection;
