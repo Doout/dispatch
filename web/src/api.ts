@@ -379,6 +379,7 @@ export type WorkflowResource = {
   jobCount: number;
   stageNames?: string[];
   targetRefs?: string[];
+  lastEvaluation?: WorkflowEvaluation;
   createdAt: string;
   updatedAt: string;
 };
@@ -427,11 +428,27 @@ export type WorkflowStageRun = {
   state: string;
   approval: string;
   deploymentIds?: string[];
+  deploymentResults?: WorkflowDeploymentResult[];
   checkRuns?: Record<string, string>;
   error?: string;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
+};
+export type WorkflowDeploymentResult = {
+  deploymentName: string;
+  appId: string;
+  deploymentId: string;
+  outcome: "unchanged" | "deployed";
+  reason?: string;
+  checkedAt: string;
+};
+export type WorkflowEvaluation = {
+  resourceId: string;
+  baselineRevisionId: string;
+  sources: Record<string, WorkflowSourceRevision>;
+  results: WorkflowDeploymentResult[];
+  checkedAt: string;
 };
 export type WorkflowTopologyColumn = { id: string; label: string };
 export type WorkflowTopologyNode = {
@@ -1411,8 +1428,8 @@ export type ServiceBinding = {
 
 export type ApplicationSyncStatus = {
  appId: string; deploymentId?: string; supported: boolean; reapplyAvailable: boolean;
- configuration: {state: string; message: string; sourceId?: string; lastSyncedAt?: string};
- revision: {state: string; applied?: string; observed?: string};
+ configuration: {state: string; message: string; sourceId?: string; lastSyncedAt?: string; lastEvaluatedAt?: string};
+ revision: {state: string; applied?: string; observed?: string; evaluatedCommit?: string; evaluatedAt?: string};
  drift: {deploymentId?: string; state: string; health: string; message: string; healthMessage?: string; checkedAt?: string; lastSuccessfulCheckAt?: string; location: string;
  resources: {apiVersion: string; kind: string; namespace?: string; name: string; state: string; health: string; message?: string; truncated?: boolean; differences: {path: string; expected: unknown; actual: unknown; redacted?: boolean}[]}[]};
  actions: {id: string; state: string; message: string; actor: string; createdAt: string}[];

@@ -4,7 +4,19 @@ Dispatch loads Applications and Pipelines from YAML or JSON in a GitHub reposito
 
 Each sync reads every `.yaml`, `.yml`, and `.json` file below that path. The parser rejects unknown fields, invalid references, and duplicate resource names. A rejected sync does not replace the last valid configuration.
 
-Imported Applications start their first deployment automatically when an active configuration syncs. Subsequent source or application configuration changes create a new immutable revision. Pipelines are available for stage checks immediately. Pause an Application to stop automatic deployments; syncing preserves that choice.
+Imported Applications start their first deployment automatically when an active configuration syncs. Subsequent changes create an immutable revision when relevant inputs or rendered Helm resources change. Pipelines are available for stage checks immediately. Pause an Application to stop automatic deployments; syncing preserves that choice.
+
+## Automatic Helm change detection
+
+Automatic sync, push, and polling first check the files a Helm deployment uses. For sources used only by Helm, commits outside the chart directory and selected values files do not create a new run. Packaged chart dependencies are included. Unscoped build jobs and explicit source-commit expressions still observe repository revisions; symlinked inputs fall back to commit matching.
+
+When those inputs change, Dispatch merges values files in order, applies inline values and stage expressions, and maps build outputs before rendering. It compares the resulting resources with the currently deployed Helm release. This catches changes in shared values files that do not affect the selected chart, including values overridden by later files or build-output mappings. YAML formatting and resource document order do not count as changes; removed resources, removed fields, image changes, labels, and annotations do.
+
+An unchanged render reuses the real deployment. It creates no deployment record or Helm revision and preserves the retained deployment's saved values, source commits, credentials, and drift observations. The generated application's desired values can still update. A stage that does need to run can show **Unchanged** beside a reused deployment, and its configured checks still run.
+
+Dispatch can compare before creating a workflow run when the latest workflow succeeded, the Application definition is unchanged, only Helm source inputs changed, all stages are automatic, there are no stage checks or finally jobs, and every build has a matching reusable result. The application then shows its checked source commits under **No deployment changes**, keeping executions out of history when nothing was applied. This records the last successful unchanged comparison, keeping its original timestamp when reused. It is hidden when its saved inputs or release baseline no longer validate; it is not continuous runtime health.
+
+Comparison requires a pinned Git chart revision and a matching, successful installed release. Missing evidence, chart or application hooks, service credential bindings, nondeterministic templates, and unsuccessful comparisons retain normal deployment behavior. Manual **Run**, deploy, and reapply remain explicit actions. No YAML flag or additional path mappings are required for Helm-only sources.
 
 ## Application
 
@@ -125,7 +137,7 @@ build-service:
   run: bash "{{ sources.slot-config.path }}/shared/build-image.sh"
 ```
 
-Paths are relative to that source's `path`, or its repository root when no `path` is set. List files or directories, without glob patterns. Include every file the job reads, including build scripts and dependency configuration. Sources without a path declaration keep their existing commit-based matching.
+Paths are relative to that source's `path`, or its repository root when no `path` is set. List files or directories, without glob patterns. Include every file the job reads, including build scripts and dependency configuration. Job sources without a path declaration keep commit-based matching. Sources used only by Helm automatically track the referenced chart directories and values files.
 
 Dispatch hashes the selected Git objects at the recorded commit. For the application-level check it also includes the Helm chart and values files referenced from that source. Adding another slot's YAML does not invalidate an existing slot. Changing its values can trigger a deployment while reusing unchanged builds. If the application definition and all source inputs match the latest revision, automatic sync, push, and polling create no new run. Manual runs remain available for retries.
 

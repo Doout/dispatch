@@ -8,6 +8,15 @@ const app = {id:"app",name:"API",projectId:"p",buildType:"helm"} as App;
 const overview = {identity:{id:"owner",systemRole:"owner"}} as Overview;
 const status:ApplicationSyncStatus={appId:"app",deploymentId:"success-1",supported:true,reapplyAvailable:true,configuration:{state:"ready",message:"Last observed configuration."},revision:{state:"current",applied:"abc"},drift:{state:"out_of_sync",health:"healthy",message:"Observed differences.",location:"Dispatch controller",checkedAt:"2026-09-19T00:00:00Z",lastSuccessfulCheckAt:"2026-09-19T00:00:00Z",resources:[{apiVersion:"apps/v1",kind:"Deployment",name:"api",state:"out_of_sync",health:"healthy",differences:[{path:"/spec/replicas",expected:2,actual:3}]}]},actions:[]};
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
+it("shows an unchanged input check separately from the applied revision and runtime observation", async () => {
+ vi.spyOn(api,"applicationSync").mockResolvedValue({...status,configuration:{...status.configuration,message:"Latest source inputs were checked; the deployed release is unchanged.",lastEvaluatedAt:"2026-09-20T10:00:00Z"},revision:{state:"current",applied:"actual-deployment-revision",evaluatedCommit:"new-checked-commit",evaluatedAt:"2026-09-20T10:00:00Z"}});
+ render(<ApplicationSync application={app} overview={overview}/>);
+ expect(await screen.findByText("Deployment input check")).toBeTruthy();
+ expect(screen.getByText("actual-deployment-revision")).toBeTruthy();
+ expect(screen.getByText("new-checked-")).toBeTruthy();
+ expect(screen.getAllByText("Out of sync").length).toBeGreaterThan(0);
+ expect(screen.getByText("Current")).toBeTruthy();
+});
 it("separates runtime drift from health and asks before reapply",async()=>{
  vi.spyOn(api,"applicationSync").mockResolvedValue(status);const apply=vi.spyOn(api,"reapplyApplication").mockResolvedValue({...status,drift:{...status.drift,state:"synced"}});
  render(<ApplicationSync application={app} overview={overview}/>);expect(await screen.findByText("Runtime drift")).toBeTruthy();expect(screen.getByText("Resource health")).toBeTruthy();expect(screen.getAllByText("Out of sync").length).toBeGreaterThan(0);expect(screen.getByText("Healthy")).toBeTruthy();expect(screen.getByText("/spec/replicas")).toBeTruthy();

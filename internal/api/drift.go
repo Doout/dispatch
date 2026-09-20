@@ -13,15 +13,18 @@ import (
 )
 
 type configurationSync struct {
-	State        string     `json:"state"`
-	Message      string     `json:"message"`
-	SourceID     string     `json:"sourceId,omitempty"`
-	LastSyncedAt *time.Time `json:"lastSyncedAt,omitempty"`
+	LastEvaluatedAt *time.Time `json:"lastEvaluatedAt,omitempty"`
+	State           string     `json:"state"`
+	Message         string     `json:"message"`
+	SourceID        string     `json:"sourceId,omitempty"`
+	LastSyncedAt    *time.Time `json:"lastSyncedAt,omitempty"`
 }
 type revisionStatus struct {
-	State    string `json:"state"`
-	Applied  string `json:"applied,omitempty"`
-	Observed string `json:"observed,omitempty"`
+	EvaluatedCommit string     `json:"evaluatedCommit,omitempty"`
+	EvaluatedAt     *time.Time `json:"evaluatedAt,omitempty"`
+	State           string     `json:"state"`
+	Applied         string     `json:"applied,omitempty"`
+	Observed        string     `json:"observed,omitempty"`
 }
 type applicationSync struct {
 	ObservationFreshness         string             `json:"observationFreshness,omitempty"`
@@ -70,6 +73,14 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 	matching, err := a.deploymentAppInputsMatch(ctx, app, d)
 	if err != nil {
 		return out, err
+	}
+	proof, equivalent, err := a.currentHelmEquivalence(ctx, app, server, d)
+	if err != nil {
+		return out, err
+	}
+	if equivalent {
+		matching = true
+		out.Revision.EvaluatedCommit, out.Revision.EvaluatedAt = proof.ChartCommit, &proof.CheckedAt
 	}
 	if !matching {
 		out.Revision.State = "redeployment_required"
@@ -132,6 +143,10 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 			return out, errors.New("configuration project mismatch")
 		}
 		out.Configuration = configurationSync{State: source.State, Message: "Last observed repository configuration.", SourceID: source.ID, LastSyncedAt: source.LastSyncedAt}
+		if equivalent {
+			out.Configuration.LastEvaluatedAt = &proof.CheckedAt
+			out.Configuration.Message = "Compared source inputs match the retained release."
+		}
 		if !source.Active || !resource.Active {
 			out.Configuration.State = "paused"
 		}
@@ -152,7 +167,7 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 				for _, candidateRun := range runs {
 					if candidateRun.RevisionID == candidates[0].ID && candidateRun.StageName == run.StageName {
 						for _, dep := range candidateRun.DeploymentIDs {
-							if dep == d.ID {
+							if dep == d.ID && equivalent && evaluatedChartCommit(candidates[0], proof.ChartCommit) {
 								reused = true
 							}
 						}

@@ -20,13 +20,15 @@ var (
 
 type Service struct {
 	// OnFinished queues follow-up observations after the terminal state is saved.
-	OnFinished func(core.Deployment)
-	services   serviceconn.Resolver
-	store      store.Store
-	executor   Executor
-	mu         sync.Mutex
-	cancels    map[string]context.CancelFunc
-	appLocks   map[string]*sync.Mutex
+	OnFinished     func(core.Deployment)
+	services       serviceconn.Resolver
+	store          store.Store
+	executor       Executor
+	mu             sync.Mutex
+	cancels        map[string]context.CancelFunc
+	appLocks       map[string]*sync.Mutex
+	helmComparison *SourceAuthExecutor
+	compareHelm    func(context.Context, core.App, core.Server, string, core.Deployment) (bool, error)
 }
 
 func NewService(data store.Store, executor Executor) *Service {
@@ -45,6 +47,11 @@ func (s *Service) StartReviewed(ctx context.Context, appID, commitSHA string, re
 func (s *Service) start(ctx context.Context, appID, commitSHA string, review *core.DeploymentReview) (core.Deployment, error) {
 	unlock := s.lockApp(appID)
 	defer unlock()
+	return s.startLocked(ctx, appID, commitSHA, review)
+}
+
+// startLocked requires the application lock, also used by automatic comparison.
+func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, review *core.DeploymentReview) (core.Deployment, error) {
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
 	if err != nil {
 		return core.Deployment{}, err

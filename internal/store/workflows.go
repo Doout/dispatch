@@ -332,19 +332,19 @@ func scanWorkflowJobResult(row scanner) (core.WorkflowJobResult, error) {
 }
 
 func (s *SQLStore) CreateWorkflowStageRun(ctx context.Context, item core.WorkflowStageRun) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_stage_runs(id,revision_id,stage_name,target_ref,state,approval,deployment_ids,check_runs,error,created_at,started_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`),
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_stage_runs(id,revision_id,stage_name,target_ref,state,approval,deployment_ids,check_runs,error,created_at,started_at,finished_at,deployment_results) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.RevisionID, item.StageName, item.TargetRef, item.State, item.Approval, jsonText(item.DeploymentIDs), jsonText(item.CheckRuns), item.Error,
-		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt))
+		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.DeploymentResults))
 	return err
 }
 
 func (s *SQLStore) UpdateWorkflowStageRun(ctx context.Context, item core.WorkflowStageRun) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_stage_runs SET state=?,approval=?,deployment_ids=?,check_runs=?,error=?,started_at=?,finished_at=? WHERE id=?`),
-		item.State, item.Approval, jsonText(item.DeploymentIDs), jsonText(item.CheckRuns), item.Error, nullTime(item.StartedAt), nullTime(item.FinishedAt), item.ID)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_stage_runs SET state=?,approval=?,deployment_ids=?,check_runs=?,error=?,started_at=?,finished_at=?,deployment_results=? WHERE id=?`),
+		item.State, item.Approval, jsonText(item.DeploymentIDs), jsonText(item.CheckRuns), item.Error, nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.DeploymentResults), item.ID)
 	return changed(result, err)
 }
 
-const workflowStageRunSelect = `SELECT id,revision_id,stage_name,target_ref,state,approval,deployment_ids,check_runs,error,created_at,started_at,finished_at FROM workflow_stage_runs`
+const workflowStageRunSelect = `SELECT id,revision_id,stage_name,target_ref,state,approval,deployment_ids,check_runs,error,created_at,started_at,finished_at,deployment_results FROM workflow_stage_runs`
 
 func (s *SQLStore) GetWorkflowStageRun(ctx context.Context, id string) (core.WorkflowStageRun, error) {
 	item, err := scanWorkflowStageRun(s.db.QueryRowContext(ctx, s.q(workflowStageRunSelect+` WHERE id=?`), id))
@@ -379,12 +379,13 @@ func (s *SQLStore) ListWorkflowStageRuns(ctx context.Context, revisionID string)
 
 func scanWorkflowStageRun(row scanner) (core.WorkflowStageRun, error) {
 	var item core.WorkflowStageRun
-	var deploymentIDs, checkRuns, created string
+	var deploymentIDs, checkRuns, created, deploymentResults string
 	var started, finished sql.NullString
 	err := row.Scan(&item.ID, &item.RevisionID, &item.StageName, &item.TargetRef, &item.State, &item.Approval, &deploymentIDs, &checkRuns,
-		&item.Error, &created, &started, &finished)
+		&item.Error, &created, &started, &finished, &deploymentResults)
 	_ = json.Unmarshal([]byte(deploymentIDs), &item.DeploymentIDs)
 	_ = json.Unmarshal([]byte(checkRuns), &item.CheckRuns)
+	_ = json.Unmarshal([]byte(deploymentResults), &item.DeploymentResults)
 	item.CreatedAt, item.StartedAt, item.FinishedAt = parseTime(created), parseNullTime(started), parseNullTime(finished)
 	return item, err
 }

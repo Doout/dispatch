@@ -88,8 +88,12 @@ func run(logger *slog.Logger) error {
 		snapshots := deploy.SnapshotExecutor{Next: runtime, Store: data}
 		executor = deploy.HookExecutor{Next: snapshots, Outputs: data, Vault: vault, Resolver: secretResolver}
 	}
-	executor = deploy.SourceAuthExecutor{Next: executor, Secrets: data, Vault: vault, Resolver: secretResolver, GitHubApps: githubApps}
+	sourceAuth := deploy.SourceAuthExecutor{Next: executor, Secrets: data, Vault: vault, Resolver: secretResolver, GitHubApps: githubApps}
+	executor = sourceAuth
 	deployments := deploy.NewService(data, executor)
+	if cfg.Executor == "docker" {
+		deployments.ConfigureHelmComparison(sourceAuth)
+	}
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	var history analytics.Reader
