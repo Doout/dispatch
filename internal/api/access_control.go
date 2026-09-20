@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -125,6 +127,15 @@ func (a *API) effectiveAssignments(ctx context.Context, userID string) ([]core.R
 	if err != nil {
 		return nil, err
 	}
+	if data, ok := a.store.(interface {
+		ListIdentityTeamMembers(context.Context) ([]core.TeamMember, error)
+	}); ok {
+		managed, err := data.ListIdentityTeamMembers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, managed...)
+	}
 	teams := map[string]bool{}
 	for _, member := range members {
 		if member.UserID == userID {
@@ -133,6 +144,9 @@ func (a *API) effectiveAssignments(ctx context.Context, userID string) ([]core.R
 	}
 	result := []core.RoleAssignment{}
 	for _, assignment := range assignments {
+		if assignment.ExpiresAt != nil && !time.Now().Before(*assignment.ExpiresAt) {
+			continue
+		}
 		if assignment.PrincipalType == core.PrincipalUser && assignment.PrincipalID == userID || assignment.PrincipalType == core.PrincipalTeam && teams[assignment.PrincipalID] {
 			result = append(result, assignment)
 		}
@@ -877,10 +891,11 @@ func (a *API) deleteTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 type roleAssignmentRequest struct {
-	PrincipalType string `json:"principalType"`
-	PrincipalID   string `json:"principalId"`
-	ProjectID     string `json:"projectId"`
-	Role          string `json:"role"`
+	ExpiresAt     json.RawMessage `json:"expiresAt"`
+	PrincipalType string          `json:"principalType"`
+	PrincipalID   string          `json:"principalId"`
+	ProjectID     string          `json:"projectId"`
+	Role          string          `json:"role"`
 }
 
 func validProjectRole(role string) bool {
@@ -922,10 +937,33 @@ func (a *API) upsertRoleAssignment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now().UTC()
-	assignment := core.RoleAssignment{ID: ulid.Make().String(), PrincipalType: input.PrincipalType, PrincipalID: input.PrincipalID, ScopeType: core.ScopeProject, ScopeID: input.ProjectID, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+	var expires *time.Time
+	if len(input.ExpiresAt) > 0 {
+		if err := json.Unmarshal(input.ExpiresAt, &expires); err != nil {
+			problem(w, 400, "Invalid expiry", "Use an RFC3339 timestamp or null to remove expiry.")
+			return
+		}
+		if expires != nil && !expires.After(now) {
+			problem(w, 400, "Invalid expiry", "Choose a future expiry time.")
+			return
+		}
+	}
+	assignment := core.RoleAssignment{ExpiresAt: expires, PreserveExpiry: len(input.ExpiresAt) == 0, ID: ulid.Make().String(), PrincipalType: input.PrincipalType, PrincipalID: input.PrincipalID, ScopeType: core.ScopeProject, ScopeID: input.ProjectID, Role: input.Role, CreatedAt: now, UpdatedAt: now}
+
 	if err := a.store.UpsertRoleAssignment(r.Context(), assignment); err != nil {
 		a.internal(w, err)
 		return
+	}
+	assignments, err := a.store.ListRoleAssignments(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	for _, saved := range assignments {
+		if saved.PrincipalType == input.PrincipalType && saved.PrincipalID == input.PrincipalID && saved.ScopeType == core.ScopeProject && saved.ScopeID == input.ProjectID {
+			assignment = saved
+			break
+		}
 	}
 	writeJSON(w, http.StatusOK, assignment)
 }
@@ -946,6 +984,14 @@ func (a *API) deleteRoleAssignment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.Overview, error) {
+	// Approvals remain actionable even when newer runs move their revision out
+	// of the recent-history window. Include their immutable context before the
+	// normal resource and project filters are applied.
+	var err error
+	overview.WorkflowRevisions, err = a.includePendingApprovalRevisions(ctx, overview.WorkflowRevisions, overview.WorkflowStageRuns, overview.WorkflowResources)
+	if err != nil {
+		return overview, err
+	}
 	identity := currentIdentity(ctx)
 	overview.ProjectPermissions = make(map[string][]core.Permission)
 	if identity.SystemRole == core.UserRoleOwner {
@@ -1115,4 +1161,40 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 	overview.GitHubApps = []core.GitHubAppConnection{}
 	overview.RelayWebhooks = []core.RelayWebhook{}
 	return overview, nil
+}
+
+func (a *API) includePendingApprovalRevisions(ctx context.Context, revisions []core.WorkflowRevision, stages []core.WorkflowStageRun, resources []core.WorkflowResource) ([]core.WorkflowRevision, error) {
+	known := make(map[string]bool, len(revisions))
+	for _, revision := range revisions {
+		known[revision.ID] = true
+	}
+	currentResources := make(map[string]bool, len(resources))
+	for _, resource := range resources {
+		if resource.State != "removed" {
+			currentResources[resource.ID] = true
+		}
+	}
+	for _, stage := range stages {
+		if stage.State != "awaiting_approval" || known[stage.RevisionID] {
+			continue
+		}
+		known[stage.RevisionID] = true
+		revision, err := a.store.GetWorkflowRevision(ctx, stage.RevisionID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if currentResources[revision.ResourceID] {
+			revisions = append(revisions, revision)
+		}
+	}
+	sort.SliceStable(revisions, func(i, j int) bool {
+		if revisions[i].CreatedAt.Equal(revisions[j].CreatedAt) {
+			return revisions[i].ID > revisions[j].ID
+		}
+		return revisions[i].CreatedAt.After(revisions[j].CreatedAt)
+	})
+	return revisions, nil
 }

@@ -217,6 +217,11 @@ Use `make check` for the race detector, `go vet`, TypeScript checks, and fronten
 
 - [Architecture](docs/architecture.md)
 - [Repository configuration](docs/application-config.md)
+- [Deployment workspace](docs/deployment-workspace.md)
+- [Release previews and rollback](docs/release-tools.md)
+- [Observations and notifications](docs/observations.md)
+- [Controller operations](docs/operations.md)
+- [Edge credentials](docs/edge-credentials.md)
 - [API reference](docs/openapi.yaml)
 - [Provider API](docs/provider-api.md)
 - [Private routes](docs/private-networks.md)

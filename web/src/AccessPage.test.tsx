@@ -424,3 +424,12 @@ describe("access page", () => {
     expect(await screen.findByRole("button", { name: "Manage users" })).not.toBeNull();
   });
 });
+
+it("preserves a grant expiry when changing roles and removes it only when cleared", async () => {
+ const user=userEvent.setup();const expiry="2030-01-02T12:30:00Z";
+ vi.spyOn(api,"access").mockResolvedValue({...access,assignments:[{...access.assignments[0],expiresAt:expiry}]});
+ vi.spyOn(api,"updateTeam").mockResolvedValue(access.teams[0]);const save=vi.spyOn(api,"upsertRoleAssignment").mockResolvedValue(access.assignments[0]);
+ render(<AccessPage/>);await screen.findByText("Controller owner");await user.click(screen.getByRole("button",{name:/Teams/}));await user.click(screen.getByRole("button",{name:"Edit Platform"}));
+ const input=screen.getByLabelText("Checkout access expiry") as HTMLInputElement;expect(input.value).toContain("2030-01-02");await user.selectOptions(screen.getByLabelText("Checkout role"),"viewer");await user.click(screen.getByRole("button",{name:"Save team"}));await waitFor(()=>expect(save).toHaveBeenCalled());expect(save.mock.calls[0][0]).not.toHaveProperty("expiresAt");
+ await screen.findByRole("button",{name:"Edit Platform"});await user.click(screen.getByRole("button",{name:"Edit Platform"}));await user.clear(screen.getByLabelText("Checkout access expiry"));await user.click(screen.getByRole("button",{name:"Save team"}));await waitFor(()=>expect(save).toHaveBeenCalledTimes(2));expect(save.mock.calls[1][0].expiresAt).toBeNull();
+});

@@ -48,6 +48,7 @@ cat > "$config_root/edge.env" <<EOF
 DISPATCH_EDGE_CONTROLLER_URL=$DISPATCH_EDGE_CONTROLLER_URL
 DISPATCH_EDGE_NODE_ID=$DISPATCH_EDGE_NODE_ID
 DISPATCH_EDGE_TOKEN=$DISPATCH_EDGE_TOKEN
+DISPATCH_EDGE_IDENTITY_FILE=/var/lib/dispatch-edge/identity.json
 EOF
 chmod 0600 "$config_root/edge.env"
 
@@ -56,6 +57,7 @@ if [ "$install_mode" = docker ]; then
   docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 1; }
   root=/opt/dispatch-edge
   install -d -m 0755 "$root/image"
+  install -d -m 0700 -o 65532 -g 65532 "$root/state"
   install -m 0755 "$temporary" "$root/image/dispatch-agent"
   cat > "$root/image/Containerfile" <<'EOF'
 FROM alpine:3.22
@@ -72,6 +74,8 @@ services:
     env_file:
       - $config_root/edge.env
     read_only: true
+    volumes:
+      - $root/state:/var/lib/dispatch-edge
     security_opt:
       - no-new-privileges:true
     tmpfs:
@@ -97,6 +101,8 @@ ExecStart=/usr/local/bin/dispatch-agent
 Restart=always
 RestartSec=3
 DynamicUser=true
+StateDirectory=dispatch-edge
+StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -140,10 +146,21 @@ func (a *API) edgeBinary(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) authenticateEdge(r *http.Request) (core.PrivateNetwork, bool) {
 	item, err := a.store.GetPrivateNetwork(r.Context(), chi.URLParam(r, "id"))
-	if err != nil || item.Driver != edge.DriverAgent || item.TokenHash == "" {
+	if err != nil || item.Driver != edge.DriverAgent {
 		return item, false
 	}
 	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if data, ok := a.edgeCredentials(); ok {
+		valid, managed := edge.AuthenticateSession(r.Context(), data, item.ID, provided, time.Now().UTC())
+		if managed {
+			return item, valid
+		}
+	}
+	// Only nodes created before credential enrollment existed may use the legacy
+	// token. Rotating or revoking creates a managed identity and closes this path.
+	if item.TokenHash == "" {
+		return item, false
+	}
 	hash := sha256.Sum256([]byte(provided))
 	encoded := base64.RawURLEncoding.EncodeToString(hash[:])
 	return item, subtle.ConstantTimeCompare([]byte(encoded), []byte(item.TokenHash)) == 1
@@ -175,6 +192,10 @@ func (a *API) leaseEdgeJob(w http.ResponseWriter, r *http.Request) {
 	a.touchEdgeNode(r.Context(), item, r)
 	deadline := time.Now().Add(25 * time.Second)
 	for {
+		if _, valid := a.authenticateEdge(r); !valid {
+			problem(w, http.StatusUnauthorized, "Authentication required", "The edge session expired or was revoked.")
+			return
+		}
 		job, err := a.edge.Lease(r.Context(), item.ID)
 		if err != nil {
 			a.internal(w, err)
@@ -232,12 +253,26 @@ func (a *API) rotateEdgeToken(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Not an edge node", "Only managed edge nodes have enrollment tokens.")
 		return
 	}
-	token, hash, err := newEdgeToken()
+	data, ok := a.edgeCredentials()
+	if !ok {
+		problem(w, http.StatusServiceUnavailable, "Enrollment unavailable", "Credential storage is unavailable.")
+		return
+	}
+	now := time.Now().UTC()
+	token, err := edge.RotateCredentials(r.Context(), data, item.ID, now)
 	if err != nil {
 		a.internal(w, err)
 		return
 	}
-	item.TokenHash, item.EnrollmentToken, item.State, item.UpdatedAt = hash, token, "waiting", time.Now().UTC()
+	item.TokenHash, item.EnrollmentToken, item.State, item.UpdatedAt = "", token, "waiting", now
+	if item.Details == nil {
+		item.Details = map[string]string{}
+	}
+	item.Details["credentialMode"] = "short_session"
+	item.Details["enrollmentExpiresAt"] = now.Add(edge.EnrollmentLifetime).Format(time.RFC3339)
+	delete(item.Details, "keyFingerprint")
+	delete(item.Details, "sessionExpiresAt")
+	delete(item.Details, "revokedAt")
 	if err := a.store.UpdatePrivateNetwork(r.Context(), item); err != nil {
 		a.internal(w, err)
 		return

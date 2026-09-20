@@ -1,17 +1,18 @@
 # Roadmap
 
-This file tracks unfinished infrastructure work. The [product priorities](product-priorities.md) describe the proposed UX and operational backlog. Current behavior belongs in the README and the feature documents.
+This file tracks unfinished infrastructure work. The [product priorities](product-priorities.md) track the implemented UX and operational backlog and later candidates. Current behavior belongs in the README and the feature documents.
 
 ## Deployment reliability
 
-- [ ] Recover expired deployment leases after a controller restart.
-- [ ] Add rollback with a destructive-action confirmation step.
-- [ ] Verify Traefik routes and certificates after deployment.
-- [ ] Add retention rules for runs, logs, and runtime snapshots.
+- [x] Recover expired deployment leases and interrupted workflow execution after a controller restart.
+- [x] Add retained Helm rollback with explicit confirmation.
+- [x] Verify configured public URLs and TLS separately from workload readiness.
+- [x] Add conservative project retention with preview and confirmed cleanup.
 
 ## Agents and private networks
 
-- [ ] Replace long-lived enrollment credentials with short-lived tokens and outbound mTLS.
+- [x] Add one-use enrollment and key-bound short-lived outbound agent sessions over authenticated HTTPS.
+- [ ] Add outbound mTLS for environments that require client-certificate transport.
 - [ ] Add typed edge operations for repository checkout, registries, and Kubernetes APIs.
 - [ ] Finish the generic Laneway application and installation contract.
 - [ ] Add approved cross-network routes after single-network installation is stable.
@@ -21,7 +22,7 @@ This file tracks unfinished infrastructure work. The [product priorities](produc
 - [ ] Publish GitHub check runs for repository-managed applications.
 - [ ] Add per-source scheduling controls beyond the shared poll interval.
 - [ ] Add a clear recovery flow for rejected repository configuration revisions.
-- [ ] Show promotion history across every stage and target.
+- [x] Show promotion/approval context and application activity alongside deployment history.
 
 ## Runtime support
 
@@ -31,8 +32,8 @@ This file tracks unfinished infrastructure work. The [product priorities](produc
 
 ## Access
 
-- [ ] Add audit-log filters for impersonation, account links, role changes, and provider credentials.
-- [ ] Add group mapping for external identity providers.
-- [ ] Add time-limited project grants.
+- [x] Record actor/impersonator mutation metadata and filter audit activity by project, actor, and action.
+- [x] Add verified GitHub team mappings for current sign-in providers.
+- [x] Add time-limited project grants.
 
 Every change must keep source revisions immutable, credentials scoped, and destructive actions explicit.

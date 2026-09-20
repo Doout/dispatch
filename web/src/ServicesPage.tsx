@@ -3,12 +3,16 @@ import { api, Overview, ServiceConnection, ServiceInput } from "./api";
 import { PageHeader } from "./PageHeader";
 import { canManageAnyProject, canManageProject } from "./permissions";
 import { ApplicationServices } from "./ApplicationServices";
+import { useDeploymentCatalog } from "./deployments/DeploymentCatalog";
+import { ServiceOperations } from "./ServiceOperations";
 
 type FieldRow = { name: string; value: string; sensitive: boolean; secretRef: string; source: "value" | "secret"; changed: boolean; saved: boolean };
 const pgFields = ["host", "port", "database", "username", "password", "sslmode", "caCert"];
 
 export function ServicesPage({ overview, onChanged }: { overview: Overview; onChanged: () => Promise<void> }) {
+ const {items:catalog}=useDeploymentCatalog();
  const [project, setProject] = useState("");
+ const [rotation,setRotation] = useState(false);
  const [editing, setEditing] = useState<ServiceConnection | "new" | null>(null);
  const [removing, setRemoving] = useState<string | null>(null);
  const [application, setApplication] = useState<string | null>(null);
@@ -20,11 +24,12 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
   try { if (action === "check") await api.verifyService(id); else { await api.deleteService(id); setRemoving(null); } await onChanged(); }
   catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(""); }
  }
- const app = overview.apps.find(a => a.id === application);
+ const managed=catalog.find(a=>a.appId===application);
+ const app = overview.apps.find(a => a.id === application) ?? (managed ? {id:managed.appId,name:managed.appName,projectId:managed.projectId,generated:true,template:false} : undefined);
  if (app) return <ApplicationServices application={app} overview={overview} onChanged={onChanged} onBack={() => setApplication(null)} />;
- if (editing) return <ServiceEditor key={editing === "new" ? "new" : editing.id} item={editing === "new" ? undefined : editing} overview={overview} initialProject={project} onBack={() => setEditing(null)} onSaved={async () => { await onChanged(); setEditing(null); }} />;
+ if (editing) return <ServiceEditor rotation={rotation} key={editing === "new" ? "new" : editing.id} item={editing === "new" ? undefined : editing} overview={overview} initialProject={project} onBack={() => setEditing(null)} onSaved={async () => { await onChanged(); setEditing(null); }} />;
  return <div className="page-layout services-page">
-  <PageHeader view="services" action={canManageAnyProject(overview, "project.configure") ? { label: "Register service", onClick: () => setEditing("new") } : undefined} />
+  <PageHeader view="services" action={canManageAnyProject(overview, "project.configure") ? { label: "Register service", onClick: () => {setRotation(false);setEditing("new")} } : undefined} />
   <p>Register connections to existing databases and other application dependencies.</p>
   <label className="service-filter">Project<select value={project} onChange={e => setProject(e.target.value)}><option value="">All projects</option>{overview.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
   {error && <p role="alert" className="error">{error}</p>}
@@ -32,18 +37,18 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
   <div className="service-list">{services.map(service => {
    const manage = canManageProject(overview, service.projectId, "project.configure");
    return <section className="service-card" key={service.id}>
-    <div className="service-card-header"><div><h2>{service.name}</h2><p>{service.type === "postgresql" ? "PostgreSQL" : "Generic"} · {overview.projects.find(p => p.id === service.projectId)?.name} · Revision {service.revision}</p></div>{manage && <button className="quiet-button" onClick={() => setEditing(service)}>Edit</button>}</div>
+    <div className="service-card-header"><div><h2>{service.name}</h2><p>{service.type === "postgresql" ? "PostgreSQL" : "Generic"} · {overview.projects.find(p => p.id === service.projectId)?.name} · Revision {service.revision}</p></div>{manage && <div className="service-actions"><button className="quiet-button" onClick={() => {setRotation(false);setEditing(service)}}>Edit</button><button className="quiet-button" onClick={() => {setRotation(true);setEditing(service)}}>Rotate credentials</button></div>}</div>
     {service.description && <p>{service.description}</p>}
     <dl className="service-fields">{Object.entries(service.fields).map(([name, f]) => <div key={name}><dt>{name}</dt><dd>{f.sensitive ? f.configured ? "Configured · hidden" : "Not configured" : f.value || "Not configured"}</dd></div>)}</dl>
     <div className="service-check"><strong>{service.check?.state === "succeeded" ? "Connection succeeded" : service.check?.state === "failed" ? "Connection failed" : "Not tested"}</strong>{service.check && <p>{service.check.message}<br />{service.check.location} · {new Date(service.check.checkedAt).toLocaleString()} · {service.check.durationMs} ms</p>}<p>A controller check does not verify access from your application.</p>{manage && <button className="quiet-button" disabled={!!busy} onClick={() => void act(service.id, "check")}>{busy === service.id ? "Working…" : "Test connection"}</button>}</div>
-    <h3>Applications</h3>{!service.consumers.length ? <p>No application bindings.</p> : <ul>{service.consumers.map(c => <li key={`${c.appId}/${c.alias}`}><button className="quiet-button" onClick={() => setApplication(c.appId)}>{c.appName}</button> · {c.alias} · {c.redeploymentRequired ? "Redeployment required" : `Applied revision ${c.appliedRevision}`}</li>)}</ul>}
+    <ServiceOperations onBindings={setApplication} service={service} overview={overview} onChanged={onChanged} />
     {manage && (removing === service.id ? <div className="service-actions"><p>Remove this connection registration? The external service remains unchanged.</p><button disabled={!!busy} className="danger-button" onClick={() => void act(service.id, "remove")}>Remove registration</button><button className="quiet-button" onClick={() => setRemoving(null)}>Cancel</button></div> : <button className="quiet-button" onClick={() => setRemoving(service.id)}>Remove registration</button>)}
    </section>;
   })}</div>
  </div>;
 }
 
-function ServiceEditor({ item, overview, initialProject, onBack, onSaved }: { item?: ServiceConnection; overview: Overview; initialProject: string; onBack: () => void; onSaved: () => Promise<void> }) {
+function ServiceEditor({ item, overview, initialProject, onBack, onSaved, rotation }: { rotation?: boolean; item?: ServiceConnection; overview: Overview; initialProject: string; onBack: () => void; onSaved: () => Promise<void> }) {
  const allowed = overview.projects.filter(p => canManageProject(overview, p.id, "project.configure"));
  const [projectId, setProject] = useState(item?.projectId ?? (allowed.some(p => p.id === initialProject) ? initialProject : allowed[0]?.id ?? ""));
  const [name, setName] = useState(item?.name ?? "");
@@ -75,7 +80,7 @@ function ServiceEditor({ item, overview, initialProject, onBack, onSaved }: { it
    await onSaved();
   } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
  }
- return <div className="page-layout services-page editor-page"><PageHeader view="services" title={item ? `Edit ${item.name}` : "Register service"} action={{ label: "Back", onClick: onBack, tone: "quiet" }} />
+ return <div className="page-layout services-page editor-page"><PageHeader view="services" title={item ? `${rotation ? "Rotate credentials for" : "Edit"} ${item.name}` : "Register service"} action={{ label: "Back", onClick: onBack, tone: "quiet" }} />
   <form className="service-form" onSubmit={e => void save(e)}>
    <div className="service-form-grid"><label>Project<select disabled={!!item} value={projectId} onChange={e => setProject(e.target.value)}>{allowed.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Name<input required pattern="[a-z0-9][a-z0-9.\-]{0,62}" disabled={!!item} value={name} onChange={e => setName(e.target.value)} placeholder="orders-db-production" /></label><label>Type<select disabled={!!item} value={type} onChange={e => { const t = e.target.value as ServiceConnection["type"]; setType(t); setRows(initialRows(t)); setRemoved([]); setUrlMode(false); }}><option value="postgresql">PostgreSQL</option><option value="generic">Generic</option></select></label><label>Description<input value={description} onChange={e => setDescription(e.target.value)} /></label></div>
    {type === "postgresql" && <><label>Connection input<select value={urlMode ? "url" : "fields"} onChange={e => setUrlMode(e.target.value === "url")}><option value="fields">Individual fields</option><option value="url">Connection URL</option></select></label>{urlMode && <label>PostgreSQL connection URL<input type="password" autoComplete="new-password" required value={url} onChange={e => setUrl(e.target.value)} placeholder="postgresql://user:password@host:5432/database" /></label>}</>}
@@ -87,6 +92,7 @@ function ServiceEditor({ item, overview, initialProject, onBack, onSaved }: { it
     <button type="button" className="quiet-button" onClick={() => { if (row.saved) setRemoved(old => [...old, row.name]); setRows(old => old.filter((_, i) => i !== index)); }}>Remove field</button>
    </div>)}</fieldset>
    {type === "generic" && <><button type="button" className="quiet-button" onClick={() => setRows(old => [...old, { name: "", value: "", sensitive: false, secretRef: "", source: "value", changed: true, saved: false }])}>Add field</button><div className="service-form-grid"><label>Optional TCP check host<input value={probeHost} onChange={e => setProbeHost(e.target.value)} /></label><label>TCP check port<input type="number" min="1" max="65535" value={probePort} onChange={e => setProbePort(e.target.value)} /></label></div></>}
+   {rotation && <p>Replace the credential fields that changed. After saving, select affected applications in the impact table to redeploy them.</p>}
    <p>Credentials stay hidden after saving. Changes require redeploying dependent applications.</p>
    {error && <p role="alert" className="error">{error}</p>}<button className="primary-button" disabled={busy || !projectId}>{busy ? "Saving…" : "Save service"}</button>
   </form>

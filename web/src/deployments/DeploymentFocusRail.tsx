@@ -1,3 +1,5 @@
+import { DeploymentStatusPills, useDeploymentCatalog } from "./DeploymentCatalog";
+import type { CatalogItem } from "./catalogClient";
 import { BuildLogs } from "./BuildLogs";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowSquareOut, CaretDown, CaretRight, CaretUp, CheckCircle, Circle, CircleNotch, GitBranch, WarningCircle } from "@phosphor-icons/react";
@@ -148,14 +150,27 @@ function buildDirectRail(application: App, allDeployments: Deployment[], overvie
   };
 }
 
-export function DeploymentFocusRails({ overview, selectedApplicationID, selectedStageName, onSelectStage, onSelectDeployment }: {
+export function DeploymentFocusRails({ overview, visibleItems, selectedApplicationID, selectedStageName, onSelectStage, onSelectDeployment }: {
   overview: Overview;
+  visibleItems?: CatalogItem[];
   selectedApplicationID?: string;
   selectedStageName?: string;
   onSelectStage?: (applicationID?: string, stageName?: string) => void;
   onSelectDeployment: (id: string) => void;
 }) {
-  const rails = useMemo(() => buildDeploymentRails(overview), [overview]);
+  const {items: catalog} = useDeploymentCatalog();
+  const rails = useMemo(() => {
+    const all = buildDeploymentRails(overview).map(rail => ({...rail, stages: rail.stages.map(stage => {
+      if (stage.deployment) return stage;
+      const item = catalog.find(item => item.resourceId === rail.id && item.environment === stage.name);
+      const deployment = item?.latest ?? item?.current;
+      if (!deployment) return stage;
+      const state = stage.state === "not_deployed" ? deployment.state : stage.state;
+      return {...stage, deployment, deployments: [deployment], state, tone: stateTone(state), revision: short(deployment.commitSha), revisionTitle: deployment.commitSha, updatedAt: stage.updatedAt ?? deployment.finishedAt ?? deployment.createdAt};
+    })}));
+    if (!visibleItems) return all;
+    return all.map(rail => ({ ...rail, stages: rail.stages.filter(stage => visibleItems.some(item => item.appId === stage.deployment?.appId || (item.resourceId === rail.id && item.environment === stage.name) || item.appId === rail.id)) })).filter(rail => rail.stages.length);
+  }, [overview, visibleItems, catalog]);
   const [localSelection, setLocalSelection] = useState<{ applicationID: string; stageName: string } | null>(null);
 
   useEffect(() => {
@@ -252,12 +267,14 @@ function DeploymentFocusRail({ rail, expanded, selectedStage, onToggle, onSelect
 }
 
 function CompactPromotionSummary({ rail, onSelectDeployment, onSelectStage }: { rail: DeploymentRail; onSelectDeployment: (id: string) => void; onSelectStage: (name: string) => void }) {
+  const { items } = useDeploymentCatalog();
   return <div className="deployment-compact-route" aria-label={`${rail.name} deployment summary`}>
     <div className="deployment-compact-source">
       <GitBranch size={15} aria-hidden="true" />
       <span><strong>Source</strong><code title={rail.source.title}>{rail.source.revision}</code></span>
     </div>
     {rail.stages.map((stage) => {
+      const item = items.find(item => item.appId === stage.deployment?.appId || (item.resourceId === rail.id && item.environment === stage.name));
       const content = <>
         <CaretRight size={13} aria-hidden="true" />
         <RailStatusIcon tone={stage.tone} />
@@ -265,7 +282,7 @@ function CompactPromotionSummary({ rail, onSelectDeployment, onSelectStage }: { 
         <code title={stage.revisionTitle}>{stage.revision}</code>
       </>;
       const className = `deployment-compact-stage ${stage.tone}`;
-      return stage.deployment ? <a
+      return <div key={stage.name} className="deployment-stage-observation">{stage.deployment ? <a
         key={stage.name}
         className={className}
         href={routePath({ view: "deployments", deploymentID: stage.deployment.id })}
@@ -276,7 +293,7 @@ function CompactPromotionSummary({ rail, onSelectDeployment, onSelectStage }: { 
           event.preventDefault();
           onSelectDeployment(stage.deployment!.id);
         }}
-      >{content}</a> : <button key={stage.name} type="button" className={className} aria-label={`Inspect ${rail.name} ${stage.label} stage`} title="Show stage details" onClick={() => onSelectStage(stage.name)}>{content}</button>;
+      >{content}</a> : <button key={stage.name} type="button" className={className} aria-label={`Inspect ${rail.name} ${stage.label} stage`} title="Show stage details" onClick={() => onSelectStage(stage.name)}>{content}</button>}<DeploymentStatusPills status={item?.sync} />{item?.current && item.current.id !== stage.deployment?.id && <a className="deployment-running-link" href={routePath({ view: "deployments", deploymentID: item.current.id })} onClick={event => { if (!shouldHandleNavigation(event)) return; event.preventDefault(); onSelectDeployment(item.current!.id); }}>Running <code>{short(item.current.commitSha)}</code></a>}</div>;
     })}
   </div>;
 }

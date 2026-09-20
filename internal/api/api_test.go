@@ -638,7 +638,7 @@ func TestManagedEdgeNodeRoutesSecretStoreRequests(t *testing.T) {
 	if node.EnrollmentToken == "" || node.State != "waiting" {
 		t.Fatalf("unexpected edge node: %#v", node)
 	}
-	token := node.EnrollmentToken
+	token := enrollNodeTest(t, handler, node).Token
 
 	agentDone := make(chan error, 1)
 	go func() {

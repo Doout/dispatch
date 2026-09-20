@@ -152,7 +152,7 @@ func (s *SQLStore) MergeUsers(ctx context.Context, sourceID, targetID string) er
 		}
 	}
 
-	assignmentRows, err := tx.QueryContext(ctx, s.q(`SELECT id,scope_type,scope_id,role,created_at,updated_at FROM role_assignments WHERE principal_type='user' AND principal_id=?`), sourceID)
+	assignmentRows, err := tx.QueryContext(ctx, s.q(`SELECT id,scope_type,scope_id,role,created_at,updated_at,expires_at FROM role_assignments WHERE principal_type='user' AND principal_id=?`), sourceID)
 	if err != nil {
 		return err
 	}
@@ -160,9 +160,14 @@ func (s *SQLStore) MergeUsers(ctx context.Context, sourceID, targetID string) er
 	for assignmentRows.Next() {
 		var item core.RoleAssignment
 		var created, updated string
-		if err := assignmentRows.Scan(&item.ID, &item.ScopeType, &item.ScopeID, &item.Role, &created, &updated); err != nil {
+		var expires sql.NullString
+		if err := assignmentRows.Scan(&item.ID, &item.ScopeType, &item.ScopeID, &item.Role, &created, &updated, &expires); err != nil {
 			_ = assignmentRows.Close()
 			return err
+		}
+		if expires.Valid {
+			at := parseTime(expires.String)
+			item.ExpiresAt = &at
 		}
 		item.PrincipalType, item.PrincipalID = core.PrincipalUser, targetID
 		item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
@@ -175,7 +180,7 @@ func (s *SQLStore) MergeUsers(ctx context.Context, sourceID, targetID string) er
 		return err
 	}
 	for _, item := range assignments {
-		if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO role_assignments(id,principal_type,principal_id,scope_type,scope_id,role,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(principal_type,principal_id,scope_type,scope_id) DO NOTHING`), item.ID, item.PrincipalType, item.PrincipalID, item.ScopeType, item.ScopeID, item.Role, stamp(item.CreatedAt), stamp(item.UpdatedAt)); err != nil {
+		if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO role_assignments(id,principal_type,principal_id,scope_type,scope_id,role,created_at,updated_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(principal_type,principal_id,scope_type,scope_id) DO NOTHING`), item.ID, item.PrincipalType, item.PrincipalID, item.ScopeType, item.ScopeID, item.Role, stamp(item.CreatedAt), stamp(item.UpdatedAt), nullTime(item.ExpiresAt)); err != nil {
 			return err
 		}
 	}
@@ -344,9 +349,13 @@ func (s *SQLStore) ListTeamMembers(ctx context.Context) ([]core.TeamMember, erro
 }
 
 func (s *SQLStore) UpsertRoleAssignment(ctx context.Context, item core.RoleAssignment) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO role_assignments(id,principal_type,principal_id,scope_type,scope_id,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(principal_type,principal_id,scope_type,scope_id)
-		DO UPDATE SET role=excluded.role,updated_at=excluded.updated_at`), item.ID, item.PrincipalType, item.PrincipalID, item.ScopeType, item.ScopeID, item.Role, stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	expiryUpdate := "expires_at=excluded.expires_at"
+	if item.PreserveExpiry {
+		expiryUpdate = "expires_at=role_assignments.expires_at"
+	}
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO role_assignments(id,principal_type,principal_id,scope_type,scope_id,role,created_at,updated_at,expires_at)
+ VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(principal_type,principal_id,scope_type,scope_id)
+ DO UPDATE SET role=excluded.role,updated_at=excluded.updated_at,`+expiryUpdate), item.ID, item.PrincipalType, item.PrincipalID, item.ScopeType, item.ScopeID, item.Role, stamp(item.CreatedAt), stamp(item.UpdatedAt), nullTime(item.ExpiresAt))
 	return err
 }
 
@@ -355,7 +364,7 @@ func (s *SQLStore) DeleteRoleAssignment(ctx context.Context, id string) error {
 }
 
 func (s *SQLStore) ListRoleAssignments(ctx context.Context) ([]core.RoleAssignment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,principal_type,principal_id,scope_type,scope_id,role,created_at,updated_at FROM role_assignments ORDER BY scope_id,principal_type,principal_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,principal_type,principal_id,scope_type,scope_id,role,created_at,updated_at,expires_at FROM role_assignments ORDER BY scope_id,principal_type,principal_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -364,10 +373,15 @@ func (s *SQLStore) ListRoleAssignments(ctx context.Context) ([]core.RoleAssignme
 	for rows.Next() {
 		var item core.RoleAssignment
 		var created, updated string
-		if err := rows.Scan(&item.ID, &item.PrincipalType, &item.PrincipalID, &item.ScopeType, &item.ScopeID, &item.Role, &created, &updated); err != nil {
+		var expires sql.NullString
+		if err := rows.Scan(&item.ID, &item.PrincipalType, &item.PrincipalID, &item.ScopeType, &item.ScopeID, &item.Role, &created, &updated, &expires); err != nil {
 			return nil, err
 		}
 		item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
+		if expires.Valid {
+			at := parseTime(expires.String)
+			item.ExpiresAt = &at
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()

@@ -45,9 +45,11 @@ persistent Docker volume remains available for recovery.
 ## Install an edge node
 
 Open **Connections > Add connection > Edge node**, name the node, and create
-it. Dispatch returns one install command containing a node-specific token. The
-install command shows the token once. Rotate it from the node row when the host
-must be reinstalled.
+it. Dispatch returns an install command containing a one-time enrollment token
+that expires in 15 minutes. The agent saves its private identity and renews
+ten-minute runtime sessions. Keep the identity directory when updating the
+agent. See [edge identities and sessions](edge-credentials.md) for recovery and
+revocation.
 
 Docker Compose is the default runtime. Clear the Docker option to install a
 systemd service. Both modes run `dispatch-agent`, which long-polls Dispatch for
@@ -55,8 +57,9 @@ bounded HTTPS requests.
 
 ## Request handling
 
-- Every node has an independent 256-bit bearer token; Dispatch stores only its
-  SHA-256 hash.
+- New nodes authenticate with short sessions renewed by their enrolled public
+  key. Dispatch stores token hashes. Existing nodes remain labeled legacy until
+  the owner explicitly rotates their credentials.
 - Dispatch encrypts queued request and response payloads with its master key.
 - Jobs are bounded to 1 MiB requests, 2 MiB responses, HTTPS destinations, and
   a short deadline.

@@ -14,6 +14,7 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	SearchDeploymentHistory(context.Context, core.DeploymentSearch) ([]core.Deployment, error)
 	SaveDriftBaseline(context.Context, core.DriftBaseline) error
 	GetDriftBaseline(context.Context, string) (core.DriftBaseline, error)
 	LatestSuccessfulDeployment(context.Context, string) (core.Deployment, error)

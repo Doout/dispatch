@@ -19,12 +19,14 @@ var (
 )
 
 type Service struct {
-	services serviceconn.Resolver
-	store    store.Store
-	executor Executor
-	mu       sync.Mutex
-	cancels  map[string]context.CancelFunc
-	appLocks map[string]*sync.Mutex
+	// OnFinished queues follow-up observations after the terminal state is saved.
+	OnFinished func(core.Deployment)
+	services   serviceconn.Resolver
+	store      store.Store
+	executor   Executor
+	mu         sync.Mutex
+	cancels    map[string]context.CancelFunc
+	appLocks   map[string]*sync.Mutex
 }
 
 func NewService(data store.Store, executor Executor) *Service {
@@ -32,6 +34,15 @@ func NewService(data store.Store, executor Executor) *Service {
 }
 
 func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Deployment, error) {
+	return s.start(ctx, appID, commitSHA, nil)
+}
+func (s *Service) StartReviewed(ctx context.Context, appID, commitSHA string, review core.DeploymentReview) (core.Deployment, error) {
+	if review.ExpectedAppName == "" || review.ProjectID == "" || review.AppSpecDigest == "" || review.BindingsDigest == "" || review.ServiceRevisions == nil {
+		return core.Deployment{}, store.ErrDeploymentReviewChanged
+	}
+	return s.start(ctx, appID, commitSHA, &review)
+}
+func (s *Service) start(ctx context.Context, appID, commitSHA string, review *core.DeploymentReview) (core.Deployment, error) {
 	unlock := s.lockApp(appID)
 	defer unlock()
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
@@ -48,6 +59,12 @@ func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Depl
 	if app.Template {
 		return core.Deployment{}, ErrApplicationTemplate
 	}
+	if review == nil {
+		review = &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest()}
+	}
+	if review.ExpectedAppName != app.Name || review.ProjectID != app.ProjectID || review.AppSpecDigest != app.SpecDigest() {
+		return core.Deployment{}, store.ErrDeploymentReviewChanged
+	}
 	if commitSHA == "" {
 		if app.BuildType == core.BuildTypeHelm {
 			commitSHA = "chart"
@@ -61,6 +78,7 @@ func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Depl
 	deployment := core.Deployment{
 		ID: ulid.Make().String(), AppID: app.ID, CommitSHA: commitSHA, SpecDigest: app.SpecDigest(),
 		State: core.DeploymentQueued, Message: "Deployment accepted", CreatedAt: now,
+		Acceptance: review, ExecutionAppName: app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
 	}
 	if err := s.store.CreateDeployment(ctx, deployment); err != nil {
 		return core.Deployment{}, err
@@ -191,12 +209,15 @@ func (s *Service) transition(ctx context.Context, deployment *core.Deployment, s
 func (s *Service) finish(deployment *core.Deployment, state core.DeploymentState, message string) {
 	now := time.Now().UTC()
 	deployment.State, deployment.Message, deployment.FinishedAt, deployment.LeaseUntil = state, message, &now, nil
-	_ = s.store.UpdateDeployment(context.Background(), *deployment)
+	saved := s.store.UpdateDeployment(context.Background(), *deployment) == nil
 	level := "info"
 	if state == core.DeploymentFailed {
 		level = "error"
 	}
 	_ = s.log(context.Background(), deployment.ID, level, message)
+	if saved && s.OnFinished != nil {
+		s.OnFinished(*deployment)
+	}
 }
 
 func (s *Service) fail(deployment core.Deployment, err error) {

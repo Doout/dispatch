@@ -3,7 +3,9 @@ import { ArrowClockwise, CaretDown, CheckCircle, CircleNotch, Info, MinusCircle,
 import { api, App, ApplicationSyncStatus, Overview } from "./api";
 import { canManageProject } from "./permissions";
 import { relative } from "./presentation";
+import { ObservationSettings } from "./ObservationSettings";
 
+type SyncStatus = ApplicationSyncStatus & { observationFreshness?: string; observationChecking?: boolean; observationStaleAfterSeconds?: number };
 const labels: Record<string, string> = { not_checked: "Not checked", not_supported: "Not supported", synced: "Synced", out_of_sync: "Out of sync", unknown: "Unknown", current: "Current", ready: "Synced", degraded: "Degraded", invalid: "Configuration error", paused: "Paused", deploying: "Deploying", not_deployed: "Not deployed", not_applicable: "Not applicable", redeployment_required: "Redeploy needed", newer_revision_available: "Update available", healthy: "Healthy", progressing: "Progressing", missing: "Missing" };
 const label = (value: string) => labels[value] ?? value;
 const date = (value?: string) => value ? new Date(value).toLocaleString() : "Never";
@@ -21,25 +23,27 @@ export function RuntimeSyncDisclosure({ application, overview }: { application: 
  return <ApplicationSync application={application} overview={overview} compact />;
 }
 export function ApplicationSync({ application, overview, onBack, compact = false }: { application: App; overview: Overview; onBack?: () => void; compact?: boolean }) {
- const [status, setStatus] = useState<ApplicationSyncStatus>();
+ const [status, setStatus] = useState<SyncStatus>();
  const [error, setError] = useState("");
  const [busy, setBusy] = useState(false);
  const [confirm, setConfirm] = useState(false);
+ const [observationRefresh, setObservationRefresh] = useState(0);
+ const [clock, setClock] = useState(Date.now());
  const [expanded, setExpanded] = useState(!compact);
  const canCheck = canManageProject(overview, application.projectId, "project.configure");
  const canApply = canManageProject(overview, application.projectId, "deployment.run");
- useEffect(() => { let alive = true; setStatus(undefined); setError(""); void api.applicationSync(application.id).then(next => { if (alive) setStatus(next); }).catch(e => { if (alive) setError(String(e.message ?? e)); }); return () => { alive = false; }; }, [application.id]);
+ useEffect(() => { let alive = true; setStatus(undefined); setError(""); async function load() { try { const next = await api.applicationSync(application.id); if (alive) { setStatus(next); setClock(Date.now()); } } catch (e) { if (alive) setError(e instanceof Error ? e.message : String(e)); } } void load(); const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 15000); return () => { alive = false; window.clearInterval(timer); }; }, [application.id]);
  async function run(reapply: boolean) {
   if (!status || busy) return;
   setBusy(true); setError(""); setConfirm(false);
   try { setStatus(await (reapply ? api.reapplyApplication(application.id, status.deploymentId!) : api.checkApplicationDrift(application.id))); }
   catch (e) { setError(e instanceof Error ? e.message : String(e)); try { setStatus(await api.applicationSync(application.id)); } catch { /* Keep the timestamp of the last observation. */ } }
-  finally { setBusy(false); }
+  finally { setBusy(false); setObservationRefresh(n => n + 1); window.dispatchEvent(new Event("dispatch-observation-updated")); }
  }
  return <section className={`application-sync${compact ? " compact" : ""}`} aria-label={`${application.name} sync and drift`}>
-  <header className="sync-toolbar"><div><h2>Application status</h2>{!compact && <span className="sync-app-name" title={application.name}>{application.name}</span>}<span className="sync-observation" title={`Last check: ${date(status?.drift.checkedAt)}. Last successful check: ${date(status?.drift.lastSuccessfulCheckAt)}. Checks are manual observations from the Dispatch controller.`}>{status?.drift.checkedAt ? `Checked ${relative(status.drift.checkedAt)}` : "Not checked"}</span></div><div>
-   {canCheck && status?.supported && <button className="quiet-button sync-check" disabled={busy || status.revision.state === "deploying"} onClick={() => void run(false)}><ArrowClockwise size={14} aria-hidden="true" />{busy ? "Checking…" : "Check now"}</button>}
-   <button className="sync-details-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>Details<CaretDown size={13} aria-hidden="true" /></button>
+  <header className="sync-toolbar"><div><h2>Application status</h2>{!compact && <span className="sync-app-name" title={application.name}>{application.name}</span>}<span className="sync-observation" title={`Last check: ${date(status?.drift.checkedAt)}. Last successful check: ${date(status?.drift.lastSuccessfulCheckAt)}. Observations are recorded from the Dispatch controller.`}>{status?.observationChecking ? "Checking…" : status?.drift.checkedAt ? `${clock - new Date(status.drift.checkedAt).getTime() > (status.observationStaleAfterSeconds ?? 900) * 1000 ? "Stale · observed" : "Checked"} ${relative(status.drift.checkedAt)}` : "Not checked"}</span></div><div>
+   {canCheck && status?.supported && <button className="quiet-button sync-check" disabled={busy || status.observationChecking || status.revision.state === "deploying"} onClick={() => void run(false)}><ArrowClockwise size={14} aria-hidden="true" />{busy ? "Checking…" : "Check now"}</button>}
+   <button className="sync-details-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{application.buildType === "helm" ? "Details" : "Checks"}<CaretDown size={13} aria-hidden="true" /></button>
    {onBack && <button className="quiet-button" onClick={onBack}>Back to applications</button>}
   </div></header>
   {error && <p role="alert" className="error-message">{error}</p>}
@@ -60,7 +64,7 @@ export function ApplicationSync({ application, overview, onBack, compact = false
      <div><dt>Observation</dt><dd>Last check: {date(status.drift.checkedAt)} · Last successful check: {date(status.drift.lastSuccessfulCheckAt)} · {status.drift.location}</dd></div>
     </dl>
     {status.drift.healthMessage && <p className="sync-observation">{status.drift.healthMessage}</p>}
-    <p className="sync-observation">Manual observation against the last successful deployment. Health reports readiness separately. The runtime may have changed since this check.</p>
+    <p className="sync-observation">Observation against the last successful deployment. Health reports readiness separately. The runtime may have changed since this check.</p>
     {canApply && status.supported && <button className="quiet-button" disabled={busy || !status.reapplyAvailable || status.drift.state !== "out_of_sync"} onClick={() => setConfirm(true)}>Reapply deployed configuration</button>}
     {confirm && <section className="sync-confirm" role="group" aria-label="Confirm reapply"><h3>Reapply the last successful deployment?</h3><p>This restores its saved resource fields and recreates missing resources. It can restart workloads. New Git changes and updated service credentials require a separate deployment.</p><div className="service-actions"><button className="primary-button" disabled={busy} onClick={() => void run(true)}>Confirm reapply</button><button className="quiet-button" onClick={() => setConfirm(false)}>Cancel</button></div></section>}
     <div className="sync-resources">{status.drift.resources.map(resource => <details key={`${resource.apiVersion}/${resource.kind}/${resource.namespace}/${resource.name}`} className="sync-resource" open={resource.differences.length > 0}>
@@ -69,6 +73,7 @@ export function ApplicationSync({ application, overview, onBack, compact = false
      {resource.truncated && <p>Showing the first 200 differences.</p>}
      {!!resource.differences.length && <div className="sync-table-scroll"><table><thead><tr><th>Field</th><th>Deployed configuration</th><th>Live value</th></tr></thead><tbody>{resource.differences.map(diff => <tr key={diff.path}><td data-label="Field"><code>{diff.path}</code></td><td data-label="Deployed configuration">{value(diff.expected)}</td><td data-label="Live value">{value(diff.actual)}</td></tr>)}</tbody></table></div>}
     </details>)}</div>
+    <ObservationSettings application={application} overview={overview} runtimeSupported={status.supported} refreshToken={observationRefresh} onChecked={() => { void api.applicationSync(application.id).then(setStatus).catch(() => undefined); }} />
     {!!status.actions.length && <details className="sync-action-history"><summary>Reapply history <span>{status.actions.length}</span></summary><ul>{status.actions.map(action => <li key={action.id}>{date(action.createdAt)} · {action.state} · {action.message}</li>)}</ul></details>}
    </div>}
   </>}

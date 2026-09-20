@@ -114,7 +114,18 @@ func (s *SQLStore) UpsertExternalIdentity(ctx context.Context, item core.Externa
 }
 
 func (s *SQLStore) DeleteExternalIdentity(ctx context.Context, providerID, userID string) error {
-	return changed(s.db.ExecContext(ctx, s.q(`DELETE FROM external_identities WHERE provider_id=? AND user_id=?`), providerID, userID))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = changed(tx.ExecContext(ctx, s.q(`DELETE FROM external_identities WHERE provider_id=? AND user_id=?`), providerID, userID)); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM identity_team_members WHERE provider_id=? AND user_id=?`), providerID, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func scanExternalIdentity(row scanner) (core.ExternalIdentity, error) {

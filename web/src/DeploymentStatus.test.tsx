@@ -22,3 +22,17 @@ it("retains one status card and history panel across live updates and version ch
  expect(screen.getByRole("button",{name:"Details"}).getAttribute("aria-expanded")).toBe("true");
  expect(screen.getAllByText("Healthy")).toHaveLength(1);
 });
+
+it.each(["dockerfile", "compose"] as const)("exposes endpoint observation settings on %s deployment details", async buildType => {
+ const deployment = {id:"run-1",appId:"app",state:"succeeded",createdAt:"2026-09-19T00:00:00Z",app:{id:"app",name:"API",projectId:"project",buildType}} as Deployment;
+ const overview = {identity:{id:"owner",systemRole:"owner"}} as Overview;
+ vi.spyOn(api,"applicationSync").mockResolvedValue({appId:"app",supported:false,reapplyAvailable:false,configuration:{state:"not_applicable",message:"Managed in Dispatch."},revision:{state:"current"},drift:{state:"unknown",health:"unknown",message:"Runtime drift checks support Helm applications on Kubernetes and OpenShift.",location:"Dispatch controller",resources:[]},actions:[]});
+ render(<DeploymentDetailsPage overview={overview} deployment={deployment} section="topology" logs={[]} logsLoading={false} logsError="" onBack={()=>undefined} onCancel={()=>undefined}/>);
+ await screen.findByText("Runtime drift");
+ expect(screen.getAllByText("Not supported")).toHaveLength(2);
+ await userEvent.setup().click(screen.getByRole("button",{name:"Checks"}));
+ expect(screen.getByRole("heading",{name:"Checks and notifications"})).toBeTruthy();
+ expect(screen.getByRole("button",{name:"Check endpoint"})).toBeTruthy();
+ expect(screen.queryByRole("button",{name:"Check now"})).toBeNull();
+ expect(screen.queryByRole("button",{name:"Reapply deployed configuration"})).toBeNull();
+});

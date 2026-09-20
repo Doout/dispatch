@@ -32,6 +32,7 @@ import (
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/groups"
 	"github.com/doout/dispatch/internal/kubeconfig"
+	"github.com/doout/dispatch/internal/observe"
 	"github.com/doout/dispatch/internal/openshift"
 	"github.com/doout/dispatch/internal/provider"
 	"github.com/doout/dispatch/internal/secretvalue"
@@ -54,6 +55,9 @@ type AuthConfig struct {
 }
 
 type EventConfig struct {
+	BackupDirectory string
+	MasterKeyFile   string
+	DatabaseURL     string
 	WebhookSecret   string
 	DefaultCommand  string
 	GitHubAPIURL    string
@@ -72,6 +76,8 @@ type githubEventServices struct {
 }
 
 type API struct {
+	backupMu           sync.Mutex
+	observations       *observe.Service
 	drift              *drift.Service
 	overviewSnapshots  overviewCache
 	handler            http.Handler
@@ -147,6 +153,8 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		edge: eventConfig.Edge, githubServices: make(map[string]githubEventServices), manifestStates: make(map[string]githubAppManifestState), authManifestStates: make(map[string]authProviderManifestState)}
 	deployments.ConfigureServices(eventConfig.Vault, eventConfig.SecretResolver)
 	a.drift = drift.New(data, eventConfig.Vault)
+	a.observations = observe.New(data, a.drift, deployments, eventConfig.Vault)
+	deployments.OnFinished = a.observations.DeploymentFinished
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
@@ -173,10 +181,21 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		r.Get("/github-apps/manifest/callback", a.completeGitHubAppManifest)
 		r.Get("/laneway-applications/setup", a.completeLanewayApplicationRegistration)
 		r.Get("/laneway-networks/callback", a.completeLanewayAuthorization)
+		r.Post("/edge/nodes/{id}/enroll", a.enrollEdgeNode)
+		r.Post("/edge/nodes/{id}/challenge", a.challengeEdgeNode)
+		r.Post("/edge/nodes/{id}/session", a.createEdgeSession)
 		r.Get("/edge/nodes/{id}/jobs/next", a.leaseEdgeJob)
 		r.Post("/edge/nodes/{id}/jobs/{jobId}/complete", a.completeEdgeJob)
 		r.Group(func(r chi.Router) {
 			r.Use(a.authorize)
+			r.Use(a.auditMutation)
+			a.operationsRoutes(r)
+			a.observationRoutes(r)
+			a.registerReleaseRoutes(r)
+			r.Get("/deployment-catalog", a.deploymentCatalog)
+			r.Get("/deployment-search", a.deploymentSearch)
+			r.Get("/deployments/{id}/identity", a.deploymentPermission(core.PermissionProjectView, a.deploymentIdentity))
+			r.Get("/deployments/{id}/compare-environment", a.deploymentPermission(core.PermissionProjectView, a.compareEnvironments))
 			r.Get("/auth/me", a.authMe)
 			r.Post("/auth/logout", a.logout)
 			r.Put("/auth/password", a.directUserOnly(a.changePassword))
@@ -228,6 +247,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Put("/private-networks/{id}", a.ownerOnly(a.updatePrivateNetwork))
 			r.Post("/private-networks/{id}/verify", a.ownerOnly(a.verifyPrivateNetwork))
 			r.Post("/private-networks/{id}/rotate-token", a.ownerOnly(a.rotateEdgeToken))
+			r.Post("/private-networks/{id}/revoke", a.ownerOnly(a.revokeEdgeNode))
 			r.Post("/private-networks/{id}/install-connector", a.ownerOnly(a.installLanewayConnector))
 			r.Delete("/private-networks/{id}", a.ownerOnly(a.deletePrivateNetwork))
 			r.Post("/laneway-networks/authorize", a.ownerOnly(a.startLanewayAuthorization))
@@ -2392,12 +2412,27 @@ func (a *API) cleanupApp(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) startDeployment(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		CommitSHA string `json:"commitSha"`
+		CommitSHA string                 `json:"commitSha"`
+		Review    *core.DeploymentReview `json:"review,omitempty"`
 	}
 	if r.ContentLength > 0 && !decode(w, r, &input) {
 		return
 	}
-	item, err := a.deploy.Start(r.Context(), chi.URLParam(r, "id"), strings.TrimSpace(input.CommitSHA))
+	var item core.Deployment
+	var err error
+	if input.Review != nil {
+		if input.Review.ExpectedAppName == "" || input.Review.ProjectID == "" || input.Review.AppSpecDigest == "" || input.Review.BindingsDigest == "" || input.Review.ServiceRevisions == nil {
+			problem(w, 422, "Incomplete deployment review", "Preview the application again before deploying reviewed inputs.")
+			return
+		}
+		item, err = a.deploy.StartReviewed(r.Context(), chi.URLParam(r, "id"), strings.TrimSpace(input.CommitSHA), *input.Review)
+	} else {
+		item, err = a.deploy.Start(r.Context(), chi.URLParam(r, "id"), strings.TrimSpace(input.CommitSHA))
+	}
+	if errors.Is(err, store.ErrDeploymentReviewChanged) {
+		problem(w, 409, "Deployment inputs changed", "Application settings, service bindings, or service revisions changed after preview. Review the current inputs before deploying.")
+		return
+	}
 	if errors.Is(err, deploy.ErrApplicationTemplate) {
 		problem(w, http.StatusConflict, "Template cannot be deployed", "Use this template from an event rule or preview group.")
 		return

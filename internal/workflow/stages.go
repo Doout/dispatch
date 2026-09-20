@@ -344,6 +344,8 @@ func (s *Service) runPipeline(ctx context.Context, name string, inputs map[strin
 }
 
 func (s *Service) ApproveStage(ctx context.Context, id string) (core.WorkflowStageRun, error) {
+	unlock := s.lock("approval:" + id)
+	defer unlock()
 	run, err := s.Store.GetWorkflowStageRun(ctx, id)
 	if err != nil {
 		return run, err
@@ -358,6 +360,12 @@ func (s *Service) ApproveStage(ctx context.Context, id string) (core.WorkflowSta
 	resource, err := s.Store.GetWorkflowResource(ctx, revision.ResourceID)
 	if err != nil {
 		return run, err
+	}
+	if !resource.Active || resource.State == "invalid" {
+		return run, errors.New("the application is paused or invalid; repair and activate it before approval")
+	}
+	if revision.SpecDigest == "" || resource.SpecDigest != revision.SpecDigest {
+		return run, errors.New("the application configuration changed after this revision was captured; start a new revision and review its stage before approving")
 	}
 	source, err := s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
 	if err != nil {

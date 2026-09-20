@@ -133,6 +133,21 @@ func (a *API) beginOAuth(w http.ResponseWriter, r *http.Request, linkUserID, ret
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(challenge[:])},
 		"code_challenge_method": {"S256"},
 	}
+	if mappings, ok := a.store.(interface {
+		ListIdentityTeamMappings(context.Context) ([]core.IdentityTeamMapping, error)
+	}); ok {
+		items, err := mappings.ListIdentityTeamMappings(r.Context())
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		for _, m := range items {
+			if m.ProviderID == provider.ID {
+				values.Set("scope", values.Get("scope")+" read:org")
+				break
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"authorizationUrl": provider.BaseURL + "/login/oauth/authorize?" + values.Encode()})
 }
 
@@ -192,6 +207,10 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 		}
 		a.logger.Error("resolve OAuth user", "provider", provider.ID, "error", err)
 		a.redirectOAuthError(w, r, "Dispatch could not finish signing you in.")
+		return
+	}
+	if err := a.syncLoginTeams(r.Context(), provider.ID, user.ID, profile.Groups); err != nil {
+		a.redirectOAuthError(w, r, "Team membership could not be verified. Try signing in again.")
 		return
 	}
 	token, err := a.createSession(r.Context(), user.ID, identityForUser(user))
@@ -299,6 +318,7 @@ type githubOAuthProfile struct {
 	Login       string
 	DisplayName string
 	Email       string
+	Groups      []string
 }
 
 func (a *API) exchangeGitHubIdentity(ctx context.Context, request *http.Request, provider core.AuthProvider, code, verifier string) (githubOAuthProfile, error) {
@@ -366,7 +386,11 @@ func (a *API) exchangeGitHubIdentity(ctx context.Context, request *http.Request,
 	if displayName == "" {
 		displayName = user.Login
 	}
-	return githubOAuthProfile{Subject: strconv.FormatInt(user.ID, 10), Login: user.Login, DisplayName: displayName, Email: email}, nil
+	groups, err := a.githubMappedGroups(ctx, client, provider, tokenResponse.AccessToken)
+	if err != nil {
+		return githubOAuthProfile{}, err
+	}
+	return githubOAuthProfile{Subject: strconv.FormatInt(user.ID, 10), Login: user.Login, DisplayName: displayName, Email: email, Groups: groups}, nil
 }
 
 func githubOAuthGet(ctx context.Context, client *http.Client, endpoint, token string, target any) error {

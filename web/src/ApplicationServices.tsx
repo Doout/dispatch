@@ -3,8 +3,9 @@ import { api, App, Overview, ServiceBinding } from "./api";
 import { PageHeader } from "./PageHeader";
 import { canManageProject } from "./permissions";
 
+type BindingApplication = Pick<App, "id" | "name" | "projectId" | "generated" | "template"> & { buildType?: App["buildType"] };
 type Mapping = { destination: string; field: string; container: string };
-export function ApplicationServices({ application, overview, onBack, onChanged }: { application: App; overview: Overview; onBack: () => void; onChanged: () => Promise<void> }) {
+export function ApplicationServices({ application, overview, onBack, onChanged }: { application: BindingApplication; overview: Overview; onBack: () => void; onChanged: () => Promise<void> }) {
  const [bindings, setBindings] = useState<ServiceBinding[]>([]);
  const [loading, setLoading] = useState(true);
  const [error, setError] = useState("");
@@ -35,7 +36,7 @@ export function ApplicationServices({ application, overview, onBack, onChanged }
   </>}
  </div>;
 }
-function BindingForm({ binding, application, services, busy, onCancel, onSave }: { binding?: ServiceBinding; application: App; services: NonNullable<Overview["services"]>; busy: boolean; onCancel: () => void; onSave: (binding: ServiceBinding) => void }) {
+function BindingForm({ binding, application, services, busy, onCancel, onSave }: { binding?: ServiceBinding; application: BindingApplication; services: NonNullable<Overview["services"]>; busy: boolean; onCancel: () => void; onSave: (binding: ServiceBinding) => void }) {
  const [alias, setAlias] = useState(binding?.alias ?? "database");
  const [serviceRef, setServiceRef] = useState(binding?.serviceRef ?? services[0]?.id ?? "");
  const [paths, setPaths] = useState(binding?.helm?.secretNameValues.join("\n") ?? "database.existingSecret");

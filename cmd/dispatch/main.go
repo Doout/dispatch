@@ -105,7 +105,15 @@ func run(logger *slog.Logger) error {
 		AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword, PublicURL: cfg.PublicURL,
 	}, logger, api.EventConfig{WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
 		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps, SecretResolver: secretResolver,
+		BackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "backups"), MasterKeyFile: cfg.MasterKeyFile, DatabaseURL: cfg.DatabaseURL,
 		Edge: edgeBroker, RepositoryCache: cfg.RepositoryCache, Analytics: history})
+	if err := controller.RecoverWorkflowWork(ctx); err != nil {
+		return err
+	}
+	go deployments.RunRecovery(shutdownCtx, logger)
+	if cfg.Executor == "docker" {
+		go controller.RunObservations(shutdownCtx)
+	}
 	go controller.RunRelayConsumers(shutdownCtx)
 	go controller.RunWorkflowPoller(shutdownCtx)
 	server := &http.Server{

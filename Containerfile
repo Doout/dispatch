@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 
 FROM docker:cli AS docker-cli
 FROM debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client python3-poetry python3 libstdc++6 && rm -rf /var/lib/apt/lists/* && \
+RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client python3-poetry python3 libstdc++6 postgresql-client && rm -rf /var/lib/apt/lists/* && \
     groupadd -g 65532 dispatch && useradd -u 65532 -g dispatch -M dispatch
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
