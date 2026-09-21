@@ -1255,7 +1255,12 @@ paths:
       - { name: id, in: path, required: true, schema: { type: string } }
     get:
       operationId: getApplicationDeploymentHistory
-      description: Saved runs for one application, newest first. Requires project.view. Returns up to 50 items without credential values or snapshot bodies.
+      description: >-
+        Saved runs for one application, newest first. Requires project.view.
+        Returns up to 50 items without credential values or snapshot bodies.
+        Optional repeats links identify consecutive successful runs with identical
+        privately compared recorded resources. Missing evidence leaves runs
+        separate. No records are deleted or live resources queried.
       parameters:
         - { name: before, in: query, schema: { type: string }, description: Deployment ID returned as the previous page's next cursor. }
       responses:
@@ -1269,6 +1274,10 @@ paths:
                 properties:
                   items: { type: array, items: { type: object } }
                   next: { type: string }
+                  repeats:
+                    type: object
+                    additionalProperties: { type: string }
+                    description: Maps an older deployment ID to its immediately newer matching run, which may be the previous page's cursor. All original runs remain in items. Private manifests and comparison fingerprints are excluded.
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
   /deployments/{id}/compare:
