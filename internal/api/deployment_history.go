@@ -10,12 +10,14 @@ import (
 	"strings"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/drift"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 )
 
 func (a *API) applicationDeploymentHistory(w http.ResponseWriter, r *http.Request) {
 	appID, before := chi.URLParam(r, "id"), r.URL.Query().Get("before")
+	var previous *core.Deployment
 	if before != "" {
 		item, err := a.store.GetDeployment(r.Context(), before)
 		if errors.Is(err, store.ErrNotFound) || err == nil && item.AppID != appID {
@@ -26,6 +28,7 @@ func (a *API) applicationDeploymentHistory(w http.ResponseWriter, r *http.Reques
 			a.internal(w, err)
 			return
 		}
+		previous = &item
 	}
 	items, err := a.store.ListApplicationHistory(r.Context(), appID, before, 51)
 	if err != nil {
@@ -38,9 +41,10 @@ func (a *API) applicationDeploymentHistory(w http.ResponseWriter, r *http.Reques
 		next = items[49].ID
 	}
 	writeJSON(w, 200, struct {
-		Items []core.Deployment `json:"items"`
-		Next  string            `json:"next,omitempty"`
-	}{items, next})
+		Items   []core.Deployment `json:"items"`
+		Next    string            `json:"next,omitempty"`
+		Repeats map[string]string `json:"repeats,omitempty"`
+	}{items, next, drift.RecordedResourceRepeats(r.Context(), a.store, a.eventConfig.Vault, previous, items)})
 }
 
 type deploymentChange struct {

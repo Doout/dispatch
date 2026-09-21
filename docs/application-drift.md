@@ -126,6 +126,22 @@ Open **History** in deployment details to browse this application's saved runs.
 History loads 50 runs at a time and includes successful, failed, cancelled, and
 in-progress deployments. **Load older deployments** retrieves the next page.
 
+Consecutive successful runs with identical saved resource manifests appear as one
+group by default. Expand its repeat count to see the individual runs, or choose
+**Show all runs**. Loading another page extends a matching group across the page
+boundary. The current run and selected comparisons remain accessible.
+
+Grouping compares the encrypted resource baselines privately, including Secret
+contents, resource identities, metadata, and arrays. It ignores resource document
+order. Missing or unreadable baselines and failed or unfinished runs break groups;
+matching redacted values alone never establish a repeat. Older runs without this
+evidence remain separate. Matching recorded resources does not mean that hooks
+or other deployment side effects were identical.
+
+This is a display cleanup. Every deployment, log, input snapshot, rollback
+reference, and analytics record is retained. History requests do not contact the
+cluster or reconstruct historical manifests from current chart inputs.
+
 Choose **From** and **To** to compare saved inputs, including supplied Helm values,
 release settings, code revisions, and applied service configuration revisions.
 Added, removed, and changed fields are listed with before/after values and a path
@@ -138,5 +154,5 @@ Sensitive fields are excluded. Their presence does not establish whether a hidde
 value changed. Older records without saved inputs show **Comparison unavailable**.
 The response includes at most 1,000 changed fields and identifies truncation.
 
-- `GET /api/v1/apps/{id}/deployment-history?before={deploymentId}`: paginated saved runs for an application. The response contains `items` and an optional `next` cursor.
+- `GET /api/v1/apps/{id}/deployment-history?before={deploymentId}`: paginated saved runs for an application. The response contains `items`, an optional `next` cursor, and optional `repeats` links from an older deployment ID to its immediately newer matching run. The newer run can be the previous page's cursor. No private manifest values or comparison fingerprints are returned.
 - `GET /api/v1/deployments/{id}/compare?from={deploymentId}`: compare two deployments belonging to the same application. Requires project view permission, as does history.
