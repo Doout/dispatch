@@ -112,7 +112,9 @@ Docker documents the raw environment-file format in its [Compose environment gui
 
 ## Build caching
 
-CI and releases share a Go module and compiled-package cache. Main-branch CI builds both architectures so subsequent release tags can reuse that cache. Release images package the same binaries as the CLI archives; they do not compile Go again inside Docker. Docker runtime layers are also cached for both architectures. Local source builds use native cross-compilation and BuildKit cache mounts for Go modules and compiled packages.
+CI and releases share a Go module and compiled-package cache. Main-branch CI builds both architectures so subsequent release tags can reuse that cache. Release images package the same binaries as the CLI archives; they do not compile Go again inside Docker. Docker runtime layers are also cached for both architectures. Local controller, agent, and relay image builds use BuildKit cache mounts for package downloads and compiled output.
+
+Dockerfile application deployments keep an immutable image tag for each deployment and a stable, per-application cache tag. A rebuild imports the last successful cache tag and replaces it only after the new image builds successfully. Compose rebuilds use Docker's project and service image cache on the same Docker daemon.
 
 ## Validation performed
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,6 +159,59 @@ func TestDockerExecutorDeploysPastedComposeWithoutGit(t *testing.T) {
 	wantStates := []core.DeploymentState{core.DeploymentFetching, core.DeploymentBuilding, core.DeploymentStarting, core.DeploymentChecking, core.DeploymentRouting}
 	if !reflect.DeepEqual(states, wantStates) {
 		t.Fatalf("unexpected deployment states: %#v", states)
+	}
+}
+
+func TestDockerExecutorReusesApplicationBuildCache(t *testing.T) {
+	repo := t.TempDir()
+	serviceFixtureRepo(t, repo, map[string]string{"Dockerfile": "FROM scratch\n"})
+	app := core.App{
+		ID: "app-1", Name: "Cached", SourceRepo: "file://" + repo, Branch: "main",
+		BuildType: core.BuildTypeDockerfile, ContextPath: ".", DockerfilePath: "Dockerfile",
+	}
+	cacheImage := dockerBuildCacheImage(app.ID)
+	for _, test := range []struct {
+		name          string
+		cacheExists   bool
+		wantCacheFrom bool
+	}{
+		{name: "first build", cacheExists: false, wantCacheFrom: false},
+		{name: "rebuild", cacheExists: true, wantCacheFrom: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var build []string
+			executor := DockerExecutor{run: func(ctx context.Context, stdin io.Reader, output io.Writer, name string, args ...string) error {
+				if name == "git" {
+					return command(ctx, stdin, output, name, args...)
+				}
+				if len(args) >= 3 && args[0] == "image" && args[1] == "inspect" && args[2] == cacheImage {
+					if test.cacheExists {
+						return nil
+					}
+					return errors.New("cache image not found")
+				}
+				if len(args) > 0 && args[0] == "build" {
+					build = append([]string(nil), args...)
+				}
+				return nil
+			}}
+			err := executor.Deploy(context.Background(), core.Deployment{ID: "deployment-1"}, app,
+				core.Server{Name: "local", Address: "local"}, func(core.DeploymentState, string) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(build) == 0 {
+				t.Fatal("Docker build was not invoked")
+			}
+			joined := strings.Join(build, " ")
+			if !strings.Contains(joined, "--build-arg BUILDKIT_INLINE_CACHE=1") || !strings.Contains(joined, "-t "+cacheImage) {
+				t.Fatalf("build did not publish reusable cache metadata: %v", build)
+			}
+			hasCacheFrom := strings.Contains(joined, "--cache-from "+cacheImage)
+			if hasCacheFrom != test.wantCacheFrom {
+				t.Fatalf("cache import = %v, want %v: %v", hasCacheFrom, test.wantCacheFrom, build)
+			}
+		})
 	}
 }
 
