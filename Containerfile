@@ -1,7 +1,10 @@
+# syntax=docker/dockerfile:1
+
 FROM --platform=$BUILDPLATFORM node:22.14-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
-RUN npm install --global pnpm@11.18.0 && pnpm install --frozen-lockfile
+RUN --mount=type=cache,target=/root/.npm --mount=type=cache,target=/pnpm/store \
+    npm install --global pnpm@11.18.0 && pnpm install --frozen-lockfile --store-dir /pnpm/store
 COPY web/ ./
 RUN pnpm build
 

@@ -197,10 +197,16 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 			return fmt.Errorf("dockerfile path: %w", err)
 		}
 		image := "dispatch/" + safeID.ReplaceAllString(strings.ToLower(app.Name), "-") + ":" + strings.ToLower(deployment.ID)
+		cacheImage := dockerBuildCacheImage(app.ID)
 		if err := progress(core.DeploymentBuilding, "Building immutable image "+image); err != nil {
 			return err
 		}
-		if err := e.command(ctx, nil, io.Discard, "docker", "build", "--pull", "-f", dockerfilePath, "-t", image, contextPath); err != nil {
+		buildArgs := []string{"build", "--pull", "--build-arg", "BUILDKIT_INLINE_CACHE=1"}
+		if e.command(ctx, nil, io.Discard, "docker", "image", "inspect", cacheImage) == nil {
+			buildArgs = append(buildArgs, "--cache-from", cacheImage)
+		}
+		buildArgs = append(buildArgs, "-f", dockerfilePath, "-t", image, "-t", cacheImage, contextPath)
+		if err := e.command(ctx, nil, io.Discard, "docker", buildArgs...); err != nil {
 			return fmt.Errorf("docker build: %w", err)
 		}
 		if err := progress(core.DeploymentStarting, "Starting candidate container on "+server.Name); err != nil {
@@ -282,6 +288,10 @@ func (e DockerExecutor) Cleanup(ctx context.Context, app core.App, server core.S
 
 func dockerResourceName(appID string) string {
 	return "dispatch-" + safeID.ReplaceAllString(strings.ToLower(appID), "-")
+}
+
+func dockerBuildCacheImage(appID string) string {
+	return "dispatch/build-cache:" + dockerResourceName(appID)
 }
 
 func (e DockerExecutor) command(ctx context.Context, stdin io.Reader, output io.Writer, name string, args ...string) error {
