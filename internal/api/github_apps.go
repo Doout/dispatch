@@ -324,6 +324,7 @@ func (a *API) verifyGitHubApp(w http.ResponseWriter, r *http.Request) {
 	}
 	item.Slug, item.ClientID = result.Slug, result.ClientID
 	item.RegistrationOwner, item.RegistrationOwnerType = result.RegistrationOwner, result.RegistrationOwnerType
+	item.InstallationID = result.InstallationID
 	item.InstallationAccount = result.InstallationAccount
 	item.InstallationURL = result.InstallationURL
 	now := time.Now().UTC()
@@ -473,7 +474,7 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 		"setup_on_update":          true,
 		"public":                   true,
 		"request_oauth_on_install": false,
-		"default_permissions":      map[string]string{"contents": "read", "issues": "write", "pull_requests": "read", "metadata": "read", "statuses": "write"},
+		"default_permissions":      githubapp.RequiredRepositoryPermissions(),
 	}
 	if delivery != "none" {
 		manifest["hook_attributes"] = map[string]interface{}{"url": webhookURL, "active": true}
@@ -612,11 +613,11 @@ func (a *API) githubAppServices(ctx context.Context, id string) (githubEventServ
 	if err != nil {
 		return githubEventServices{}, err
 	}
-	tokenSource := func(ctx context.Context) (string, error) {
-		return a.eventConfig.GitHubApps.InstallationToken(ctx, id)
+	tokenSource := func(ctx context.Context, repository string) (string, error) {
+		return a.eventConfig.GitHubApps.RepositoryToken(ctx, id, repository)
 	}
-	resolver := events.GitHubResolver{BaseURL: connection.APIURL, TokenSource: tokenSource}
-	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, TokenSource: tokenSource}
+	resolver := events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: tokenSource}
+	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: tokenSource}
 	services := githubEventServices{
 		events: events.New(a.store, resolver, a.lifecycle, notifier),
 		groups: groups.New(a.store, a.deploy, resolver, notifier, nil),
@@ -673,7 +674,45 @@ func (a *API) processGitHubWebhook(w http.ResponseWriter, r *http.Request, secre
 		problem(w, http.StatusUnauthorized, "Invalid webhook signature", "Sign the request body with the configured webhook secret.")
 		return
 	}
-	if installationID > 0 {
+	if connectionID != "" && a.eventConfig.GitHubApps != nil {
+		var envelope struct {
+			Installation *struct {
+				ID int64 `json:"id"`
+			} `json:"installation"`
+			Repository struct {
+				FullName string `json:"full_name"`
+			} `json:"repository"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil || envelope.Installation == nil || envelope.Installation.ID < 1 {
+			problem(w, http.StatusForbidden, "Missing GitHub App installation", "The event must identify its installation.")
+			return
+		}
+		matches := false
+		if envelope.Repository.FullName != "" {
+			expected, err := a.eventConfig.GitHubApps.RepositoryInstallation(r.Context(), connectionID, envelope.Repository.FullName)
+			if err != nil {
+				problem(w, http.StatusBadGateway, "GitHub App installation lookup failed", err.Error())
+				return
+			}
+			matches = expected == envelope.Installation.ID
+		} else {
+			installations, err := a.eventConfig.GitHubApps.ListInstallations(r.Context(), connectionID)
+			if err != nil {
+				problem(w, http.StatusBadGateway, "GitHub App installation lookup failed", err.Error())
+				return
+			}
+			for _, item := range installations {
+				if item.ID == envelope.Installation.ID && !item.Suspended {
+					matches = true
+					break
+				}
+			}
+		}
+		if !matches {
+			problem(w, http.StatusForbidden, "Unexpected GitHub App installation", "The event installation does not match this App's access to the repository.")
+			return
+		}
+	} else if installationID > 0 {
 		var envelope struct {
 			Installation *struct {
 				ID int64 `json:"id"`
@@ -684,6 +723,7 @@ func (a *API) processGitHubWebhook(w http.ResponseWriter, r *http.Request, secre
 			return
 		}
 	}
+
 	if r.Header.Get("X-GitHub-Event") == "push" {
 		if connectionID == "" || a.workflows == nil {
 			w.WriteHeader(http.StatusNoContent)
@@ -707,6 +747,7 @@ func (a *API) processGitHubWebhook(w http.ResponseWriter, r *http.Request, secre
 		return
 	}
 	event.ProviderConnectionID = connectionID
+	event.DeliveryID = events.CommentDeliveryID(event)
 	groupRuns, err := groupService.Process(r.Context(), event)
 	if err != nil {
 		problem(w, http.StatusUnprocessableEntity, "Preview group event rejected", err.Error())

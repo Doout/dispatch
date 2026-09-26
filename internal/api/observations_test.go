@@ -52,7 +52,7 @@ func TestObservationAPIWriteOnlyAndProjectRoles(t *testing.T) {
 		route.URLParams.Add("id", app.ID)
 		r = r.WithContext(context.WithValue(withIdentity(r.Context(), identityForUser(user)), chi.RouteCtxKey, route))
 		rr := httptest.NewRecorder()
-		a.appPermission(permission, a.getApplicationObservations)(rr, r)
+		a.appPermission(permission)(http.HandlerFunc(a.getApplicationObservations)).ServeHTTP(rr, r)
 		return rr.Code
 	}
 	for _, role := range []string{"viewer", "deployer", "operator", "admin"} {

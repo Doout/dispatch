@@ -532,6 +532,19 @@ func (s *Service) deployComponent(ctx context.Context, run core.PreviewGroupRun,
 	app.Name = trimName(group.Name+"-"+run.Slug+"-"+component.Alias+"-"+strconv.Itoa(run.Attempt), 56) + "-" + strings.ToLower(app.ID[len(app.ID)-6:])
 	app.Branch, app.HelmNamespace = source.HeadRef, run.Namespace
 	app.HelmRelease = trimName("dispatch-"+run.Slug+"-"+component.Alias, 53)
+	app.HelmProvenance = core.HelmProvenance{}
+	githubURL := "https://github.com"
+	if group.GitHubAppID != "" {
+		if connection, err := s.store.GetGitHubApp(ctx, group.GitHubAppID); err == nil {
+			githubURL = strings.TrimRight(connection.WebURL, "/")
+		}
+	}
+	for _, linked := range run.Sources {
+		if linked.PullRequest > 0 {
+			app.HelmProvenance.PullRequests = append(app.HelmProvenance.PullRequests, core.HelmPullRequest{Repository: linked.Repository, Number: linked.PullRequest,
+				URL: githubURL + "/" + linked.Repository + "/pull/" + strconv.Itoa(linked.PullRequest)})
+		}
+	}
 	app.Domain = renderDomain(template.Domain, run, component, source)
 	app.HelmGroupValues, err = bindingValues(component.Bindings, available)
 	if err != nil {
@@ -856,7 +869,7 @@ func groupComment(run core.PreviewGroupRun) string {
 		body.WriteString(run.Message)
 		body.WriteString("\n")
 	}
-	body.WriteString("\n| Component | Source | Revision | State |\n| --- | --- | --- | --- |\n")
+	body.WriteString("\n| Component | Repository | Source | Commit | State |\n| --- | --- | --- | --- | --- |\n")
 	for _, source := range run.Sources {
 		sourceText := source.HeadRef
 		if source.PullRequest > 0 {
@@ -873,9 +886,11 @@ func groupComment(run core.PreviewGroupRun) string {
 		body.WriteString("| ")
 		body.WriteString(source.Alias)
 		body.WriteString(" | ")
+		body.WriteString(source.Repository)
+		body.WriteString(" | ")
 		body.WriteString(sourceText)
 		body.WriteString(" | `")
-		body.WriteString(shortSHA(source.SHA))
+		body.WriteString(source.SHA)
 		body.WriteString("` | ")
 		body.WriteString(state)
 		body.WriteString(" |\n")

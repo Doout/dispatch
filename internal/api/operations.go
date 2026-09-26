@@ -32,31 +32,6 @@ type operationsStore interface {
 	ListBackupRecords(context.Context) ([]core.BackupRecord, error)
 }
 
-func (a *API) operationsRoutes(r chi.Router) {
-	r.Get("/settings", a.ownerOnly(a.getControllerSettings))
-	r.Put("/settings", a.ownerOnly(a.saveControllerSettings))
-	r.Group(func(r chi.Router) {
-		r.Use(a.requireOperationsEnabled)
-		r.Get("/audit", a.listAudit)
-		r.Get("/operations/summary", a.operationsSummary)
-		r.Get("/operations/ownership", a.operationsOwnership)
-		r.Get("/projects/{id}/owner-candidates", a.ownerCandidates)
-		r.Put("/apps/{id}/owner", a.appPermission(core.PermissionProjectConfigure, a.setApplicationOwner))
-		r.Get("/identity-team-mappings", a.ownerOnly(a.listTeamMappings))
-		r.Post("/identity-team-mappings", a.ownerOnly(a.saveTeamMapping))
-		r.Delete("/identity-team-mappings/{id}", a.ownerOnly(a.removeTeamMapping))
-		r.Get("/projects/{id}/retention", a.getRetention)
-		r.Put("/projects/{id}/retention", a.saveRetention)
-		r.Post("/projects/{id}/retention/preview", a.previewRetention)
-		r.Post("/projects/{id}/retention/apply", a.applyRetention)
-		r.Get("/operations/backups", a.ownerOnly(a.listBackups))
-		r.Post("/operations/backups", a.ownerOnly(a.createBackup))
-		r.Post("/operations/backups/{id}/verify", a.ownerOnly(a.verifyBackup))
-	})
-	r.Get("/apps/{id}/owner", a.appPermission(core.PermissionProjectView, a.getApplicationOwner))
-	r.Get("/services/{id}/impact", a.serviceImpact)
-	r.Post("/services/{id}/redeploy", a.redeployServiceConsumers)
-}
 func (a *API) ops(w http.ResponseWriter) (operationsStore, bool) {
 	s, ok := a.store.(operationsStore)
 	if !ok {
@@ -80,7 +55,7 @@ func (a *API) auditMutation(next http.Handler) http.Handler {
 		if identity.ID == "" {
 			return
 		}
-		route := chi.RouteContext(r.Context()).RoutePattern()
+		route := strings.TrimSuffix(chi.RouteContext(r.Context()).RoutePattern(), "/")
 		if route == "" {
 			return
 		}

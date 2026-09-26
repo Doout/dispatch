@@ -3,6 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { DeploymentDetailsPage } from "./App";
+import { DeploymentStatusPills } from "./deployments/DeploymentCatalog";
 import { api, type Deployment, type Overview } from "./api";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -35,4 +36,10 @@ it.each(["dockerfile", "compose"] as const)("exposes endpoint observation settin
  expect(screen.getByRole("button",{name:"Check endpoint"})).toBeTruthy();
  expect(screen.queryByRole("button",{name:"Check now"})).toBeNull();
  expect(screen.queryByRole("button",{name:"Reapply deployed configuration"})).toBeNull();
+});
+
+it("shows a readable sync failure badge with the saved cause", () => {
+ const cause = 'deployment/api.yaml: branch "main" was not found in Example/service';
+ render(<DeploymentStatusPills status={{configuration: "invalid", configurationMessage: cause, revision: "current", drift: "synced", health: "healthy", supported: true, message: ""}} />);
+ expect(screen.getByText("Sync: Configuration error").title).toBe(cause);
 });

@@ -41,6 +41,7 @@ import {
   PreviewGroup,
   Secret,
   WorkflowResource,
+  WorkflowPreviewTemplate,
 } from "./api";
 import { HookCredentialBindings, HookFields } from "./HookEditorFields";
 import { HelmValuesEditor, helmValueOverrides, mergeHelmValues } from "./HelmValuesEditor";
@@ -54,6 +55,8 @@ import { canManageAnyProject, canManageProject } from "./permissions";
 import { WorkflowConfigSourceForm } from "./workflows/ConfigSourceForm";
 import { ConfigurationTopologyPage, workflowStages, workflowStageStatusLabel } from "./workflows/ConfigurationTopologyPage";
 import { WorkflowResourceDialog } from "./workflows/ResourceDialog";
+import { TemporaryPreviewForm } from "./workflows/TemporaryPreviewForm";
+import { PreviewTemplateForm, previewTemplateGitURL } from "./workflows/PreviewTemplateForm";
 import { WorkflowTopologyPage } from "./workflows/TopologyPage";
 import { workflowResourceStatus, workflowResourceStatusLabel } from "./workflows/status";
 
@@ -68,6 +71,8 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
   const [creatingHelm, setCreatingHelm] = useState(false);
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const [configSourceEdit, setConfigSourceEdit] = useState<ConfigSource | "new" | null>(null);
+  const [temporaryPreviewEdit, setTemporaryPreviewEdit] = useState<WorkflowResource | "new" | null>(null);
+  const [previewTemplateEdit, setPreviewTemplateEdit] = useState<WorkflowPreviewTemplate | "new" | null>(null);
   const [workflowDetail, setWorkflowDetail] = useState<WorkflowResource | null>(null);
   const [syncApplication,setSyncApplication] = useState<AppModel | null>(null);
   const [serviceApplication, setServiceApplication] = useState<AppModel | null>(null);
@@ -87,7 +92,8 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
   const canAddGroup = overview.identity?.systemRole === "owner" && helmSources.length > 0 && overview.githubApps.some((connection) => connection.installationId && connection.state !== "needs_installation");
   const repositoryCredentials = overview.secrets.some((secret) => secret.type === "ssh_private_key" || secret.type === "github_token" || secret.type === "api_token");
   const canAddConfig = overview.identity?.systemRole === "owner" && canConfigure && hasProject && (repositoryCredentials || overview.githubApps.some((connection) => connection.state === "ready"));
-  const editorTitle = creating ? "New application" : creatingTemplate ? "New template" : creatingHelm ? "New Helm source" : configSourceEdit ? configSourceEdit === "new" ? "Import configuration" : "Edit configuration" : undefined;
+  const canAddTemporaryPreview = overview.identity?.systemRole === "owner" && (overview.configSources ?? []).some((source) => source.active) && overview.githubApps.some((connection) => connection.state === "ready" && connection.installationId);
+  const editorTitle = creating ? "New application" : creatingTemplate ? "New template" : creatingHelm ? "New Helm source" : configSourceEdit ? configSourceEdit === "new" ? "Import configuration" : "Edit configuration" : previewTemplateEdit ? previewTemplateEdit === "new" ? "New PR preview template" : `Edit ${previewTemplateEdit.name}` : temporaryPreviewEdit ? temporaryPreviewEdit === "new" ? "New one-off PR preview" : `Edit ${temporaryPreviewEdit.name}` : undefined;
   const action = creating
     ? { label: "Cancel", onClick: onToggleCreate, icon: <X size={16} weight="bold" />, tone: "quiet" as const }
     : creatingTemplate
@@ -96,6 +102,10 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
         ? { label: "Cancel", onClick: () => setCreatingHelm(false), icon: <X size={16} weight="bold" />, tone: "quiet" as const }
         : configSourceEdit
           ? { label: "Cancel", onClick: () => setConfigSourceEdit(null), icon: <X size={16} weight="bold" />, tone: "quiet" as const }
+        : previewTemplateEdit
+          ? { label: "Cancel", onClick: () => setPreviewTemplateEdit(null), icon: <X size={16} weight="bold" />, tone: "quiet" as const }
+        : temporaryPreviewEdit
+          ? { label: "Cancel", onClick: () => setTemporaryPreviewEdit(null), icon: <X size={16} weight="bold" />, tone: "quiet" as const }
         : undefined;
 
   useEffect(() => {
@@ -131,12 +141,14 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
   </div>;
 
   return <div className="page-layout applications-page">
-    <PageHeader view="applications" action={previewGroupEditing ? undefined : action} trailing={!editorTitle && !previewGroupEditing && (canAddApplication || canAddHelm || canAddTemplate || canAddGroup || canAddConfig) ? <ApplicationAddMenu canAddApplication={canAddApplication} canAddHelm={canAddHelm} canAddTemplate={canAddTemplate} canAddGroup={canAddGroup} canAddConfig={canAddConfig} onApplication={onToggleCreate} onHelm={() => setCreatingHelm(true)} onTemplate={() => setCreatingTemplate(true)} onGroup={() => setPreviewGroupEdit("new")} onConfig={() => setConfigSourceEdit("new")} /> : undefined} title={editorTitle ?? (previewGroupEditing ? "Preview group" : undefined)} />
+    <PageHeader view="applications" action={previewGroupEditing ? undefined : action} trailing={!editorTitle && !previewGroupEditing && (canAddApplication || canAddHelm || canAddTemplate || canAddGroup || canAddConfig || canAddTemporaryPreview) ? <ApplicationAddMenu canAddApplication={canAddApplication} canAddHelm={canAddHelm} canAddTemplate={canAddTemplate} canAddGroup={canAddGroup} canAddConfig={canAddConfig} canAddTemporaryPreview={canAddTemporaryPreview} onApplication={onToggleCreate} onHelm={() => setCreatingHelm(true)} onTemplate={() => setCreatingTemplate(true)} onGroup={() => setPreviewGroupEdit("new")} onConfig={() => setConfigSourceEdit("new")} onPreviewTemplate={() => setPreviewTemplateEdit("new")} onTemporaryPreview={() => setTemporaryPreviewEdit("new")} /> : undefined} title={editorTitle ?? (previewGroupEditing ? "Preview group" : undefined)} />
     {creating && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-application-title"><div className="inline-create-body"><h2 className="sr-only" id="new-application-title">New application</h2><AppForm data={overview} onChanged={onChanged} focusName /></div></section>}
     {creatingTemplate && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-template-title"><div className="inline-create-body"><h2 className="sr-only" id="new-template-title">New template</h2><AppForm data={overview} onChanged={async () => { await onChanged(); setCreatingTemplate(false); }} focusName initialSourceType="repository" template /></div></section>}
     {creatingHelm && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-helm-source-title"><div className="inline-create-body"><h2 className="sr-only" id="new-helm-source-title">New Helm source</h2><AppForm data={overview} onChanged={async () => { await onChanged(); setCreatingHelm(false); }} focusName initialSourceType="helm" sourceTypeLocked /></div></section>}
     {configSourceEdit && <section className="inline-create focused-editor compact-editor" aria-labelledby="configuration-source-title"><div className="inline-create-body"><h2 className="sr-only" id="configuration-source-title">Repository configuration</h2><WorkflowConfigSourceForm overview={overview} source={configSourceEdit === "new" ? undefined : configSourceEdit} onCancel={() => setConfigSourceEdit(null)} onSaved={async () => { await onChanged(); setConfigSourceEdit(null); }} /></div></section>}
-    {!editorTitle && !previewGroupEditing && <ApplicationInventory onOpenDeployment={onOpenDeployment} overview={overview} onDeploy={onDeploy} onSync={setSyncApplication} onServices={setServiceApplication} onHooks={setHookApplication} onValues={setHelmValuesApplication} onEditGroup={setPreviewGroupEdit} onEditConfig={setConfigSourceEdit} onOpenWorkflow={setWorkflowDetail} onOpenTopology={onOpenTopology} onOpenConfigurationTopology={onOpenConfigurationTopology} onOpenWorkflowStage={openStage} onOpenDeploymentManifests={onOpenDeploymentManifests} onDelete={onDelete} onDeleteGroup={onDeleteGroup} onChanged={onChanged} hasReadyServer={dockerReady || kubernetesReady} hasProject={hasProject} onNavigate={onNavigate} />}
+    {previewTemplateEdit && <section className="inline-create focused-editor compact-editor" aria-labelledby="preview-template-title"><div className="inline-create-body"><h2 className="sr-only" id="preview-template-title">PR preview template</h2><PreviewTemplateForm key={previewTemplateEdit === "new" ? "new" : previewTemplateEdit.id} overview={overview} template={previewTemplateEdit === "new" ? undefined : previewTemplateEdit} onCancel={() => setPreviewTemplateEdit(null)} onSaved={async () => { await onChanged(); setPreviewTemplateEdit(null); }} /></div></section>}
+    {temporaryPreviewEdit && <section className="inline-create focused-editor compact-editor" aria-labelledby="temporary-preview-title"><div className="inline-create-body"><h2 className="sr-only" id="temporary-preview-title">PR preview</h2><TemporaryPreviewForm key={temporaryPreviewEdit === "new" ? "new" : temporaryPreviewEdit.id} overview={overview} resource={temporaryPreviewEdit === "new" ? undefined : temporaryPreviewEdit} onCancel={() => setTemporaryPreviewEdit(null)} onSaved={async () => { await onChanged(); setTemporaryPreviewEdit(null); }} /></div></section>}
+    {!editorTitle && !previewGroupEditing && <ApplicationInventory onOpenDeployment={onOpenDeployment} overview={overview} onDeploy={onDeploy} onSync={setSyncApplication} onServices={setServiceApplication} onHooks={setHookApplication} onValues={setHelmValuesApplication} onEditGroup={setPreviewGroupEdit} onEditConfig={setConfigSourceEdit} onEditPreviewTemplate={setPreviewTemplateEdit} onEditTemporaryPreview={setTemporaryPreviewEdit} onOpenWorkflow={setWorkflowDetail} onOpenTopology={onOpenTopology} onOpenConfigurationTopology={onOpenConfigurationTopology} onOpenWorkflowStage={openStage} onOpenDeploymentManifests={onOpenDeploymentManifests} onDelete={onDelete} onDeleteGroup={onDeleteGroup} onChanged={onChanged} hasReadyServer={dockerReady || kubernetesReady} hasProject={hasProject} onNavigate={onNavigate} />}
     {!editorTitle && <div className="preview-group-editor-host"><PreviewGroupsArea overview={overview} onChanged={onChanged} embedded hideInventory requestedEdit={previewGroupEdit} onEditingChange={handlePreviewGroupEditing} /></div>}
     {workflowDetail && <WorkflowResourceDialog resource={workflowDetail} overview={overview} onClose={() => setWorkflowDetail(null)} onChanged={onChanged} onOpenDeploymentManifests={onOpenDeploymentManifests} />}
   </div>;
@@ -185,15 +197,25 @@ function workflowResourceSummary(source: ConfigSource, resources: WorkflowResour
   return { state: active ?? "paused", label: active ? workflowResourceStatusLabel(active) : `${ready}/${resources.length} ready`, detail: synced };
 }
 
-function ApplicationAddMenu({ canAddApplication, canAddHelm, canAddTemplate, canAddGroup, canAddConfig, onApplication, onHelm, onTemplate, onGroup, onConfig }: { canAddApplication: boolean; canAddHelm: boolean; canAddTemplate: boolean; canAddGroup: boolean; canAddConfig: boolean; onApplication: () => void; onHelm: () => void; onTemplate: () => void; onGroup: () => void; onConfig: () => void }) {
+function ApplicationAddMenu({ canAddApplication, canAddHelm, canAddTemplate, canAddGroup, canAddConfig, canAddTemporaryPreview, onApplication, onHelm, onTemplate, onGroup, onConfig, onPreviewTemplate, onTemporaryPreview }: { canAddApplication: boolean; canAddHelm: boolean; canAddTemplate: boolean; canAddGroup: boolean; canAddConfig: boolean; canAddTemporaryPreview: boolean; onApplication: () => void; onHelm: () => void; onTemplate: () => void; onGroup: () => void; onConfig: () => void; onPreviewTemplate: () => void; onTemporaryPreview: () => void }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild><button className="primary-button add-resource-menu" type="button"><Plus size={16} weight="bold" />Add</button></DropdownMenu.Trigger>
     <DropdownMenu.Portal>
-      <DropdownMenu.Content className="action-menu-list add-resource-options" align="end" sideOffset={6} collisionPadding={12}>
-        <MenuAction icon={<AppWindow size={16} />} label="Application" disabled={!canAddApplication} onClick={onApplication} />
-        <MenuAction icon={<SlidersHorizontal size={16} />} label="Helm source" disabled={!canAddHelm} onClick={onHelm} />
-        <MenuAction icon={<Copy size={16} />} label="Template" disabled={!canAddTemplate} onClick={onTemplate} />
-        <MenuAction icon={<PlugsConnected size={16} />} label="Preview group" disabled={!canAddGroup} onClick={onGroup} />
+      <DropdownMenu.Content className="action-menu-list add-resource-options application-add-options" align="end" sideOffset={6} collisionPadding={12}>
+        <DropdownMenu.Group aria-label="Applications">
+          <DropdownMenu.Label className="add-resource-group-label">Applications</DropdownMenu.Label>
+          <MenuAction icon={<AppWindow size={16} />} label="Application" disabled={!canAddApplication} onClick={onApplication} />
+          <MenuAction icon={<SlidersHorizontal size={16} />} label="Helm source" disabled={!canAddHelm} onClick={onHelm} />
+          <MenuAction icon={<Copy size={16} />} label="Docker template" disabled={!canAddTemplate} onClick={onTemplate} />
+        </DropdownMenu.Group>
+        <DropdownMenu.Separator className="action-menu-separator" />
+        <DropdownMenu.Group aria-label="PR previews">
+          <DropdownMenu.Label className="add-resource-group-label">PR previews</DropdownMenu.Label>
+          <MenuAction icon={<Copy size={16} />} label="PR preview template" disabled={!canAddTemporaryPreview} onClick={onPreviewTemplate} />
+          <MenuAction icon={<RocketLaunch size={16} />} label="One-off PR preview" disabled={!canAddTemporaryPreview} onClick={onTemporaryPreview} />
+          {canAddGroup && <MenuAction icon={<PlugsConnected size={16} />} label="Preview group" onClick={onGroup} />}
+        </DropdownMenu.Group>
+        <DropdownMenu.Separator className="action-menu-separator" />
         <MenuAction icon={<GitBranch size={16} />} label="Repository configuration" disabled={!canAddConfig} onClick={onConfig} />
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
@@ -206,18 +228,22 @@ function MenuAction({ icon, label, danger = false, disabled = false, onClick }: 
 
 
 
-function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, onServices, onHooks, onValues, onEditGroup, onEditConfig, onOpenWorkflow, onOpenTopology, onOpenConfigurationTopology, onOpenWorkflowStage, onOpenDeploymentManifests, onDelete, onDeleteGroup, onChanged, hasReadyServer, hasProject, onNavigate }: { onOpenDeployment?: (id: string) => void; overview: Overview; onDeploy: (id: string) => void; onSync: (application: AppModel) => void; onServices: (application: AppModel) => void; onHooks: (application: AppModel) => void; onValues: (application: AppModel) => void; onEditGroup: (group: PreviewGroup) => void; onEditConfig: (source: ConfigSource) => void; onOpenWorkflow: (resource: WorkflowResource) => void; onOpenTopology: (resource: WorkflowResource) => void; onOpenConfigurationTopology: (source: ConfigSource) => void; onOpenWorkflowStage: (applicationID: string, stageName: string) => void; onOpenDeploymentManifests: (deploymentID: string) => void; onDelete: (application: AppModel) => void; onDeleteGroup: (group: PreviewGroup) => void; onChanged: () => Promise<void>; hasReadyServer: boolean; hasProject: boolean; onNavigate: (view: View) => void }) {
+function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, onServices, onHooks, onValues, onEditGroup, onEditConfig, onEditPreviewTemplate, onEditTemporaryPreview, onOpenWorkflow, onOpenTopology, onOpenConfigurationTopology, onOpenWorkflowStage, onOpenDeploymentManifests, onDelete, onDeleteGroup, onChanged, hasReadyServer, hasProject, onNavigate }: { onOpenDeployment?: (id: string) => void; overview: Overview; onDeploy: (id: string) => void; onSync: (application: AppModel) => void; onServices: (application: AppModel) => void; onHooks: (application: AppModel) => void; onValues: (application: AppModel) => void; onEditGroup: (group: PreviewGroup) => void; onEditConfig: (source: ConfigSource) => void; onEditPreviewTemplate: (template: WorkflowPreviewTemplate) => void; onEditTemporaryPreview: (resource: WorkflowResource) => void; onOpenWorkflow: (resource: WorkflowResource) => void; onOpenTopology: (resource: WorkflowResource) => void; onOpenConfigurationTopology: (source: ConfigSource) => void; onOpenWorkflowStage: (applicationID: string, stageName: string) => void; onOpenDeploymentManifests: (deploymentID: string) => void; onDelete: (application: AppModel) => void; onDeleteGroup: (group: PreviewGroup) => void; onChanged: () => Promise<void>; hasReadyServer: boolean; hasProject: boolean; onNavigate: (view: View) => void }) {
   const [busyID, setBusyID] = useState("");
   const [error, setError] = useState("");
   const [deleteSource, setDeleteSource] = useState<ConfigSource | null>(null);
+  const [deletePreview, setDeletePreview] = useState<WorkflowResource | null>(null);
+  const [deleteTemplate, setDeleteTemplate] = useState<WorkflowPreviewTemplate | null>(null);
   const [expandedSourceIDs, setExpandedSourceIDs] = useState<Set<string>>(() => new Set());
   const [expandedResourceIDs, setExpandedResourceIDs] = useState<Set<string>>(() => new Set());
   const applications = overview.apps.filter((application) => !application.generated);
   const configSources = overview.configSources ?? [];
   const workflowResources = overview.workflowResources ?? [];
   const sourceIDs = new Set(configSources.map((source) => source.id));
-  const orphanWorkflowResources = workflowResources.filter((resource) => !sourceIDs.has(resource.configSourceId));
-  const resourceCount = applications.length + overview.previewGroups.length + configSources.length + orphanWorkflowResources.length;
+  const orphanWorkflowResources = workflowResources.filter((resource) => !resource.temporary && !sourceIDs.has(resource.configSourceId));
+  const temporaryPreviews = workflowResources.filter((resource) => resource.temporary);
+  const previewTemplates = overview.workflowPreviewTemplates ?? [];
+  const resourceCount = applications.length + overview.previewGroups.length + configSources.length + orphanWorkflowResources.length + temporaryPreviews.length + previewTemplates.length;
 
   function toggleSource(sourceID: string) {
     setExpandedSourceIDs((current) => {
@@ -269,6 +295,42 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
     }
   }
 
+  async function deleteTemporaryPreview(resource: WorkflowResource) {
+    setBusyID(resource.id);
+    setError("");
+    try {
+      await api.deleteTemporaryWorkflowResource(resource.id);
+      await onChanged();
+      setDeletePreview(null);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusyID("");
+    }
+  }
+
+  async function syncPreviewTemplate(template: WorkflowPreviewTemplate) {
+    setBusyID(template.id);
+    setError("");
+    try { await api.syncWorkflowPreviewTemplate(template.id); await onChanged(); }
+    catch (cause) { setError((cause as Error).message); await onChanged().catch(() => {}); }
+    finally { setBusyID(""); }
+  }
+
+  async function deletePreviewTemplate(template: WorkflowPreviewTemplate) {
+    setBusyID(template.id);
+    setError("");
+    try {
+      await api.deleteWorkflowPreviewTemplate(template.id);
+      await onChanged();
+      setDeleteTemplate(null);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusyID("");
+    }
+  }
+
   function workflowResourceRow(resource: WorkflowResource, source?: ConfigSource, nested = false) {
     const latest = (overview.workflowRevisions ?? []).filter((item) => item.resourceId === resource.id).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
     const stages = workflowStages(resource, overview);
@@ -288,9 +350,9 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
         <td data-label="Name"><div className="resource-identity">
           <button type="button" className="resource-name-button" aria-label={`Open ${resource.name}`} onClick={() => onOpenWorkflow(resource)}><strong>{resource.name}</strong><small>{resource.sourceCount} source{resource.sourceCount === 1 ? "" : "s"}, {resource.jobCount} job{resource.jobCount === 1 ? "" : "s"}</small></button>
           {stages.length ? <button type="button" className="hierarchy-toggle" aria-label={`${expanded ? "Hide stages" : `Show ${stages.length} stage${stages.length === 1 ? "" : "s"}`} for ${resource.name}`} aria-expanded={expanded} onClick={() => toggleResource(resource.id)}>{expanded ? <CaretDown size={13} /> : <CaretRight size={13} />}<span>{expanded ? "Hide stages" : `Show ${stages.length} stage${stages.length === 1 ? "" : "s"}`}</span></button> : null}
-        </div></td>
-        <td data-label="Type"><strong className="cell-secondary-heading">{resource.kind}</strong><small>{source ? "Managed application" : "Imported"}</small></td>
-        <td data-label="Source"><span className="truncate-cell" title={resource.path}>{resource.path}</span><small className="truncate-cell" title={resource.configSha}>Config {resource.configSha.slice(0, 8)}</small></td>
+        </div>{resource.temporary && <div className="temporary-preview-pr-links">{resource.previewPullRequests?.map((pr, index) => <a key={`${pr.repository}#${pr.number}`} href={pr.url} target="_blank" rel="noreferrer" aria-label={`${pr.repository} pull request #${pr.number}`}>{index === 0 ? `PR #${pr.number}` : `${pr.repository.split("/").at(-1)} #${pr.number}`}<ArrowSquareOut size={12} /></a>)}{overview.identity?.systemRole === "owner" && <button type="button" onClick={() => onEditTemporaryPreview(resource)} aria-label={`Edit ${resource.name} preview`}><PencilSimple size={12} />Edit YAML &amp; PR</button>}</div>}</td>
+        <td data-label="Type"><strong className="cell-secondary-heading">{resource.temporary ? "PR preview" : resource.kind}</strong><small>{resource.temporary ? "Inline Application" : source ? "Managed application" : "Imported"}</small></td>
+        <td data-label="Source"><span className="truncate-cell" title={resource.path}>{resource.temporary ? "Saved YAML" : resource.path}</span><small className="truncate-cell" title={resource.configSha}>Config {resource.configSha.slice(0, 8)}</small></td>
         <td data-label="Target"><span className="truncate-cell" title={target}>{target}</span></td>
         <td data-label="Status"><span className={`status-label ${status}`}><i />{workflowResourceStatusLabel(status)}</span><small>{stages.length} stage{stages.length === 1 ? "" : "s"}</small></td>
         <td className="row-actions"><RowActionMenu name={resource.name}>
@@ -299,6 +361,8 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
           {latestDeploymentID && <MenuAction icon={<FileCode size={16} />} label="Manifests" onClick={() => onOpenDeploymentManifests(latestDeploymentID)} />}
           {(canConfigureResource || canRunResource) && <DropdownMenu.Separator className="action-menu-separator" />}
           {(canConfigureResource || canRunResource) && <DropdownMenu.Label className="row-action-group-label">Application</DropdownMenu.Label>}
+          {resource.temporary && overview.identity?.systemRole === "owner" && <MenuAction icon={<PencilSimple size={16} />} label="Edit preview" onClick={() => onEditTemporaryPreview(resource)} />}
+          {resource.temporary && overview.identity?.systemRole === "owner" && <MenuAction icon={<Trash size={16} />} label="Delete preview" danger onClick={() => { setError(""); setDeletePreview(resource); }} />}
           {canConfigureResource && !resource.active && <MenuAction icon={<Check size={16} />} label="Activate" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "activate")} />}
           {canRunResource && resource.active && resource.kind === "Application" && <MenuAction icon={<RocketLaunch size={16} />} label="Run now" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "run")} />}
           {canConfigureResource && resource.active && <MenuAction icon={<X size={16} />} label="Pause" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "pause")} />}
@@ -323,7 +387,7 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
   return <section id="application-resources" aria-labelledby="application-resources-title"><h2 className="sr-only" id="application-resources-title">Configured resources</h2>{error && <p className="form-error application-inventory-error" role="alert">{error}</p>}<div className="resource-table-wrap application-inventory-table-wrap"><table className="resource-table application-inventory-table"><thead><tr><th>Name</th><th>Type</th><th>Source</th><th>Target</th><th>Status</th><th className="actions-head"><span className="sr-only">Options</span></th></tr></thead><tbody>
     {configSources.map((source) => {
       const project = overview.projects.find((item) => item.id === source.projectId)?.name ?? "Unknown project";
-      const resources = workflowResources.filter((resource) => resource.configSourceId === source.id);
+      const resources = workflowResources.filter((resource) => resource.configSourceId === source.id && !resource.temporary);
       const expanded = expandedSourceIDs.has(source.id);
       const summary = workflowResourceSummary(source, resources, overview);
       const canConfigureSource = canManageProject(overview, source.projectId, "project.configure");
@@ -352,6 +416,19 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
         {expanded && resources.map((resource) => workflowResourceRow(resource, source, true))}
       </Fragment>;
     })}
+    {(temporaryPreviews.length > 0 || previewTemplates.length > 0) && <tr className="configuration-source-row temporary-preview-group-row"><td data-label="Name"><strong>PR previews</strong><small>{previewTemplates.length} template{previewTemplates.length === 1 ? "" : "s"} · {temporaryPreviews.length} instance{temporaryPreviews.length === 1 ? "" : "s"}</small></td><td data-label="Type">Comment driven</td><td data-label="Source">Template definitions</td><td data-label="Target">Per PR</td><td data-label="Status"><span className={`status-label ${previewTemplates.length || temporaryPreviews.length ? "ready" : "paused"}`}><i />{previewTemplates.length || temporaryPreviews.length ? "Configured" : "No previews"}</span></td><td className="row-actions" /></tr>}
+    {previewTemplates.map((template) => <Fragment key={`preview-template-${template.id}`}>
+      <tr className="configuration-resource-row preview-template-row">
+        <td data-label="Name">{overview.identity?.systemRole === "owner" ? <button type="button" className="resource-name-button" onClick={() => onEditPreviewTemplate(template)} aria-label={`Edit ${template.name} template`}><strong>{template.name}</strong><small>Reusable workflow YAML</small></button> : <><strong>{template.name}</strong><small>Reusable workflow YAML</small></>}{overview.identity?.systemRole === "owner" && <div className="temporary-preview-pr-links"><button type="button" onClick={() => onEditPreviewTemplate(template)}><PencilSimple size={12} />Edit template</button></div>}</td>
+        <td data-label="Type"><strong className="cell-secondary-heading">PR template</strong><small><code>{template.command}</code> creates an instance</small></td>
+        <td data-label="Source">{template.gitSource ? <><a href={previewTemplateGitURL(template, overview)} target="_blank" rel="noreferrer">GitHub · {template.gitSource.branch}</a><small className="truncate-cell" title={`${template.gitSource.repository}/${template.gitSource.path}`}>{template.gitSource.path}</small></> : "Saved YAML"}</td>
+        <td data-label="Target">{(template.watchRepositories?.length ? template.watchRepositories : [template.repository]).map((repository) => <small key={repository} className="truncate-cell" title={repository}>{repository}</small>)}</td>
+        <td data-label="Status"><span className={`status-label ${template.gitSource?.lastError ? "failed" : template.active ? "ready" : "paused"}`}><i />{template.gitSource?.lastError ? "Sync failed" : template.active ? "Watching PRs" : "Paused"}</span>{template.gitSource?.commitSha && <small>Commit {template.gitSource.commitSha.slice(0, 8)}</small>}</td>
+        <td className="row-actions">{overview.identity?.systemRole === "owner" && <RowActionMenu name={template.name}><MenuAction icon={<PencilSimple size={16} />} label="Edit template" onClick={() => onEditPreviewTemplate(template)} />{template.gitSource && <MenuAction icon={<ArrowClockwise size={16} />} label="Sync from GitHub" disabled={busyID === template.id} onClick={() => void syncPreviewTemplate(template)} />}<MenuAction icon={<Trash size={16} />} label="Delete template" danger onClick={() => { setError(""); setDeleteTemplate(template); }} /></RowActionMenu>}</td>
+      </tr>
+      {template.gitSource?.lastError && <tr className="configuration-error-row"><td colSpan={6}><p className="form-error" role="alert">{template.gitSource.lastError} New previews are blocked until this template syncs successfully.</p></td></tr>}
+    </Fragment>)}
+    {temporaryPreviews.map((resource) => workflowResourceRow(resource, configSources.find((source) => source.id === resource.configSourceId), true))}
     {orphanWorkflowResources.map((resource) => workflowResourceRow(resource))}
     {applications.map((application) => {
       const project = overview.projects.find((item) => item.id === application.projectId)?.name ?? "Unknown project";
@@ -381,7 +458,7 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
         {overview.identity?.systemRole === "owner" && <MenuAction icon={<Trash size={16} />} label="Delete" danger onClick={() => onDeleteGroup(group)} />}
       </RowActionMenu>}</td></tr>;
     })}
-  </tbody></table></div>{deleteSource && <ConfigSourceDeleteDialog source={deleteSource} busy={busyID === deleteSource.id} error={error} onClose={() => { setDeleteSource(null); setError(""); }} onDelete={() => void sourceAction(deleteSource, "delete")} />}</section>;
+  </tbody></table></div>{deleteSource && <ConfigSourceDeleteDialog source={deleteSource} busy={busyID === deleteSource.id} error={error} onClose={() => { setDeleteSource(null); setError(""); }} onDelete={() => void sourceAction(deleteSource, "delete")} />}{deletePreview && <TemporaryPreviewDeleteDialog resource={deletePreview} busy={busyID === deletePreview.id} error={error} onClose={() => { setDeletePreview(null); setError(""); }} onDelete={() => void deleteTemporaryPreview(deletePreview)} />}{deleteTemplate && <PreviewTemplateDeleteDialog template={deleteTemplate} busy={busyID === deleteTemplate.id} error={error} onClose={() => { setDeleteTemplate(null); setError(""); }} onDelete={() => void deletePreviewTemplate(deleteTemplate)} />}</section>;
 }
 
 function RowActionMenu({ name, children }: { name: string; children: ReactNode }) {
@@ -403,6 +480,26 @@ function ConfigSourceDeleteDialog({ source, busy, error, onClose, onDelete }: { 
     <section ref={dialogRef} className="resource-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-config-title" aria-describedby="delete-config-description">
       <header><div><h2 id="delete-config-title">Delete configuration</h2><p>This removes its imported applications and pipelines.</p></div><button aria-label="Close dialog" onClick={onClose}><X size={19} weight="bold" /></button></header>
       <div className="dialog-body"><p className="confirm-copy" id="delete-config-description">Delete <strong>{source.name}</strong>?</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions confirm-actions"><button className="quiet-button" onClick={onClose}>Cancel</button><button className="danger-button" disabled={busy} onClick={onDelete}>{busy ? "Deleting..." : "Delete configuration"}</button></div></div>
+    </section>
+  </div>;
+}
+
+function TemporaryPreviewDeleteDialog({ resource, busy, error, onClose, onDelete }: { resource: WorkflowResource; busy: boolean; error: string; onClose: () => void; onDelete: () => void }) {
+  const dialogRef = useDialogFocus(onClose);
+  return <div className="dialog-layer confirm-layer" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <section ref={dialogRef} className="resource-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-preview-title" aria-describedby="delete-preview-description">
+      <header><div><h2 id="delete-preview-title">Delete PR preview</h2><p>Stops the comment command and removes its deployed resources.</p></div><button aria-label="Close dialog" disabled={busy} onClick={onClose}><X size={19} weight="bold" /></button></header>
+      <div className="dialog-body"><p className="confirm-copy" id="delete-preview-description">Delete <strong>{resource.name}</strong>? The pull request stays open.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions confirm-actions"><button className="quiet-button" disabled={busy} onClick={onClose}>Cancel</button><button className="danger-button" disabled={busy} onClick={onDelete}>{busy ? "Deleting..." : "Delete preview"}</button></div></div>
+    </section>
+  </div>;
+}
+
+function PreviewTemplateDeleteDialog({ template, busy, error, onClose, onDelete }: { template: WorkflowPreviewTemplate; busy: boolean; error: string; onClose: () => void; onDelete: () => void }) {
+  const dialogRef = useDialogFocus(onClose);
+  return <div className="dialog-layer confirm-layer" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <section ref={dialogRef} className="resource-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-preview-template-title" aria-describedby="delete-preview-template-description">
+      <header><div><h2 id="delete-preview-template-title">Delete PR preview template</h2><p>Stops creating previews from future comments.</p></div><button aria-label="Close dialog" disabled={busy} onClick={onClose}><X size={19} weight="bold" /></button></header>
+      <div className="dialog-body"><p className="confirm-copy" id="delete-preview-template-description">Delete <strong>{template.name}</strong>? Existing preview instances and deployments remain available.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions confirm-actions"><button className="quiet-button" disabled={busy} onClick={onClose}>Cancel</button><button className="danger-button" disabled={busy} onClick={onDelete}>{busy ? "Deleting..." : "Delete template"}</button></div></div>
     </section>
   </div>;
 }

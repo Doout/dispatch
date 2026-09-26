@@ -111,6 +111,8 @@ Dispatch passes resolved secrets to the job process. Job scripts can print those
 
 The GitHub App manifest flow creates an App with the required callback, setup, repository permissions, and event subscriptions. Existing Apps can connect with an App ID, RSA private key, webhook secret, and optional installation ID.
 
+The manifest requests Contents read, Pull requests write for PR comments, Issues write, Commit statuses write, and Metadata read. In Connections, **Verify** compares the App registration, installation, and issued token with those requirements. If the App registration lacks access, edit its permissions in GitHub first. Then approve the updated installation permissions or reinstall the App, select its repositories, and verify again.
+
 A GitHub App uses one installation webhook. It does not require a webhook for each repository. Polling can run alone or alongside webhooks.
 
 When GitHub cannot reach the controller, install `dispatch-relay` on a public node. The relay writes each request before returning `202 Accepted`. Dispatch polls it and acknowledges an event after signature verification and local processing. An unacknowledged lease expires and the relay sends the event again.
@@ -121,7 +123,7 @@ The legacy shared webhook endpoint remains available at `/api/v1/events/github` 
 
 ## Pull request previews
 
-An event rule listens for a command such as `/preview` on a pull request. A trusted repository member can start a preview. Dispatch checks out the pull request revision, runs its hooks, deploys the application, and updates one status comment.
+An event rule listens for a command such as `/preview` on a pull request. A trusted repository member can start a preview. Dispatch checks out the pull request revision, runs its hooks, deploys the application, and updates one status comment. When webhooks are unavailable, Dispatch polls repository issue comments every 30 seconds. It saves a cursor per repository, checks only comments with a matching command, and checks active pull requests for closure. Webhooks and polling use the same comment ID for deduplication.
 
 Preview groups link components stored in different repositories. A command can select another open pull request:
 
@@ -131,7 +133,15 @@ Preview groups link components stored in different repositories. A command can s
 /preview with owner/repository=#123
 ```
 
-Dispatch keeps a linked preview running until all explicitly linked pull requests close. An operator can also clean it from the console.
+Dispatch keeps a linked preview running until all explicitly linked pull requests close. An operator can also clean it from the console. The status comment lists the preview URL and the full commit ID for every linked component.
+
+For a repository-managed workflow preview, an owner can call `POST /api/v1/workflow/revisions/{id}/preview-report` after the revision succeeds. Send `githubAppId`, `repository`, `pullRequestNumber`, and the verified HTTPS `url`. Dispatch posts or updates a comment with the target, deployment, full source commits, and built image tags. If an enterprise GitHub App rejects comment writes, a configured `DISPATCH_GITHUB_TOKEN` provides a fallback for this manual endpoint.
+
+To deploy a one-off workflow preview without committing configuration to its repository, choose **Applications > Add > PR preview** and save the Application YAML, GitHub App, PR, `/preview` command, and preview URL. Dispatch lists it under **PR previews**, separate from the repository configuration used for credentials. The same flow is available through `POST /api/v1/workflow/temporary-resources` with `configSourceId` and one complete Application YAML document. Pin the pull request source to its full head commit and choose a unique deployment and Helm release. Then call `POST /api/v1/workflow/temporary-resources/{id}/preview-trigger` with `githubAppId`, `repository`, `pullRequestNumber`, and the HTTPS `previewUrl`. A trusted `/preview` comment starts the revision through the repository-wide poller; repeat polls of the same comment do not start it again. Use `/preview with ui=#123` or `/preview with owner/repository=#123` to link another source pull request. The link persists on the trigger; later `/preview` comments refresh both pull request heads, Helm provenance includes both PRs, and cleanup waits until both close. After a successful revision, the poller posts or updates a single preview report with the GitHub App installation token. It retries failed reports and does not use `DISPATCH_GITHUB_TOKEN`. To change an inline Application without a configuration repository PR, call `PUT /api/v1/workflow/temporary-resources/{id}` with the complete `document`; the next run upgrades the same Helm release. To add a URL to an existing trigger, call `PUT /api/v1/workflow/preview-triggers/{id}/url` with `previewUrl`. Repository sync preserves the temporary resource.
+
+Every Helm install and upgrade records the Dispatch application and deployment IDs on the release Secret and rendered resources. Preview releases also carry the linked pull request numbers and repositories, workflow resource and revision IDs, and pinned source commits in the `dispatch.app/provenance` annotation and Helm release description. The `dispatch.app/has-pr=true` label on Helm release Secrets supports finding orphaned preview releases if automatic close cleanup misses one.
+
+For repeated previews, put `__PREVIEW_ID__` in every identity value in the document (Application name, Helm release, workload names, and labels) and send `previewId` with the PR number. Dispatch uses that ID when free and appends a short random suffix if a resource name or Helm release is already in use. This keeps service and UI pull requests with the same number separate.
 
 Hooks receive `DISPATCH_EVENT_*` variables for the triggering event and `DISPATCH_COMPONENT_<ALIAS>_<OUTPUT>` variables for available component outputs. A hook should write named results with `dispatch-hook` or use `DISPATCH_OUTPUT_FILE` for legacy scripts.
 
@@ -227,7 +237,8 @@ Use `make check` for the race detector, `go vet`, TypeScript checks, and fronten
 - [Private routes](docs/private-networks.md)
 - [Roadmap](docs/roadmap.md)
 
-Database migrations are ordered SQL files under `internal/store/migrations`.
+Database migrations live in two SQL files under `internal/store/migrations`, one
+for SQLite and one for PostgreSQL. Version markers keep each upgrade separate.
 
 See [contributing](CONTRIBUTING.md) for development and review guidance, and [security](SECURITY.md) for the trust model and vulnerability reporting.
 

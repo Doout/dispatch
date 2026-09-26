@@ -120,7 +120,7 @@ func TestApprovalAuditUsesWorkflowProjectAndFiltersForeignActions(t *testing.T) 
 	}
 	router := chi.NewRouter()
 	router.Use(a.auditMutation)
-	router.Post("/api/v1/workflow/stages/{id}/approve", a.workflowStagePermission(core.PermissionStageApprove, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) }))
+	router.With(a.workflowStagePermission(core.PermissionStageApprove)).Post("/api/v1/workflow/stages/{id}/approve", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) })
 	for _, item := range []struct {
 		id     string
 		status int

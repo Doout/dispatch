@@ -151,3 +151,24 @@ func TestTemplateDuplicateNamesRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestImportSkipsPreviewDefinitionsAlongsideApplications(t *testing.T) {
+	preview := "apiVersion: dispatch/v1alpha1\nkind: WorkflowTemplate\nmetadata:\n  name: preview-{{ instance.id }}\nspec:\n  sources:\n    app:\n      repository: owner/app\n  jobs:\n    build:\n      runFrom: app\n      run: echo preview\n"
+	live := strings.ReplaceAll(strings.Replace(preview, "kind: WorkflowTemplate", "kind: Application", 1), "{{ instance.id }}", "slot1")
+	for _, files := range [][]githubapp.RepositoryFile{
+		{{Path: "deployment/slot1.yaml", Contents: []byte(live)}, {Path: "deployment/templates/preview.yaml", Contents: []byte(preview)}},
+		{{Path: "deployment/mixed.yaml", Contents: []byte(preview + "---\n" + live)}},
+	} {
+		got, err := expandConfiguration(files, "main", nil)
+		if err != nil || len(got) != 1 || got[0].document.Metadata.Name != "preview-slot1" {
+			t.Fatalf("import = %v, %v", got, err)
+		}
+	}
+	got, err := expandConfiguration([]githubapp.RepositoryFile{{Path: "deployment/templates/preview.yaml", Contents: []byte(preview)}}, "main", nil)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("template-only import = %v, %v", got, err)
+	}
+	if _, err := Parse("preview.yaml", []byte(preview)); err == nil {
+		t.Fatal("unrendered preview accepted as deployable Application")
+	}
+}

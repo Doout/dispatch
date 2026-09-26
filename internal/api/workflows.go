@@ -249,6 +249,10 @@ func (a *API) listWorkflowResources(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	if err := a.enrichWorkflowPreviewPullRequests(r.Context(), items); err != nil {
+		a.internal(w, err)
+		return
+	}
 	a.list(w, items, err)
 }
 

@@ -209,7 +209,8 @@ func TestLinkedGroupDeploysDependenciesAndKeepsStableURLWhenPRIsAttached(t *test
 	notifier.mu.Lock()
 	for _, key := range []string{"org/service#11", "org/ui#22"} {
 		body := notifier.bodies[key]
-		if !strings.Contains(body, "Full stack") || !strings.Contains(body, "with ui=#123") || !strings.Contains(body, stableURL) {
+		if !strings.Contains(body, "Full stack") || !strings.Contains(body, "with ui=#123") || !strings.Contains(body, stableURL) ||
+			!strings.Contains(body, sourceForAlias(updated.Sources, "service").SHA) || !strings.Contains(body, sourceForAlias(updated.Sources, "ui").SHA) {
 			notifier.mu.Unlock()
 			t.Fatalf("combined status missing for %s: %q", key, body)
 		}

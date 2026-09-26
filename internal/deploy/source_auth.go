@@ -24,7 +24,7 @@ type secretReader interface {
 }
 
 type githubAppTokenSource interface {
-	InstallationToken(context.Context, string) (string, error)
+	RepositoryToken(context.Context, string, string) (string, error)
 }
 
 type SecretResolver interface {
@@ -72,7 +72,7 @@ func (e SourceAuthExecutor) Resolve(ctx context.Context, app core.App) (core.App
 		if e.GitHubApps == nil {
 			return app, errors.New("GitHub App authentication is not configured")
 		}
-		token, err := e.GitHubApps.InstallationToken(ctx, app.SourceCredentialID)
+		token, err := e.GitHubApps.RepositoryToken(ctx, app.SourceCredentialID, app.SourceRepo)
 		if err != nil {
 			return app, fmt.Errorf("create GitHub App installation token: %w", err)
 		}

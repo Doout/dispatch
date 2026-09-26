@@ -26,7 +26,7 @@ export function ConfigurationTopologyPage({
   onOpenResource: (resource: WorkflowResource) => void;
   onOpenStage: (resourceID: string, stageName: string) => void;
 }) {
-  const resources = (overview.workflowResources ?? []).filter((resource) => resource.configSourceId === source.id);
+  const resources = (overview.workflowResources ?? []).filter((resource) => resource.configSourceId === source.id && !resource.temporary);
   const { topology, resourcesByNodeID, stagesByNodeID } = configurationTopology(source, resources, overview);
 
   return <div className="page-layout topology-page configuration-topology-page">

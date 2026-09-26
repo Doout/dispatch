@@ -30,26 +30,72 @@ type ConfigSource struct {
 }
 
 type WorkflowResource struct {
-	LastEvaluation *WorkflowEquivalence `json:"lastEvaluation,omitempty"`
-	ServiceIDs     []string             `json:"-"`
-	ID             string               `json:"id"`
-	ConfigSourceID string               `json:"configSourceId"`
-	APIVersion     string               `json:"apiVersion"`
-	Kind           string               `json:"kind"`
-	Name           string               `json:"name"`
-	Path           string               `json:"path"`
-	Document       string               `json:"document"`
-	SpecDigest     string               `json:"specDigest"`
-	ConfigSHA      string               `json:"configSha"`
-	Active         bool                 `json:"active"`
-	State          string               `json:"state"`
-	LastError      string               `json:"lastError,omitempty"`
-	SourceCount    int                  `json:"sourceCount"`
-	JobCount       int                  `json:"jobCount"`
-	StageNames     []string             `json:"stageNames,omitempty"`
-	TargetRefs     []string             `json:"targetRefs,omitempty"`
-	CreatedAt      time.Time            `json:"createdAt"`
-	UpdatedAt      time.Time            `json:"updatedAt"`
+	LastEvaluation      *WorkflowEquivalence `json:"lastEvaluation,omitempty"`
+	PreviewPullRequests []HelmPullRequest    `json:"previewPullRequests,omitempty"`
+	ServiceIDs          []string             `json:"-"`
+	ID                  string               `json:"id"`
+	ConfigSourceID      string               `json:"configSourceId"`
+	APIVersion          string               `json:"apiVersion"`
+	Kind                string               `json:"kind"`
+	Name                string               `json:"name"`
+	Path                string               `json:"path"`
+	Document            string               `json:"document"`
+	SpecDigest          string               `json:"specDigest"`
+	ConfigSHA           string               `json:"configSha"`
+	Temporary           bool                 `json:"temporary"`
+	Active              bool                 `json:"active"`
+	State               string               `json:"state"`
+	LastError           string               `json:"lastError,omitempty"`
+	SourceCount         int                  `json:"sourceCount"`
+	JobCount            int                  `json:"jobCount"`
+	StageNames          []string             `json:"stageNames,omitempty"`
+	TargetRefs          []string             `json:"targetRefs,omitempty"`
+	CreatedAt           time.Time            `json:"createdAt"`
+	UpdatedAt           time.Time            `json:"updatedAt"`
+}
+
+// WorkflowPreviewTrigger binds an inline workflow to one pull request command.
+type WorkflowPreviewTrigger struct {
+	TemplateSource     *WorkflowPreviewTemplateGitSource `json:"templateSource,omitempty"`
+	LinkedPullRequests map[string]int                    `json:"linkedPullRequests,omitempty"`
+	ID                 string                            `json:"id"`
+	TemplateID         string                            `json:"templateId,omitempty"`
+	ResourceID         string                            `json:"resourceId"`
+	GitHubAppID        string                            `json:"githubAppId"`
+	Repository         string                            `json:"repository"`
+	PullRequestNumber  int                               `json:"pullRequestNumber"`
+	Command            string                            `json:"command"`
+	PreviewURL         string                            `json:"previewUrl,omitempty"`
+	ReportCommentID    string                            `json:"reportCommentId,omitempty"`
+	CreatedAt          time.Time                         `json:"createdAt"`
+	ClosedAt           *time.Time                        `json:"closedAt,omitempty"`
+}
+
+// WorkflowPreviewTemplate creates one temporary Application per PR when its
+// repository receives a trusted comment command.
+type WorkflowPreviewTemplateGitSource struct {
+	Repository string     `json:"repository"`
+	Branch     string     `json:"branch"`
+	Path       string     `json:"path"`
+	CommitSHA  string     `json:"commitSha,omitempty"`
+	SyncedAt   *time.Time `json:"syncedAt,omitempty"`
+	LastError  string     `json:"lastError,omitempty"`
+}
+
+type WorkflowPreviewTemplate struct {
+	WatchRepositories []string                          `json:"watchRepositories,omitempty"`
+	GitSource         *WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
+	ID                string                            `json:"id"`
+	ConfigSourceID    string                            `json:"configSourceId"`
+	GitHubAppID       string                            `json:"githubAppId"`
+	Name              string                            `json:"name"`
+	Repository        string                            `json:"repository"`
+	Command           string                            `json:"command"`
+	PreviewURL        string                            `json:"previewUrl"`
+	Document          string                            `json:"document"`
+	Active            bool                              `json:"active"`
+	CreatedAt         time.Time                         `json:"createdAt"`
+	UpdatedAt         time.Time                         `json:"updatedAt"`
 }
 
 type WorkflowSourceRevision struct {
