@@ -473,7 +473,7 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 		"setup_on_update":          true,
 		"public":                   true,
 		"request_oauth_on_install": false,
-		"default_permissions":      map[string]string{"contents": "read", "issues": "write", "pull_requests": "read", "metadata": "read", "statuses": "write"},
+		"default_permissions":      githubapp.RequiredRepositoryPermissions(),
 	}
 	if delivery != "none" {
 		manifest["hook_attributes"] = map[string]interface{}{"url": webhookURL, "active": true}
@@ -707,6 +707,7 @@ func (a *API) processGitHubWebhook(w http.ResponseWriter, r *http.Request, secre
 		return
 	}
 	event.ProviderConnectionID = connectionID
+	event.DeliveryID = events.CommentDeliveryID(event)
 	groupRuns, err := groupService.Process(r.Context(), event)
 	if err != nil {
 		problem(w, http.StatusUnprocessableEntity, "Preview group event rejected", err.Error())

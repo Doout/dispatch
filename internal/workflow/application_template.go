@@ -76,7 +76,7 @@ func expandConfiguration(files []githubapp.RepositoryFile, revision string, read
 	parsed := []parsedResource{}
 	cache := map[string][]githubapp.RepositoryFile{}
 	for _, file := range files {
-		documents, err := Parse(file.Path, file.Contents)
+		documents, err := parseDocuments(file.Path, file.Contents, true)
 		if err != nil {
 			return nil, err
 		}

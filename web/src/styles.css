@@ -415,6 +415,11 @@ code { font-family: var(--mono); }
 .add-resource-options { width: 270px; padding: 6px; }
 .add-resource-group-label { padding: 6px 10px 4px; color: #75828d; font-size: 11px; font-weight: 720; letter-spacing: .055em; text-transform: uppercase; user-select: none; }
 .add-resource-options .action-menu-separator { margin: 5px 4px; }
+.application-add-options { width: 238px; max-width: calc(100vw - 24px); padding: 5px; box-shadow: 0 8px 24px rgba(23,40,54,.12); }
+.application-add-options .add-resource-group-label { padding: 5px 9px 3px; font-size: 10px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.application-add-options .action-menu-item { align-items: center; min-height: 32px; padding: 6px 9px; gap: 8px; }
+.application-add-options .action-menu-item strong { font-weight: 550; }
+.application-add-options .action-menu-item svg { margin-top: 0; }
 .row-action-menu { display: inline-grid !important; width: 34px; height: 34px; min-height: 34px !important; padding: 0 !important; color: #53626e !important; background: transparent !important; border: 1px solid transparent !important; border-radius: 7px; cursor: pointer; place-items: center; }
 .row-action-menu:hover, .row-action-menu[data-state="open"] { color: var(--blue) !important; background: var(--blue-soft) !important; }
 .row-action-menu-list { width: 188px; padding: 4px; }
@@ -812,6 +817,19 @@ code { font-family: var(--mono); }
 .resource-form input:hover, .resource-form select:hover, .resource-form textarea:hover { border-color: #a9b5bf; }
 .resource-form input:disabled, .resource-form select:disabled, .resource-form textarea:disabled { color: #63717c; background: #edf1f3; }
 .resource-form textarea { min-height: 176px; padding: 11px 12px; resize: vertical; font: 500 12px/1.55 var(--mono); tab-size: 2; }
+.temporary-preview-form textarea { min-height: 360px; }
+.temporary-preview-file-import { display: flex; align-items: end; flex-wrap: wrap; gap: 8px 12px; }
+.temporary-preview-file-import label { flex: 1 1 300px; }
+.temporary-preview-file-import label:nth-child(2) { flex: 0 1 150px; }
+.temporary-preview-file-import > button { min-height: 42px; }
+.temporary-preview-file-import p { flex-basis: 100%; margin: 0; color: #32624a; font-size: 11px; }
+.resource-form label.temporary-preview-template-active { display: flex; align-items: center; gap: 8px; }
+.resource-form .temporary-preview-template-active input { width: 16px; min-height: 16px; height: 16px; }
+.temporary-preview-intro, .temporary-preview-links { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.temporary-preview-group-row td { background: #eef5ff; }
+.temporary-preview-pr-links { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 5px; }
+.temporary-preview-pr-links a, .temporary-preview-pr-links button { display: inline-flex; align-items: center; gap: 3px; min-height: 20px; padding: 0; color: #1b5fbc; background: transparent; border: 0; cursor: pointer; font-family: inherit; font-size: 11px; font-weight: 600; text-decoration: none; }
+.temporary-preview-pr-links a:hover, .temporary-preview-pr-links button:hover { text-decoration: underline; }
 .resource-form label.compose-field textarea { min-height: 190px; }
 .resource-form label.kubeconfig-field textarea { min-height: 230px; }
 .resource-form label.kube-ca-field textarea { min-height: 130px; }
@@ -1352,6 +1370,12 @@ code { font-family: var(--mono); }
 .connection-row-actions .primary-link { color: var(--blue); background: var(--blue-soft); }
 .connection-row-actions .delete-action { color: var(--red); }
 .connection-row-actions .delete-action:hover { background: var(--red-soft); }
+.connection-access-check { grid-column: 1 / -1; display: grid; gap: 8px; padding: 12px 14px; color: #493e21; background: #fff9eb; border: 1px solid #ead9ab; border-radius: 8px; font-size: 11px; line-height: 1.45; }
+.connection-access-check > strong { font-size: 12px; }
+.connection-access-check p { margin: 0; }
+.connection-access-check ul { margin: 5px 0 8px; padding-left: 18px; }
+.connection-access-check a { display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin-right: 14px; color: var(--blue); font-weight: 650; text-decoration: none; }
+.connection-access-check a:hover { text-decoration: underline; }
 .connection-remove-warning { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(220px, 1fr) auto auto auto; align-items: center; gap: 10px; padding: 12px 13px; color: #71302d; background: var(--red-soft); border: 1px solid #edc8c4; border-radius: 8px; }
 .connection-remove-warning > svg { color: var(--red); }
 .connection-remove-warning > div { display: grid; gap: 3px; }

@@ -1,0 +1,1 @@
+ALTER TABLE workflow_resources ADD COLUMN temporary BOOLEAN NOT NULL DEFAULT FALSE;

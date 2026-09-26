@@ -372,6 +372,8 @@ export type WorkflowResource = {
   document: string;
   specDigest: string;
   configSha: string;
+  temporary?: boolean;
+  previewPullRequests?: { repository: string; number: number; url: string }[];
   active: boolean;
   state: string;
   lastError?: string;
@@ -383,6 +385,45 @@ export type WorkflowResource = {
   createdAt: string;
   updatedAt: string;
 };
+export type WorkflowPreviewTemplateGitSource = {
+  repository: string;
+  branch: string;
+  path: string;
+  commitSha?: string;
+  syncedAt?: string;
+  lastError?: string;
+};
+export type WorkflowPreviewTemplate = {
+  watchRepositories?: string[];
+  gitSource?: WorkflowPreviewTemplateGitSource;
+  id: string;
+  configSourceId: string;
+  githubAppId: string;
+  name: string;
+  repository: string;
+  command: string;
+  previewUrl: string;
+  document: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+export type WorkflowPreviewTrigger = {
+  templateSource?: WorkflowPreviewTemplateGitSource;
+  id: string;
+  templateId?: string;
+  resourceId: string;
+  githubAppId: string;
+  repository: string;
+  pullRequestNumber: number;
+  command: string;
+  previewUrl?: string;
+  linkedPullRequests?: Record<string, number>;
+  reportCommentId?: string;
+  createdAt: string;
+  closedAt?: string;
+};
+export type WorkflowPreviewTriggerInput = Pick<WorkflowPreviewTrigger, "githubAppId" | "repository" | "pullRequestNumber" | "command" | "previewUrl">;
 export type WorkflowSourceRevision = {
   alias: string;
   repository: string;
@@ -547,6 +588,7 @@ export type Overview = {
   githubApps: GitHubAppConnection[];
   relayWebhooks: RelayWebhook[];
   configSources?: ConfigSource[];
+  workflowPreviewTemplates?: WorkflowPreviewTemplate[];
   workflowResources?: WorkflowResource[];
   workflowRevisions?: WorkflowRevision[];
   workflowStageRuns?: WorkflowStageRun[];
@@ -597,7 +639,14 @@ export type GitHubAppVerification = {
   repositorySelection: string;
   repositoryCount: number;
   pushSubscribed: boolean;
+  appPermissionsAvailable: boolean;
+  installationPermissionsAvailable: boolean;
+  missingAppPermissions: GitHubPermissionGap[];
+  missingInstallationPermissions: GitHubPermissionGap[];
+  tokenPermissionsAvailable: boolean;
+  missingTokenPermissions: GitHubPermissionGap[];
 };
+export type GitHubPermissionGap = { name: string; required: string; granted: string };
 export type GitHubAppManifest = {
   action: string;
   manifest: Record<string, unknown>;
@@ -1160,6 +1209,28 @@ export const api = {
     }),
   deleteConfigSource: (id: string) =>
     request<void>(`/api/v1/config-sources/${id}`, { method: "DELETE" }),
+  workflowPreviewTriggers: () =>
+    request<WorkflowPreviewTrigger[]>("/api/v1/workflow/preview-triggers"),
+  createWorkflowPreviewTemplate: (body: Omit<WorkflowPreviewTemplate, "id" | "createdAt" | "updatedAt">) =>
+    request<WorkflowPreviewTemplate>("/api/v1/workflow/preview-templates", { method: "POST", body: JSON.stringify(body) }),
+  updateWorkflowPreviewTemplate: (id: string, body: Omit<WorkflowPreviewTemplate, "id" | "createdAt" | "updatedAt">) =>
+    request<WorkflowPreviewTemplate>(`/api/v1/workflow/preview-templates/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  syncWorkflowPreviewTemplate: (id: string) =>
+    request<WorkflowPreviewTemplate>(`/api/v1/workflow/preview-templates/${id}/sync`, { method: "POST" }),
+  deleteWorkflowPreviewTemplate: (id: string) =>
+    request<void>(`/api/v1/workflow/preview-templates/${id}`, { method: "DELETE" }),
+  createTemporaryWorkflowResource: (body: { configSourceId: string; document: string; previewId?: string }) =>
+    request<WorkflowResource>("/api/v1/workflow/temporary-resources", { method: "POST", body: JSON.stringify(body) }),
+  importWorkflowPreviewDocument: (body: { githubAppId: string; repository: string; pullRequestNumber: number; path: string }) =>
+    request<{ document: string; path: string; headSha: string }>("/api/v1/workflow/temporary-resources/import", { method: "POST", body: JSON.stringify(body) }),
+  updateTemporaryWorkflowResource: (id: string, document: string) =>
+    request<WorkflowResource>(`/api/v1/workflow/temporary-resources/${id}`, { method: "PUT", body: JSON.stringify({ document }) }),
+  deleteTemporaryWorkflowResource: (id: string) =>
+    request<void>(`/api/v1/workflow/temporary-resources/${id}`, { method: "DELETE" }),
+  createWorkflowPreviewTrigger: (resourceId: string, body: WorkflowPreviewTriggerInput) =>
+    request<WorkflowPreviewTrigger>(`/api/v1/workflow/temporary-resources/${resourceId}/preview-trigger`, { method: "POST", body: JSON.stringify(body) }),
+  updateWorkflowPreviewTrigger: (id: string, body: WorkflowPreviewTriggerInput) =>
+    request<WorkflowPreviewTrigger>(`/api/v1/workflow/preview-triggers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   activateWorkflowResource: (id: string) =>
     request<{ resource: WorkflowResource; revision?: WorkflowRevision }>(
       `/api/v1/workflow/resources/${id}/activate`,

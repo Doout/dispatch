@@ -77,6 +77,8 @@ type githubEventServices struct {
 
 type API struct {
 	backupMu           sync.Mutex
+	previewReportMu    sync.Mutex
+	temporaryPreviewMu sync.Mutex
 	observations       *observe.Service
 	drift              *drift.Service
 	overviewSnapshots  overviewCache
@@ -268,6 +270,19 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Post("/config-sources/{id}/sync", a.configSourcePermission(core.PermissionProjectConfigure, a.syncConfigSource))
 			r.Delete("/config-sources/{id}", a.configSourcePermission(core.PermissionProjectConfigure, a.deleteConfigSource))
 			r.Get("/workflow/resources", a.listWorkflowResources)
+			r.Get("/workflow/preview-templates", a.ownerOnly(a.listWorkflowPreviewTemplates))
+			r.Post("/workflow/preview-templates", a.ownerOnly(a.createWorkflowPreviewTemplate))
+			r.Put("/workflow/preview-templates/{id}", a.ownerOnly(a.updateWorkflowPreviewTemplate))
+			r.Post("/workflow/preview-templates/{id}/sync", a.ownerOnly(a.syncWorkflowPreviewTemplate))
+			r.Delete("/workflow/preview-templates/{id}", a.ownerOnly(a.deleteWorkflowPreviewTemplate))
+			r.Post("/workflow/temporary-resources", a.ownerOnly(a.createTemporaryWorkflowResource))
+			r.Post("/workflow/temporary-resources/import", a.ownerOnly(a.importWorkflowPreviewDocument))
+			r.Put("/workflow/temporary-resources/{id}", a.ownerOnly(a.updateTemporaryWorkflowResource))
+			r.Delete("/workflow/temporary-resources/{id}", a.ownerOnly(a.deleteTemporaryWorkflowResource))
+			r.Post("/workflow/temporary-resources/{id}/preview-trigger", a.ownerOnly(a.createWorkflowPreviewTrigger))
+			r.Get("/workflow/preview-triggers", a.ownerOnly(a.listWorkflowPreviewTriggers))
+			r.Put("/workflow/preview-triggers/{id}", a.ownerOnly(a.updateWorkflowPreviewTrigger))
+			r.Put("/workflow/preview-triggers/{id}/url", a.ownerOnly(a.updateWorkflowPreviewTriggerURL))
 			r.Get("/workflow/resources/{id}/topology", a.workflowResourcePermission(core.PermissionProjectView, a.getWorkflowTopology))
 			r.Post("/workflow/resources/{id}/activate", a.workflowResourcePermission(core.PermissionProjectConfigure, a.activateWorkflowResource))
 			r.Post("/workflow/resources/{id}/deactivate", a.workflowResourcePermission(core.PermissionProjectConfigure, a.deactivateWorkflowResource))
@@ -277,6 +292,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 			r.Get("/workflow/revisions/{id}/jobs", a.workflowRevisionPermission(core.PermissionProjectView, a.listWorkflowJobs))
 			r.Get("/workflow/revisions/{id}/logs/watch", a.workflowRevisionPermission(core.PermissionProjectView, a.watchWorkflowLogs))
 			r.Get("/workflow/revisions/{id}/stages", a.workflowRevisionPermission(core.PermissionProjectView, a.listWorkflowStages))
+			r.Post("/workflow/revisions/{id}/preview-report", a.ownerOnly(a.reportWorkflowPreview))
 			r.Post("/workflow/stages/{id}/approve", a.workflowStagePermission(core.PermissionStageApprove, a.approveWorkflowStage))
 			r.Post("/workflow/validate", a.validateWorkflowDocument)
 			r.Get("/projects", a.listProjects)
@@ -695,6 +711,10 @@ func (a *API) overviewData(r *http.Request) (core.Overview, error) {
 	if err != nil {
 		return core.Overview{}, err
 	}
+	workflowPreviewTemplates, err := a.store.ListWorkflowPreviewTemplates(r.Context())
+	if err != nil {
+		return core.Overview{}, err
+	}
 	workflowResources, err := a.store.ListWorkflowResources(r.Context(), "")
 	if err != nil {
 		return core.Overview{}, err
@@ -751,7 +771,7 @@ func (a *API) overviewData(r *http.Request) (core.Overview, error) {
 	}
 	overview := core.Overview{ControllerSettings: settings, Services: services, Demo: a.demo, SecretStorageConfigured: a.eventConfig.Vault != nil, Identity: currentIdentity(r.Context()), Projects: projects, Servers: servers, Apps: apps, Deployments: deployments,
 		EventTriggers: eventTriggers, Previews: previews, PreviewGroups: previewGroups, PreviewGroupRuns: previewGroupRuns, Secrets: secrets, SecretStores: secretStores, PrivateNetworks: privateNetworks, GitHubApps: githubApps, RelayWebhooks: relayWebhooks,
-		ConfigSources: configSources, WorkflowResources: workflowResources, WorkflowRevisions: workflowRevisions, WorkflowStageRuns: workflowStageRuns}
+		ConfigSources: configSources, WorkflowPreviewTemplates: workflowPreviewTemplates, WorkflowResources: workflowResources, WorkflowRevisions: workflowRevisions, WorkflowStageRuns: workflowStageRuns}
 	if impersonator, ok := currentImpersonator(r.Context()); ok {
 		overview.Impersonator = &impersonator
 	}
@@ -760,6 +780,9 @@ func (a *API) overviewData(r *http.Request) (core.Overview, error) {
 		return core.Overview{}, err
 	}
 	if err := a.enrichWorkflowEvaluations(r.Context(), overview.WorkflowResources); err != nil {
+		return core.Overview{}, err
+	}
+	if err := a.enrichWorkflowPreviewPullRequests(r.Context(), overview.WorkflowResources); err != nil {
 		return core.Overview{}, err
 	}
 	return overview, nil

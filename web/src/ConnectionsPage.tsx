@@ -26,6 +26,7 @@ import {
   GitHubAppConnection,
   GitHubAppInstallation,
   GitHubRepository,
+  GitHubAppVerification,
   Overview,
   PrivateNetwork,
   Secret,
@@ -79,6 +80,8 @@ function githubAppInstallURL(connection: GitHubAppConnection) {
   return `${connection.webUrl}/${path}/${encodeURIComponent(connection.slug)}/installations/new`;
 }
 
+const permissionLabels: Record<string, string> = { contents: "Contents", issues: "Issues", pull_requests: "Pull requests", statuses: "Commit statuses" };
+
 export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRelay = () => {} }: { overview: Overview; notice: string; onNotice: (value: string) => void; onChanged: () => Promise<void>; onAddRelay?: () => void }) {
 	const edgeNetworks = (overview.privateNetworks ?? []).filter((network) => network.driver === "dispatch_agent");
   const [creating, setCreating] = useState(false);
@@ -108,6 +111,7 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
   const [busyID, setBusyID] = useState("");
   const [installations, setInstallations] = useState<Record<string, GitHubAppInstallation[]>>({});
   const [repositories, setRepositories] = useState<Record<string, GitHubRepository[]>>({});
+  const [accessChecks, setAccessChecks] = useState<Record<string, GitHubAppVerification>>({});
   const [repositoryOpen, setRepositoryOpen] = useState("");
   const [repositoryQuery, setRepositoryQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState("");
@@ -222,7 +226,9 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
     setError("");
     try {
       const result = await api.verifyGitHubApp(connection.id);
-      onNotice(result.verification.pushSubscribed ? connection.name + " is connected." : connection.name + " is connected. Add the push event in GitHub for workflow webhooks. Dispatch will keep polling until then.");
+      setAccessChecks((current) => ({ ...current, [connection.id]: result.verification }));
+      const missingAccess = result.verification.missingAppPermissions?.length || result.verification.missingInstallationPermissions?.length || result.verification.missingTokenPermissions?.length;
+      onNotice(missingAccess ? connection.name + " needs more GitHub access. See the permission details below." : result.verification.pushSubscribed ? connection.name + " is connected." : connection.name + " is connected. Add the push event in GitHub for workflow webhooks. Dispatch will keep polling until then.");
       await onChanged();
     } catch (cause) {
       setError((cause as Error).message);
@@ -251,8 +257,10 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
     try {
       await api.updateGitHubApp(connection.id, { installationId: id });
       const result = await api.verifyGitHubApp(connection.id);
+      setAccessChecks((current) => ({ ...current, [connection.id]: result.verification }));
       setInstallations((current) => ({ ...current, [connection.id]: [] }));
-      onNotice(result.verification.pushSubscribed ? connection.name + " is installed and verified." : connection.name + " is installed. Add the push event in GitHub for workflow webhooks. Dispatch will keep polling until then.");
+      const missingAccess = result.verification.missingAppPermissions?.length || result.verification.missingInstallationPermissions?.length || result.verification.missingTokenPermissions?.length;
+      onNotice(missingAccess ? connection.name + " needs more GitHub access. See the permission details below." : result.verification.pushSubscribed ? connection.name + " is installed and verified." : connection.name + " is installed. Add the push event in GitHub for workflow webhooks. Dispatch will keep polling until then.");
       await onChanged();
     } catch (cause) {
       setError((cause as Error).message);
@@ -367,7 +375,7 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
             <label className="private-key-field"><span>Private key</span><textarea value={privateKey} onChange={(event) => setPrivateKey(event.target.value)} placeholder={editing ? "Leave blank to keep the key" : "Paste the RSA private key PEM"} required={!editing} spellCheck={false} /></label>
           </div>
         </div>}
-        {method === "manifest" && !editing && <div className="manifest-summary"><LockSimple size={18} /><p>Contents and pull requests: read. Issue comments: write.</p></div>}
+        {method === "manifest" && !editing && <div className="manifest-summary"><LockSimple size={18} /><p>Repository access: Contents read, Pull requests write for PR comments, Issues write, Commit statuses write. Metadata read is included.</p></div>}
         <div className="connection-actions"><button type="button" className="quiet-button" onClick={reset}>Cancel</button><button className="primary-button" disabled={!!busyID || !name.trim() || !webURL.trim() || !apiURL.trim() || (!editing && eventDelivery === "relay" && !relayServerID) || (method === "manifest" && !editing && (!ownerType || (ownerType === "organization" && !owner.trim()))) || ((method === "manual" || !!editing) && (!appID || (!editing && (!privateKey.trim() || (eventDelivery !== "none" && !webhookSecret.trim()))))) }>{busyID ? "Working..." : method === "manifest" && !editing ? "Continue to GitHub" : editing ? "Save connection" : "Add connection"}</button></div>
       </form>
 	</section> : creatingSecretStore ? <SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={allPrivateNetworks} creating editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} /> : creatingPrivateNetwork ? <PrivateNetworksSection networks={privateNetworks} stores={secretStores} githubApps={overview.githubApps} creating editing={editingPrivateNetwork} initialDriver={privateNetworkDriver} onCreatingChange={setCreatingPrivateNetwork} onEditingChange={setEditingPrivateNetwork} onChanged={onChanged} /> : creatingLanewayNetwork ? <LanewayNetworksSection networks={lanewayNetworks} creating onCreatingChange={setCreatingLanewayNetwork} onChanged={onChanged} /> : hasConnections ? <div className="connections-inventory">
@@ -379,6 +387,7 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
       const installationSettingsURL = githubInstallationSettingsURL(connection);
       const choices = installations[connection.id] || [];
       const installedRepositories = repositories[connection.id] || [];
+      const access = accessChecks[connection.id];
       const visibleRepositories = installedRepositories.filter((repository) => repository.fullName.toLowerCase().includes(repositoryQuery.trim().toLowerCase()));
       return <section className="connection-row" key={connection.id}>
         <div className="connection-identity"><span className="github-mark"><GithubLogo size={21} weight="fill" /></span><div><strong>{connection.name}</strong><small>{new URL(connection.webUrl).host}{connection.registrationOwner ? " / " + connection.registrationOwner : ""}{connection.privateNetworkId ? ` · via ${edgeNetworks.find((network) => network.id === connection.privateNetworkId)?.name ?? "edge"}` : ""}</small></div></div>
@@ -392,6 +401,18 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
           <button className="table-action" onClick={() => edit(connection)}><PencilSimple size={15} />Edit</button>
           <button className="delete-action" onClick={() => setConfirmDelete(connection.id)}><Trash size={15} />Remove</button>
         </div>
+        {access && <div className="connection-access-check" role="status">
+          <strong>GitHub access check</strong>
+          {!access.appPermissionsAvailable && <p>GitHub did not return the App registration permissions. Check them in App settings.</p>}
+          {(access.missingAppPermissions?.length ?? 0) > 0 && <div><p>App registration needs these repository permissions:</p><ul>{access.missingAppPermissions.map((gap) => <li key={gap.name}>{permissionLabels[gap.name] || gap.name}: {gap.required} (currently {gap.granted})</li>)}</ul><a href={settingsURL} target="_blank" rel="noreferrer">Edit App permissions<ArrowSquareOut size={13} /></a></div>}
+          {connection.installationId && !access.installationPermissionsAvailable && <p>GitHub did not return the installation permissions. Check them in installation settings.</p>}
+          {(access.missingInstallationPermissions?.length ?? 0) > 0 && <div><p>The installation still needs these repository permissions approved:</p><ul>{access.missingInstallationPermissions.map((gap) => <li key={gap.name}>{permissionLabels[gap.name] || gap.name}: {gap.required} (currently {gap.granted})</li>)}</ul><a href={installationSettingsURL} target="_blank" rel="noreferrer">Approve installation access<ArrowSquareOut size={13} /></a></div>}
+          {connection.installationId && !access.tokenPermissionsAvailable && <p>GitHub did not return the issued token permissions. Check the installation in GitHub.</p>}
+          {(access.missingTokenPermissions?.length ?? 0) > 0 && <div><p>The issued installation token is missing these grants:</p><ul>{access.missingTokenPermissions.map((gap) => <li key={gap.name}>{permissionLabels[gap.name] || gap.name}: {gap.required} (currently {gap.granted})</li>)}</ul><a href={installationSettingsURL} target="_blank" rel="noreferrer">Review installation access<ArrowSquareOut size={13} /></a></div>}
+          {access.repositoryCount === 0 && <p>No repositories are selected for this installation. Add the repositories Dispatch will use.</p>}
+          {access.appPermissionsAvailable && access.installationPermissionsAvailable && access.tokenPermissionsAvailable && !access.missingAppPermissions?.length && !access.missingInstallationPermissions?.length && !access.missingTokenPermissions?.length && access.repositoryCount > 0 && <p>Required repository permissions are present.</p>}
+          {installURL && ((access.missingAppPermissions?.length ?? 0) > 0 || (access.missingInstallationPermissions?.length ?? 0) > 0 || (access.missingTokenPermissions?.length ?? 0) > 0) && <a href={installURL} target="_blank" rel="noreferrer">Install or reinstall App<ArrowSquareOut size={13} /></a>}
+        </div>}
         {confirmDelete === connection.id && <div className="connection-remove-warning" role="alert"><WarningCircle size={19} weight="fill" /><div><strong>Remove from Dispatch?</strong><p>The GitHub App and its reserved name will remain in GitHub. Delete it from GitHub settings if you no longer need it.</p></div><a className="table-action" href={settingsURL} target="_blank" rel="noreferrer">Open GitHub settings<ArrowSquareOut size={14} /></a><button className="quiet-button" onClick={() => setConfirmDelete("")}>Cancel</button><button className="danger-button" disabled={busyID === connection.id} onClick={() => void remove(connection)}>{busyID === connection.id ? "Removing..." : "Remove from Dispatch"}</button></div>}
         {choices.length > 0 && <div className="installation-picker"><div><strong>Choose an installation</strong></div>{choices.map((item) => <button type="button" key={item.id} onClick={() => void selectInstallation(connection, item.id)}><span>{item.account}</span><small>{item.target} / {item.id}</small><ArrowRight size={14} /></button>)}</div>}
         {repositoryOpen === connection.id && <div className="connection-repositories">

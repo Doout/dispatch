@@ -1128,6 +1128,13 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 		}
 	}
 	overview.ConfigSources = configSources
+	templates := overview.WorkflowPreviewTemplates[:0]
+	for _, template := range overview.WorkflowPreviewTemplates {
+		if configSourceIDs[template.ConfigSourceID] {
+			templates = append(templates, template)
+		}
+	}
+	overview.WorkflowPreviewTemplates = templates
 	resourceIDs := map[string]bool{}
 	resources := overview.WorkflowResources[:0]
 	for _, resource := range overview.WorkflowResources {

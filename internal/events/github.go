@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,6 +19,8 @@ type GitHubNotifier struct {
 	TokenSource func(context.Context) (string, error)
 	Client      *http.Client
 }
+
+var ErrCommentForbidden = errors.New("GitHub App cannot write issue comments")
 
 func (n GitHubNotifier) UpdatePreview(ctx context.Context, notification Notification) (string, error) {
 	return n.UpdateComment(ctx, notification.Preview.Repository, notification.Preview.PullRequestNumber,
@@ -66,7 +69,11 @@ func (n GitHubNotifier) UpdateComment(ctx context.Context, repository string, nu
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("preview comment update returned %s", response.Status)
+		contents, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+		if response.StatusCode == http.StatusForbidden {
+			return "", fmt.Errorf("%w: %s", ErrCommentForbidden, strings.TrimSpace(string(contents)))
+		}
+		return "", fmt.Errorf("preview comment update returned %s: %s", response.Status, strings.TrimSpace(string(contents)))
 	}
 	var result struct {
 		ID json.Number `json:"id"`
@@ -111,6 +118,8 @@ type GitHubResolver struct {
 	Client      *http.Client
 }
 
+var ErrPullRequestNotFound = errors.New("pull request not found")
+
 func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository string, number int) (SourceRevision, error) {
 	owner, name, ok := strings.Cut(NormalizeRepository(repository), "/")
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
@@ -143,6 +152,9 @@ func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository strin
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusNotFound {
+			return SourceRevision{}, ErrPullRequestNotFound
+		}
 		return SourceRevision{}, fmt.Errorf("pull request lookup returned %s", response.Status)
 	}
 	var payload struct {

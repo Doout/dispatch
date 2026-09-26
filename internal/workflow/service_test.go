@@ -390,6 +390,28 @@ spec:
 	if treeReads.Load() != 2 {
 		t.Fatalf("configuration was not fetched exactly once per changed revision; tree reads=%d", treeReads.Load())
 	}
+	temporary, err := service.CreateTemporaryApplication(ctx, source.ID, []byte(`apiVersion: dispatch/v1alpha1
+kind: Application
+metadata:
+  name: inline-preview
+spec:
+  sources:
+    service:
+      repository: example/service
+      ref: main
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceVersion.Store(3)
+	makePollDue(t, ctx, data, source.ID)
+	if err := service.PollOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	temporaryRevisions, err := data.ListWorkflowRevisions(ctx, temporary.ID, 10)
+	if err != nil || len(temporaryRevisions) != 0 {
+		t.Fatalf("repository poll started an inline preview: %#v err=%v", temporaryRevisions, err)
+	}
 }
 
 func makePollDue(t *testing.T, ctx context.Context, data *store.SQLStore, sourceID string) {

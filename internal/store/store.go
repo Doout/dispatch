@@ -116,12 +116,30 @@ type Store interface {
 	GetWorkflowResource(context.Context, string) (core.WorkflowResource, error)
 	ListWorkflowResources(context.Context, string) ([]core.WorkflowResource, error)
 	ReplaceWorkflowResources(context.Context, core.ConfigSource, []core.WorkflowResource) error
+	CreateWorkflowPreviewTemplate(context.Context, core.WorkflowPreviewTemplate) error
+	UpdateWorkflowPreviewTemplate(context.Context, core.WorkflowPreviewTemplate) error
+	DeleteWorkflowPreviewTemplate(context.Context, string) error
+	GetWorkflowPreviewTemplate(context.Context, string) (core.WorkflowPreviewTemplate, error)
+	ListWorkflowPreviewTemplates(context.Context) ([]core.WorkflowPreviewTemplate, error)
+	CreateWorkflowPreviewTrigger(context.Context, core.WorkflowPreviewTrigger) error
+	ListWorkflowPreviewTriggers(context.Context) ([]core.WorkflowPreviewTrigger, error)
+	UpdateWorkflowPreviewTrigger(context.Context, core.WorkflowPreviewTrigger) error
+	UpdateWorkflowPreviewTriggerURL(context.Context, string, string) error
+	UpdateWorkflowPreviewTriggerComment(context.Context, string, string) error
+	UpdateWorkflowPreviewTriggerLinks(context.Context, string, map[string]int) error
+	PendingWorkflowPreviewReports(context.Context, string) ([]string, error)
+	CloseWorkflowPreviewTrigger(context.Context, string, time.Time) error
+	ReserveWorkflowPreviewComment(context.Context, string, string) (bool, error)
+	CompleteWorkflowPreviewComment(context.Context, string, string, string) error
+	ReleaseWorkflowPreviewComment(context.Context, string, string) error
 	CreateWorkflowEvent(context.Context, core.WorkflowEvent) (bool, error)
 	UpdateWorkflowEvent(context.Context, core.WorkflowEvent) error
 	CreateWorkflowRevision(context.Context, core.WorkflowRevision) error
 	UpdateWorkflowRevision(context.Context, core.WorkflowRevision) error
 	GetWorkflowRevision(context.Context, string) (core.WorkflowRevision, error)
 	ListWorkflowRevisions(context.Context, string, int) ([]core.WorkflowRevision, error)
+	WorkflowPreviewReportComment(context.Context, string, string, int) (string, error)
+	SaveWorkflowPreviewReportComment(context.Context, string, string, int, string) error
 	CreateWorkflowJobResult(context.Context, core.WorkflowJobResult) error
 	UpdateWorkflowJobResult(context.Context, core.WorkflowJobResult) error
 	FindWorkflowJobResult(context.Context, string, string, string) (core.WorkflowJobResult, error)
@@ -195,6 +213,8 @@ type Store interface {
 	UpdatePreviewGroupRun(context.Context, core.PreviewGroupRun) error
 	GetPreviewGroupRun(context.Context, string) (core.PreviewGroupRun, error)
 	ListPreviewGroupRuns(context.Context, string) ([]core.PreviewGroupRun, error)
+	PreviewPollCursor(context.Context, string, string) (*time.Time, error)
+	SavePreviewPollCursor(context.Context, string, string, time.Time) error
 	FindPreviewGroupRunForPR(context.Context, string, string, int) (*core.PreviewGroupRun, error)
 	ReplacePreviewGroupSources(context.Context, string, []core.PreviewGroupSource) error
 	UpsertPreviewGroupRunComponent(context.Context, core.PreviewGroupRunComponent) error

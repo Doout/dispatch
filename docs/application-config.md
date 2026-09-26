@@ -195,7 +195,7 @@ A stage check starts a named active Pipeline and waits for it. Pipeline `finally
 
 The default update mode uses webhooks and polling. Dispatch processes `push` deliveries and compares the configuration branch and each referenced source branch on a schedule. Polling still detects a change when the controller is private or GitHub misses a webhook delivery.
 
-The GitHub App registration must subscribe to `push` and grant read access to repository contents. Commit status publishing also needs write access to commit statuses. The Dispatch manifest requests both settings. Update existing registrations in GitHub if they lack either permission.
+The GitHub App registration must subscribe to `push` for webhook updates and grant Contents read, Pull requests write for PR comments, Issues write, and Commit statuses write. Metadata read is included. The Dispatch manifest requests these permissions. Connections > Verify lists any missing registration, installation, or issued-token grants. Update the App permissions in GitHub before approving the installation change or reinstalling it.
 
 Polling checks each imported source at its configured interval. The minimum interval is 30 seconds. A configuration may use only webhooks or only polling.
 
@@ -363,6 +363,91 @@ sync the new template and verify their IDs before resuming them.
 A malformed configuration file does not prevent other files from syncing. Dispatch retains the affected file's last accepted resources and marks them invalid until the file is fixed. Duplicate application names reject both conflicting files. Template expansion errors retain that template file's previous resources.
 
 An unavailable source branch rejects only the application that references it. Healthy applications continue syncing and deploying. The source shows a sync warning with the failing file and source; polling retries rejected configurations even when the configuration commit has not changed. Existing deployments remain in place, and rejected definitions do not start new runs.
+
+## PR previews saved in Dispatch
+
+To create one preview for a specific PR, choose **Add > One-off PR preview**. Pick an active repository configuration only to supply repository access. Then paste the Application YAML or enter a YAML file path from the primary PR branch and choose **Load YAML from PR**. Set the installed GitHub App, primary PR, comment command, and public preview URL. Dispatch stores the YAML and command settings in its database. The preview appears under **PR previews**, separate from the repository configuration and its slots. No change to the configuration repository is needed. Loading a PR file copies its current contents into the editor; later PR commits require another load and save.
+
+To create a reusable Application template, choose **Add > PR preview template**. Configure the GitHub App, PR repository, command, HTTPS URL pattern, and Application YAML. Put `{{ instance.id }}` in the Application name, every Helm release name, and the URL. You can copy the YAML and settings from a saved preview or load YAML from a sample PR branch. When a trusted user posts `/preview` on an open PR in a watched repository, Dispatch creates an instance with the PR number as its ID and starts the workflow. If the preferred name or Helm release is already in use, Dispatch adds a short unique suffix. Later `/preview` comments on the same PR reuse its instance; `/preview with ui=#123` links a UI PR. The GitHub App reports the URL, source commits, and deployed images on the PR. The poller reads repository issue comments in one paginated stream and works even when the GitHub webhook is unavailable. Editing a template changes future instances; pause it to stop creating new instances. Deleting a template leaves existing instances running, which can each be deleted from their own row.
+
+Reusable preview YAML uses its own resource kind:
+
+```yaml
+apiVersion: dispatch/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: dev-preview-{{ instance.id }}
+spec:
+  sources:
+    service:
+      repository: example/service
+      branch: main
+  triggers:
+    pullRequestComment:
+      sources: [service]
+      command: /preview
+  # jobs, deployments, and stages use the Application schema
+```
+
+The template uses the Application `spec` schema for sources, jobs, deployments, and stages. `spec.triggers.pullRequestComment` declares the comment command and the source aliases whose PR comments can create instances. For a service/UI workflow, use `sources: [service, ui]`; other sources remain dependencies and can still accept explicit linked-PR overrides. The GitHub App and repository access connection are selected in Dispatch. `WorkflowTemplate` itself does not imply a PR trigger.
+
+| Variable | Value |
+| --- | --- |
+| `{{ instance.id }}` | Unique instance ID, including a collision suffix when needed |
+| `{{ trigger.pullRequest.number }}` | Original PR number, without a collision suffix |
+| `{{ trigger.repository }}` | Triggering repository as `owner/repository` |
+| `{{ trigger.pullRequest.url }}` | GitHub URL of the triggering PR |
+
+Use the instance ID in resource and Helm release names. Quote YAML scalars that consist entirely of an expression. Unknown instance or trigger variables fail validation; source and job expressions remain available for runtime resolution. Trigger variables require the corresponding trigger context.
+
+Dispatch replaces `{{ instance.id }}` and creates an `Application` for each preview. Existing saved templates using `kind: Application` remain supported.
+
+
+#### Promoting a template through stages
+
+A `WorkflowTemplate` retains the full ordered `spec.stages` list when Dispatch creates its Application. Each run builds once and promotes the same source commits and build outputs through those stages. A stage finishes only after its deployments and all configured checks succeed. A failed deployment or check stops promotion; `approval: required` pauses before the next environment deploys.
+
+For example, extend the stage list with:
+
+```yaml
+spec:
+  stages:
+    - name: development
+      targetRef: dev
+      deploy: [preview]
+      url: "https://dev.example.com/app/preview/{{ instance.id }}"
+      checks:
+        e2e:
+          pipelineRef: example-e2e
+          with:
+            base-url: "{{ stage.url }}"
+    - name: staging
+      targetRef: staging
+      deploy: [preview]
+      checks:
+        smoke:
+          pipelineRef: example-staging-smoke
+    - name: production
+      targetRef: production
+      deploy: [preview]
+      approval: required
+```
+
+The target names must match registered Dispatch targets, and each `pipelineRef` must identify a saved Pipeline. These are example names. Choose the actual staging target, namespace, values, and checks before enabling promotion. If environments need different Helm namespaces or values, declare separate deployments and reference the appropriate deployment from each stage. Within a stage, checks run after its deployments. Without checks, success means the deployment completed; it does not imply an evaluation or end-to-end test passed.
+
+Updates to the reusable definition apply to new instances; existing instances keep their saved stage configuration.
+
+#### GitHub-managed preview templates
+
+To version a template in your deployment repository, choose **GitHub repository (GitOps)** under **Template definition**. Set the repository, branch, and YAML file path. Keep all deployment definitions in one directory, for example slots in `deployment/` and reusable previews in `deployment/templates/dev-preview.yaml`. Use `kind: WorkflowTemplate` for reusable definitions. The slot importer skips this kind; the preview workflow validates the definition and converts it into a concrete `kind: Application` when a command comment arrives. The selected GitHub App needs **Contents: read** access to the template repository. Missing repository access or permissions appear as sync errors.
+
+Dispatch resolves the branch every 30 seconds and reads the file at that immutable commit. Saving or manually choosing **Sync from GitHub** also fetches and validates the file. The template row shows the source and synced commit. Choose **Edit template** to change its settings, or **Edit YAML in GitHub** to review changes through a pull request. The YAML owns its source defaults, watched source aliases, and comment command. Dispatch stores the GitHub App connection, repository access source, and Git file location.
+
+Invalid YAML and failed GitHub reads preserve the last valid definition and block creation of new previews until a successful sync. Pending command comments are retried after recovery. Existing instances retain their saved YAML. Each new preview records its template commit in the GitHub App report. Creating an individual preview requires no commit to the deployment repository.
+
+
+Use `{{ instance.id }}` in the YAML for the Application name, Helm release, and workload identity. The editor uses the PR number by default and allocates a suffix if that identity is already in use. Each preview row links to its primary PR and any linked PRs. Choose **Edit YAML & PR** on the row to change the saved YAML or command settings. Changing the primary PR clears the old report comment and linked PRs. The next comment with `/preview` starts a run; `/preview with ui=#123` links a UI PR and keeps that link for later runs. A successful run posts the preview URL, commits, and images through the GitHub App. The row menu can also delete a preview: Dispatch stops its comment trigger, removes deployed resources, and hides the saved preview while retaining run history. Finish any active run before deleting it.
+
 ## Service connections
 
 Deployment `serviceBindings` select project-scoped Services registered in Dispatch. Stage `serviceBindings` map an alias to a different service for that environment. Generated applications keep these bindings read-only in the UI. See [services](services.md#repository-managed-applications) for the schema and a PostgreSQL promotion example.

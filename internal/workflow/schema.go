@@ -20,6 +20,7 @@ const APIVersion = "dispatch/v1alpha1"
 
 const (
 	KindApplication         = "Application"
+	KindWorkflowTemplate    = "WorkflowTemplate"
 	KindApplicationTemplate = "ApplicationTemplate"
 	KindPipeline            = "Pipeline"
 )
@@ -145,6 +146,11 @@ var (
 // Parse decodes every YAML document in a file. JSON is accepted because it is
 // a strict subset of YAML. Unknown fields fail instead of being ignored.
 func Parse(path string, contents []byte) ([]Document, error) {
+	return parseDocuments(path, contents, false)
+}
+
+func parseDocuments(path string, contents []byte, importing bool) ([]Document, error) {
+	skippedPreview := false
 	decoder := yaml.NewDecoder(bytes.NewReader(contents))
 	items := []Document{}
 	for index := 1; ; index++ {
@@ -166,6 +172,15 @@ func Parse(path string, contents []byte) ([]Document, error) {
 		var meta TypeMeta
 		if err := yaml.Unmarshal(raw, &meta); err != nil {
 			return nil, fmt.Errorf("%s document %d: %w", path, index, err)
+		}
+		// A workflow definition is instantiated by its configured trigger,
+		// never by the ordinary Application importer.
+		if meta.Kind == KindWorkflowTemplate {
+			if importing && meta.APIVersion == APIVersion {
+				skippedPreview = true
+				continue
+			}
+			return nil, fmt.Errorf("%s document %d: WorkflowTemplate must be instantiated through a configured trigger", path, index)
 		}
 		var item Document
 		switch meta.Kind {
@@ -203,7 +218,7 @@ func Parse(path string, contents []byte) ([]Document, error) {
 		}
 		items = append(items, item)
 	}
-	if len(items) == 0 {
+	if len(items) == 0 && !skippedPreview {
 		return nil, fmt.Errorf("%s does not contain a Dispatch resource", path)
 	}
 	return items, nil

@@ -32,8 +32,9 @@ type Store interface {
 }
 
 type cachedToken struct {
-	value     string
-	expiresAt time.Time
+	value       string
+	expiresAt   time.Time
+	permissions map[string]string
 }
 
 type Manager struct {
@@ -82,15 +83,58 @@ type RepositoryFile struct {
 }
 
 type Verification struct {
-	Slug                  string `json:"slug"`
-	ClientID              string `json:"clientId"`
-	RegistrationOwner     string `json:"registrationOwner"`
-	RegistrationOwnerType string `json:"registrationOwnerType"`
-	InstallationAccount   string `json:"installationAccount"`
-	InstallationURL       string `json:"installationUrl"`
-	RepositorySelection   string `json:"repositorySelection"`
-	RepositoryCount       int    `json:"repositoryCount"`
-	PushSubscribed        bool   `json:"pushSubscribed"`
+	Slug                             string          `json:"slug"`
+	ClientID                         string          `json:"clientId"`
+	RegistrationOwner                string          `json:"registrationOwner"`
+	RegistrationOwnerType            string          `json:"registrationOwnerType"`
+	InstallationAccount              string          `json:"installationAccount"`
+	InstallationURL                  string          `json:"installationUrl"`
+	RepositorySelection              string          `json:"repositorySelection"`
+	RepositoryCount                  int             `json:"repositoryCount"`
+	PushSubscribed                   bool            `json:"pushSubscribed"`
+	MissingAppPermissions            []PermissionGap `json:"missingAppPermissions"`
+	MissingInstallationPermissions   []PermissionGap `json:"missingInstallationPermissions"`
+	AppPermissionsAvailable          bool            `json:"appPermissionsAvailable"`
+	InstallationPermissionsAvailable bool            `json:"installationPermissionsAvailable"`
+	TokenPermissionsAvailable        bool            `json:"tokenPermissionsAvailable"`
+	MissingTokenPermissions          []PermissionGap `json:"missingTokenPermissions"`
+}
+
+type PermissionGap struct {
+	Name     string `json:"name"`
+	Required string `json:"required"`
+	Granted  string `json:"granted"`
+}
+
+var requiredRepositoryPermissions = map[string]string{
+	"contents":      "read",
+	"issues":        "write",
+	"pull_requests": "write",
+	"statuses":      "write",
+}
+
+func RequiredRepositoryPermissions() map[string]string {
+	permissions := make(map[string]string, len(requiredRepositoryPermissions)+1)
+	for name, level := range requiredRepositoryPermissions {
+		permissions[name] = level
+	}
+	permissions["metadata"] = "read"
+	return permissions
+}
+
+func missingPermissions(granted map[string]string) []PermissionGap {
+	missing := []PermissionGap{}
+	for _, name := range []string{"contents", "issues", "pull_requests", "statuses"} {
+		required, actual := requiredRepositoryPermissions[name], granted[name]
+		if actual == required || actual == "write" && required == "read" {
+			continue
+		}
+		if actual == "" {
+			actual = "none"
+		}
+		missing = append(missing, PermissionGap{Name: name, Required: required, Granted: actual})
+	}
+	return missing
 }
 
 func New(store Store, vault *secretcrypto.Vault) *Manager {
@@ -224,8 +268,9 @@ func (m *Manager) InstallationToken(ctx context.Context, id string) (string, err
 	}
 	endpoint := fmt.Sprintf("%s/app/installations/%d/access_tokens", strings.TrimRight(connection.APIURL, "/"), connection.InstallationID)
 	var response struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
+		Token       string            `json:"token"`
+		ExpiresAt   time.Time         `json:"expires_at"`
+		Permissions map[string]string `json:"permissions"`
 	}
 	if err := m.request(ctx, http.MethodPost, endpoint, jwt, nil, &response, connection.PrivateNetworkID); err != nil {
 		return "", fmt.Errorf("create GitHub App installation token: %w", err)
@@ -234,7 +279,7 @@ func (m *Manager) InstallationToken(ctx context.Context, id string) (string, err
 		return "", errors.New("GitHub returned an empty installation token")
 	}
 	m.mu.Lock()
-	m.tokens[id] = cachedToken{value: response.Token, expiresAt: response.ExpiresAt}
+	m.tokens[id] = cachedToken{value: response.Token, expiresAt: response.ExpiresAt, permissions: response.Permissions}
 	m.mu.Unlock()
 	return response.Token, nil
 }
@@ -482,7 +527,8 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 			Login string `json:"login"`
 			Type  string `json:"type"`
 		} `json:"owner"`
-		Events []string `json:"events"`
+		Events      []string          `json:"events"`
+		Permissions map[string]string `json:"permissions"`
 	}
 	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/app", jwt, nil, &app, connection.PrivateNetworkID); err != nil {
 		return Verification{}, fmt.Errorf("verify GitHub App registration: %w", err)
@@ -492,13 +538,18 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	}
 	result := Verification{Slug: app.Slug, ClientID: app.ClientID, RegistrationOwner: app.Owner.Login, RegistrationOwnerType: app.Owner.Type}
 	result.PushSubscribed = slices.Contains(app.Events, "push")
+	result.AppPermissionsAvailable = app.Permissions != nil
+	if result.AppPermissionsAvailable {
+		result.MissingAppPermissions = missingPermissions(app.Permissions)
+	}
 	if connection.InstallationID < 1 {
 		return result, nil
 	}
 	var installation struct {
-		ID                  int64  `json:"id"`
-		HTMLURL             string `json:"html_url"`
-		RepositorySelection string `json:"repository_selection"`
+		ID                  int64             `json:"id"`
+		HTMLURL             string            `json:"html_url"`
+		RepositorySelection string            `json:"repository_selection"`
+		Permissions         map[string]string `json:"permissions"`
 		Account             struct {
 			Login string `json:"login"`
 		} `json:"account"`
@@ -513,9 +564,20 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	result.InstallationAccount = installation.Account.Login
 	result.InstallationURL = installation.HTMLURL
 	result.RepositorySelection = installation.RepositorySelection
+	result.InstallationPermissionsAvailable = installation.Permissions != nil
+	if result.InstallationPermissionsAvailable {
+		result.MissingInstallationPermissions = missingPermissions(installation.Permissions)
+	}
 	token, err := m.InstallationToken(ctx, id)
 	if err != nil {
 		return Verification{}, err
+	}
+	m.mu.Lock()
+	tokenPermissions := m.tokens[id].permissions
+	m.mu.Unlock()
+	result.TokenPermissionsAvailable = tokenPermissions != nil
+	if result.TokenPermissionsAvailable {
+		result.MissingTokenPermissions = missingPermissions(tokenPermissions)
 	}
 	var repositories struct {
 		Total int `json:"total_count"`

@@ -345,6 +345,15 @@ func renderHelmEquivalent(ctx context.Context, app core.App, server core.Server,
 		upgrade.ResetValues, upgrade.DisableHooks = true, true
 		upgrade.DryRun, upgrade.DryRunOption = true, "server"
 		upgrade.Timeout = 30 * time.Second
+		if installed.Info != nil {
+			if raw, ok := strings.CutPrefix(installed.Info.Description, "Dispatch provenance: "); ok {
+				var metadata helmDeploymentMetadata
+				if json.Unmarshal([]byte(raw), &metadata) != nil {
+					return false, errors.New("comparison release provenance invalid")
+				}
+				upgrade.PostRenderer = metadata
+			}
+		}
 		rendered, err := upgrade.RunWithContext(ctx, helmReleaseName(app), c, values)
 		if err != nil {
 			return false, errors.New("comparison rendering unavailable")

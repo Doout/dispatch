@@ -1953,6 +1953,239 @@ paths:
         - { in: query, name: configSourceId, schema: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/temporary-resources:
+    post:
+      operationId: createTemporaryWorkflowResource
+      description: >-
+        Stores one inline Application document using an existing configuration source's
+        repository credentials. Repository sync preserves the temporary resource.
+        Set run to true to queue its first revision. Owner access is required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configSourceId, document]
+              properties:
+                configSourceId: { type: string }
+                document: { type: string, maxLength: 1048576 }
+                previewId: { type: string, description: "Replaces {{ instance.id }} throughout the document; a random suffix is added on collision." }
+                run: { type: boolean }
+      responses:
+        "201": { description: Temporary resource created. }
+        "202": { description: Temporary resource created and revision queued. }
+        "422": { $ref: "#/components/responses/Problem" }
+  /workflow/temporary-resources/{resourceId}/preview-trigger:
+    post:
+      operationId: createWorkflowPreviewTrigger
+      description: Binds a trusted pull request command to an active temporary Application. Owner access is required.
+      parameters:
+        - { in: path, name: resourceId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [githubAppId, repository, pullRequestNumber]
+              properties:
+                githubAppId: { type: string }
+                repository: { type: string }
+                pullRequestNumber: { type: integer, minimum: 1 }
+                command: { type: string, default: /preview }
+                previewUrl: { type: string, format: uri, description: HTTPS URL to post when the workflow succeeds. }
+      responses:
+        "201": { description: Comment trigger created. }
+        "409": { $ref: "#/components/responses/Problem" }
+  /workflow/temporary-resources/import:
+    post:
+      operationId: importWorkflowPreviewDocument
+      description: >-
+        Loads one YAML or JSON file from the current head of an open pull request
+        using an installed GitHub App. Returns its contents for review in the editor;
+        saving the preview stores a snapshot in Dispatch. Owner access is required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [githubAppId, repository, pullRequestNumber, path]
+              properties:
+                githubAppId: { type: string }
+                repository: { type: string }
+                pullRequestNumber: { type: integer, minimum: 1 }
+                path: { type: string, description: Relative path to one YAML or JSON file in the PR branch. }
+      responses:
+        "200": { description: File contents, path, and head commit. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /workflow/temporary-resources/{id}:
+    put:
+      operationId: updateTemporaryWorkflowResource
+      description: Updates an active inline Application while preserving its preview trigger and Helm release. Owner access is required.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document]
+              properties:
+                document: { type: string, maxLength: 1048576 }
+      responses:
+        "200": { description: Temporary Application updated. }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteTemporaryWorkflowResource
+      description: >-
+        Stops an inline PR preview, cleans its deployed resources, closes its comment
+        triggers, and removes it from the active inventory. History is retained.
+        A queued, running, or approval-pending workflow blocks deletion. Owner access is required.
+      responses:
+        "204": { description: Preview deleted. }
+        "409": { $ref: "#/components/responses/Problem" }
+  /workflow/preview-templates:
+    get:
+      operationId: listWorkflowPreviewTemplates
+      description: Lists reusable PR preview Application templates. Owner access is required.
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+    post:
+      operationId: createWorkflowPreviewTemplate
+      description: >-
+        Saves a reusable WorkflowTemplate YAML definition. Its pullRequestComment trigger
+        selects watched source aliases and the command. A trusted command comment on
+        an open PR in a watched repository creates an Application instance. Owner access is required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configSourceId, githubAppId, name, previewUrl, active]
+              properties:
+                configSourceId: { type: string }
+                githubAppId: { type: string }
+                name: { type: string }
+                repository: { type: string, description: "Fallback owner/repository when YAML does not declare spec.triggers.pullRequestComment.sources" }
+                command: { type: string, example: /preview, description: "Fallback command when YAML does not declare its trigger" }
+                previewUrl: { type: string, description: "HTTPS URL containing {{ instance.id }}" }
+                document: { type: string, maxLength: 1048576, description: "WorkflowTemplate YAML containing {{ instance.id }} in its name and every Helm release name" }
+                gitSource:
+                  type: object
+                  description: When provided, load Application YAML from GitHub; document is ignored. Otherwise document is required. Requires App Contents read access.
+                  required: [repository, branch, path]
+                  properties:
+                    repository: { type: string, description: "owner/repository" }
+                    branch: { type: string, example: main }
+                    path: { type: string, example: deployment/templates/preview.yaml }
+                active: { type: boolean }
+      responses:
+        "201": { description: Template saved. }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /workflow/preview-templates/{id}:
+    put:
+      operationId: updateWorkflowPreviewTemplate
+      description: Updates a template for future previews; existing instances keep their saved YAML. Owner access is required.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configSourceId, githubAppId, name, previewUrl, active]
+              properties:
+                configSourceId: { type: string }
+                githubAppId: { type: string }
+                name: { type: string }
+                repository: { type: string }
+                command: { type: string }
+                previewUrl: { type: string }
+                document: { type: string, maxLength: 1048576 }
+                gitSource:
+                  type: object
+                  description: When provided, load Application YAML from GitHub; document is ignored. Otherwise document is required. Requires App Contents read access.
+                  required: [repository, branch, path]
+                  properties:
+                    repository: { type: string, description: "owner/repository" }
+                    branch: { type: string, example: main }
+                    path: { type: string, example: deployment/templates/preview.yaml }
+                active: { type: boolean }
+      responses:
+        "200": { description: Template updated. }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteWorkflowPreviewTemplate
+      description: Stops future instances from being created. Existing previews and deployments remain. Owner access is required.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Template deleted. }
+  /workflow/preview-templates/{id}/sync:
+    post:
+      operationId: syncWorkflowPreviewTemplate
+      description: Fetch and validate a GitHub template at its current branch commit. Keeps last valid YAML and records an error on failure. Owner access is required.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Template synced, including gitSource.commitSha and gitSource.syncedAt. }
+        "404": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+  /workflow/preview-triggers:
+    get:
+      operationId: listWorkflowPreviewTriggers
+      description: Lists saved PR comment triggers for the owner editor, including linked PRs and closed state. Owner access is required.
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/preview-triggers/{id}:
+    put:
+      operationId: updateWorkflowPreviewTrigger
+      description: Updates the PR, command, GitHub App, and report URL. Changing the primary PR or GitHub App clears the previous report comment and linked PRs. Owner access is required.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [githubAppId, repository, pullRequestNumber]
+              properties:
+                githubAppId: { type: string }
+                repository: { type: string }
+                pullRequestNumber: { type: integer, minimum: 1 }
+                command: { type: string, default: /preview }
+                previewUrl: { type: string, format: uri }
+      responses:
+        "200": { description: Trigger updated. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /workflow/preview-triggers/{id}/url:
+    put:
+      operationId: updateWorkflowPreviewTriggerURL
+      description: Sets the HTTPS URL for automatic GitHub App preview reporting. Owner access is required.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [previewUrl]
+              properties:
+                previewUrl: { type: string, format: uri }
+      responses:
+        "200": { description: Trigger updated. }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /workflow/resources/{resourceId}/topology:
     get:
       operationId: getWorkflowTopology
@@ -2013,6 +2246,27 @@ paths:
         - { in: path, name: revisionId, required: true, schema: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/revisions/{revisionId}/preview-report:
+    post:
+      operationId: reportWorkflowPreview
+      description: Posts or updates a GitHub comment for a successful preview revision. Uses a configured GitHub token if the App cannot write comments. The report includes the URL, target, full source commits, and built images. Owner access is required.
+      parameters:
+        - { in: path, name: revisionId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [githubAppId, repository, pullRequestNumber, url]
+              properties:
+                githubAppId: { type: string }
+                repository: { type: string, example: Example/service }
+                pullRequestNumber: { type: integer, minimum: 1 }
+                url: { type: string, format: uri }
+      responses:
+        "200": { description: GitHub comment created or updated. }
+        "409": { description: Revision is not successful or pull request is closed. }
   /workflow/stages/{stageId}/approve:
     post:
       operationId: approveWorkflowStage

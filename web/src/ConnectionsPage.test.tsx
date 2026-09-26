@@ -97,7 +97,7 @@ describe("connections page", () => {
         webUrl: "https://github.example.com",
         apiUrl: "https://github.example.com/api/v3",
         appId: 42,
-        slug: "dispatch-dev",
+        slug: "dispatch-example",
         privateKeyConfigured: true,
         webhookSecretConfigured: true,
         state: "needs_installation",
@@ -109,8 +109,35 @@ describe("connections page", () => {
 
     const installLink = screen.getByRole("link", { name: /Install App/ });
     expect(installLink.getAttribute("href"))
-      .toBe("https://github.example.com/github-apps/dispatch-dev/installations/new");
+      .toBe("https://github.example.com/github-apps/dispatch-example/installations/new");
     expect(installLink.getAttribute("target")).toBeNull();
+  });
+
+  it("shows missing App and installation access after verification", async () => {
+    const connection: Overview["githubApps"][number] = {
+      id: "app-1", name: "Dispatch", webUrl: "https://github.example.com", apiUrl: "https://github.example.com/api/v3",
+      appId: 42, slug: "dispatch-example", installationId: 73, installationUrl: "https://github.example.com/settings/installations/73",
+      privateKeyConfigured: true, webhookSecretConfigured: true, state: "ready",
+      createdAt: "2026-08-27T00:00:00Z", updatedAt: "2026-08-27T00:00:00Z",
+    };
+    vi.spyOn(api, "verifyGitHubApp").mockResolvedValue({ connection, verification: {
+      slug: "dispatch-example", clientId: "", registrationOwner: "", registrationOwnerType: "User",
+      installationAccount: "Example", repositorySelection: "selected", repositoryCount: 1, pushSubscribed: false,
+      appPermissionsAvailable: true, installationPermissionsAvailable: true,
+      tokenPermissionsAvailable: true, missingTokenPermissions: [],
+      missingAppPermissions: [{ name: "pull_requests", required: "write", granted: "read" }],
+      missingInstallationPermissions: [{ name: "pull_requests", required: "write", granted: "read" }],
+    } });
+    render(<ConnectionsPage overview={{ ...overview, githubApps: [connection] }} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    expect(await screen.findByText("App registration needs these repository permissions:")).toBeTruthy();
+    expect(screen.getByText("The installation still needs these repository permissions approved:")).toBeTruthy();
+    expect(screen.getAllByText("Pull requests: write (currently read)")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: /Edit App permissions/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Approve installation access/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Install or reinstall App/ })).toBeTruthy();
   });
 });
 

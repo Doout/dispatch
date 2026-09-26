@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -230,6 +231,37 @@ func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.Workf
 	app.HelmRelease, err = renderRuntime(spec.Helm.ReleaseName, nil, revision.Sources, nil, &stage)
 	if err != nil {
 		return prepared, err
+	}
+	app.HelmProvenance = core.HelmProvenance{WorkflowResourceID: resource.ID, WorkflowRevisionID: revision.ID, Sources: map[string]core.WorkflowSourceRevision{}}
+	for alias, pinned := range revision.Sources {
+		app.HelmProvenance.Sources[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: pinned.Repository, Branch: pinned.Branch, CommitSHA: pinned.CommitSHA}
+	}
+	if resource.Temporary {
+		triggers, err := s.Store.ListWorkflowPreviewTriggers(ctx)
+		if err != nil {
+			return prepared, err
+		}
+		for _, trigger := range triggers {
+			if trigger.ResourceID == resource.ID && trigger.ClosedAt == nil {
+				webURL := ""
+				if connection, err := s.Store.GetGitHubApp(ctx, trigger.GitHubAppID); err == nil {
+					webURL = strings.TrimRight(connection.WebURL, "/")
+				}
+				addLinkedPR := func(repository string, number int) {
+					linked := core.HelmPullRequest{Repository: repository, Number: number}
+					if webURL != "" {
+						linked.URL = webURL + "/" + repository + "/pull/" + strconv.Itoa(number)
+					}
+					app.HelmProvenance.PullRequests = append(app.HelmProvenance.PullRequests, linked)
+				}
+				addLinkedPR(trigger.Repository, trigger.PullRequestNumber)
+				for alias, number := range trigger.LinkedPullRequests {
+					if pinned, ok := revision.Sources[alias]; ok {
+						addLinkedPR(pinned.Repository, number)
+					}
+				}
+			}
+		}
 	}
 	app.Domain = stage.URL
 	return preparedHelmDeployment{app: app, expectedAppSpecDigest: expectedAppSpecDigest, bindings: bindings, chart: chart, evidence: evidence}, nil

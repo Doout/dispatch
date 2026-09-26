@@ -846,12 +846,12 @@ func (s *SQLStore) CreateApp(ctx context.Context, app core.App) error {
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO apps(
         id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,dockerfile_path,compose_path,
         compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,helm_release,
-        pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+        pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		app.ID, app.ProjectID, app.ServerID, app.Name, app.SourceRepo, app.Branch, app.SourceAuthType, app.SourceCredentialID, string(app.BuildType),
 		app.ContextPath, app.DockerfilePath, app.ComposePath, app.ComposeContent, app.HelmChart, app.HelmVersion,
 		app.HelmRepository, app.HelmValues, app.HelmNamespace, app.HelmRelease, app.PreDeployHook, app.PostDeployHook,
-		app.ContainerPort, app.Domain, app.State, stamp(app.CreatedAt), app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template)
+		app.ContainerPort, app.Domain, app.State, stamp(app.CreatedAt), app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, jsonText(app.HelmProvenance))
 	return err
 }
 
@@ -860,11 +860,11 @@ func (s *SQLStore) UpdateApp(ctx context.Context, app core.App) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE apps SET project_id=?,server_id=?,name=?,source_repo=?,branch=?,source_auth_type=?,source_credential_id=?,build_type=?,
         context_path=?,dockerfile_path=?,compose_path=?,compose_content=?,helm_chart=?,helm_version=?,helm_repository=?,
         helm_values=?,helm_namespace=?,helm_release=?,pre_deploy_hook=?,post_deploy_hook=?,container_port=?,domain=?,state=?,
-        helm_group_values=?,hook_environment=?,generated=?,template=? WHERE id=?`),
+        helm_group_values=?,hook_environment=?,generated=?,template=?,helm_provenance=? WHERE id=?`),
 		app.ProjectID, app.ServerID, app.Name, app.SourceRepo, app.Branch, app.SourceAuthType, app.SourceCredentialID, string(app.BuildType), app.ContextPath, app.DockerfilePath,
 		app.ComposePath, app.ComposeContent, app.HelmChart, app.HelmVersion, app.HelmRepository, app.HelmValues, app.HelmNamespace,
 		app.HelmRelease, app.PreDeployHook, app.PostDeployHook, app.ContainerPort, app.Domain, app.State,
-		app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, app.ID)
+		app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, jsonText(app.HelmProvenance), app.ID)
 	return changed(result, err)
 }
 
@@ -928,7 +928,7 @@ func (s *SQLStore) ListActiveApps(ctx context.Context) ([]core.App, error) {
 func (s *SQLStore) listApps(ctx context.Context, includeGenerated bool) ([]core.App, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
         dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
-        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template FROM apps
+        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance FROM apps
         WHERE state <> 'closed' AND (generated=? OR ?) ORDER BY name`), false, includeGenerated)
 	if err != nil {
 		return nil, err
@@ -948,7 +948,7 @@ func (s *SQLStore) listApps(ctx context.Context, includeGenerated bool) ([]core.
 func (s *SQLStore) GetApp(ctx context.Context, id string) (core.App, error) {
 	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
         dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
-        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template FROM apps WHERE id=?`), id)
+        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance FROM apps WHERE id=?`), id)
 	app, err := scanApp(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return app, ErrNotFound
@@ -960,15 +960,16 @@ type scanner interface{ Scan(...any) error }
 
 func scanApp(row scanner) (core.App, error) {
 	var item core.App
-	var buildType, created, hookEnvironment string
+	var buildType, created, hookEnvironment, helmProvenance string
 	err := row.Scan(&item.ID, &item.ProjectID, &item.ServerID, &item.Name, &item.SourceRepo, &item.Branch, &item.SourceAuthType, &item.SourceCredentialID,
 		&buildType, &item.ContextPath, &item.DockerfilePath, &item.ComposePath, &item.ComposeContent, &item.HelmChart,
 		&item.HelmVersion, &item.HelmRepository, &item.HelmValues, &item.HelmNamespace, &item.HelmRelease,
 		&item.PreDeployHook, &item.PostDeployHook, &item.ContainerPort,
-		&item.Domain, &item.State, &created, &item.HelmGroupValues, &hookEnvironment, &item.Generated, &item.Template)
+		&item.Domain, &item.State, &created, &item.HelmGroupValues, &hookEnvironment, &item.Generated, &item.Template, &helmProvenance)
 	item.BuildType = core.BuildType(buildType)
 	item.CreatedAt = parseTime(created)
 	_ = json.Unmarshal([]byte(hookEnvironment), &item.HookEnvironment)
+	_ = json.Unmarshal([]byte(helmProvenance), &item.HelmProvenance)
 	for key := range item.HookEnvironment {
 		if id, _, ok := core.ParseSecretEnvironmentKey(key); ok {
 			item.HookSecretIDs = append(item.HookSecretIDs, id)

@@ -70,19 +70,32 @@ func scanConfigSource(row scanner) (core.ConfigSource, error) {
 }
 
 func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.WorkflowResource) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_resources(id,config_source_id,api_version,kind,name,path,document,spec_digest,config_sha,active,state,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_resources(id,config_source_id,api_version,kind,name,path,document,spec_digest,config_sha,temporary,active,state,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.ConfigSourceID, item.APIVersion, item.Kind, item.Name, item.Path, item.Document, item.SpecDigest, item.ConfigSHA,
-		item.Active, item.State, item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt))
-	return err
+		item.Temporary, item.Active, item.State, item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	if err != nil {
+		return err
+	}
+	for _, serviceID := range item.ServiceIDs {
+		if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_service_references(resource_id,service_id) VALUES(?,?)`), item.ID, serviceID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) UpdateWorkflowResource(ctx context.Context, item core.WorkflowResource) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_resources SET api_version=?,kind=?,name=?,path=?,document=?,spec_digest=?,config_sha=?,active=?,state=?,last_error=?,updated_at=? WHERE id=?`),
-		item.APIVersion, item.Kind, item.Name, item.Path, item.Document, item.SpecDigest, item.ConfigSHA, item.Active, item.State, item.LastError, stamp(item.UpdatedAt), item.ID)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_resources SET api_version=?,kind=?,name=?,path=?,document=?,spec_digest=?,config_sha=?,temporary=?,active=?,state=?,last_error=?,updated_at=? WHERE id=?`),
+		item.APIVersion, item.Kind, item.Name, item.Path, item.Document, item.SpecDigest, item.ConfigSHA, item.Temporary, item.Active, item.State, item.LastError, stamp(item.UpdatedAt), item.ID)
 	return changed(result, err)
 }
 
-const workflowResourceSelect = `SELECT id,config_source_id,api_version,kind,name,path,document,spec_digest,config_sha,active,state,last_error,created_at,updated_at FROM workflow_resources`
+const workflowResourceSelect = `SELECT id,config_source_id,api_version,kind,name,path,document,spec_digest,config_sha,temporary,active,state,last_error,created_at,updated_at FROM workflow_resources`
 
 func (s *SQLStore) GetWorkflowResource(ctx context.Context, id string) (core.WorkflowResource, error) {
 	item, err := scanWorkflowResource(s.db.QueryRowContext(ctx, s.q(workflowResourceSelect+` WHERE id=?`), id))
@@ -128,12 +141,12 @@ func (s *SQLStore) ReplaceWorkflowResources(ctx context.Context, source core.Con
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err = tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET active=?,state=?,updated_at=? WHERE config_source_id=?`), false, "removed", stamp(source.UpdatedAt), source.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET active=?,state=?,updated_at=? WHERE config_source_id=? AND temporary=?`), false, "removed", stamp(source.UpdatedAt), source.ID, false); err != nil {
 		return err
 	}
 	for _, item := range items {
-		result, updateErr := tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET api_version=?,kind=?,name=?,path=?,document=?,spec_digest=?,config_sha=?,active=?,state=?,last_error=?,updated_at=? WHERE id=? AND config_source_id=?`),
-			item.APIVersion, item.Kind, item.Name, item.Path, item.Document, item.SpecDigest, item.ConfigSHA, item.Active, item.State, item.LastError, stamp(item.UpdatedAt), item.ID, source.ID)
+		result, updateErr := tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET api_version=?,kind=?,name=?,path=?,document=?,spec_digest=?,config_sha=?,active=?,state=?,last_error=?,updated_at=? WHERE id=? AND config_source_id=? AND temporary=?`),
+			item.APIVersion, item.Kind, item.Name, item.Path, item.Document, item.SpecDigest, item.ConfigSHA, item.Active, item.State, item.LastError, stamp(item.UpdatedAt), item.ID, source.ID, false)
 		if updateErr != nil {
 			return updateErr
 		}
@@ -142,9 +155,9 @@ func (s *SQLStore) ReplaceWorkflowResources(ctx context.Context, source core.Con
 			return countErr
 		}
 		if count == 0 {
-			if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_resources(id,config_source_id,api_version,kind,name,path,document,spec_digest,config_sha,active,state,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+			if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_resources(id,config_source_id,api_version,kind,name,path,document,spec_digest,config_sha,temporary,active,state,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 				item.ID, item.ConfigSourceID, item.APIVersion, item.Kind, item.Name, item.Path, item.Document, item.SpecDigest, item.ConfigSHA,
-				item.Active, item.State, item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt)); err != nil {
+				false, item.Active, item.State, item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt)); err != nil {
 				return err
 			}
 		}
@@ -196,7 +209,7 @@ func scanWorkflowResource(row scanner) (core.WorkflowResource, error) {
 	var item core.WorkflowResource
 	var created, updated string
 	err := row.Scan(&item.ID, &item.ConfigSourceID, &item.APIVersion, &item.Kind, &item.Name, &item.Path, &item.Document,
-		&item.SpecDigest, &item.ConfigSHA, &item.Active, &item.State, &item.LastError, &created, &updated)
+		&item.SpecDigest, &item.ConfigSHA, &item.Temporary, &item.Active, &item.State, &item.LastError, &created, &updated)
 	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
 	return item, err
 }
