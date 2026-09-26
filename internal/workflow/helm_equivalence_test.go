@@ -19,6 +19,7 @@ import (
 )
 
 type workflowDeploymentRecorder struct {
+	startState    core.DeploymentState
 	data          *store.SQLStore
 	unchanged     bool
 	compares      int
@@ -37,6 +38,9 @@ func (r *workflowDeploymentRecorder) Start(ctx context.Context, appID, sha strin
 	}
 	now := time.Now().UTC()
 	d := core.Deployment{ID: fmt.Sprintf("accepted-%d", r.starts), AppID: appID, State: core.DeploymentSucceeded, SpecDigest: app.SpecDigest(), CommitSHA: sha, CreatedAt: now, FinishedAt: &now, Snapshot: core.DeploymentSnapshot{TargetID: app.ServerID, Values: map[string]any{"recorded": true}}}
+	if r.startState != "" {
+		d.State, d.FinishedAt = r.startState, nil
+	}
 	if err := r.data.CreateDeployment(ctx, d); err != nil {
 		return d, err
 	}
@@ -425,5 +429,55 @@ func TestWorkflowEquivalenceCacheRechecksResolvedJobSecrets(t *testing.T) {
 	}
 	if f.runner.compares != compares {
 		t.Fatal("changed job credentials reached Helm comparison before build validation")
+	}
+}
+
+func TestStageLinksDeploymentBeforeWaiting(t *testing.T) {
+	f := newWorkflowNoopFixture(t)
+	f.runner.startState = core.DeploymentQueued
+	ctx := context.Background()
+	revision := core.WorkflowRevision{ID: "in-progress", ResourceID: f.resource.ID, State: "running", Trigger: "manual", Sources: f.snapshot, Outputs: f.previous.Outputs, CreatedAt: time.Now().UTC()}
+	if err := f.data.CreateWorkflowRevision(ctx, revision); err != nil {
+		t.Fatal(err)
+	}
+	stage := f.document.Spec.Stages[0]
+	run := core.WorkflowStageRun{ID: "live-stage", RevisionID: revision.ID, StageName: stage.Name, State: "running", CreatedAt: time.Now().UTC()}
+	if err := f.data.CreateWorkflowStageRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	work, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.service.deployStage(work, f.resource, f.source, f.document, revision, stage, &run) }()
+	deadline := time.After(5 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			cancel()
+			<-done
+			t.Fatal("running deployment was not linked")
+		case <-ticker.C:
+			saved, err := f.data.GetWorkflowStageRun(ctx, "live-stage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(saved.DeploymentIDs) == 0 {
+				continue
+			}
+			deployment, err := f.data.GetDeployment(ctx, saved.DeploymentIDs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if deployment.State != core.DeploymentQueued {
+				t.Fatalf("state = %s", deployment.State)
+			}
+			cancel()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatalf("got %v", err)
+			}
+			return
+		}
 	}
 }

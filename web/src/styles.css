@@ -2252,3 +2252,8 @@ code { font-family: var(--mono); }
 .deploy-preview .deploy-preview-acknowledge { display: flex; align-items: start; gap: 8px; margin: 12px 0; }.deploy-preview-acknowledge input { width: 16px; min-height: 16px; margin-top: 2px; }
 .command-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(12,20,29,.4); display: flex; align-items: flex-start; justify-content: center; padding: min(14vh,120px) 16px 24px; }
 @media(max-width:600px) { .command-backdrop { padding-top: 64px; } }
+
+.workflow-stage-progress { grid-column: 1 / -1; min-width: 0; width: 100%; }
+.workflow-stage-progress > p { margin: 8px 0; font-size: 12px; }
+.workflow-stage-progress h5 { margin: 12px 0 8px; }
+.workflow-stage-progress .workflow-job-output + .workflow-job-output { margin-top: 8px; }

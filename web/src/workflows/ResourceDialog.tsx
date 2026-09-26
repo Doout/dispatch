@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, CheckCircle, Copy, FileCode, RocketLaunch, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
 import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun } from "../api";
+import { StageProgress } from "./StageProgress";
 import { relative } from "../presentation";
 import { useDialogFocus } from "../useDialogFocus";
 import { canManageProject } from "../permissions";
@@ -12,6 +13,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const [revisionID, setRevisionID] = useState(revisions[0]?.id ?? "");
   const [jobs, setJobs] = useState<WorkflowJobResult[]>([]);
   const [stages, setStages] = useState<WorkflowStageRun[]>([]);
+  const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
   const [selectedJobID, setSelectedJobID] = useState("");
   const [copiedJobID, setCopiedJobID] = useState("");
   const [runLoading, setRunLoading] = useState(false);
@@ -33,14 +35,27 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     setCopiedJobID("");
     setRunLoading(Boolean(revisionID));
     if (!revisionID) return () => { active = false; };
-    void Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID)]).then(([nextJobs, nextStages]) => {
-      if (active) {
-        setJobs(nextJobs);
-        setStages(nextStages);
-        setSelectedJobID(nextJobs.find((job) => job.state === "failed")?.id ?? nextJobs[0]?.id ?? "");
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      try {
+        const [nextJobs, nextStages] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID)]);
+        if (active) {
+          setJobs(nextJobs);
+          setStages(nextStages);
+          setSelectedJobID(current => current || nextJobs.find(job => job.state === "failed")?.id || nextJobs[0]?.id || "");
+          setError("");
+        }
+      } catch (cause) {
+        if (active) setError((cause as Error).message);
+      } finally {
+        if (active) {
+          setRunLoading(false);
+          timer = setTimeout(() => void refresh(), 3000);
+        }
       }
-    }).catch((cause: Error) => active && setError(cause.message)).finally(() => active && setRunLoading(false));
-    return () => { active = false; };
+    }
+    void refresh();
+    return () => { active = false; clearTimeout(timer); };
   }, [revisionID]);
 
   async function copyJobLog(job: WorkflowJobResult) {
@@ -94,7 +109,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}
               {jobs.length > 0 && <div className="workflow-run-list workflow-job-list"><h4>Jobs</h4>{jobs.map((job) => <button type="button" key={job.id} className={job.id === selectedJob?.id ? "active" : ""} aria-pressed={job.id === selectedJob?.id} aria-label={`${job.jobName}, ${job.state}`} onClick={() => setSelectedJobID(job.id)}><span className={`status-label ${job.state}`}><i />{job.state}</span><strong>{job.jobName}</strong>{job.reusedFromId && <small>Reused</small>}</button>)}</div>}
               {selectedJob && <section className="workflow-job-output" aria-label={`${selectedJob.jobName} job output`}><header><div><TerminalWindow size={15} /><strong>{selectedJob.jobName}</strong><span>{selectedJob.state}</span></div><button type="button" aria-label={`Copy ${selectedJob.jobName} output`} title={copiedJobID === selectedJob.id ? "Copied" : "Copy output"} disabled={!selectedJob.log && !selectedJob.error} onClick={() => void copyJobLog(selectedJob)}>{copiedJobID === selectedJob.id ? <Check size={15} /> : <Copy size={15} />}</button></header>{selectedJob.error && <p>{selectedJob.error}</p>}<pre tabIndex={0}>{selectedJob.log || selectedJob.error || "No output was captured."}</pre></section>}
-              {stages.length > 0 && <div className="workflow-run-list"><h4>Stages</h4>{stages.map((stage) => <div className="workflow-stage-row" key={stage.id}><span className={`status-label ${stage.state}`}><i />{stage.state.replaceAll("_", " ")}</span><strong>{stage.stageName}</strong><small>{stage.targetRef}</small>{canApprove && stage.state === "awaiting_approval" && <button className="quiet-button" disabled={busy} onClick={() => void approve(stage)}>Approve</button>}{stage.deploymentIds?.map((deploymentID) => { const deployment = overview.deployments.find((item) => item.id === deploymentID); const result = stage.deploymentResults?.find(item => item.deploymentId === deploymentID); return <button className="workflow-manifest-link" key={deploymentID} title={result?.reason} onClick={() => { onClose(); onOpenDeploymentManifests(deploymentID); }}><FileCode size={14} /><span>{deployment?.app?.name ?? "Managed deployment"}</span><strong>{result?.outcome === "unchanged" ? "Unchanged · Manifests" : "Manifests"}</strong></button>; })}</div>)}</div>}
+              {stages.length > 0 && <div className="workflow-run-list"><h4>Stages</h4>{stages.map((stage) => <div className="workflow-stage-row" key={stage.id}><span className={`status-label ${stage.state}`}><i />{stage.state.replaceAll("_", " ")}</span><strong>{stage.stageName}</strong><small>{stage.targetRef}</small>{canApprove && stage.state === "awaiting_approval" && <button className="quiet-button" disabled={busy} onClick={() => void approve(stage)}>Approve</button>}<button className="quiet-button" aria-expanded={Boolean(expandedStages[stage.id])} onClick={() => setExpandedStages(current => ({ ...current, [stage.id]: !current[stage.id] }))}>{expandedStages[stage.id] ? "Hide progress" : "View progress & logs"}</button>{stage.error && !expandedStages[stage.id] && <p className="form-error workflow-stage-progress" role="alert">{stage.error}</p>}{expandedStages[stage.id] && <StageProgress stage={stage} onOpenManifests={id => { onClose(); onOpenDeploymentManifests(id); }} />}{stage.deploymentIds?.map((deploymentID) => { const deployment = overview.deployments.find((item) => item.id === deploymentID); const result = stage.deploymentResults?.find(item => item.deploymentId === deploymentID); return <button className="workflow-manifest-link" key={deploymentID} title={result?.reason} onClick={() => { onClose(); onOpenDeploymentManifests(deploymentID); }}><FileCode size={14} /><span>{deployment?.app?.name ?? "Managed deployment"}</span><strong>{result?.outcome === "unchanged" ? "Unchanged · Manifests" : "Manifests"}</strong></button>; })}</div>)}</div>}
             </>}
           </section>
         </div>
