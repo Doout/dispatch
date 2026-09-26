@@ -137,7 +137,7 @@ function PreviewGroupBuilder({ overview, helmApps, group, onCancel, onSaved }: {
     <form onSubmit={submit}>
       <div className="group-basics">
         <label><span>Name</span><input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label><span>GitHub connection</span><select required value={githubAppID} onChange={(event) => setGitHubAppID(event.target.value)}><option value="">Choose a connection</option>{readyConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name} ({connection.installationAccount || "installed"})</option>)}</select></label>
+        <label><span>GitHub connection</span><select required value={githubAppID} onChange={(event) => setGitHubAppID(event.target.value)}><option value="">Choose a connection</option>{readyConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name} ({"all installations"})</option>)}</select></label>
         <label><span>Command</span><input required value={command} onChange={(event) => setCommand(event.target.value)} /></label>
         <label className="check-field"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Accept preview commands</span></label>
       </div>

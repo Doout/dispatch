@@ -620,6 +620,10 @@ export type GitHubAppInstallation = {
   id: number;
   account: string;
   target: string;
+ webUrl?: string;
+ repositorySelection?: string;
+ suspended?: boolean;
+ missingPermissions?: GitHubPermissionGap[];
 };
 export type GitHubRepository = {
   id: number;

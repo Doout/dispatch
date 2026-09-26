@@ -80,8 +80,8 @@ func (a *API) reportWorkflowPreview(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusConflict, "GitHub App not installed", "Install the selected GitHub App for the pull request repository.")
 		return
 	}
-	resolver := events.GitHubResolver{BaseURL: connection.APIURL, TokenSource: func(ctx context.Context) (string, error) {
-		return a.eventConfig.GitHubApps.InstallationToken(ctx, input.GitHubAppID)
+	resolver := events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
+		return a.eventConfig.GitHubApps.RepositoryToken(ctx, input.GitHubAppID, repository)
 	}}
 	pr, err := resolver.ResolvePullRequest(r.Context(), input.Repository, input.PullRequestNumber)
 	if err != nil {
@@ -97,7 +97,7 @@ func (a *API) reportWorkflowPreview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, TokenSource: resolver.TokenSource}
+	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: resolver.RepositoryTokenSource}
 	var reportTrigger *core.WorkflowPreviewTrigger
 	triggers, err := a.store.ListWorkflowPreviewTriggers(r.Context())
 	if err != nil {
@@ -157,8 +157,8 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 	if err != nil {
 		return err
 	}
-	resolver := events.GitHubResolver{BaseURL: connection.APIURL, TokenSource: func(ctx context.Context) (string, error) {
-		return a.eventConfig.GitHubApps.InstallationToken(ctx, trigger.GitHubAppID)
+	resolver := events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
+		return a.eventConfig.GitHubApps.RepositoryToken(ctx, trigger.GitHubAppID, repository)
 	}}
 	pr, err := resolver.ResolvePullRequest(ctx, trigger.Repository, trigger.PullRequestNumber)
 	if err != nil {
@@ -167,7 +167,7 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 	if !pr.Open {
 		return nil
 	}
-	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, TokenSource: resolver.TokenSource}
+	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: resolver.RepositoryTokenSource}
 	resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
 	if err != nil {
 		return err

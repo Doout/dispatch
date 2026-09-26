@@ -441,6 +441,16 @@ Updates to the reusable definition apply to new instances; existing instances ke
 
 To version a template in your deployment repository, choose **GitHub repository (GitOps)** under **Template definition**. Set the repository, branch, and YAML file path. Keep all deployment definitions in one directory, for example slots in `deployment/` and reusable previews in `deployment/templates/dev-preview.yaml`. Use `kind: WorkflowTemplate` for reusable definitions. The slot importer skips this kind; the preview workflow validates the definition and converts it into a concrete `kind: Application` when a command comment arrives. The selected GitHub App needs **Contents: read** access to the template repository. Missing repository access or permissions appear as sync errors.
 
+A GitHub App connection uses all of its installations. The template repository,
+watched PR repositories, and linked PRs can belong to different organizations.
+Dispatch discovers the installation for each repository and keeps its token
+separate from tokens for other installations. In **Connections**, each
+installation has its own access-settings link and permission warnings. Installing
+the App in another organization preserves existing access. Repository pickers
+include repositories across installations. A missing or suspended installation
+fails with a repository-specific error; Dispatch does not substitute another
+organization's token.
+
 Dispatch resolves the branch every 30 seconds and reads the file at that immutable commit. Saving or manually choosing **Sync from GitHub** also fetches and validates the file. The template row shows the source and synced commit. Choose **Edit template** to change its settings, or **Edit YAML in GitHub** to review changes through a pull request. The YAML owns its source defaults, watched source aliases, and comment command. Dispatch stores the GitHub App connection, repository access source, and Git file location.
 
 Invalid YAML and failed GitHub reads preserve the last valid definition and block creation of new previews until a successful sync. Pending command comments are retried after recovery. Existing instances retain their saved YAML. Each new preview records its template commit in the GitHub App report. Creating an individual preview requires no commit to the deployment repository.

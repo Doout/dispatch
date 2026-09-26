@@ -187,10 +187,13 @@ func (a *API) pollPreviewTarget(ctx context.Context, target *previewPollTarget) 
 			return err
 		}
 		tokenSource := func(ctx context.Context) (string, error) {
-			return a.eventConfig.GitHubApps.InstallationToken(ctx, target.connectionID)
+			return a.eventConfig.GitHubApps.RepositoryToken(ctx, target.connectionID, target.repository)
 		}
 		reader.BaseURL, reader.Token, reader.TokenSource = connection.APIURL, "", tokenSource
-		resolver.BaseURL, resolver.Token, resolver.TokenSource = connection.APIURL, "", tokenSource
+		resolver.BaseURL, resolver.Token = connection.APIURL, ""
+		resolver.RepositoryTokenSource = func(ctx context.Context, repository string) (string, error) {
+			return a.eventConfig.GitHubApps.RepositoryToken(ctx, target.connectionID, repository)
+		}
 		groupService, eventService = services.groups, services.events
 	}
 	checkedAt := time.Now().UTC()

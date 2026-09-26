@@ -51,6 +51,8 @@ func TestImportWorkflowPreviewDocumentFromPRHead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/repos/example/service/installation":
+			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case "/app/installations/73/access_tokens":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC()})
 		case "/repos/example/service/pulls/42":

@@ -59,6 +59,8 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasPrefix(r.URL.Path, "/repos/") && strings.HasSuffix(r.URL.Path, "/installation"):
+			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case r.URL.Path == "/app/installations/73/access_tokens":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC()})
 		case r.URL.Path == "/repos/example/service/pulls/42":

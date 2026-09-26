@@ -14,10 +14,11 @@ import (
 )
 
 type GitHubNotifier struct {
-	BaseURL     string
-	Token       string
-	TokenSource func(context.Context) (string, error)
-	Client      *http.Client
+	BaseURL               string
+	Token                 string
+	TokenSource           func(context.Context) (string, error)
+	RepositoryTokenSource func(context.Context, string) (string, error)
+	Client                *http.Client
 }
 
 var ErrCommentForbidden = errors.New("GitHub App cannot write issue comments")
@@ -52,7 +53,7 @@ func (n GitHubNotifier) UpdateComment(ctx context.Context, repository string, nu
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("Content-Type", "application/json")
-	token, err := githubToken(ctx, n.Token, n.TokenSource)
+	token, err := githubRepositoryToken(ctx, owner+"/"+repository, n.Token, n.TokenSource, n.RepositoryTokenSource)
 	if err != nil {
 		return "", err
 	}
@@ -112,10 +113,11 @@ func previewComment(notification Notification) string {
 }
 
 type GitHubResolver struct {
-	BaseURL     string
-	Token       string
-	TokenSource func(context.Context) (string, error)
-	Client      *http.Client
+	BaseURL               string
+	Token                 string
+	TokenSource           func(context.Context) (string, error)
+	RepositoryTokenSource func(context.Context, string) (string, error)
+	Client                *http.Client
 }
 
 var ErrPullRequestNotFound = errors.New("pull request not found")
@@ -135,7 +137,7 @@ func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository strin
 		return SourceRevision{}, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	token, err := githubToken(ctx, r.Token, r.TokenSource)
+	token, err := githubRepositoryToken(ctx, repository, r.Token, r.TokenSource, r.RepositoryTokenSource)
 	if err != nil {
 		return SourceRevision{}, err
 	}
@@ -191,7 +193,7 @@ func (r GitHubResolver) ResolveBranch(ctx context.Context, repository, branch st
 		return SourceRevision{}, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	token, err := githubToken(ctx, r.Token, r.TokenSource)
+	token, err := githubRepositoryToken(ctx, repository, r.Token, r.TokenSource, r.RepositoryTokenSource)
 	if err != nil {
 		return SourceRevision{}, err
 	}
@@ -227,4 +229,11 @@ func githubToken(ctx context.Context, static string, source func(context.Context
 		return source(ctx)
 	}
 	return static, nil
+}
+
+func githubRepositoryToken(ctx context.Context, repository, static string, source func(context.Context) (string, error), repositorySource func(context.Context, string) (string, error)) (string, error) {
+	if repositorySource != nil {
+		return repositorySource(ctx, NormalizeRepository(repository))
+	}
+	return githubToken(ctx, static, source)
 }

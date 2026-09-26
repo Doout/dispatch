@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import {
   ArrowClockwise,
   ArrowRight,
@@ -101,7 +101,6 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
   const [appID, setAppID] = useState("");
   const [clientID, setClientID] = useState("");
   const [slug, setSlug] = useState("");
-  const [installationID, setInstallationID] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
 	const [privateNetworkID, setPrivateNetworkID] = useState("");
@@ -118,6 +117,17 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
   const [copied, setCopied] = useState("");
   const [error, setError] = useState("");
   const privateKeyFile = useRef<HTMLInputElement>(null);
+  const installationConnections = overview.githubApps.map(connection => `${connection.id}:${connection.updatedAt}`).join(",");
+  useEffect(() => {
+    let active = true;
+    for (const connection of overview.githubApps) {
+      void api.githubAppInstallations(connection.id).then(items => {
+        if (active) setInstallations(current => ({...current, [connection.id]: items}));
+      }).catch(cause => { if (active) setError(`${connection.name}: could not load installations. ${cause instanceof Error ? cause.message : String(cause)}`); });
+    }
+    return () => { active = false; };
+  }, [installationConnections]);
+
 
   function reset() {
     setCreating(false);
@@ -131,7 +141,6 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
     setAppID("");
     setClientID("");
     setSlug("");
-    setInstallationID("");
     setPrivateKey("");
     setWebhookSecret("");
 		setPrivateNetworkID("");
@@ -152,7 +161,6 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
     setAppID(String(connection.appId));
     setClientID(connection.clientId || "");
     setSlug(connection.slug || "");
-    setInstallationID(connection.installationId ? String(connection.installationId) : "");
     setPrivateKey("");
     setWebhookSecret("");
 		setPrivateNetworkID(connection.privateNetworkId || "");
@@ -188,7 +196,7 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
       }
       const body: Record<string, unknown> = {
         name, webUrl: webURL, apiUrl: apiURL, appId: Number(appID), clientId: clientID, slug,
-        installationId: installationID ? Number(installationID) : 0,
+        installationId: editing?.installationId ?? 0,
 		eventDelivery,
 			privateNetworkId: privateNetworkID,
       };
@@ -226,6 +234,8 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
     setError("");
     try {
       const result = await api.verifyGitHubApp(connection.id);
+      const found = await api.githubAppInstallations(connection.id);
+      setInstallations((current) => ({ ...current, [connection.id]: found }));
       setAccessChecks((current) => ({ ...current, [connection.id]: result.verification }));
       const missingAccess = result.verification.missingAppPermissions?.length || result.verification.missingInstallationPermissions?.length || result.verification.missingTokenPermissions?.length;
       onNotice(missingAccess ? connection.name + " needs more GitHub access. See the permission details below." : result.verification.pushSubscribed ? connection.name + " is connected." : connection.name + " is connected. Add the push event in GitHub for workflow webhooks. Dispatch will keep polling until then.");
@@ -243,25 +253,8 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
     try {
       const items = await api.githubAppInstallations(connection.id);
       setInstallations((current) => ({ ...current, [connection.id]: items }));
+      if (items.length && !connection.installationId) { await api.verifyGitHubApp(connection.id); await onChanged(); }
       if (!items.length) onNotice("No installation was found. Install the App in GitHub first.");
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setBusyID("");
-    }
-  }
-
-  async function selectInstallation(connection: GitHubAppConnection, id: number) {
-    setBusyID(connection.id);
-    setError("");
-    try {
-      await api.updateGitHubApp(connection.id, { installationId: id });
-      const result = await api.verifyGitHubApp(connection.id);
-      setAccessChecks((current) => ({ ...current, [connection.id]: result.verification }));
-      setInstallations((current) => ({ ...current, [connection.id]: [] }));
-      const missingAccess = result.verification.missingAppPermissions?.length || result.verification.missingInstallationPermissions?.length || result.verification.missingTokenPermissions?.length;
-      onNotice(missingAccess ? connection.name + " needs more GitHub access. See the permission details below." : result.verification.pushSubscribed ? connection.name + " is installed and verified." : connection.name + " is installed. Add the push event in GitHub for workflow webhooks. Dispatch will keep polling until then.");
-      await onChanged();
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -348,7 +341,6 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
 			<label><span>Route</span><select value={privateNetworkID} onChange={(event) => setPrivateNetworkID(event.target.value)}><option value="">Direct</option>{edgeNetworks.map((network) => <option key={network.id} value={network.id}>Edge · {network.name}{network.state === "ready" ? "" : ` (${network.state})`}</option>)}</select></label>
           {method === "manifest" && !editing ? <><label><span>Registration owner</span><select value={ownerType} onChange={(event) => { const value = event.target.value as "" | "personal" | "organization"; setOwnerType(value); if (value !== "organization") setOwner(""); }} required><option value="">Choose an account type</option><option value="personal">My personal account</option><option value="organization">GitHub organization</option></select></label>{ownerType === "organization" && <label><span>Organization login</span><input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="platform-team" required spellCheck={false} /></label>}</> : <>
             <label><span>App ID</span><input inputMode="numeric" value={appID} onChange={(event) => setAppID(event.target.value)} placeholder="123456" required /></label>
-            <label><span>Installation ID</span><input inputMode="numeric" value={installationID} onChange={(event) => setInstallationID(event.target.value)} placeholder="Add after installation" /></label>
           </>}
         </div>
         {!editing && <section className="connection-delivery" aria-labelledby="event-delivery-title">
@@ -391,32 +383,37 @@ export function ConnectionsPage({ overview, notice, onNotice, onChanged, onAddRe
       const visibleRepositories = installedRepositories.filter((repository) => repository.fullName.toLowerCase().includes(repositoryQuery.trim().toLowerCase()));
       return <section className="connection-row" key={connection.id}>
         <div className="connection-identity"><span className="github-mark"><GithubLogo size={21} weight="fill" /></span><div><strong>{connection.name}</strong><small>{new URL(connection.webUrl).host}{connection.registrationOwner ? " / " + connection.registrationOwner : ""}{connection.privateNetworkId ? ` · via ${edgeNetworks.find((network) => network.id === connection.privateNetworkId)?.name ?? "edge"}` : ""}</small></div></div>
-        <div className="connection-metadata"><div><span>App ID</span><code>{connection.appId}</code></div><div><span>Installation</span><strong>{connection.installationId || "Not installed"}</strong></div><div><span>Events</span><strong>{!connection.webhookUrl ? "Disabled" : connection.relayWebhookId ? "Relay" : "Direct"}</strong></div><div><span>Status</span><StatusLabel state={connection.state} /></div></div>
+        <div className="connection-metadata"><div><span>App ID</span><code>{connection.appId}</code></div><div><span>Installations</span><strong>{choices.length ? `${choices.length} connected` : connection.installationId ? "Automatic per repository" : "Not installed"}</strong></div><div><span>Events</span><strong>{!connection.webhookUrl ? "Disabled" : connection.relayWebhookId ? "Relay" : "Direct"}</strong></div><div><span>Status</span><StatusLabel state={connection.state} /></div></div>
         <div className="connection-row-actions">
           {connection.state === "needs_installation" && installURL && <a className="table-action primary-link" href={installURL}>Install App<ArrowRight size={14} /></a>}
-          {connection.state === "needs_installation" && <button className="table-action" disabled={busyID === connection.id} onClick={() => void findInstallations(connection)}><ArrowClockwise size={15} />Find installation</button>}
+          {<button className="table-action" disabled={busyID === connection.id} onClick={() => void findInstallations(connection)}><ArrowClockwise size={15} />Refresh installations</button>}
           {connection.installationId ? <button className="table-action" disabled={busyID === connection.id} onClick={() => void verify(connection)}><CheckCircle size={15} />Verify</button> : null}
           {connection.installationId ? <button className="table-action" disabled={busyID === connection.id} aria-expanded={repositoryOpen === connection.id} onClick={() => void toggleRepositories(connection)}><FolderSimple size={15} />Repositories</button> : null}
-          <a className="table-action" href={connection.installationId ? installationSettingsURL : settingsURL} target="_blank" rel="noreferrer">Manage access<ArrowSquareOut size={14} /></a>
+          <a className="table-action" href={settingsURL} target="_blank" rel="noreferrer">App settings<ArrowSquareOut size={14} /></a>
           <button className="table-action" onClick={() => edit(connection)}><PencilSimple size={15} />Edit</button>
           <button className="delete-action" onClick={() => setConfirmDelete(connection.id)}><Trash size={15} />Remove</button>
         </div>
         {access && <div className="connection-access-check" role="status">
-          <strong>GitHub access check</strong>
+          <strong>GitHub access check{access.installationAccount ? ` · ${access.installationAccount}` : ""}</strong>
           {!access.appPermissionsAvailable && <p>GitHub did not return the App registration permissions. Check them in App settings.</p>}
           {(access.missingAppPermissions?.length ?? 0) > 0 && <div><p>App registration needs these repository permissions:</p><ul>{access.missingAppPermissions.map((gap) => <li key={gap.name}>{permissionLabels[gap.name] || gap.name}: {gap.required} (currently {gap.granted})</li>)}</ul><a href={settingsURL} target="_blank" rel="noreferrer">Edit App permissions<ArrowSquareOut size={13} /></a></div>}
           {connection.installationId && !access.installationPermissionsAvailable && <p>GitHub did not return the installation permissions. Check them in installation settings.</p>}
           {(access.missingInstallationPermissions?.length ?? 0) > 0 && <div><p>The installation still needs these repository permissions approved:</p><ul>{access.missingInstallationPermissions.map((gap) => <li key={gap.name}>{permissionLabels[gap.name] || gap.name}: {gap.required} (currently {gap.granted})</li>)}</ul><a href={installationSettingsURL} target="_blank" rel="noreferrer">Approve installation access<ArrowSquareOut size={13} /></a></div>}
           {connection.installationId && !access.tokenPermissionsAvailable && <p>GitHub did not return the issued token permissions. Check the installation in GitHub.</p>}
           {(access.missingTokenPermissions?.length ?? 0) > 0 && <div><p>The issued installation token is missing these grants:</p><ul>{access.missingTokenPermissions.map((gap) => <li key={gap.name}>{permissionLabels[gap.name] || gap.name}: {gap.required} (currently {gap.granted})</li>)}</ul><a href={installationSettingsURL} target="_blank" rel="noreferrer">Review installation access<ArrowSquareOut size={13} /></a></div>}
-          {access.repositoryCount === 0 && <p>No repositories are selected for this installation. Add the repositories Dispatch will use.</p>}
+          {access.repositoryCount === 0 && <p>No repositories are selected for the verified installation. Add the repositories Dispatch will use.</p>}
           {access.appPermissionsAvailable && access.installationPermissionsAvailable && access.tokenPermissionsAvailable && !access.missingAppPermissions?.length && !access.missingInstallationPermissions?.length && !access.missingTokenPermissions?.length && access.repositoryCount > 0 && <p>Required repository permissions are present.</p>}
           {installURL && ((access.missingAppPermissions?.length ?? 0) > 0 || (access.missingInstallationPermissions?.length ?? 0) > 0 || (access.missingTokenPermissions?.length ?? 0) > 0) && <a href={installURL} target="_blank" rel="noreferrer">Install or reinstall App<ArrowSquareOut size={13} /></a>}
         </div>}
         {confirmDelete === connection.id && <div className="connection-remove-warning" role="alert"><WarningCircle size={19} weight="fill" /><div><strong>Remove from Dispatch?</strong><p>The GitHub App and its reserved name will remain in GitHub. Delete it from GitHub settings if you no longer need it.</p></div><a className="table-action" href={settingsURL} target="_blank" rel="noreferrer">Open GitHub settings<ArrowSquareOut size={14} /></a><button className="quiet-button" onClick={() => setConfirmDelete("")}>Cancel</button><button className="danger-button" disabled={busyID === connection.id} onClick={() => void remove(connection)}>{busyID === connection.id ? "Removing..." : "Remove from Dispatch"}</button></div>}
-        {choices.length > 0 && <div className="installation-picker"><div><strong>Choose an installation</strong></div>{choices.map((item) => <button type="button" key={item.id} onClick={() => void selectInstallation(connection, item.id)}><span>{item.account}</span><small>{item.target} / {item.id}</small><ArrowRight size={14} /></button>)}</div>}
+        {choices.length > 0 && <div className="installation-picker"><div><strong>Connected installations</strong><p>Dispatch selects the installation for each repository automatically. Adding an organization keeps existing access.</p></div>{choices.map((item) => <div key={item.id}>
+          <strong>{item.account}</strong><span> · {item.suspended ? "Suspended" : item.repositorySelection === "all" ? "All repositories" : "Selected repositories"}</span>
+          {item.webUrl && <a className="table-action" href={item.webUrl} target="_blank" rel="noreferrer">Manage {item.account} access<ArrowSquareOut size={13} /></a>}
+          {!!item.missingPermissions?.length && <p role="alert">Missing permissions: {item.missingPermissions.map(gap => `${permissionLabels[gap.name] || gap.name}: ${gap.required}`).join(", ")}. Approve these in this installation's settings.</p>}
+        </div>)}{installURL && <a className="table-action" href={installURL} target="_blank" rel="noreferrer">Install in another organization<ArrowSquareOut size={13} /></a>}</div>}
+
         {repositoryOpen === connection.id && <div className="connection-repositories">
-          <div className="repository-panel-head"><div><strong>Repository access</strong></div><div>{connection.webhookUrl && <button className="table-action" onClick={() => void copyWebhook(connection)}>{copied === connection.id ? <Check size={15} /> : <Copy size={15} />}{copied === connection.id ? "Copied" : "Copy endpoint"}</button>}<a className="table-action primary-link" href={installationSettingsURL} target="_blank" rel="noreferrer">Add repositories<ArrowSquareOut size={14} /></a></div></div>
+          <div className="repository-panel-head"><div><strong>Repository access across installations</strong></div><div>{connection.webhookUrl && <button className="table-action" onClick={() => void copyWebhook(connection)}>{copied === connection.id ? <Check size={15} /> : <Copy size={15} />}{copied === connection.id ? "Copied" : "Copy endpoint"}</button>}<a className="table-action primary-link" href={installationSettingsURL} target="_blank" rel="noreferrer">Add repositories<ArrowSquareOut size={14} /></a></div></div>
           {installedRepositories.length > 6 && <label className="repository-search"><span className="sr-only">Filter repositories</span><input value={repositoryQuery} onChange={(event) => setRepositoryQuery(event.target.value)} placeholder="Filter repositories" /></label>}
           {busyID === connection.id ? <div className="repository-access-empty"><strong>Loading repositories</strong></div> : installedRepositories.length && visibleRepositories.length ? <div className="repository-access-list">{visibleRepositories.map((repository) => <a key={repository.id} href={repository.webUrl} target="_blank" rel="noreferrer"><span><strong>{repository.fullName}</strong><small>{repository.private ? "Private" : "Public"}</small></span><code>{repository.defaultBranch || "default branch"}</code><ArrowSquareOut size={13} /></a>)}</div> : <div className="repository-access-empty"><strong>{installedRepositories.length ? "No matching repositories" : "No repositories selected"}</strong><span>{installedRepositories.length ? "Try another name." : "Choose repository access in GitHub."}</span></div>}
         </div>}

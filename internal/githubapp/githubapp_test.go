@@ -173,6 +173,10 @@ func TestVerifyReportsRegistrationAndInstallationPermissionGaps(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/app/installations":
+			_, _ = w.Write([]byte(`[{"id":73,"account":{"login":"platform"}}]`))
+		case strings.HasPrefix(r.URL.Path, "/repos/") && strings.HasSuffix(r.URL.Path, "/installation"):
+			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/app":
 			_, _ = w.Write([]byte(`{"id":42,"slug":"dispatch","permissions":{"contents":"read","issues":"read","pull_requests":"read","statuses":"write"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/app/installations/73":
@@ -219,6 +223,10 @@ func TestListRepositoriesUsesInstallationTokenAndPaginates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/app/installations":
+			_, _ = w.Write([]byte(`[{"id":73,"account":{"login":"platform"}}]`))
+		case strings.HasPrefix(r.URL.Path, "/repos/") && strings.HasSuffix(r.URL.Path, "/installation"):
+			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/73/access_tokens":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC()})
 		case r.Method == http.MethodGet && r.URL.Path == "/installation/repositories":
@@ -277,6 +285,10 @@ func TestWorkflowRepositoryOperations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/app/installations":
+			_, _ = w.Write([]byte(`[{"id":73,"account":{"login":"platform"}}]`))
+		case strings.HasPrefix(r.URL.Path, "/repos/") && strings.HasSuffix(r.URL.Path, "/installation"):
+			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/73/access_tokens":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC()})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/platform/config/commits/main":

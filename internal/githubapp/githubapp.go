@@ -43,8 +43,9 @@ type Manager struct {
 	Client *http.Client
 	Edge   *edge.Broker
 
-	mu     sync.Mutex
-	tokens map[string]cachedToken
+	mu           sync.Mutex
+	tokens       map[string]cachedToken
+	repositories map[string]repositoryInstallation
 }
 
 type ManifestConversion struct {
@@ -60,9 +61,13 @@ type ManifestConversion struct {
 }
 
 type Installation struct {
-	ID      int64  `json:"id"`
-	Account string `json:"account"`
-	Target  string `json:"target"`
+	ID                  int64           `json:"id"`
+	Account             string          `json:"account"`
+	Target              string          `json:"target"`
+	WebURL              string          `json:"webUrl"`
+	RepositorySelection string          `json:"repositorySelection"`
+	Suspended           bool            `json:"suspended"`
+	MissingPermissions  []PermissionGap `json:"missingPermissions,omitempty"`
 }
 
 // Repository is a repository selected for one GitHub App installation. The
@@ -83,6 +88,7 @@ type RepositoryFile struct {
 }
 
 type Verification struct {
+	InstallationID                   int64           `json:"installationId,omitempty"`
 	Slug                             string          `json:"slug"`
 	ClientID                         string          `json:"clientId"`
 	RegistrationOwner                string          `json:"registrationOwner"`
@@ -146,7 +152,16 @@ func (m *Manager) Invalidate(id string) {
 		return
 	}
 	m.mu.Lock()
-	delete(m.tokens, id)
+	for key := range m.tokens {
+		if strings.HasPrefix(key, id+":") {
+			delete(m.tokens, key)
+		}
+	}
+	for key := range m.repositories {
+		if strings.HasPrefix(key, id+":") {
+			delete(m.repositories, key)
+		}
+	}
 	m.mu.Unlock()
 }
 
@@ -249,8 +264,20 @@ func (m *Manager) WebhookSecret(ctx context.Context, id string) (string, error) 
 }
 
 func (m *Manager) InstallationToken(ctx context.Context, id string) (string, error) {
+	connection, err := m.Store.GetGitHubApp(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return m.installationToken(ctx, id, connection.InstallationID)
+}
+
+func (m *Manager) installationToken(ctx context.Context, id string, installation int64) (string, error) {
+	if installation < 1 {
+		return "", errors.New("GitHub App is not linked to an installation")
+	}
+	key := tokenCacheKey(id, installation)
 	m.mu.Lock()
-	if cached := m.tokens[id]; cached.value != "" && time.Until(cached.expiresAt) > 5*time.Minute {
+	if cached := m.tokens[key]; cached.value != "" && time.Until(cached.expiresAt) > 5*time.Minute {
 		m.mu.Unlock()
 		return cached.value, nil
 	}
@@ -259,14 +286,11 @@ func (m *Manager) InstallationToken(ctx context.Context, id string) (string, err
 	if err != nil {
 		return "", err
 	}
-	if connection.InstallationID < 1 {
-		return "", errors.New("GitHub App is not linked to an installation")
-	}
 	jwt, err := m.appJWT(connection)
 	if err != nil {
 		return "", err
 	}
-	endpoint := fmt.Sprintf("%s/app/installations/%d/access_tokens", strings.TrimRight(connection.APIURL, "/"), connection.InstallationID)
+	endpoint := fmt.Sprintf("%s/app/installations/%d/access_tokens", strings.TrimRight(connection.APIURL, "/"), installation)
 	var response struct {
 		Token       string            `json:"token"`
 		ExpiresAt   time.Time         `json:"expires_at"`
@@ -279,7 +303,7 @@ func (m *Manager) InstallationToken(ctx context.Context, id string) (string, err
 		return "", errors.New("GitHub returned an empty installation token")
 	}
 	m.mu.Lock()
-	m.tokens[id] = cachedToken{value: response.Token, expiresAt: response.ExpiresAt, permissions: response.Permissions}
+	m.tokens[key] = cachedToken{value: response.Token, expiresAt: response.ExpiresAt, permissions: response.Permissions}
 	m.mu.Unlock()
 	return response.Token, nil
 }
@@ -293,21 +317,35 @@ func (m *Manager) ListInstallations(ctx context.Context, id string) ([]Installat
 	if err != nil {
 		return nil, err
 	}
-	var response []struct {
-		ID      int64  `json:"id"`
-		Target  string `json:"target_type"`
-		Account struct {
-			Login string `json:"login"`
-		} `json:"account"`
+	items := []Installation{}
+	for page := 1; ; page++ {
+		var response []struct {
+			ID                  int64             `json:"id"`
+			Target              string            `json:"target_type"`
+			HTMLURL             string            `json:"html_url"`
+			RepositorySelection string            `json:"repository_selection"`
+			SuspendedAt         *time.Time        `json:"suspended_at"`
+			Permissions         map[string]string `json:"permissions"`
+			Account             struct {
+				Login string `json:"login"`
+			} `json:"account"`
+		}
+		endpoint := fmt.Sprintf("%s/app/installations?per_page=100&page=%d", strings.TrimRight(connection.APIURL, "/"), page)
+		if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &response, connection.PrivateNetworkID); err != nil {
+			return nil, err
+		}
+		for _, item := range response {
+			installation := Installation{ID: item.ID, Account: item.Account.Login, Target: item.Target, WebURL: item.HTMLURL, RepositorySelection: item.RepositorySelection, Suspended: item.SuspendedAt != nil}
+			if item.Permissions != nil {
+				installation.MissingPermissions = missingPermissions(item.Permissions)
+			}
+			items = append(items, installation)
+		}
+		if len(response) < 100 {
+			break
+		}
 	}
-	endpoint := strings.TrimRight(connection.APIURL, "/") + "/app/installations?per_page=100"
-	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &response, connection.PrivateNetworkID); err != nil {
-		return nil, err
-	}
-	items := make([]Installation, 0, len(response))
-	for _, item := range response {
-		items = append(items, Installation{ID: item.ID, Account: item.Account.Login, Target: item.Target})
-	}
+
 	return items, nil
 }
 
@@ -316,35 +354,44 @@ func (m *Manager) ListRepositories(ctx context.Context, id string) ([]Repository
 	if err != nil {
 		return nil, err
 	}
-	token, err := m.InstallationToken(ctx, id)
+	installations, err := m.ListInstallations(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	items := []Repository{}
-	for page := 1; ; page++ {
-		var response struct {
-			Repositories []struct {
-				ID            int64  `json:"id"`
-				FullName      string `json:"full_name"`
-				Name          string `json:"name"`
-				DefaultBranch string `json:"default_branch"`
-				Private       bool   `json:"private"`
-				HTMLURL       string `json:"html_url"`
-				Owner         struct {
-					Login string `json:"login"`
-				} `json:"owner"`
-			} `json:"repositories"`
+	for _, installation := range installations {
+		if installation.Suspended {
+			continue
 		}
-		endpoint := fmt.Sprintf("%s/installation/repositories?per_page=100&page=%d", strings.TrimRight(connection.APIURL, "/"), page)
-		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
-			return nil, fmt.Errorf("list installation repositories: %w", err)
+		token, err := m.installationToken(ctx, id, installation.ID)
+		if err != nil {
+			return nil, fmt.Errorf("installation %s: %w", installation.Account, err)
 		}
-		for _, repository := range response.Repositories {
-			items = append(items, Repository{ID: repository.ID, FullName: repository.FullName, Name: repository.Name,
-				Owner: repository.Owner.Login, DefaultBranch: repository.DefaultBranch, Private: repository.Private, WebURL: repository.HTMLURL})
-		}
-		if len(response.Repositories) < 100 {
-			break
+		for page := 1; ; page++ {
+			var response struct {
+				Repositories []struct {
+					ID            int64  `json:"id"`
+					FullName      string `json:"full_name"`
+					Name          string `json:"name"`
+					DefaultBranch string `json:"default_branch"`
+					Private       bool   `json:"private"`
+					HTMLURL       string `json:"html_url"`
+					Owner         struct {
+						Login string `json:"login"`
+					} `json:"owner"`
+				} `json:"repositories"`
+			}
+			endpoint := fmt.Sprintf("%s/installation/repositories?per_page=100&page=%d", strings.TrimRight(connection.APIURL, "/"), page)
+			if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
+				return nil, fmt.Errorf("list installation repositories: %w", err)
+			}
+			for _, repository := range response.Repositories {
+				items = append(items, Repository{ID: repository.ID, FullName: repository.FullName, Name: repository.Name,
+					Owner: repository.Owner.Login, DefaultBranch: repository.DefaultBranch, Private: repository.Private, WebURL: repository.HTMLURL})
+			}
+			if len(response.Repositories) < 100 {
+				break
+			}
 		}
 	}
 	return items, nil
@@ -357,7 +404,7 @@ func (m *Manager) RepositoryHead(ctx context.Context, id, repository, branch str
 	if err != nil {
 		return "", err
 	}
-	token, err := m.InstallationToken(ctx, id)
+	token, err := m.RepositoryToken(ctx, id, repository)
 	if err != nil {
 		return "", err
 	}
@@ -390,7 +437,7 @@ func (m *Manager) RepositoryFiles(ctx context.Context, id, repository, revision,
 	if err != nil {
 		return nil, err
 	}
-	token, err := m.InstallationToken(ctx, id)
+	token, err := m.RepositoryToken(ctx, id, repository)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +514,7 @@ func (m *Manager) SetCommitStatus(ctx context.Context, id, repository, revision,
 	if err != nil {
 		return err
 	}
-	token, err := m.InstallationToken(ctx, id)
+	token, err := m.RepositoryToken(ctx, id, repository)
 	if err != nil {
 		return err
 	}
@@ -492,6 +539,11 @@ func (m *Manager) SetCommitStatus(ctx context.Context, id, repository, revision,
 
 func repositoryPath(repository string) (string, error) {
 	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	if !strings.Contains(repository, "://") && strings.Contains(repository, "@") {
+		if _, value, ok := strings.Cut(repository, ":"); ok {
+			repository = value
+		}
+	}
 	if parsed, err := url.Parse(repository); err == nil && parsed.Host != "" {
 		repository = strings.TrimSuffix(strings.Trim(parsed.Path, "/"), ".git")
 	}
@@ -542,9 +594,28 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	if result.AppPermissionsAvailable {
 		result.MissingAppPermissions = missingPermissions(app.Permissions)
 	}
-	if connection.InstallationID < 1 {
+	installations, err := m.ListInstallations(ctx, id)
+	if err != nil {
+		return result, err
+	}
+	selected := int64(0)
+	for _, installation := range installations {
+		if installation.Suspended {
+			continue
+		}
+		if selected == 0 || installation.ID == connection.InstallationID {
+			selected = installation.ID
+		}
+		if installation.ID == connection.InstallationID {
+			break
+		}
+	}
+	connection.InstallationID = selected
+	if selected == 0 {
 		return result, nil
 	}
+
+	result.InstallationID = connection.InstallationID
 	var installation struct {
 		ID                  int64             `json:"id"`
 		HTMLURL             string            `json:"html_url"`
@@ -568,12 +639,12 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	if result.InstallationPermissionsAvailable {
 		result.MissingInstallationPermissions = missingPermissions(installation.Permissions)
 	}
-	token, err := m.InstallationToken(ctx, id)
+	token, err := m.installationToken(ctx, id, connection.InstallationID)
 	if err != nil {
 		return Verification{}, err
 	}
 	m.mu.Lock()
-	tokenPermissions := m.tokens[id].permissions
+	tokenPermissions := m.tokens[tokenCacheKey(id, connection.InstallationID)].permissions
 	m.mu.Unlock()
 	result.TokenPermissionsAvailable = tokenPermissions != nil
 	if result.TokenPermissionsAvailable {
