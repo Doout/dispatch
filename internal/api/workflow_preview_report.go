@@ -300,7 +300,11 @@ func workflowPreviewReportForTrigger(revision core.WorkflowRevision, resource co
 	body := workflowPreviewReportBody(revision, resource, stages, previewURL, githubURL, links...)
 	body += workflowPreviewCommandHelp(revision, trigger)
 	if source := trigger.TemplateSource; source != nil && source.CommitSHA != "" {
-		body += fmt.Sprintf("\n**Template:** `%s/%s` at [`%s`](%s/%s/commit/%s)\n", source.Repository, source.Path, source.CommitSHA, strings.TrimRight(githubURL, "/"), source.Repository, source.CommitSHA)
+		fileURL := strings.TrimRight(githubURL, "/") + "/" + source.Repository + "/blob/" + url.PathEscape(source.CommitSHA)
+		for _, part := range strings.Split(source.Path, "/") {
+			fileURL += "/" + url.PathEscape(part)
+		}
+		body += fmt.Sprintf("\n**Template:** [`%s/%s`](%s) at `%s`\n", source.Repository, source.Path, fileURL, source.CommitSHA)
 	}
 	return body
 }

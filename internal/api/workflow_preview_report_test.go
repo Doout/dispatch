@@ -88,7 +88,7 @@ func TestWorkflowPreviewReportHelpRetainsLinkedPRsAndTemplateCommit(t *testing.T
 	revision := core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"service": {Repository: "org/service"}, "ui": {Repository: "org/ui"}}}
 	trigger := core.WorkflowPreviewTrigger{Repository: "org/service", Command: "/preview", LinkedPullRequests: map[string]int{"ui": 84}, TemplateSource: &core.WorkflowPreviewTemplateGitSource{Repository: "org/devops", Path: "deployment/templates/app.yaml", CommitSHA: "abc123"}}
 	body := workflowPreviewReportForTrigger(revision, core.WorkflowResource{Name: "preview-42"}, nil, "https://preview.example.test", "https://github.example", trigger)
-	for _, want := range []string{"https://github.example/org/ui/pull/84", "https://github.example/org/devops/commit/abc123", "### Preview commands", "/preview with ui=#<PR_NUMBER>"} {
+	for _, want := range []string{"https://github.example/org/ui/pull/84", "[`org/devops/deployment/templates/app.yaml`](https://github.example/org/devops/blob/abc123/deployment/templates/app.yaml) at `abc123`", "### Preview commands", "/preview with ui=#<PR_NUMBER>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("report omitted %q: %s", want, body)
 		}
