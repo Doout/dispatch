@@ -9,6 +9,7 @@ import (
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -143,16 +144,21 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 			return out, errors.New("configuration project mismatch")
 		}
 		out.Configuration = configurationSync{State: source.State, Message: "Last observed repository configuration.", SourceID: source.ID, LastSyncedAt: source.LastSyncedAt}
+		if source.State == "invalid" || source.State == "degraded" {
+			out.Configuration.Message = configurationSyncError(resource, source)
+		}
 		if equivalent {
 			out.Configuration.LastEvaluatedAt = &proof.CheckedAt
-			out.Configuration.Message = "Compared source inputs match the retained release."
+			if source.State != "invalid" && source.State != "degraded" {
+				out.Configuration.Message = "Compared source inputs match the retained release."
+			}
 		}
 		if !source.Active || !resource.Active {
 			out.Configuration.State = "paused"
 		}
 		if resource.State == "invalid" {
 			out.Configuration.State = "invalid"
-			out.Configuration.Message = "The application's repository configuration could not be synchronized."
+			out.Configuration.Message = configurationSyncError(resource, source)
 		}
 		out.Revision.Applied = revision.ID
 		candidates, e := a.store.ListWorkflowRevisions(ctx, resource.ID, 1)
@@ -198,6 +204,16 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 	out.Actions, err = a.store.ListDriftActions(ctx, id)
 	return out, err
 }
+func configurationSyncError(resource core.WorkflowResource, source core.ConfigSource) string {
+	if detail := strings.TrimSpace(resource.LastError); resource.State == "invalid" && detail != "" {
+		return detail
+	}
+	if detail := strings.TrimSpace(source.LastError); detail != "" {
+		return detail
+	}
+	return "Configuration sync failed without an error detail. Sync the repository configuration again to get the current cause."
+}
+
 func (a *API) getApplicationSync(w http.ResponseWriter, r *http.Request) {
 	result, err := a.applicationSync(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {

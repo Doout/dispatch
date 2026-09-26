@@ -121,3 +121,66 @@ func TestSyncDoesNotReuseGreenResultForNewDeployment(t *testing.T) {
 		t.Fatal("stale green observation survived deployment", status)
 	}
 }
+
+func TestApplicationSyncReportsConfigurationFailure(t *testing.T) {
+	a := serviceTestAPI(t)
+	ctx := context.Background()
+	apps, err := a.store.ListApps(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := apps[0]
+	now := time.Now().UTC()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := core.Deployment{ID: "sync-error-deployment", AppID: app.ID, State: core.DeploymentSucceeded, SpecDigest: app.SpecDigest(), CreatedAt: now}
+	must(a.store.CreateDeployment(ctx, d))
+	secret := core.Secret{ID: "sync-error-secret", Name: "sync-error-secret", Type: core.SecretTypeGitHubToken, CreatedAt: now, UpdatedAt: now}
+	must(a.store.CreateSecret(ctx, secret))
+	source := core.ConfigSource{ID: "sync-error-source", Name: "Configurations", ProjectID: app.ProjectID, CredentialSecretID: secret.ID, Active: true, State: "degraded", LastError: "Another application has invalid configuration.", CreatedAt: now, UpdatedAt: now}
+	must(a.store.CreateConfigSource(ctx, source))
+	resource := core.WorkflowResource{ID: "sync-error-resource", Name: "api", ConfigSourceID: source.ID, Kind: "Application", Active: true, State: "invalid", LastError: `deployment/api.yaml: source service (main): branch or tag "main" was not found in Example/service`, CreatedAt: now, UpdatedAt: now}
+	must(a.store.CreateWorkflowResource(ctx, resource))
+	revision := core.WorkflowRevision{ID: "sync-error-revision", ResourceID: resource.ID, State: "succeeded", CreatedAt: now}
+	must(a.store.CreateWorkflowRevision(ctx, revision))
+	must(a.store.CreateWorkflowStageRun(ctx, core.WorkflowStageRun{ID: "sync-error-stage", RevisionID: revision.ID, StageName: "dev", State: "succeeded", DeploymentIDs: []string{d.ID}, CreatedAt: now}))
+	raw := serviceRequestTest(t, a, "GET", "/api/v1/apps/"+app.ID+"/sync", nil, 200)
+	var status applicationSync
+	must(json.Unmarshal(raw, &status))
+	if status.Configuration.State != "invalid" || status.Configuration.Message != resource.LastError {
+		t.Fatalf("configuration cause lost: %+v", status.Configuration)
+	}
+	raw = serviceRequestTest(t, a, "GET", "/api/v1/deployment-catalog", nil, 200)
+	var catalog struct {
+		Items []deploymentCatalogItem `json:"items"`
+	}
+	must(json.Unmarshal(raw, &catalog))
+	found := false
+	for _, item := range catalog.Items {
+		if item.AppID == app.ID {
+			found = true
+			if item.Sync == nil || item.Sync.ConfigurationMessage != resource.LastError {
+				t.Fatalf("catalog lost configuration cause: %+v", item.Sync)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("application missing from catalog")
+	}
+	for _, test := range []struct{ name, resourceState, resourceError, sourceError, want string }{
+		{"source fallback", "invalid", " ", "Repository access denied.", "Repository access denied."},
+		{"source warning", "ready", "Old error", "Another application is invalid.", "Another application is invalid."},
+		{"missing detail", "invalid", "", "", "Configuration sync failed without an error detail. Sync the repository configuration again to get the current cause."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resource.State, resource.LastError, source.LastError = test.resourceState, test.resourceError, test.sourceError
+			if got := configurationSyncError(resource, source); got != test.want {
+				t.Fatalf("got %q, want %q", got, test.want)
+			}
+		})
+	}
+}

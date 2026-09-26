@@ -41,8 +41,8 @@ export function ApplicationSync({ application, overview, onBack, compact = false
   finally { setBusy(false); setObservationRefresh(n => n + 1); window.dispatchEvent(new Event("dispatch-observation-updated")); }
  }
  return <section className={`application-sync${compact ? " compact" : ""}`} aria-label={`${application.name} sync and drift`}>
-  <header className="sync-toolbar"><div><h2>Application status</h2>{!compact && <span className="sync-app-name" title={application.name}>{application.name}</span>}<span className="sync-observation" title={`Last check: ${date(status?.drift.checkedAt)}. Last successful check: ${date(status?.drift.lastSuccessfulCheckAt)}. Observations are recorded from the Dispatch controller.`}>{status?.observationChecking ? "Checking…" : status?.drift.checkedAt ? `${clock - new Date(status.drift.checkedAt).getTime() > (status.observationStaleAfterSeconds ?? 900) * 1000 ? "Stale · observed" : "Checked"} ${relative(status.drift.checkedAt)}` : "Not checked"}</span></div><div>
-   {canCheck && status?.supported && <button className="quiet-button sync-check" disabled={busy || status.observationChecking || status.revision.state === "deploying"} onClick={() => void run(false)}><ArrowClockwise size={14} aria-hidden="true" />{busy ? "Checking…" : "Check now"}</button>}
+  <header className="sync-toolbar"><div><h2>Application status</h2>{!compact && <span className="sync-app-name" title={application.name}>{application.name}</span>}<span className="sync-observation" title={`Last check: ${date(status?.drift.checkedAt)}. Last successful check: ${date(status?.drift.lastSuccessfulCheckAt)}. Observations are recorded from the Dispatch controller.`}>{status?.observationChecking ? "Checking…" : status?.drift.checkedAt ? `${clock - new Date(status.drift.checkedAt).getTime() > (status.observationStaleAfterSeconds ?? 900) * 1000 ? "Runtime stale · observed" : "Runtime checked"} ${relative(status.drift.checkedAt)}` : "Not checked"}</span></div><div>
+   {canCheck && status?.supported && <button className="quiet-button sync-check" title="Check runtime drift and health. This does not sync repository configuration." disabled={busy || status.observationChecking || status.revision.state === "deploying"} onClick={() => void run(false)}><ArrowClockwise size={14} aria-hidden="true" />{busy ? "Checking…" : "Check now"}</button>}
    <button className="sync-details-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{application.buildType === "helm" ? "Details" : "Checks"}<CaretDown size={13} aria-hidden="true" /></button>
    {onBack && <button className="quiet-button" onClick={onBack}>Back to applications</button>}
   </div></header>
@@ -55,6 +55,13 @@ export function ApplicationSync({ application, overview, onBack, compact = false
     <div><dt>Runtime drift</dt><dd><SyncState state={!status.supported ? "not_supported" : !status.drift.checkedAt ? "not_checked" : status.drift.state} /></dd></div>
     <div><dt>Resource health</dt><dd><span title={status.drift.healthMessage}><SyncState state={!status.supported ? "not_supported" : !status.drift.checkedAt ? "not_checked" : status.drift.health} /></span></dd></div>
    </dl>
+   {["invalid", "degraded"].includes(status.configuration.state) && <div className="configuration-sync-error" role="alert">
+    <WarningCircle size={18} weight="fill" aria-hidden="true" />
+    <div><strong>{status.configuration.state === "invalid" ? "Configuration sync blocked" : "Configuration sync warning"}</strong>
+     <p>{status.configuration.message || "The sync did not return an error detail. Sync the repository configuration again to get the current cause."}</p>
+     <p className="configuration-sync-hint">Fix the configuration or repository access, then sync its repository configuration again. Check now refreshes runtime status only.</p>
+    </div>
+   </div>}
    {(status.drift.state === "unknown" || status.drift.state === "out_of_sync") && <div className="sync-notice"><Info size={14} aria-hidden="true" /><span>{status.drift.message}</span></div>}
    {status.drift.health === "unknown" && status.drift.checkedAt && status.drift.healthMessage && <div className="sync-notice"><Info size={14} aria-hidden="true" /><span>{status.drift.healthMessage}</span></div>}
    {expanded && <div className="sync-detail-body">

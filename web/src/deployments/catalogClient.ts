@@ -1,5 +1,5 @@
 import { request, Deployment, DeploymentComparison } from "../api";
-export type CatalogStatus = { staleAfterSeconds?: number; configuration: string; revision: string; drift: string; health: string; supported: boolean; checkedAt?: string; message: string; healthMessage?: string };
+export type CatalogStatus = { staleAfterSeconds?: number; configuration: string; configurationMessage?: string; revision: string; drift: string; health: string; supported: boolean; checkedAt?: string; message: string; healthMessage?: string };
 export type CatalogItem = { appId: string; appName: string; projectId: string; targetId: string; targetName: string; environment: string; resourceId?: string; resourceName?: string; latest?: Deployment; current?: Deployment; sync?: CatalogStatus };
 export const catalogClient = {
  catalog: () => request<{items: CatalogItem[]}>("/api/v1/deployment-catalog"),
