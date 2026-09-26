@@ -237,7 +237,8 @@ Use `make check` for the race detector, `go vet`, TypeScript checks, and fronten
 - [Private routes](docs/private-networks.md)
 - [Roadmap](docs/roadmap.md)
 
-Database migrations are ordered SQL files under `internal/store/migrations`.
+Database migrations live in two SQL files under `internal/store/migrations`, one
+for SQLite and one for PostgreSQL. Version markers keep each upgrade separate.
 
 See [contributing](CONTRIBUTING.md) for development and review guidance, and [security](SECURITY.md) for the trust model and vulnerability reporting.
 

@@ -5,17 +5,11 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/observe"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 )
 
-func (a *API) observationRoutes(r chi.Router) {
-	r.Get("/apps/{id}/observations", a.appPermission(core.PermissionProjectView, a.getApplicationObservations))
-	r.Put("/apps/{id}/observations", a.appPermission(core.PermissionProjectConfigure, a.updateApplicationObservations))
-	r.Post("/apps/{id}/observations/check", a.appPermission(core.PermissionProjectConfigure, a.checkApplicationObservations))
-}
 func (a *API) RunObservations(ctx context.Context) {
 	if a.observations != nil {
 		a.observations.Run(ctx)

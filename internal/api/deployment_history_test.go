@@ -142,7 +142,7 @@ func TestApplicationHistoryPaginationAndComparisonIsolation(t *testing.T) {
 	route.URLParams.Add("id", app.ID)
 	req = req.WithContext(context.WithValue(withIdentity(req.Context(), core.Identity{ID: "unassigned-member", SystemRole: "member"}), chi.RouteCtxKey, route))
 	response := httptest.NewRecorder()
-	a.appPermission(core.PermissionProjectView, a.applicationDeploymentHistory)(response, req)
+	a.appPermission(core.PermissionProjectView)(http.HandlerFunc(a.applicationDeploymentHistory)).ServeHTTP(response, req)
 	if response.Code != 403 {
 		t.Fatalf("unassigned member can read history: %d", response.Code)
 	}

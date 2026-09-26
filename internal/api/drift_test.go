@@ -3,13 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"github.com/doout/dispatch/internal/core"
-	"github.com/go-chi/chi/v5"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/doout/dispatch/internal/core"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestApplicationSyncStatusPermissionsAndMissingBaseline(t *testing.T) {
@@ -65,7 +66,7 @@ func TestApplicationSyncStatusPermissionsAndMissingBaseline(t *testing.T) {
 		route.URLParams.Add("id", app.ID)
 		request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
 		response := httptest.NewRecorder()
-		a.appPermission(permission, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })(response, request)
+		a.appPermission(permission)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })).ServeHTTP(response, request)
 		return response.Code
 	}
 	if call(core.PermissionProjectView) != 204 || call(core.PermissionProjectConfigure) != 403 || call(core.PermissionDeploymentRun) != 403 {

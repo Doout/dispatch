@@ -1,2 +1,0 @@
-ALTER TABLE secrets ADD COLUMN secret_type TEXT NOT NULL DEFAULT 'text';
-ALTER TABLE secrets ADD COLUMN public_value TEXT NOT NULL DEFAULT '';
