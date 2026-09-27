@@ -30,7 +30,8 @@ describe("change password dialog", () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     const change = vi.spyOn(api, "changePassword").mockResolvedValue();
-    render(<ChangePasswordDialog onClose={onClose} />);
+    const onChanged = vi.fn();
+    render(<ChangePasswordDialog onClose={onClose} onChanged={onChanged} />);
 
     await user.type(screen.getByLabelText("Current password"), "original-password-123");
     await user.type(screen.getByLabelText(/^New password/), "replacement-password-123");
@@ -39,5 +40,6 @@ describe("change password dialog", () => {
 
     expect(change).toHaveBeenCalledWith("original-password-123", "replacement-password-123");
     expect(onClose).toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalled();
   });
 });

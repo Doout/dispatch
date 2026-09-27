@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/doout/dispatch/internal/analytics"
@@ -22,10 +24,11 @@ import (
 )
 
 type AuthConfig struct {
-	AdminToken string
-	Username   string
-	Password   string
-	PublicURL  string
+	AdminToken        string
+	Username          string
+	Password          string
+	PublicURL         string
+	TrustedProxyCIDRs string
 }
 
 type EventConfig struct {
@@ -76,11 +79,10 @@ type API struct {
 	authManifestStates map[string]authProviderManifestState
 	workflows          *workflowservice.Service
 
-	sessionMu   sync.RWMutex
-	sessions    map[string]sessionState
-	oauthMu     sync.Mutex
-	oauthStates map[string]oauthState
-	oauthCodes  map[string]oauthCode
+	trustedProxies []*net.IPNet
+	oauthMu        sync.Mutex
+	oauthStates    map[string]oauthState
+	oauthCodes     map[string]oauthCode
 }
 
 func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConfig, logger *slog.Logger, eventConfigs ...EventConfig) *API {
@@ -128,12 +130,18 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		openShift:          openshift.New(),
 		lifecycle:          lifecycle,
 		edge:               eventConfig.Edge,
-		sessions:           make(map[string]sessionState),
 		oauthStates:        make(map[string]oauthState),
 		oauthCodes:         make(map[string]oauthCode),
 		githubServices:     make(map[string]githubEventServices),
 		manifestStates:     make(map[string]githubAppManifestState),
 		authManifestStates: make(map[string]authProviderManifestState),
+	}
+	for _, entry := range strings.Split(auth.TrustedProxyCIDRs, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			if _, network, err := net.ParseCIDR(entry); err == nil {
+				a.trustedProxies = append(a.trustedProxies, network)
+			}
+		}
 	}
 	deployments.ConfigureServices(eventConfig.Vault, eventConfig.SecretResolver)
 	a.drift = drift.New(data, eventConfig.Vault)

@@ -1081,14 +1081,22 @@ ALTER TABLE workflow_preview_templates ADD COLUMN git_source TEXT NOT NULL DEFAU
 ALTER TABLE workflow_preview_triggers ADD COLUMN template_source TEXT NOT NULL DEFAULT 'null';
 ALTER TABLE workflow_preview_templates ADD COLUMN watch_repositories TEXT NOT NULL DEFAULT '[]';
 
--- dispatch:migration 057_preview_auto_deploy_policy
+-- dispatch:migration 057_auth_throttle
+CREATE TABLE auth_throttle (
+    key_hash TEXT PRIMARY KEY,
+    hits INTEGER NOT NULL,
+    window_started_at BIGINT NOT NULL
+);
+CREATE INDEX auth_throttle_window ON auth_throttle(window_started_at);
+
+-- dispatch:migration 058_preview_auto_deploy_policy
 ALTER TABLE workflow_preview_templates ADD COLUMN auto_deploy BOOLEAN NOT NULL DEFAULT 0;
 ALTER TABLE workflow_preview_templates ADD COLUMN max_auto_runs_per_hour INTEGER NOT NULL DEFAULT 2;
 ALTER TABLE workflow_preview_triggers ADD COLUMN auto_deploy BOOLEAN NOT NULL DEFAULT 0;
 ALTER TABLE workflow_preview_triggers ADD COLUMN max_auto_runs_per_hour INTEGER NOT NULL DEFAULT 2;
 
--- dispatch:migration 058_preview_test_comments
+-- dispatch:migration 059_preview_test_comments
 ALTER TABLE workflow_preview_comments ADD COLUMN status_comment_id TEXT NOT NULL DEFAULT '';
 
--- dispatch:migration 059_docker_builders
+-- dispatch:migration 060_docker_builders
 ALTER TABLE servers ADD COLUMN builder_config TEXT NOT NULL DEFAULT '{}';
