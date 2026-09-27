@@ -1,4 +1,5 @@
 import { FormEvent, useState } from "react";
+import { CaretDown } from "@phosphor-icons/react";
 import { api, Overview, ServiceConnection, ServiceInput } from "./api";
 import { PageHeader } from "./PageHeader";
 import { canManageAnyProject, canManageProject } from "./permissions";
@@ -15,14 +16,16 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
  const [rotation,setRotation] = useState(false);
  const [editing, setEditing] = useState<ServiceConnection | "new" | null>(null);
  const [removing, setRemoving] = useState<string | null>(null);
+ const [expanded, setExpanded] = useState<string[]>([]);
+ const [impacts, setImpacts] = useState<string[]>([]);
  const [application, setApplication] = useState<string | null>(null);
  const [busy, setBusy] = useState("");
- const [error, setError] = useState("");
+ const [error, setError] = useState<{ serviceId: string; message: string } | null>(null);
  const services = (overview.services ?? []).filter(s => !project || s.projectId === project);
  async function act(id: string, action: "check" | "remove") {
-  setBusy(id); setError("");
+  setBusy(id); setError(null);
   try { if (action === "check") await api.verifyService(id); else { await api.deleteService(id); setRemoving(null); } await onChanged(); }
-  catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(""); }
+  catch (e) { setError({ serviceId: id, message: e instanceof Error ? e.message : String(e) }); } finally { setBusy(""); }
  }
  const managed=catalog.find(a=>a.appId===application);
  const app = overview.apps.find(a => a.id === application) ?? (managed ? {id:managed.appId,name:managed.appName,projectId:managed.projectId,generated:true,template:false} : undefined);
@@ -30,20 +33,26 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
  if (editing) return <ServiceEditor rotation={rotation} key={editing === "new" ? "new" : editing.id} item={editing === "new" ? undefined : editing} overview={overview} initialProject={project} onBack={() => setEditing(null)} onSaved={async () => { await onChanged(); setEditing(null); }} />;
  return <div className="page-layout services-page">
   <PageHeader view="services" action={canManageAnyProject(overview, "project.configure") ? { label: "Register service", onClick: () => {setRotation(false);setEditing("new")} } : undefined} />
-  <p>Register connections to existing databases and other application dependencies.</p>
-  <label className="service-filter">Project<select value={project} onChange={e => setProject(e.target.value)}><option value="">All projects</option>{overview.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-  {error && <p role="alert" className="error">{error}</p>}
-  {!services.length && <p className="empty-state">No services registered in this project.</p>}
+  <p className="service-intro">Connect an existing database or dependency to applications in a project.</p>
+  {overview.projects.length > 1 && <label className="service-filter">Project<select value={project} onChange={e => setProject(e.target.value)}><option value="">All projects</option>{overview.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
+  {!services.length && <p className="empty-state">No services registered{project ? " in this project" : " yet"}.</p>}
   <div className="service-list">{services.map(service => {
    const manage = canManageProject(overview, service.projectId, "project.configure");
-   return <section className="service-card" key={service.id}>
-    <div className="service-card-header"><div><h2>{service.name}</h2><p>{service.type === "postgresql" ? "PostgreSQL" : "Generic"} · {overview.projects.find(p => p.id === service.projectId)?.name} · Revision {service.revision}</p></div>{manage && <div className="service-actions"><button className="quiet-button" onClick={() => {setRotation(false);setEditing(service)}}>Edit</button><button className="quiet-button" onClick={() => {setRotation(true);setEditing(service)}}>Rotate credentials</button></div>}</div>
-    {service.description && <p>{service.description}</p>}
-    <dl className="service-fields">{Object.entries(service.fields).map(([name, f]) => <div key={name}><dt>{name}</dt><dd>{f.sensitive ? f.configured ? "Configured · hidden" : "Not configured" : f.value || "Not configured"}</dd></div>)}</dl>
-    <div className="service-check"><strong>{service.check?.state === "succeeded" ? "Connection succeeded" : service.check?.state === "failed" ? "Connection failed" : "Not tested"}</strong>{service.check && <p>{service.check.message}<br />{service.check.location} · {new Date(service.check.checkedAt).toLocaleString()} · {service.check.durationMs} ms</p>}<p>A controller check does not verify access from your application.</p>{manage && <button className="quiet-button" disabled={!!busy} onClick={() => void act(service.id, "check")}>{busy === service.id ? "Working…" : "Test connection"}</button>}</div>
-    <ServiceOperations onBindings={setApplication} service={service} overview={overview} onChanged={onChanged} />
-    {manage && (removing === service.id ? <div className="service-actions"><p>Remove this connection registration? The external service remains unchanged.</p><button disabled={!!busy} className="danger-button" onClick={() => void act(service.id, "remove")}>Remove registration</button><button className="quiet-button" onClick={() => setRemoving(null)}>Cancel</button></div> : <button className="quiet-button" onClick={() => setRemoving(service.id)}>Remove registration</button>)}
-   </section>;
+   const isExpanded = expanded.includes(service.id);
+   const impactOpen = impacts.includes(service.id);
+   return <details className="service-card" key={service.id} open={isExpanded} onToggle={e => { const open = e.currentTarget.open; setExpanded(current => open ? [...new Set([...current, service.id])] : current.filter(id => id !== service.id)); }}>
+    <summary className="service-card-summary"><span><strong>{service.name}</strong><small>{service.type === "postgresql" ? "PostgreSQL" : "Generic"} · {overview.projects.find(p => p.id === service.projectId)?.name}</small></span><span className={`service-status service-status-${service.check?.state ?? "untested"}`}>{service.check?.state === "succeeded" ? "Check passed" : service.check?.state === "failed" ? "Check failed" : "Not tested"}</span><CaretDown size={18} aria-hidden="true" /></summary>
+    {isExpanded && <div className="service-card-body">
+     {service.description && <p>{service.description}</p>}
+     {manage && <div className="service-actions"><button className="quiet-button" onClick={() => {setRotation(false);setEditing(service)}}>Edit</button><button className="quiet-button" onClick={() => {setRotation(true);setEditing(service)}}>Rotate credentials</button><button className="quiet-button" disabled={!!busy} onClick={() => void act(service.id, "check")}>{busy === service.id ? "Working…" : "Test connection"}</button></div>}
+     {error?.serviceId === service.id && <p role="alert" className="error">{error.message}</p>}
+     {service.check && <p className="service-check-result">{service.check.message} · {service.check.location} · {new Date(service.check.checkedAt).toLocaleString()}</p>}
+     <p className="service-help">Connection checks run from the Dispatch controller. Application access can differ.</p>
+     <details className="service-card-section"><summary>Connection details</summary><dl className="service-fields">{Object.entries(service.fields).map(([name, f]) => <div key={name}><dt>{name}</dt><dd>{f.sensitive ? f.configured ? "Configured · hidden" : "Not configured" : f.value || "Not configured"}</dd></div>)}</dl></details>
+     <details className="service-card-section" open={impactOpen} onToggle={e => { const open = e.currentTarget.open; setImpacts(current => open ? [...new Set([...current, service.id])] : current.filter(id => id !== service.id)); }}><summary>Application impact{service.consumers.length ? ` · ${service.consumers.length}` : ""}</summary>{impactOpen && <ServiceOperations onBindings={setApplication} service={service} overview={overview} onChanged={onChanged} />}</details>
+     {manage && (removing === service.id ? <div className="service-actions"><p>Remove this registration? The external service remains unchanged.</p><button disabled={!!busy} className="danger-button" onClick={() => void act(service.id, "remove")}>Remove registration</button><button className="quiet-button" onClick={() => setRemoving(null)}>Cancel</button></div> : <button className="service-remove-trigger" onClick={() => setRemoving(service.id)}>Remove registration</button>)}
+    </div>}
+   </details>;
   })}</div>
  </div>;
 }
@@ -54,7 +63,7 @@ function ServiceEditor({ item, overview, initialProject, onBack, onSaved, rotati
  const [name, setName] = useState(item?.name ?? "");
  const [description, setDescription] = useState(item?.description ?? "");
  const [type, setType] = useState<ServiceConnection["type"]>(item?.type ?? "postgresql");
- const [urlMode, setUrlMode] = useState(false);
+ const [urlMode, setUrlMode] = useState(!item);
  const [url, setUrl] = useState("");
  const [probeHost, setProbeHost] = useState(item?.probeHost ?? "");
  const [probePort, setProbePort] = useState(item?.probePort?.toString() ?? "");
@@ -63,17 +72,37 @@ function ServiceEditor({ item, overview, initialProject, onBack, onSaved, rotati
  const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
  const owner = overview.identity?.systemRole === "owner";
  function change(index: number, patch: Partial<FieldRow>) { setRows(current => current.map((row, i) => i === index ? { ...row, ...patch, changed: true } : row)); }
+ function pgControl(name: string) {
+  const index = rows.findIndex(row => row.name === name);
+  const row = rows[index];
+  const label = ({ host: "Host", port: "Port", database: "Database", username: "Username", password: "Password", sslmode: "TLS mode", caCert: "CA certificate" } as Record<string, string>)[name];
+  return <label key={name}>{label}
+   {row.source === "secret" ? <select aria-label={`${label} secret`} disabled={!owner} required value={row.secretRef} onChange={e => change(index, { secretRef: e.target.value })}><option value="">Choose global secret</option>{overview.secrets.map(secret => <option key={secret.id} value={secret.id}>{secret.name}</option>)}</select>
+    : name === "sslmode" ? <select value={row.value} onChange={e => change(index, { value: e.target.value })}>{["verify-full", "verify-ca", "require", "disable"].map(mode => <option key={mode}>{mode}</option>)}</select>
+    : name === "caCert" ? <textarea aria-label={name} value={row.value} onChange={e => change(index, { value: e.target.value })} placeholder="Optional PEM certificate" />
+    : <input aria-label={name} required={["host", "database", "username"].includes(name)} type={row.sensitive ? "password" : "text"} autoComplete={row.sensitive ? "new-password" : "off"} value={row.value} onChange={e => change(index, { value: e.target.value })} placeholder={row.saved && row.sensitive ? "Configured. Leave blank to keep." : name === "host" ? "db.example.com" : ""} />}
+   {row.saved && row.sensitive && row.source === "value" && <small className="service-help">Leave blank to keep the saved value.</small>}
+  </label>;
+ }
+ function sourceChoice(name: string) {
+  const index = rows.findIndex(row => row.name === name);
+  return <label key={name}>{name} source<select value={rows[index].source} onChange={e => change(index, { source: e.target.value as FieldRow["source"] })}><option value="value">Entered value</option><option value="secret">Global secret</option></select></label>;
+ }
  async function save(e: FormEvent) {
   e.preventDefault(); setBusy(true); setError("");
   try {
    const fields: ServiceInput["fields"] = {};
    for (const key of removed) fields[key] = { remove: true };
    for (const row of rows) {
+    if (removed.includes(row.name)) continue;
     if (urlMode && pgFields.includes(row.name) && row.name !== "caCert") continue;
     if (!row.name) throw new Error("Give each field a name.");
     if (rows.filter(r => r.name === row.name).length > 1) throw new Error("Field names must be unique.");
     if (!row.changed && row.saved) continue;
+    if (row.source === "secret" && !row.secretRef) throw new Error(`Choose a global secret for ${row.name}.`);
+    if (row.saved && row.sensitive && row.source === "value" && !row.secretRef && !row.value) continue;
     if (!row.saved && row.value === "" && row.secretRef === "" && ["password", "caCert"].includes(row.name)) continue;
+    if (row.source === "value" && row.secretRef && !row.value) throw new Error(`Enter a replacement value for ${row.name}.`);
     fields[row.name] = row.source === "secret" ? { secretRef: row.secretRef } : { value: row.value, sensitive: row.sensitive };
    }
    await api.saveService(item?.id, { projectId, name, description, type, revision: item?.revision, fields, ...(urlMode ? { connectionUrl: url } : {}), probeHost: type === "generic" ? probeHost : "", probePort: type === "generic" && probePort ? Number(probePort) : 0 });
@@ -83,15 +112,26 @@ function ServiceEditor({ item, overview, initialProject, onBack, onSaved, rotati
  return <div className="page-layout services-page editor-page"><PageHeader view="services" title={item ? `${rotation ? "Rotate credentials for" : "Edit"} ${item.name}` : "Register service"} action={{ label: "Back", onClick: onBack, tone: "quiet" }} />
   <form className="service-form" onSubmit={e => void save(e)}>
    <div className="service-form-grid"><label>Project<select disabled={!!item} value={projectId} onChange={e => setProject(e.target.value)}>{allowed.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Name<input required pattern="[a-z0-9][a-z0-9.\-]{0,62}" disabled={!!item} value={name} onChange={e => setName(e.target.value)} placeholder="orders-db-production" /></label><label>Type<select disabled={!!item} value={type} onChange={e => { const t = e.target.value as ServiceConnection["type"]; setType(t); setRows(initialRows(t)); setRemoved([]); setUrlMode(false); }}><option value="postgresql">PostgreSQL</option><option value="generic">Generic</option></select></label><label>Description<input value={description} onChange={e => setDescription(e.target.value)} /></label></div>
-   {type === "postgresql" && <><label>Connection input<select value={urlMode ? "url" : "fields"} onChange={e => setUrlMode(e.target.value === "url")}><option value="fields">Individual fields</option><option value="url">Connection URL</option></select></label>{urlMode && <label>PostgreSQL connection URL<input type="password" autoComplete="new-password" required value={url} onChange={e => setUrl(e.target.value)} placeholder="postgresql://user:password@host:5432/database" /></label>}</>}
-   <fieldset><legend>Connection fields</legend>{rows.map((row, index) => urlMode && row.name !== "caCert" ? null : <div className="service-field-row" key={index}>
+   {type === "postgresql" ? <section className="service-pg-form">
+    <h2>PostgreSQL connection</h2>
+    <p>Paste a connection URL from your database provider, or enter the details yourself.</p>
+    <div className="service-mode" role="group" aria-label="Connection input"><button type="button" aria-pressed={urlMode} onClick={() => setUrlMode(true)}>Connection URL</button><button type="button" aria-pressed={!urlMode} onClick={() => setUrlMode(false)}>Enter details</button></div>
+    {urlMode ? <>
+     <label>PostgreSQL URL<input type="password" autoComplete="new-password" required value={url} onChange={e => setUrl(e.target.value)} placeholder="postgresql://user:password@host:5432/database" /></label>
+     {item && <p className="service-help">Saving a URL replaces the saved host, database, username, password, and TLS mode.</p>}
+     <details className="service-advanced"><summary>CA certificate and secret source</summary>{!removed.includes("caCert") && pgControl("caCert")}{item?.fields.caCert && <button type="button" className="quiet-button" onClick={() => setRemoved(current => current.includes("caCert") ? current.filter(name => name !== "caCert") : [...current, "caCert"])}>{removed.includes("caCert") ? "Keep CA certificate" : "Remove CA certificate"}</button>}{owner && sourceChoice("caCert")}</details>
+    </> : <>
+     <div className="service-form-grid">{["host", "database", "username", "password"].map(pgControl)}</div>
+     <details className="service-advanced"><summary>Port, TLS, and secret sources</summary><div className="service-form-grid">{["port", "sslmode", "caCert"].filter(name => !removed.includes(name)).map(pgControl)}</div>{item?.fields.caCert && <button type="button" className="quiet-button" onClick={() => setRemoved(current => current.includes("caCert") ? current.filter(name => name !== "caCert") : [...current, "caCert"])}>{removed.includes("caCert") ? "Keep CA certificate" : "Remove CA certificate"}</button>}{owner && <div className="service-source-grid"><h3>Global secret sources</h3><p>Use a global secret instead of an entered value.</p>{["database", "username", "password", "caCert"].map(sourceChoice)}</div>}</details>
+    </>}
+   </section> : <fieldset><legend>Connection fields</legend>{rows.map((row, index) => <div className="service-field-row" key={index}>
     <label>Field{type === "generic" && !row.saved ? <input aria-label={`Field ${index + 1} name`} required value={row.name} onChange={e => change(index, { name: e.target.value })} /> : <strong>{row.name}</strong>}</label>
     {owner && <label>Source<select value={row.source} onChange={e => change(index, { source: e.target.value as FieldRow["source"] })}><option value="value">Value</option><option value="secret">Global secret</option></select></label>}
     {row.source === "secret" ? <label>Secret<select disabled={!owner} required value={row.secretRef} onChange={e => change(index, { secretRef: e.target.value })}><option value="">Choose secret</option>{overview.secrets.filter(s => s.type !== "environment_variable" && s.type !== "environment_json").map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label> : <label>{row.sensitive ? "Credential" : "Value"}{row.name === "sslmode" ? <select value={row.value} onChange={e => change(index, { value: e.target.value })}>{["verify-full", "verify-ca", "require", "disable"].map(mode => <option key={mode}>{mode}</option>)}</select> : row.name === "caCert" ? <textarea value={row.value} onChange={e => change(index, { value: e.target.value })} placeholder="Optional PEM CA certificate" /> : <input aria-label={row.name || `Field ${index + 1} value`} type={row.sensitive ? "password" : "text"} autoComplete={row.sensitive ? "new-password" : "off"} value={row.value} onChange={e => change(index, { value: e.target.value })} placeholder={row.saved && row.sensitive ? "Configured. Leave blank to keep." : ""} />}</label>}
     {type === "generic" && <label className="service-checkbox"><input type="checkbox" checked={row.sensitive} disabled={row.saved && row.sensitive} onChange={e => change(index, { sensitive: e.target.checked })} />Sensitive</label>}
     <button type="button" className="quiet-button" onClick={() => { if (row.saved) setRemoved(old => [...old, row.name]); setRows(old => old.filter((_, i) => i !== index)); }}>Remove field</button>
-   </div>)}</fieldset>
-   {type === "generic" && <><button type="button" className="quiet-button" onClick={() => setRows(old => [...old, { name: "", value: "", sensitive: false, secretRef: "", source: "value", changed: true, saved: false }])}>Add field</button><div className="service-form-grid"><label>Optional TCP check host<input value={probeHost} onChange={e => setProbeHost(e.target.value)} /></label><label>TCP check port<input type="number" min="1" max="65535" value={probePort} onChange={e => setProbePort(e.target.value)} /></label></div></>}
+   </div>)}</fieldset>}
+   {type === "generic" && <><button type="button" className="quiet-button" onClick={() => setRows(old => [...old, { name: "", value: "", sensitive: false, secretRef: "", source: "value", changed: true, saved: false }])}>Add field</button><details className="service-advanced"><summary>Connection check</summary><div className="service-form-grid"><label>TCP host<input value={probeHost} onChange={e => setProbeHost(e.target.value)} /></label><label>TCP port<input type="number" min="1" max="65535" value={probePort} onChange={e => setProbePort(e.target.value)} /></label></div></details></>}
    {rotation && <p>Replace the credential fields that changed. After saving, select affected applications in the impact table to redeploy them.</p>}
    <p>Credentials stay hidden after saving. Changes require redeploying dependent applications.</p>
    {error && <p role="alert" className="error">{error}</p>}<button className="primary-button" disabled={busy || !projectId}>{busy ? "Saving…" : "Save service"}</button>

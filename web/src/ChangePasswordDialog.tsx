@@ -3,7 +3,7 @@ import { Key, X } from "@phosphor-icons/react";
 import { api } from "./api";
 import { useDialogFocus } from "./useDialogFocus";
 
-export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
+export function ChangePasswordDialog({ onClose, onChanged }: { onClose: () => void; onChanged?: () => void }) {
   const dialogRef = useDialogFocus(onClose);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -22,6 +22,7 @@ export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
     try {
       await api.changePassword(currentPassword, newPassword);
       onClose();
+      onChanged?.();
     } catch (cause) {
       setError((cause as Error).message);
       setBusy(false);

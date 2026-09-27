@@ -888,7 +888,7 @@ export default function DispatchApp() {
         />
       )}
       {changingPassword && (
-        <ChangePasswordDialog onClose={() => setChangingPassword(false)} />
+        <ChangePasswordDialog onClose={() => setChangingPassword(false)} onChanged={() => void logout()} />
       )}
       {viewingAccountProfile && (
         <AccountProfileDialog
@@ -943,9 +943,11 @@ export function Nav({
       previous?.focus();
     };
   }, [open]);
+  type NavEntry = { id: View; label: string; icon: ReactNode; count: number };
   const groups: Array<{
     label: string;
-    entries: Array<{ id: View; label: string; icon: ReactNode; count: number }>;
+    entries?: NavEntry[];
+    sections?: Array<{ label: string; entries: NavEntry[] }>;
   }> = [
     {
       label: "Operate",
@@ -976,58 +978,61 @@ export function Nav({
     },
     {
       label: "Configure",
-      entries: [
+      sections: [
         {
-          id: "projects",
-          label: "Projects",
-          icon: <FolderSimple size={18} />,
-          count: overview?.projects.length ?? 0,
-        },
-        {
-          id: "services",
-          label: "Services",
-          icon: <PlugsConnected size={18} />,
-          count: overview?.services?.length ?? 0,
-        },
-        {
-          id: "servers",
-          label: "Servers",
-          icon: <HardDrives size={18} />,
-          count: overview?.servers.length ?? 0,
+          label: "Resources",
+          entries: [
+            {
+              id: "projects", label: "Projects", icon: <FolderSimple size={18} />,
+              count: overview?.projects.length ?? 0,
+            },
+            {
+              id: "services", label: "Services", icon: <PlugsConnected size={18} />,
+              count: overview?.services?.length ?? 0,
+            },
+            {
+              id: "servers", label: "Servers", icon: <HardDrives size={18} />,
+              count: overview?.servers.length ?? 0,
+            },
+          ],
         },
         ...(overview?.identity?.systemRole === "owner"
-          ? [
-              {
-                id: "secrets" as View,
-                label: "Variables",
-                icon: <Key size={18} />,
-                count: overview?.secrets.length ?? 0,
-              },
-              {
-                id: "connections" as View,
-                label: "Connections",
-                icon: <PlugsConnected size={18} />,
-                count:
-                  (overview?.githubApps.length ?? 0) +
-                  (overview?.secretStores?.length ?? 0),
-              },
-              {
-                id: "access" as View,
-                label: "Access",
-                icon: <UsersThree size={18} />,
-                count: 0,
-              },
-              {
-                id: "settings" as View,
-                label: "Settings",
-                icon: <GearSix size={18} />,
-                count: 0,
-              },
-            ]
+          ? [{
+              label: "Controller",
+              entries: [
+                {
+                  id: "secrets" as View, label: "Variables", icon: <Key size={18} />,
+                  count: overview?.secrets.length ?? 0,
+                },
+                {
+                  id: "connections" as View, label: "Connections", icon: <PlugsConnected size={18} />,
+                  count: (overview?.githubApps.length ?? 0) + (overview?.secretStores?.length ?? 0),
+                },
+                { id: "access" as View, label: "Access", icon: <UsersThree size={18} />, count: 0 },
+                { id: "settings" as View, label: "Settings", icon: <GearSix size={18} />, count: 0 },
+              ],
+            }]
           : []),
       ],
     },
   ];
+  const renderEntry = (entry: NavEntry) => (
+    <a
+      key={entry.id}
+      href={routePath({ view: entry.id })}
+      className="nav-link"
+      aria-current={view === entry.id ? "page" : undefined}
+      onClick={(event) => {
+        if (!shouldHandleNavigation(event)) return;
+        event.preventDefault();
+        onNavigate(entry.id);
+      }}
+    >
+      {entry.icon}
+      <span>{entry.label}</span>
+      {entry.count > 0 && <small aria-hidden="true">{entry.count}</small>}
+    </a>
+  );
 
   return (
     <>
@@ -1051,24 +1056,21 @@ export function Nav({
           {groups.map((group) => (
             <div className="nav-group" key={group.label}>
               <span className="nav-eyebrow">{group.label}</span>
-              {group.entries.map((entry) => (
-                <a
-                  key={entry.id}
-                  href={routePath({ view: entry.id })}
-                  className={view === entry.id ? "active" : ""}
-                  aria-current={view === entry.id ? "page" : undefined}
-                  onClick={(event) => {
-                    if (!shouldHandleNavigation(event)) return;
-                    event.preventDefault();
-                    onNavigate(entry.id);
-                  }}
+              {group.entries?.map(renderEntry)}
+              {group.sections?.map((section) => (
+                <details
+                  className="nav-subgroup"
+                  key={`${section.label}-${view}`}
+                  open={section.entries.some((entry) => entry.id === view)}
                 >
-                  {entry.icon}
-                  <span>{entry.label}</span>
-                  {entry.count > 0 && (
-                    <small aria-hidden="true">{entry.count}</small>
-                  )}
-                </a>
+                  <summary>
+                    {section.label}
+                    <CaretDown size={14} />
+                  </summary>
+                  <div className="nav-subgroup-links">
+                    {section.entries.map(renderEntry)}
+                  </div>
+                </details>
               ))}
             </div>
           ))}
@@ -4005,6 +4007,8 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
       if (failure.status === 409) {
         setSetupRequired(false);
         setError("Administrator already exists. Sign in instead.");
+      } else if (failure.status === 429) {
+        setError("Too many sign-in attempts. Try again later.");
       } else
         setError(
           setupRequired ? failure.message : "Incorrect username or password.",
