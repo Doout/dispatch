@@ -149,20 +149,42 @@ describe("account menu", () => {
   });
 });
 
-
 describe("optional Operations navigation", () => {
-  it("hides Operations until enabled and limits Settings to controller owners", () => {
-    const owner = overview({id:"owner",username:"owner",displayName:"Owner",systemRole:"owner",permissions:[]});
-    const props = {open:false,view:"deployments" as const,onClose:vi.fn(),onNavigate:vi.fn()};
-    const view=render(<Nav {...props} overview={owner}/>);
-    expect(screen.queryByRole("link",{name:"Operations"})).toBeNull();
-    expect(screen.getByRole("link",{name:"Settings"}).getAttribute("href")).toBe("/settings");
-    view.rerender(<Nav {...props} overview={{...owner,controllerSettings:{operationsEnabled:true}}}/>);
-    expect(screen.getByRole("link",{name:"Operations"}).getAttribute("href")).toBe("/operations");
-    view.rerender(<Nav {...props} overview={{...owner,identity:{...owner.identity!,systemRole:"member"},controllerSettings:{operationsEnabled:true}}}/>);
-    expect(screen.queryByRole("link",{name:"Settings"})).toBeNull();
-    expect(screen.getByRole("link",{name:"Operations"})).toBeTruthy();
-    view.rerender(<Nav {...props} overview={{...owner,controllerSettings:{operationsEnabled:false}}}/>);
-    expect(screen.queryByRole("link",{name:"Operations"})).toBeNull();
+  it("hides Operations until enabled and limits Settings to controller owners", async () => {
+    const user = userEvent.setup();
+    const owner = overview({ id: "owner", username: "owner", displayName: "Owner", systemRole: "owner", permissions: [] });
+    const props = { open: false, view: "deployments" as const, onClose: vi.fn(), onNavigate: vi.fn() };
+    const view = render(<Nav {...props} overview={owner} />);
+    expect(screen.queryByRole("link", { name: "Operations" })).toBeNull();
+    await user.click(screen.getByText("Controller"));
+    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings");
+    view.rerender(<Nav {...props} overview={{ ...owner, controllerSettings: { operationsEnabled: true } }} />);
+    expect(screen.getByRole("link", { name: "Operations" }).getAttribute("href")).toBe("/operations");
+    view.rerender(<Nav {...props} overview={{ ...owner, identity: { ...owner.identity!, systemRole: "member" }, controllerSettings: { operationsEnabled: true } }} />);
+    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Operations" })).toBeTruthy();
+    view.rerender(<Nav {...props} overview={{ ...owner, controllerSettings: { operationsEnabled: false } }} />);
+    expect(screen.queryByRole("link", { name: "Operations" })).toBeNull();
+  });
+});
+
+describe("configuration navigation", () => {
+  it("opens the current section and lets users expand another section", async () => {
+    const user = userEvent.setup();
+    const owner = overview({ id: "owner", username: "owner", displayName: "Owner", systemRole: "owner", permissions: [] });
+    const props = { open: false, onClose: vi.fn(), onNavigate: vi.fn() };
+    const view = render(<Nav {...props} view="projects" overview={owner} />);
+
+    expect(screen.getByRole("link", { name: "Projects" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByText("Resources").closest("details")?.open).toBe(true);
+    expect(screen.getByText("Controller").closest("details")?.open).toBe(false);
+    await user.click(screen.getByText("Controller"));
+    expect(screen.getByText("Controller").closest("details")?.open).toBe(true);
+    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings");
+
+    view.rerender(<Nav {...props} view="settings" overview={owner} />);
+    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByText("Resources").closest("details")?.open).toBe(false);
+    expect(screen.getByText("Controller").closest("details")?.open).toBe(true);
   });
 });
