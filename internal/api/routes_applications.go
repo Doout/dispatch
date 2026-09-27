@@ -54,4 +54,8 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.With(a.directUserOnly).Put("/", a.updateService)
 		})
 	})
+	r.Get("/service-templates", a.listServiceTemplates)
+	r.With(a.directUserOnly).Post("/service-templates/{id}/runs", a.startServiceProvision)
+	r.Get("/service-provision-runs", a.listServiceProvisionRuns)
+	r.Get("/service-provision-runs/{id}", a.getServiceProvisionRun)
 }

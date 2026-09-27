@@ -1100,3 +1100,15 @@ ALTER TABLE workflow_preview_comments ADD COLUMN status_comment_id TEXT NOT NULL
 
 -- dispatch:migration 060_docker_builders
 ALTER TABLE servers ADD COLUMN builder_config TEXT NOT NULL DEFAULT '{}';
+
+-- dispatch:migration 061_service_provision_runs
+CREATE TABLE service_provision_runs (
+    id TEXT PRIMARY KEY,
+    template_id TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    service_name TEXT NOT NULL,
+    state TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+CREATE INDEX service_provision_runs_project ON service_provision_runs(project_id);
+CREATE UNIQUE INDEX service_provision_runs_active_name ON service_provision_runs(project_id,service_name) WHERE state IN ('queued','running');

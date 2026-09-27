@@ -113,6 +113,8 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 			sources = value.document.Spec.Sources
 		} else if value.document.Pipeline != nil {
 			sources = value.document.Pipeline.Sources
+		} else if value.document.ServiceTemplate != nil {
+			sources = value.document.ServiceTemplate.Sources
 		}
 		for alias, spec := range sources {
 			key := spec.Repository + "@" + sourceRevisionRef(spec)

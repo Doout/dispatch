@@ -166,12 +166,14 @@ function configSourceMethod(source: ConfigSource) {
 }
 
 function workflowResourceCountLabel(resources: WorkflowResource[]) {
-  if (!resources.length) return "No applications found";
+  if (!resources.length) return "No resources found";
   const applications = resources.filter((resource) => resource.kind === "Application").length;
-  const pipelines = resources.length - applications;
+  const pipelines = resources.filter((resource) => resource.kind === "Pipeline").length;
+  const serviceTemplates = resources.filter((resource) => resource.kind === "ServiceTemplate").length;
   return [
     applications ? `${applications} application${applications === 1 ? "" : "s"}` : "",
     pipelines ? `${pipelines} pipeline${pipelines === 1 ? "" : "s"}` : "",
+    serviceTemplates ? `${serviceTemplates} service template${serviceTemplates === 1 ? "" : "s"}` : "",
   ].filter(Boolean).join(", ");
 }
 
@@ -335,7 +337,7 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
     const latest = (overview.workflowRevisions ?? []).filter((item) => item.resourceId === resource.id && !isPreviewCheckRun(item)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
     const stages = workflowStages(resource, overview);
     const expanded = expandedResourceIDs.has(resource.id);
-    const target = resource.targetRefs?.join(", ") || (resource.kind === "Pipeline" ? "Stage check" : "No stage");
+    const target = resource.targetRefs?.join(", ") || (resource.kind === "Pipeline" ? "Stage check" : resource.kind === "ServiceTemplate" ? "Services" : "No stage");
     const status = workflowResourceStatus(resource, latest?.state);
     const latestDeploymentID = latestWorkflowDeploymentID(overview, resource.id);
     const canConfigureResource = Boolean(source && canManageProject(overview, source.projectId, "project.configure"));
@@ -351,7 +353,7 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
           <button type="button" className="resource-name-button" aria-label={`Open ${resource.name}`} onClick={() => onOpenWorkflow(resource)}><strong>{resource.name}</strong><small>{resource.sourceCount} source{resource.sourceCount === 1 ? "" : "s"}, {resource.jobCount} job{resource.jobCount === 1 ? "" : "s"}</small></button>
           {stages.length ? <button type="button" className="hierarchy-toggle" aria-label={`${expanded ? "Hide stages" : `Show ${stages.length} stage${stages.length === 1 ? "" : "s"}`} for ${resource.name}`} aria-expanded={expanded} onClick={() => toggleResource(resource.id)}>{expanded ? <CaretDown size={13} /> : <CaretRight size={13} />}<span>{expanded ? "Hide stages" : `Show ${stages.length} stage${stages.length === 1 ? "" : "s"}`}</span></button> : null}
         </div>{resource.temporary && <div className="temporary-preview-pr-links">{resource.previewPullRequests?.map((pr, index) => <a key={`${pr.repository}#${pr.number}`} href={pr.url} target="_blank" rel="noreferrer" aria-label={`${pr.repository} pull request #${pr.number}`}>{index === 0 ? `PR #${pr.number}` : `${pr.repository.split("/").at(-1)} #${pr.number}`}<ArrowSquareOut size={12} /></a>)}{overview.identity?.systemRole === "owner" && <button type="button" onClick={() => onEditTemporaryPreview(resource)} aria-label={`Edit ${resource.name} preview`}><PencilSimple size={12} />Edit YAML &amp; PR</button>}</div>}</td>
-        <td data-label="Type"><strong className="cell-secondary-heading">{resource.temporary ? "PR preview" : resource.kind}</strong><small>{resource.temporary ? "Inline Application" : source ? "Managed application" : "Imported"}</small></td>
+        <td data-label="Type"><strong className="cell-secondary-heading">{resource.temporary ? "PR preview" : resource.kind}</strong><small>{resource.temporary ? "Inline Application" : resource.kind === "ServiceTemplate" ? "Managed service template" : source ? "Managed application" : "Imported"}</small></td>
         <td data-label="Source"><span className="truncate-cell" title={resource.path}>{resource.temporary ? "Saved YAML" : resource.path}</span><small className="truncate-cell" title={resource.configSha}>Config {resource.configSha.slice(0, 8)}</small></td>
         <td data-label="Target"><span className="truncate-cell" title={target}>{target}</span></td>
         <td data-label="Status"><span className={`status-label ${status}`}><i />{workflowResourceStatusLabel(status)}</span><small>{stages.length} stage{stages.length === 1 ? "" : "s"}</small></td>
@@ -360,7 +362,7 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
           <MenuAction icon={<Graph size={16} />} label="Topology" onClick={() => onOpenTopology(resource)} />
           {latestDeploymentID && <MenuAction icon={<FileCode size={16} />} label="Manifests" onClick={() => onOpenDeploymentManifests(latestDeploymentID)} />}
           {(canConfigureResource || canRunResource) && <DropdownMenu.Separator className="action-menu-separator" />}
-          {(canConfigureResource || canRunResource) && <DropdownMenu.Label className="row-action-group-label">Application</DropdownMenu.Label>}
+          {(canConfigureResource || canRunResource) && <DropdownMenu.Label className="row-action-group-label">Resource</DropdownMenu.Label>}
           {resource.temporary && overview.identity?.systemRole === "owner" && <MenuAction icon={<PencilSimple size={16} />} label="Edit preview" onClick={() => onEditTemporaryPreview(resource)} />}
           {resource.temporary && overview.identity?.systemRole === "owner" && <MenuAction icon={<Trash size={16} />} label="Delete preview" danger onClick={() => { setError(""); setDeletePreview(resource); }} />}
           {canConfigureResource && !resource.active && <MenuAction icon={<Check size={16} />} label="Activate" disabled={busyID === resource.id} onClick={() => void workflowAction(resource, "activate")} />}

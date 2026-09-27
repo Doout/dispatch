@@ -367,7 +367,7 @@ export type WorkflowResource = {
   id: string;
   configSourceId: string;
   apiVersion: string;
-  kind: "Application" | "Pipeline";
+  kind: "Application" | "Pipeline" | "ServiceTemplate";
   name: string;
   path: string;
   document: string;
@@ -863,6 +863,10 @@ export const api = {
  checkApplicationDrift: (id: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/drift/check`,{method:"POST"}),
  reapplyApplication: (id: string,deploymentId: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/reapply`,{method:"POST",body:JSON.stringify({deploymentId})}),
  services: () => request<ServiceConnection[]>("/api/v1/services"),
+ serviceTemplates: () => request<ServiceTemplate[]>("/api/v1/service-templates"),
+ startServiceProvision: (id: string, data: { name: string; description: string; inputs: Record<string,string> }) => request<ServiceProvisionRun>(`/api/v1/service-templates/${id}/runs`, { method: "POST", body: JSON.stringify(data) }),
+ serviceProvisionRun: (id: string) => request<ServiceProvisionRun>(`/api/v1/service-provision-runs/${id}`),
+ serviceProvisionRuns: () => request<ServiceProvisionRun[]>("/api/v1/service-provision-runs"),
  saveService: (id: string | undefined, data: ServiceInput) => request<ServiceConnection>(`/api/v1/services${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(data) }),
  deleteService: (id: string) => request<void>(`/api/v1/services/${id}`, { method: "DELETE" }),
  verifyService: (id: string) => request<ServiceCheck>(`/api/v1/services/${id}/verify`, { method: "POST" }),
@@ -1499,9 +1503,12 @@ export type AnalyticsCounts = { runs: number; succeeded: number; failed: number;
 export type AnalyticsDay = { date: string; deployments: AnalyticsCounts; workflows: AnalyticsCounts; jobs: AnalyticsCounts };
 export type AnalyticsSummary = { state: string; updatedAt?: string; days: number; daily: AnalyticsDay[]; totals: AnalyticsDay };
 export type ServiceField = { value?: string; sensitive: boolean; configured: boolean; secretRef?: string };
+export type ServiceTemplate = { id: string; name: string; projectId: string; description: string; serviceType: "postgresql" | "generic"; inputs: Record<string, { label?: string; description?: string; type?: "string" | "secret" | "service"; required?: boolean; serviceType?: "postgresql" }>; outputs: Record<string, { sensitive?: boolean }>; configSha: string };
+export type ServiceProvisionRun = { id: string; templateId: string; projectId: string; serviceName: string; serviceId?: string; state: "queued" | "running" | "succeeded" | "failed"; phase?: string; error?: string; createdAt: string; startedAt?: string; finishedAt?: string };
 export type ServiceCheck = { state: "succeeded" | "failed" | "untested"; message: string; location: string; checkedAt: string; durationMs: number };
 export type ServiceConnection = {
  id: string; projectId: string; name: string; description: string; type: "postgresql" | "generic";
+ templateId?: string; templateName?: string; templateConfigSha?: string; provisionRunId?: string;
  fields: Record<string, ServiceField>; availableFields: string[]; revision: number;
  probeHost?: string; probePort?: number; check?: ServiceCheck;
  consumers: { appId: string; appName: string; alias: string; appliedRevision: number; redeploymentRequired: boolean }[];

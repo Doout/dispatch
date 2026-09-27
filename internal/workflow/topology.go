@@ -47,6 +47,9 @@ func BuildTopology(path string, contents []byte) (Topology, error) {
 	if document.Pipeline != nil {
 		return pipelineTopology(*document.Pipeline), nil
 	}
+	if document.ServiceTemplate != nil {
+		return pipelineTopology(PipelineSpec{Sources: document.ServiceTemplate.Sources, Jobs: map[string]JobSpec{"provision": document.ServiceTemplate.Provision}}), nil
+	}
 	return Topology{}, fmt.Errorf("%s has no workflow specification", path)
 }
 

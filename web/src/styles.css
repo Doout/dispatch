@@ -2173,6 +2173,13 @@ code { font-family: var(--mono); }
 .services-page { max-width: 1160px; }
 .service-intro { margin: -16px 0 24px; color: var(--muted); font-size: 14px; }
 .service-list { display: grid; gap: 10px; }
+.service-add-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.service-add-option { display: grid; gap: 8px; padding: 20px; text-align: left; color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 12px; cursor: pointer; }
+.service-add-option:hover, .service-add-option:focus-visible { border-color: var(--blue); }
+.service-add-option strong { font-size: 16px; }
+.service-add-option span, .service-add-option small { color: var(--muted); }
+.service-provision-status { padding: 14px 16px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface-subtle); }
+.service-provision-status p { margin: 6px 0 0; }
 .service-card, .service-form { border: 1px solid var(--rule); border-radius: 12px; background: var(--paper); }
 .service-card { overflow: hidden; }
 .service-card-summary { display: flex; align-items: center; gap: 16px; min-height: 76px; padding: 16px 22px; cursor: pointer; list-style: none; }

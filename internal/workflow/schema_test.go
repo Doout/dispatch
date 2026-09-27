@@ -99,6 +99,47 @@ spec:
 	}
 }
 
+func TestServiceTemplateContract(t *testing.T) {
+	yaml := `apiVersion: dispatch/v1alpha1
+kind: ServiceTemplate
+metadata: {name: shared-postgres}
+spec:
+  serviceType: postgresql
+  inputs:
+    cluster: {type: service, serviceType: postgresql, required: true}
+    database: {type: string, required: true}
+  provision:
+    run: ./create-db.sh
+  outputs:
+    host: {}
+    database: {}
+    username: {}
+    password: {sensitive: true}
+`
+	documents, err := Parse("service.yaml", []byte(yaml))
+	if err != nil || len(documents) != 1 || documents[0].ServiceTemplate == nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if documents[0].ServiceTemplate.Provision.Reuse != "never" {
+		t.Fatal("provisioning must not reuse a previous run")
+	}
+	encoded, err := documents[0].MarshalYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse("service.yaml", encoded); err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	bad := strings.Replace(yaml, "./create-db.sh", `echo "{{ inputs.database }}"`, 1)
+	if _, err := Parse("service.yaml", []byte(bad)); err == nil {
+		t.Fatal("input interpolation into shell should be rejected")
+	}
+	bad = strings.Replace(yaml, "    host: {}", "    connectionUrl: {}\n    host: {}", 1)
+	if _, err := Parse("service.yaml", []byte(bad)); err == nil {
+		t.Fatal("conflicting connection outputs should be rejected")
+	}
+}
+
 func TestParseRejectsUnknownFieldsAndReferences(t *testing.T) {
 	for name, source := range map[string]string{
 		"unknown field": `apiVersion: dispatch/v1alpha1

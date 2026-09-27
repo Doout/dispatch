@@ -23,6 +23,7 @@ const (
 	KindWorkflowTemplate    = "WorkflowTemplate"
 	KindApplicationTemplate = "ApplicationTemplate"
 	KindPipeline            = "Pipeline"
+	KindServiceTemplate     = "ServiceTemplate"
 )
 
 type TypeMeta struct {
@@ -35,12 +36,13 @@ type Metadata struct {
 }
 
 type Document struct {
-	TypeMeta   `json:",inline" yaml:",inline"`
-	Metadata   Metadata                 `json:"metadata" yaml:"metadata"`
-	Spec       *ApplicationSpec         `json:"spec,omitempty" yaml:"spec,omitempty"`
-	Pipeline   *PipelineSpec            `json:"-" yaml:"-"`
-	SourcePath string                   `json:"-" yaml:"-"`
-	Template   *ApplicationTemplateSpec `json:"-" yaml:"-"`
+	TypeMeta        `json:",inline" yaml:",inline"`
+	Metadata        Metadata                 `json:"metadata" yaml:"metadata"`
+	Spec            *ApplicationSpec         `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Pipeline        *PipelineSpec            `json:"-" yaml:"-"`
+	ServiceTemplate *ServiceTemplateSpec     `json:"-" yaml:"-"`
+	SourcePath      string                   `json:"-" yaml:"-"`
+	Template        *ApplicationTemplateSpec `json:"-" yaml:"-"`
 }
 
 type ApplicationDocument struct {
@@ -53,6 +55,36 @@ type PipelineDocument struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Metadata Metadata     `json:"metadata" yaml:"metadata"`
 	Spec     PipelineSpec `json:"spec" yaml:"spec"`
+}
+
+type ServiceTemplateDocument struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata Metadata            `json:"metadata" yaml:"metadata"`
+	Spec     ServiceTemplateSpec `json:"spec" yaml:"spec"`
+}
+
+// A ServiceTemplate describes a connection contract, not a provider. Its
+// provision job can call Docker, SQL, or a cloud API and returns the same
+// service fields to application bindings.
+type ServiceTemplateSpec struct {
+	Description string                               `json:"description,omitempty" yaml:"description,omitempty"`
+	ServiceType string                               `json:"serviceType" yaml:"serviceType"`
+	Inputs      map[string]ServiceTemplateInputSpec  `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	Sources     map[string]SourceSpec                `json:"sources,omitempty" yaml:"sources,omitempty"`
+	Provision   JobSpec                              `json:"provision" yaml:"provision"`
+	Outputs     map[string]ServiceTemplateOutputSpec `json:"outputs" yaml:"outputs"`
+}
+
+type ServiceTemplateInputSpec struct {
+	Label       string `json:"label,omitempty" yaml:"label,omitempty"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	Type        string `json:"type,omitempty" yaml:"type,omitempty"`
+	Required    bool   `json:"required,omitempty" yaml:"required,omitempty"`
+	ServiceType string `json:"serviceType,omitempty" yaml:"serviceType,omitempty"`
+}
+
+type ServiceTemplateOutputSpec struct {
+	Sensitive bool `json:"sensitive,omitempty" yaml:"sensitive,omitempty"`
 }
 
 type ApplicationSpec struct {
@@ -217,8 +249,18 @@ func parseDocuments(path string, contents []byte, importing bool) ([]Document, e
 				return nil, fmt.Errorf("%s document %d: %w", path, index, err)
 			}
 			item = Document{TypeMeta: value.TypeMeta, Metadata: value.Metadata, Pipeline: &value.Spec, SourcePath: path}
+		case KindServiceTemplate:
+			var value ServiceTemplateDocument
+			if err := strictDecode(raw, &value); err != nil {
+				return nil, fmt.Errorf("%s document %d: %w", path, index, err)
+			}
+			applyServiceTemplateDefaults(&value.Spec)
+			if err := validateServiceTemplate(value); err != nil {
+				return nil, fmt.Errorf("%s document %d: %w", path, index, err)
+			}
+			item = Document{TypeMeta: value.TypeMeta, Metadata: value.Metadata, ServiceTemplate: &value.Spec, SourcePath: path}
 		default:
-			return nil, fmt.Errorf("%s document %d: kind must be Application, ApplicationTemplate or Pipeline", path, index)
+			return nil, fmt.Errorf("%s document %d: unsupported kind %q", path, index, meta.Kind)
 		}
 		items = append(items, item)
 	}
@@ -255,6 +297,92 @@ func applyPipelineDefaults(spec *PipelineSpec) {
 		}
 		spec.Inputs[name] = input
 	}
+}
+
+func applyServiceTemplateDefaults(spec *ServiceTemplateSpec) {
+	applySourceDefaults(spec.Sources)
+	if spec.Provision.Outputs == nil {
+		for name := range spec.Outputs {
+			spec.Provision.Outputs = append(spec.Provision.Outputs, name)
+		}
+		slices.Sort(spec.Provision.Outputs)
+	}
+	spec.Provision.Reuse = "never"
+	for name, input := range spec.Inputs {
+		if input.Type == "" {
+			input.Type = "string"
+		}
+		spec.Inputs[name] = input
+	}
+}
+
+func validateServiceTemplate(document ServiceTemplateDocument) error {
+	if err := validateHeader(document.TypeMeta, document.Metadata); err != nil {
+		return err
+	}
+	spec := document.Spec
+	if spec.ServiceType != "postgresql" && spec.ServiceType != "generic" {
+		return errors.New("spec.serviceType must be postgresql or generic")
+	}
+	if len(spec.Outputs) == 0 {
+		return errors.New("spec.outputs must declare at least one service field")
+	}
+	if spec.ServiceType == "postgresql" {
+		_, connectionURL := spec.Outputs["connectionUrl"]
+		if connectionURL {
+			for name := range spec.Outputs {
+				if name != "connectionUrl" && name != "caCert" {
+					return errors.New("spec.outputs.connectionUrl cannot be combined with individual PostgreSQL fields")
+				}
+			}
+		} else {
+			for _, name := range []string{"host", "database", "username"} {
+				if _, ok := spec.Outputs[name]; !ok {
+					return fmt.Errorf("spec.outputs.%s is required for PostgreSQL", name)
+				}
+			}
+		}
+	}
+	inputs := map[string]InputSpec{}
+	for name, input := range spec.Inputs {
+		if !aliasPattern.MatchString(name) {
+			return fmt.Errorf("spec.inputs.%s has an invalid name", name)
+		}
+		if input.Type != "string" && input.Type != "secret" && input.Type != "service" {
+			return fmt.Errorf("spec.inputs.%s.type must be string, secret, or service", name)
+		}
+		if input.Type == "service" {
+			if input.ServiceType != "postgresql" {
+				return fmt.Errorf("spec.inputs.%s.serviceType must be postgresql", name)
+			}
+		} else if input.ServiceType != "" {
+			return fmt.Errorf("spec.inputs.%s.serviceType requires a service input", name)
+		}
+		inputs[name] = InputSpec{Type: "string", Required: input.Required}
+	}
+	if err := validateSources(spec.Sources); err != nil {
+		return err
+	}
+	if err := validateJobs("spec.provision", map[string]JobSpec{"job": spec.Provision}, spec.Sources, inputs, true); err != nil {
+		return err
+	}
+	for _, match := range templatePattern.FindAllStringSubmatch(spec.Provision.Run, -1) {
+		if strings.HasPrefix(strings.TrimSpace(match[1]), "inputs.") {
+			return errors.New("spec.provision.run must read DISPATCH_INPUT_* environment variables instead of interpolating inputs")
+		}
+	}
+	if len(spec.Provision.Outputs) != len(spec.Outputs) {
+		return errors.New("spec.provision.outputs must match spec.outputs")
+	}
+	for name := range spec.Outputs {
+		if !outputPattern.MatchString(name) || !slices.Contains(spec.Provision.Outputs, name) {
+			return fmt.Errorf("spec.outputs.%s must be declared by the provision job", name)
+		}
+		if spec.ServiceType == "postgresql" && !slices.Contains([]string{"connectionUrl", "host", "port", "database", "username", "password", "sslmode", "caCert"}, name) {
+			return fmt.Errorf("spec.outputs.%s is not a PostgreSQL connection field", name)
+		}
+	}
+	return nil
 }
 
 func applySourceDefaults(sources map[string]SourceSpec) {
@@ -523,6 +651,9 @@ func uniqueStrings(values []string) []string {
 }
 
 func (d Document) CanonicalJSON() ([]byte, error) {
+	if d.ServiceTemplate != nil {
+		return json.Marshal(ServiceTemplateDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.ServiceTemplate})
+	}
 	if d.Template != nil {
 		return json.Marshal(ApplicationTemplateDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.Template})
 	}
@@ -545,6 +676,9 @@ func (d Document) Digest() (string, error) {
 }
 
 func (d Document) MarshalYAML() ([]byte, error) {
+	if d.ServiceTemplate != nil {
+		return yaml.Marshal(ServiceTemplateDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.ServiceTemplate})
+	}
 	if d.Template != nil {
 		return yaml.Marshal(ApplicationTemplateDocument{TypeMeta: d.TypeMeta, Metadata: d.Metadata, Spec: *d.Template})
 	}
