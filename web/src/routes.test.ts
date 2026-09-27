@@ -64,6 +64,12 @@ describe("application routes", () => {
     expect(routePath({view:"settings"})).toBe("/settings");
   });
 
+  it("opens a GitHub connection from a direct link", () => {
+    const route = { view: "connections" as const, connectionID: "app/one" };
+    expect(routePath(route)).toBe("/connections/app%2Fone");
+    expect(readRoute({ pathname: routePath(route), search: "" })).toEqual(route);
+  });
+
   it("preserves Operations drilldowns and rejects unsupported sections and outcomes", () => {
     const route = {view: "operations" as const, operationsFilters: {
       section: "activity" as const, projectId: "team/project", query: "release & API",

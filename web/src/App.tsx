@@ -801,6 +801,8 @@ export default function DispatchApp() {
           {!loading && overview && view === "connections" && canManageConnections && (
             <ConnectionsPage
               overview={overview}
+              selectedConnectionID={route.connectionID}
+              onOpenConnection={(id) => navigateRoute({ view: "connections", connectionID: id ?? undefined })}
               notice={connectionNotice}
               onNotice={setConnectionNotice}
               onChanged={async () => {
