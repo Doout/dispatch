@@ -65,6 +65,8 @@ type WorkflowPreviewTrigger struct {
 	Repository         string                            `json:"repository"`
 	PullRequestNumber  int                               `json:"pullRequestNumber"`
 	Command            string                            `json:"command"`
+	AutoDeploy         bool                              `json:"autoDeploy"`
+	MaxAutoRunsPerHour int                               `json:"maxAutoRunsPerHour"`
 	PreviewURL         string                            `json:"previewUrl,omitempty"`
 	ReportCommentID    string                            `json:"reportCommentId,omitempty"`
 	CreatedAt          time.Time                         `json:"createdAt"`
@@ -83,19 +85,21 @@ type WorkflowPreviewTemplateGitSource struct {
 }
 
 type WorkflowPreviewTemplate struct {
-	WatchRepositories []string                          `json:"watchRepositories,omitempty"`
-	GitSource         *WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
-	ID                string                            `json:"id"`
-	ConfigSourceID    string                            `json:"configSourceId"`
-	GitHubAppID       string                            `json:"githubAppId"`
-	Name              string                            `json:"name"`
-	Repository        string                            `json:"repository"`
-	Command           string                            `json:"command"`
-	PreviewURL        string                            `json:"previewUrl"`
-	Document          string                            `json:"document"`
-	Active            bool                              `json:"active"`
-	CreatedAt         time.Time                         `json:"createdAt"`
-	UpdatedAt         time.Time                         `json:"updatedAt"`
+	WatchRepositories  []string                          `json:"watchRepositories,omitempty"`
+	GitSource          *WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
+	ID                 string                            `json:"id"`
+	ConfigSourceID     string                            `json:"configSourceId"`
+	GitHubAppID        string                            `json:"githubAppId"`
+	Name               string                            `json:"name"`
+	Repository         string                            `json:"repository"`
+	Command            string                            `json:"command"`
+	AutoDeploy         bool                              `json:"autoDeploy"`
+	MaxAutoRunsPerHour int                               `json:"maxAutoRunsPerHour"`
+	PreviewURL         string                            `json:"previewUrl"`
+	Document           string                            `json:"document"`
+	Active             bool                              `json:"active"`
+	CreatedAt          time.Time                         `json:"createdAt"`
+	UpdatedAt          time.Time                         `json:"updatedAt"`
 }
 
 type WorkflowSourceRevision struct {

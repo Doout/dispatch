@@ -17,6 +17,8 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
   const [githubAppId, setGithubAppId] = useState(template?.githubAppId ?? apps[0]?.id ?? "");
   const [repository, setRepository] = useState(template?.repository ?? "");
   const [command, setCommand] = useState(template?.command ?? "/preview");
+  const [autoDeploy, setAutoDeploy] = useState(template?.autoDeploy ?? false);
+  const [maxAutoRunsPerHour, setMaxAutoRunsPerHour] = useState(template?.maxAutoRunsPerHour || 2);
   const [previewUrl, setPreviewUrl] = useState(template?.previewUrl ?? "");
   const [document, setDocument] = useState(template?.document ?? "");
   const [active, setActive] = useState(template?.active ?? true);
@@ -31,7 +33,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
       const config = parseYAML(document);
       if (config?.kind !== "WorkflowTemplate" || !config.spec?.triggers?.pullRequestComment) return undefined;
       const trigger = config.spec.triggers.pullRequestComment;
-      return { command: trigger.command || "/preview", repositories: Array.isArray(trigger.sources) ? trigger.sources.map((alias: string) => config.spec.sources?.[alias]?.repository || alias) as string[] : [] };
+      return { command: trigger.command || "/preview", autoDeploy: Boolean(trigger.autoDeploy), maxAutoRunsPerHour: Number(trigger.maxAutoRunsPerHour) || 2, repositories: Array.isArray(trigger.sources) ? trigger.sources.map((alias: string) => config.spec.sources?.[alias]?.repository || alias) as string[] : [] };
     } catch { return undefined; }
   }, [document]);
   const fileControlsTrigger = Boolean(yamlTrigger) || definitionSource === "github";
@@ -56,6 +58,8 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
       if (trigger) {
         setGithubAppId(trigger.githubAppId);
         setCommand(trigger.command);
+        setAutoDeploy(trigger.autoDeploy ?? false);
+        setMaxAutoRunsPerHour(trigger.maxAutoRunsPerHour || 2);
         setRepository(trigger.repository);
         setSamplePR(trigger.pullRequestNumber);
         setDocument(resource.document.replaceAll(String(trigger.pullRequestNumber), placeholder));
@@ -84,7 +88,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
     setBusy(true);
     setError("");
     try {
-      const body = { configSourceId: sourceId, githubAppId, name: name.trim(), repository: repository.trim(), command: command.trim(), previewUrl: previewUrl.trim(), document, active, gitSource: definitionSource === "github" ? { repository: gitRepository.trim(), branch: gitBranch.trim(), path: gitPath.trim() } : undefined };
+      const body = { configSourceId: sourceId, githubAppId, name: name.trim(), repository: repository.trim(), command: command.trim(), autoDeploy, maxAutoRunsPerHour, previewUrl: previewUrl.trim(), document, active, gitSource: definitionSource === "github" ? { repository: gitRepository.trim(), branch: gitBranch.trim(), path: gitPath.trim() } : undefined };
       if (template) await api.updateWorkflowPreviewTemplate(template.id, body);
       else await api.createWorkflowPreviewTemplate(body);
       await onSaved();
@@ -104,6 +108,10 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
     {fileControlsTrigger ? <p className="wide temporary-preview-intro"><strong>Comment trigger from YAML</strong><br />{watchedRepositories.length ? <>{displayCommand} watches {watchedRepositories.join(", ")}. Other sources are dependencies.</> : <>Declare <code>spec.triggers.pullRequestComment.sources</code> and <code>command</code> in the template file. Saving loads the watched repositories from GitHub.</>}</p> : <>
     <label><span>PR repository</span><input value={repository} onChange={(event) => setRepository(event.target.value)} placeholder="owner/repository" required spellCheck={false} /></label>
     <label><span>Comment command</span><input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="/preview" required spellCheck={false} /><small>For example, <code>/preview</code>. Linked PR arguments still work.</small></label>
+    </>}
+    {fileControlsTrigger ? <p className="wide temporary-preview-intro">Commit updates: {(yamlTrigger?.autoDeploy ?? template?.autoDeploy) ? `automatic, up to ${yamlTrigger?.maxAutoRunsPerHour ?? template?.maxAutoRunsPerHour ?? 2} runs per hour` : "manual only"}. Set <code>autoDeploy</code> and <code>maxAutoRunsPerHour</code> under <code>spec.triggers.pullRequestComment</code> in the YAML. A new <code>{displayCommand}</code> comment always starts a run.</p> : <>
+      <label className="wide temporary-preview-template-active"><input type="checkbox" checked={autoDeploy} onChange={(event) => setAutoDeploy(event.target.checked)} /><span>Automatically deploy new PR commits</span></label>
+      {autoDeploy && <label><span>Automatic runs per hour</span><input type="number" min={1} max={12} value={maxAutoRunsPerHour} onChange={(event) => setMaxAutoRunsPerHour(Number(event.target.value))} required /><small>Per preview. Comment commands bypass this limit. Newer commits cancel older queued or running work.</small></label>}
     </>}
     <label><span>Preview URL pattern</span><input type="text" inputMode="url" value={previewUrl} onChange={(event) => setPreviewUrl(event.target.value)} placeholder="https://dev.example.com/app/preview/{{ instance.id }}" required spellCheck={false} /><small>Use <code>{placeholder}</code> where the PR ID belongs.</small></label>
     <label className="wide"><span>Template definition</span><select value={definitionSource} onChange={(event) => setDefinitionSource(event.target.value)}><option value="saved">YAML saved in Dispatch</option><option value="github">GitHub repository (GitOps)</option></select><small>GitHub definitions are checked every 30 seconds. Valid changes apply to future preview instances.</small></label>

@@ -9,17 +9,17 @@ import (
 	"github.com/doout/dispatch/internal/core"
 )
 
-const workflowPreviewTemplateSelect = `SELECT id,config_source_id,github_app_id,name,repository,command,preview_url,document,active,created_at,updated_at,git_source,watch_repositories FROM workflow_preview_templates`
+const workflowPreviewTemplateSelect = `SELECT id,config_source_id,github_app_id,name,repository,command,preview_url,document,active,created_at,updated_at,git_source,watch_repositories,auto_deploy,max_auto_runs_per_hour FROM workflow_preview_templates`
 
 func (s *SQLStore) CreateWorkflowPreviewTemplate(ctx context.Context, item core.WorkflowPreviewTemplate) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_templates(id,config_source_id,github_app_id,name,repository,command,preview_url,document,active,created_at,updated_at,git_source,watch_repositories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-		item.ID, item.ConfigSourceID, item.GitHubAppID, item.Name, item.Repository, item.Command, item.PreviewURL, item.Document, item.Active, stamp(item.CreatedAt), stamp(item.UpdatedAt), jsonText(item.GitSource), jsonText(item.WatchRepositories))
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_templates(id,config_source_id,github_app_id,name,repository,command,preview_url,document,active,created_at,updated_at,git_source,watch_repositories,auto_deploy,max_auto_runs_per_hour) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.ConfigSourceID, item.GitHubAppID, item.Name, item.Repository, item.Command, item.PreviewURL, item.Document, item.Active, stamp(item.CreatedAt), stamp(item.UpdatedAt), jsonText(item.GitSource), jsonText(item.WatchRepositories), item.AutoDeploy, item.MaxAutoRunsPerHour)
 	return err
 }
 
 func (s *SQLStore) UpdateWorkflowPreviewTemplate(ctx context.Context, item core.WorkflowPreviewTemplate) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_templates SET config_source_id=?,github_app_id=?,name=?,repository=?,command=?,preview_url=?,document=?,active=?,updated_at=?,git_source=?,watch_repositories=? WHERE id=?`),
-		item.ConfigSourceID, item.GitHubAppID, item.Name, item.Repository, item.Command, item.PreviewURL, item.Document, item.Active, stamp(item.UpdatedAt), jsonText(item.GitSource), jsonText(item.WatchRepositories), item.ID)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_templates SET config_source_id=?,github_app_id=?,name=?,repository=?,command=?,preview_url=?,document=?,active=?,updated_at=?,git_source=?,watch_repositories=?,auto_deploy=?,max_auto_runs_per_hour=? WHERE id=?`),
+		item.ConfigSourceID, item.GitHubAppID, item.Name, item.Repository, item.Command, item.PreviewURL, item.Document, item.Active, stamp(item.UpdatedAt), jsonText(item.GitSource), jsonText(item.WatchRepositories), item.AutoDeploy, item.MaxAutoRunsPerHour, item.ID)
 	return changed(result, err)
 }
 
@@ -56,7 +56,7 @@ func (s *SQLStore) ListWorkflowPreviewTemplates(ctx context.Context) ([]core.Wor
 func scanWorkflowPreviewTemplate(row scanner) (core.WorkflowPreviewTemplate, error) {
 	var item core.WorkflowPreviewTemplate
 	var created, updated, gitSource, watchRepositories string
-	err := row.Scan(&item.ID, &item.ConfigSourceID, &item.GitHubAppID, &item.Name, &item.Repository, &item.Command, &item.PreviewURL, &item.Document, &item.Active, &created, &updated, &gitSource, &watchRepositories)
+	err := row.Scan(&item.ID, &item.ConfigSourceID, &item.GitHubAppID, &item.Name, &item.Repository, &item.Command, &item.PreviewURL, &item.Document, &item.Active, &created, &updated, &gitSource, &watchRepositories, &item.AutoDeploy, &item.MaxAutoRunsPerHour)
 	if err != nil {
 		return item, err
 	}

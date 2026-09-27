@@ -34,6 +34,7 @@ type Service struct {
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
 	buildLocks map[string]*buildLock
+	runCancels map[string]context.CancelFunc
 }
 
 type DeploymentRunner interface {
@@ -559,6 +560,8 @@ func (s *Service) Deactivate(ctx context.Context, id string) (core.WorkflowResou
 }
 
 func (s *Service) Start(ctx context.Context, resourceID, trigger string) (core.WorkflowRevision, error) {
+	unlock := s.lock("schedule:" + resourceID)
+	defer unlock()
 	resource, err := s.Store.GetWorkflowResource(ctx, resourceID)
 	if err != nil {
 		return core.WorkflowRevision{}, err
@@ -577,7 +580,62 @@ func (s *Service) Start(ctx context.Context, resourceID, trigger string) (core.W
 	if err != nil {
 		return core.WorkflowRevision{}, err
 	}
+	if resource.Temporary {
+		if err := s.cancelPreviewRuns(ctx, resourceID); err != nil {
+			return core.WorkflowRevision{}, err
+		}
+	}
 	return s.startWithSnapshot(ctx, resource, source, snapshot, trigger)
+}
+
+// CancelPreviewRuns stops stale work without starting a replacement. This is
+// useful when automatic updates are disabled or the hourly allowance is full.
+func (s *Service) CancelPreviewRuns(ctx context.Context, resourceID string) error {
+	unlock := s.lock("schedule:" + resourceID)
+	defer unlock()
+	return s.cancelPreviewRuns(ctx, resourceID)
+}
+
+func (s *Service) cancelPreviewRuns(ctx context.Context, resourceID string) error {
+	active, err := s.Store.ListWorkflowRevisions(ctx, resourceID, 0)
+	if err != nil {
+		return err
+	}
+	deploymentIDs := []string{}
+	for _, revision := range active {
+		if revision.State != "queued" && revision.State != "running" && revision.State != "awaiting_approval" {
+			continue
+		}
+		stages, err := s.Store.ListWorkflowStageRuns(ctx, revision.ID)
+		if err != nil {
+			return err
+		}
+		for _, stage := range stages {
+			if stage.State == "running" {
+				deploymentIDs = append(deploymentIDs, stage.DeploymentIDs...)
+			}
+		}
+	}
+	ids, err := s.Store.SupersedeWorkflowRevisions(ctx, resourceID)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		s.mu.Lock()
+		cancel := s.runCancels[id]
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+	}
+	if canceller, ok := s.Deployments.(interface {
+		Cancel(context.Context, string) error
+	}); ok {
+		for _, id := range deploymentIDs {
+			_ = canceller.Cancel(ctx, id)
+		}
+	}
+	return nil
 }
 
 // CreateTemporaryApplication stores an inline configuration beside a repository
@@ -697,8 +755,41 @@ func (s *Service) startWithSnapshot(ctx context.Context, resource core.WorkflowR
 	if err := s.Store.CreateWorkflowRevision(ctx, revision); err != nil {
 		return revision, err
 	}
-	go s.runApplication(context.Background(), resource, source, revision)
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	if s.runCancels == nil {
+		s.runCancels = map[string]context.CancelFunc{}
+	}
+	s.runCancels[revision.ID] = cancel
+	s.mu.Unlock()
+	go func() {
+		defer cancel()
+		defer func() {
+			s.mu.Lock()
+			delete(s.runCancels, revision.ID)
+			s.mu.Unlock()
+		}()
+		go s.watchRunCancellation(runCtx, revision.ID, cancel)
+		s.runApplication(runCtx, resource, source, revision)
+	}()
 	return revision, nil
+}
+
+func (s *Service) watchRunCancellation(ctx context.Context, revisionID string, cancel context.CancelFunc) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			revision, err := s.Store.GetWorkflowRevision(ctx, revisionID)
+			if err == nil && revision.State == "cancelled" {
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 func (s *Service) resolveResourceSources(ctx context.Context, source core.ConfigSource, resource core.WorkflowResource) (map[string]core.WorkflowSourceRevision, error) {

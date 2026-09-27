@@ -1080,3 +1080,9 @@ ALTER TABLE workflow_preview_triggers ADD COLUMN template_id TEXT REFERENCES wor
 ALTER TABLE workflow_preview_templates ADD COLUMN git_source TEXT NOT NULL DEFAULT 'null';
 ALTER TABLE workflow_preview_triggers ADD COLUMN template_source TEXT NOT NULL DEFAULT 'null';
 ALTER TABLE workflow_preview_templates ADD COLUMN watch_repositories TEXT NOT NULL DEFAULT '[]';
+
+-- dispatch:migration 057_preview_auto_deploy_policy
+ALTER TABLE workflow_preview_templates ADD COLUMN auto_deploy BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE workflow_preview_templates ADD COLUMN max_auto_runs_per_hour INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE workflow_preview_triggers ADD COLUMN auto_deploy BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE workflow_preview_triggers ADD COLUMN max_auto_runs_per_hour INTEGER NOT NULL DEFAULT 2;

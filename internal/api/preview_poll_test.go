@@ -16,8 +16,118 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/events"
 	"github.com/doout/dispatch/internal/store"
 )
+
+func TestPreviewAutoRunAllowanceCountsOnlyRecentAutomaticStarts(t *testing.T) {
+	now := time.Now().UTC()
+	revisions := []core.WorkflowRevision{
+		{Trigger: "pull request comment 123", CreatedAt: now.Add(-time.Minute)},
+		{Trigger: "pull request update", State: "cancelled", CreatedAt: now.Add(-20 * time.Minute)},
+		{Trigger: "pull request update", State: "succeeded", CreatedAt: now.Add(-2 * time.Hour)},
+	}
+	if !previewAutoRunAllowed(revisions, 2, now) {
+		t.Fatal("a manual run or an expired automatic run used the hourly allowance")
+	}
+	if previewAutoRunAllowed(revisions, 1, now) {
+		t.Fatal("a cancelled automatic run did not use the hourly allowance")
+	}
+	if !previewAutoRunAllowed(revisions, 1, now.Add(41*time.Minute)) {
+		t.Fatal("the rolling hourly allowance did not reopen")
+	}
+}
+
+func TestNewHeadCancelsStaleManualPreviewWithoutDeploying(t *testing.T) {
+	ctx := context.Background()
+	data, err := store.Open(ctx, filepath.Join(t.TempDir(), "manual-preview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	if err := data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	oldSHA := strings.Repeat("a", 40)
+	newSHA := strings.Repeat("b", 40)
+	for _, create := range []func() error{
+		func() error {
+			return data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now})
+		},
+		func() error {
+			return data.CreateSecret(ctx, core.Secret{ID: "credential", Name: "Credential", Type: core.SecretTypeGitHubToken, EncryptedValue: "fixture", CreatedAt: now})
+		},
+		func() error {
+			return data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", CredentialSecretID: "credential", Name: "Source", Repository: "example/devops", CreatedAt: now, UpdatedAt: now})
+		},
+		func() error {
+			return data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "preview", ConfigSourceID: "source", Kind: "Application", Name: "preview", Path: "temporary/preview.yaml", Document: "apiVersion: dispatch/v1alpha1\nkind: Application\nmetadata:\n  name: preview\nspec:\n  sources:\n    service:\n      repository: example/service\n      ref: " + oldSHA + "\n", Temporary: true, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now})
+		},
+		func() error {
+			return data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: "old", ResourceID: "preview", State: "running", Trigger: "pull request comment 1", Sources: map[string]core.WorkflowSourceRevision{"service": {Alias: "service", Repository: "example/service", CommitSHA: oldSHA}}, CreatedAt: now})
+		},
+	} {
+		if err := create(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := New(data, deploy.NewService(data, deploy.SimulationExecutor{}), false, AuthConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	trigger := core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "preview", Repository: "example/service", PullRequestNumber: 42, AutoDeploy: false}
+	if err := a.updateWorkflowPreviewHead(ctx, trigger, "example/service", newSHA, events.GitHubResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	revisions, err := data.ListWorkflowRevisions(ctx, "preview", 0)
+	if err != nil || len(revisions) != 1 || revisions[0].State != "cancelled" {
+		t.Fatalf("new head should cancel stale work without an automatic run: %+v, %v", revisions, err)
+	}
+	trigger.AutoDeploy, trigger.MaxAutoRunsPerHour = true, 1
+	if err := a.updateWorkflowPreviewHead(ctx, trigger, "example/service", newSHA, events.GitHubResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	revisions, err = data.ListWorkflowRevisions(ctx, "preview", 0)
+	if err != nil || len(revisions) != 2 || revisions[0].Trigger != "pull request update" || revisions[0].Sources["service"].CommitSHA != newSHA {
+		t.Fatalf("automatic update did not run the newest head: %+v, %v", revisions, err)
+	}
+	thirdSHA := strings.Repeat("c", 40)
+	if err := a.updateWorkflowPreviewHead(ctx, trigger, "example/service", thirdSHA, events.GitHubResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	revisions, err = data.ListWorkflowRevisions(ctx, "preview", 0)
+	if err != nil || len(revisions) != 2 {
+		t.Fatalf("hourly cap did not defer the next automatic run: %+v, %v", revisions, err)
+	}
+	resource, err := data.GetWorkflowResource(ctx, "preview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := pinWorkflowPreviewSources(resource, map[string]string{"service": thirdSHA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.UpdateWorkflowResource(ctx, pinned); err != nil {
+		t.Fatal(err)
+	}
+	manual, err := a.workflows.Start(ctx, "preview", "pull request comment 2")
+	if err != nil || manual.Sources["service"].CommitSHA != thirdSHA {
+		t.Fatalf("manual command did not bypass the automatic cap: %+v, %v", manual, err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		finished, err := data.GetWorkflowRevision(ctx, manual.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if finished.State == "succeeded" {
+			return
+		}
+		if finished.State == "failed" || finished.State == "cancelled" {
+			t.Fatalf("manual run failed: %+v", finished)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("manual run did not complete")
+}
 
 func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 	ctx := context.Background()

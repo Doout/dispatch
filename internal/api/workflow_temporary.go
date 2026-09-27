@@ -369,11 +369,13 @@ func temporaryPreviewCollides(document workflowservice.Document, existing []core
 }
 
 type workflowPreviewTriggerRequest struct {
-	GitHubAppID       string `json:"githubAppId"`
-	Repository        string `json:"repository"`
-	PullRequestNumber int    `json:"pullRequestNumber"`
-	Command           string `json:"command"`
-	PreviewURL        string `json:"previewUrl"`
+	GitHubAppID        string `json:"githubAppId"`
+	Repository         string `json:"repository"`
+	PullRequestNumber  int    `json:"pullRequestNumber"`
+	Command            string `json:"command"`
+	AutoDeploy         bool   `json:"autoDeploy"`
+	MaxAutoRunsPerHour int    `json:"maxAutoRunsPerHour"`
+	PreviewURL         string `json:"previewUrl"`
 }
 
 func validWorkflowPreviewURL(value string) bool {
@@ -388,6 +390,10 @@ func (a *API) validateWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Requ
 	input.PreviewURL = strings.TrimSpace(input.PreviewURL)
 	if input.Command == "" {
 		input.Command = "/preview"
+	}
+	if err := validatePreviewAutoPolicy(&input.MaxAutoRunsPerHour); err != nil {
+		problem(w, http.StatusBadRequest, "Preview update policy invalid", err.Error())
+		return false
 	}
 	command, arguments := events.ParseCommand(input.Command)
 	if input.GitHubAppID == "" || input.Repository == "" || input.PullRequestNumber < 1 || command != input.Command || arguments != "" || input.PreviewURL != "" && !validWorkflowPreviewURL(input.PreviewURL) {
@@ -450,7 +456,8 @@ func (a *API) createWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	item := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), ResourceID: resource.ID, GitHubAppID: input.GitHubAppID,
-		Repository: input.Repository, PullRequestNumber: input.PullRequestNumber, Command: input.Command, PreviewURL: input.PreviewURL, CreatedAt: time.Now().UTC()}
+		Repository: input.Repository, PullRequestNumber: input.PullRequestNumber, Command: input.Command, PreviewURL: input.PreviewURL,
+		AutoDeploy: input.AutoDeploy, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour, CreatedAt: time.Now().UTC()}
 	if err := a.store.CreateWorkflowPreviewTrigger(r.Context(), item); err != nil {
 		a.internal(w, err)
 		return
@@ -504,6 +511,7 @@ func (a *API) updateWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Reques
 		}
 		trigger.GitHubAppID, trigger.Repository, trigger.PullRequestNumber = input.GitHubAppID, input.Repository, input.PullRequestNumber
 		trigger.Command, trigger.PreviewURL = input.Command, input.PreviewURL
+		trigger.AutoDeploy, trigger.MaxAutoRunsPerHour = input.AutoDeploy, input.MaxAutoRunsPerHour
 		if err := a.store.UpdateWorkflowPreviewTrigger(r.Context(), trigger); err != nil {
 			a.notFoundOrInternal(w, err, "Preview trigger")
 			return

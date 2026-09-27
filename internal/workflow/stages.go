@@ -22,11 +22,17 @@ import (
 )
 
 func (s *Service) runStages(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, document Document, revision *core.WorkflowRevision, start int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(document.Spec.Stages) == 0 {
 		s.succeedRevision(ctx, source, revision)
 		return nil
 	}
 	for index := start; index < len(document.Spec.Stages); index++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		stage := document.Spec.Stages[index]
 		run, exists, err := s.stageRun(ctx, revision.ID, stage.Name)
 		if err != nil {
@@ -53,6 +59,9 @@ func (s *Service) runStages(ctx context.Context, resource core.WorkflowResource,
 			return err
 		}
 		if err := s.deployStage(ctx, resource, source, document, *revision, stage, &run); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			finish := time.Now().UTC()
 			run.State, run.Error, run.FinishedAt = "failed", err.Error(), &finish
 			_ = s.Store.UpdateWorkflowStageRun(context.Background(), run)
@@ -63,6 +72,9 @@ func (s *Service) runStages(ctx context.Context, resource core.WorkflowResource,
 		if err := s.Store.UpdateWorkflowStageRun(ctx, run); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	s.succeedRevision(ctx, source, revision)
 	return nil

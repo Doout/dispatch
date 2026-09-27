@@ -135,6 +135,7 @@ type Store interface {
 	CreateWorkflowEvent(context.Context, core.WorkflowEvent) (bool, error)
 	UpdateWorkflowEvent(context.Context, core.WorkflowEvent) error
 	CreateWorkflowRevision(context.Context, core.WorkflowRevision) error
+	SupersedeWorkflowRevisions(context.Context, string) ([]string, error)
 	UpdateWorkflowRevision(context.Context, core.WorkflowRevision) error
 	GetWorkflowRevision(context.Context, string) (core.WorkflowRevision, error)
 	ListWorkflowRevisions(context.Context, string, int) ([]core.WorkflowRevision, error)

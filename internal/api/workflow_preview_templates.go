@@ -17,15 +17,17 @@ import (
 )
 
 type workflowPreviewTemplateRequest struct {
-	GitSource      *core.WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
-	ConfigSourceID string                                 `json:"configSourceId"`
-	GitHubAppID    string                                 `json:"githubAppId"`
-	Name           string                                 `json:"name"`
-	Repository     string                                 `json:"repository"`
-	Command        string                                 `json:"command"`
-	PreviewURL     string                                 `json:"previewUrl"`
-	Document       string                                 `json:"document"`
-	Active         bool                                   `json:"active"`
+	GitSource          *core.WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
+	ConfigSourceID     string                                 `json:"configSourceId"`
+	GitHubAppID        string                                 `json:"githubAppId"`
+	Name               string                                 `json:"name"`
+	Repository         string                                 `json:"repository"`
+	Command            string                                 `json:"command"`
+	AutoDeploy         bool                                   `json:"autoDeploy"`
+	MaxAutoRunsPerHour int                                    `json:"maxAutoRunsPerHour"`
+	PreviewURL         string                                 `json:"previewUrl"`
+	Document           string                                 `json:"document"`
+	Active             bool                                   `json:"active"`
 }
 
 func (a *API) listWorkflowPreviewTemplates(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +99,7 @@ func (a *API) validateWorkflowPreviewTemplate(w http.ResponseWriter, r *http.Req
 		ConfigSourceID: strings.TrimSpace(input.ConfigSourceID), GitHubAppID: strings.TrimSpace(input.GitHubAppID),
 		Name: strings.TrimSpace(input.Name), Repository: events.NormalizeRepository(input.Repository),
 		Command: strings.TrimSpace(input.Command), PreviewURL: strings.TrimSpace(input.PreviewURL),
-		Document: input.Document, Active: input.Active,
+		Document: input.Document, Active: input.Active, AutoDeploy: input.AutoDeploy, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour,
 	}
 	if item.Command == "" {
 		item.Command = "/preview"
@@ -139,6 +141,10 @@ func (a *API) validateWorkflowPreviewTemplate(w http.ResponseWriter, r *http.Req
 	}
 	if err := applyPreviewTemplateTrigger(&item); err != nil {
 		problem(w, http.StatusUnprocessableEntity, "Template trigger invalid", err.Error())
+		return core.WorkflowPreviewTemplate{}, false
+	}
+	if err := validatePreviewAutoPolicy(&item.MaxAutoRunsPerHour); err != nil {
+		problem(w, http.StatusBadRequest, "Preview update policy invalid", err.Error())
 		return core.WorkflowPreviewTemplate{}, false
 	}
 	if err := validatePreviewTemplateDocument(item); err != nil {
@@ -202,6 +208,7 @@ func applyPreviewTemplateTrigger(item *core.WorkflowPreviewTemplate) error {
 	item.WatchRepositories = nil
 	if trigger != nil {
 		item.Command = trigger.Command
+		item.AutoDeploy, item.MaxAutoRunsPerHour = trigger.AutoDeploy, trigger.MaxAutoRunsPerHour
 		for _, alias := range trigger.Sources {
 			repository := events.NormalizeRepository(sources[alias].Repository)
 			if !slices.Contains(item.WatchRepositories, repository) {
@@ -226,6 +233,16 @@ func applyPreviewTemplateTrigger(item *core.WorkflowPreviewTemplate) error {
 	}
 	if !validWorkflowPreviewURL(url) {
 		return errors.New("provide a valid HTTPS preview URL pattern")
+	}
+	return nil
+}
+
+func validatePreviewAutoPolicy(limit *int) error {
+	if *limit == 0 {
+		*limit = 2
+	}
+	if *limit < 1 || *limit > 12 {
+		return errors.New("choose 1 to 12 automatic runs per hour")
 	}
 	return nil
 }
