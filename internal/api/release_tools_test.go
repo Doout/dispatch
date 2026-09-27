@@ -107,19 +107,19 @@ func TestReleaseRoutesEnforceProjectRoles(t *testing.T) {
 		handler(rr, req)
 		return rr
 	}
-	for _, handler := range []http.HandlerFunc{a.deploymentPermission(core.PermissionDeploymentRun, a.rollbackDeploymentRelease), a.deploymentPermission(core.PermissionProjectConfigure, a.updateDeploymentRelease)} {
+	for _, handler := range []http.HandlerFunc{a.deploymentPermission(core.PermissionDeploymentRun)(http.HandlerFunc(a.rollbackDeploymentRelease)).ServeHTTP, a.deploymentPermission(core.PermissionProjectConfigure)(http.HandlerFunc(a.updateDeploymentRelease)).ServeHTTP} {
 		if rr := call(handler, d.ID); rr.Code != 403 {
 			t.Fatalf("viewer mutation returned %d", rr.Code)
 		}
 	}
-	if rr := call(a.deploymentPermission(core.PermissionProjectView, a.getDeploymentRelease), d.ID); rr.Code != 200 {
+	if rr := call(a.deploymentPermission(core.PermissionProjectView)(http.HandlerFunc(a.getDeploymentRelease)).ServeHTTP, d.ID); rr.Code != 200 {
 		t.Fatal("viewer cannot inspect release metadata")
 	}
 	grant.ScopeID = "unrelated-project"
 	if err := a.store.DeleteRoleAssignment(ctx, grant.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rr := call(a.deploymentPermission(core.PermissionProjectView, a.getDeploymentRelease), d.ID); rr.Code != 403 {
+	if rr := call(a.deploymentPermission(core.PermissionProjectView)(http.HandlerFunc(a.getDeploymentRelease)).ServeHTTP, d.ID); rr.Code != 403 {
 		t.Fatal("cross-project metadata exposed")
 	}
 }

@@ -24,7 +24,7 @@ export function catalogOverview(overview: Overview, items: CatalogItem[]): Overv
  for(const item of items)for(const d of [item.current,item.latest])if(d&&!merged.has(d.id))merged.set(d.id,{...d,app:overview.apps.find(a=>a.id===d.appId),server:overview.servers.find(s=>s.id===item.targetId)});
  return {...overview,deployments:[...merged.values()].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id))};
 }
-const label=(value:string)=>value.replaceAll("_"," ").replace(/^\w/,s=>s.toUpperCase());
+const label=(value:string)=>value === "invalid" ? "Configuration error" : value.replaceAll("_"," ").replace(/^\w/,s=>s.toUpperCase());
 export function DeploymentStatusPills({status}: {status?: CatalogStatus}) {
  if(!status)return <span className="catalog-status unavailable"><Question size={12}/>Status unavailable</span>;
  const stale=!!status.checkedAt&&Date.now()-Date.parse(status.checkedAt)>(status.staleAfterSeconds??900)*1000;
@@ -33,7 +33,7 @@ export function DeploymentStatusPills({status}: {status?: CatalogStatus}) {
   const Icon=good?CheckCircle:bad?WarningCircle:Question;
   return <span className={`catalog-status ${good?"success":bad?"danger":"muted"}`} title={message||label(value)}><Icon size={12} weight={good||bad?"fill":"regular"}/>{kind}: {label(value)}</span>;
  };
- return <span className="catalog-status-group" aria-label="Observed application status">{state("Sync",status.configuration==="ready"?"synced":status.configuration)}{state("Drift",!status.supported?"not_supported":!status.checkedAt?"not_checked":status.drift,status.message)}{state("Health",!status.supported?"not_supported":!status.checkedAt?"not_checked":status.health,status.healthMessage||status.message)}<span className={`catalog-status ${stale?"stale":"muted"}`} title={status.checkedAt?new Date(status.checkedAt).toLocaleString():"No saved observation"}><Clock size={12}/>{status.checkedAt?`${stale?"Stale · ":""}${relative(status.checkedAt)}`:"Not checked"}</span></span>;
+ return <span className="catalog-status-group" aria-label="Observed application status">{state("Sync",status.configuration==="ready"?"synced":status.configuration,status.configurationMessage)}{state("Drift",!status.supported?"not_supported":!status.checkedAt?"not_checked":status.drift,status.message)}{state("Health",!status.supported?"not_supported":!status.checkedAt?"not_checked":status.health,status.healthMessage||status.message)}<span className={`catalog-status ${stale?"stale":"muted"}`} title={status.checkedAt?new Date(status.checkedAt).toLocaleString():"No saved observation"}><Clock size={12}/>{status.checkedAt?`${stale?"Stale · ":""}${relative(status.checkedAt)}`:"Not checked"}</span></span>;
 }
 export function ApplicationDeploymentLink({appId,onNavigate,label="Open running release"}:{appId:string;onNavigate?:(route:AppRoute)=>void;label?:string}){
  const {items,onNavigate:defaultNavigate}=useDeploymentCatalog();const navigate=onNavigate??defaultNavigate;const item=items.find(i=>i.appId===appId);const d=item?.current??item?.latest;if(!d)return null;

@@ -61,3 +61,21 @@ it("explains unreadable resources even with compact details collapsed", async ()
  expect(await screen.findByText("Readiness could not be read from the deployment target.")).toBeTruthy();
  expect(screen.getAllByText("Unknown")).toHaveLength(2);
 });
+
+it("shows the configuration failure with Details collapsed and distinguishes runtime checks", async () => {
+ const cause = 'deployment/api.yaml: source service (main): branch or tag "main" was not found in Example/service';
+ vi.spyOn(api, "applicationSync").mockResolvedValue({...status, configuration: {state: "invalid", message: cause}});
+ render(<ApplicationSync application={app} overview={overview} compact />);
+ const alert = await screen.findByRole("alert");
+ expect(alert.textContent).toContain(cause);
+ expect(alert.textContent).toContain("Check now refreshes runtime status only.");
+ expect(screen.getByRole("button", {name: "Details"}).getAttribute("aria-expanded")).toBe("false");
+ expect(screen.getByRole("button", {name: "Check now"}).title).toContain("does not sync repository configuration");
+ expect(screen.getByText(/Runtime stale · observed/)).toBeTruthy();
+});
+
+it("keeps repository warnings visible for applications in a degraded configuration source", async () => {
+ vi.spyOn(api, "applicationSync").mockResolvedValue({...status, configuration: {state: "degraded", message: "deployment/other.yaml: repository access denied"}});
+ render(<ApplicationSync application={app} overview={overview} compact />);
+ expect((await screen.findByRole("alert")).textContent).toContain("deployment/other.yaml: repository access denied");
+});

@@ -11,7 +11,7 @@ import (
 
 var ErrHelmEquivalenceChanged = errors.New("Helm comparison inputs changed")
 
-const equivalenceAppSelect = `SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template FROM apps WHERE id=?`
+const equivalenceAppSelect = `SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance FROM apps WHERE id=?`
 const equivalenceServerSelect = `SELECT id,name,address,runtime,state,agent_mode,kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,openshift_service_account,openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,relay_access_token,relay_pending_events,relay_oldest_pending_at,relay_last_connected_at,relay_last_error,created_at FROM servers WHERE id=?`
 const equivalenceSelect = `SELECT app_id,project_id,app_name,app_spec_digest,candidate_spec_digest,chart_commit,server_id,target_digest,deployment_id,checked_at FROM application_helm_equivalence WHERE app_id=?`
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,11 +88,13 @@ func (s *Service) deployStage(ctx context.Context, resource core.WorkflowResourc
 	}
 	for _, name := range stage.Deploy {
 		deployment := document.Spec.Deployments[name]
-		id, unchanged, err := s.deployHelm(ctx, resource, source, revision, stage, name, deployment, server)
+		id, unchanged, err := s.deployHelm(ctx, resource, source, revision, stage, name, deployment, server, func(id string) error {
+			run.DeploymentIDs = append(run.DeploymentIDs, id)
+			return s.Store.UpdateWorkflowStageRun(ctx, *run)
+		})
 		if err != nil {
 			return err
 		}
-		run.DeploymentIDs = append(run.DeploymentIDs, id)
 		result := core.WorkflowDeploymentResult{DeploymentName: name, AppID: managedAppID(resource.ID, name, stage.Name), DeploymentID: id, Outcome: "deployed", Reason: "Helm deployment completed.", CheckedAt: time.Now().UTC()}
 		if unchanged {
 			result.Outcome, result.Reason = "unchanged", "The effective Helm release is unchanged."
@@ -111,7 +114,10 @@ func (s *Service) deployStage(ctx context.Context, resource core.WorkflowResourc
 			}
 			inputs[key] = rendered
 		}
-		checkRevision, err := s.runPipeline(ctx, check.PipelineRef, inputs, resource.Name+"/"+stage.Name)
+		checkRevision, err := s.runPipeline(ctx, check.PipelineRef, inputs, resource.Name+"/"+stage.Name, func(id string) error {
+			run.CheckRuns[name] = id
+			return s.Store.UpdateWorkflowStageRun(ctx, *run)
+		})
 		if err != nil {
 			return fmt.Errorf("check %s: %w", name, err)
 		}
@@ -231,6 +237,37 @@ func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.Workf
 	if err != nil {
 		return prepared, err
 	}
+	app.HelmProvenance = core.HelmProvenance{WorkflowResourceID: resource.ID, WorkflowRevisionID: revision.ID, Sources: map[string]core.WorkflowSourceRevision{}}
+	for alias, pinned := range revision.Sources {
+		app.HelmProvenance.Sources[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: pinned.Repository, Branch: pinned.Branch, CommitSHA: pinned.CommitSHA}
+	}
+	if resource.Temporary {
+		triggers, err := s.Store.ListWorkflowPreviewTriggers(ctx)
+		if err != nil {
+			return prepared, err
+		}
+		for _, trigger := range triggers {
+			if trigger.ResourceID == resource.ID && trigger.ClosedAt == nil {
+				webURL := ""
+				if connection, err := s.Store.GetGitHubApp(ctx, trigger.GitHubAppID); err == nil {
+					webURL = strings.TrimRight(connection.WebURL, "/")
+				}
+				addLinkedPR := func(repository string, number int) {
+					linked := core.HelmPullRequest{Repository: repository, Number: number}
+					if webURL != "" {
+						linked.URL = webURL + "/" + repository + "/pull/" + strconv.Itoa(number)
+					}
+					app.HelmProvenance.PullRequests = append(app.HelmProvenance.PullRequests, linked)
+				}
+				addLinkedPR(trigger.Repository, trigger.PullRequestNumber)
+				for alias, number := range trigger.LinkedPullRequests {
+					if pinned, ok := revision.Sources[alias]; ok {
+						addLinkedPR(pinned.Repository, number)
+					}
+				}
+			}
+		}
+	}
 	app.Domain = stage.URL
 	return preparedHelmDeployment{app: app, expectedAppSpecDigest: expectedAppSpecDigest, bindings: bindings, chart: chart, evidence: evidence}, nil
 }
@@ -239,7 +276,7 @@ func automaticWorkflowTrigger(trigger string) bool {
 	return trigger == "configuration sync" || trigger == "github push" || trigger == "poll"
 }
 
-func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, deploymentName string, spec DeploymentSpec, server core.Server) (string, bool, error) {
+func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, deploymentName string, spec DeploymentSpec, server core.Server, onStarted func(string) error) (string, bool, error) {
 	prepared, err := s.prepareHelmDeployment(ctx, resource, source, revision, stage, deploymentName, spec, server)
 	if err != nil {
 		return "", false, err
@@ -267,6 +304,9 @@ func (s *Service) deployHelm(ctx context.Context, resource core.WorkflowResource
 	}
 	if err != nil {
 		return "", false, err
+	}
+	if err := onStarted(deployment.ID); err != nil {
+		return deployment.ID, unchanged, err
 	}
 	if unchanged {
 		// The retained deployment's logs, values provenance, and timestamps are
@@ -320,7 +360,7 @@ func (s *Service) waitDeployment(ctx context.Context, id string) error {
 	}
 }
 
-func (s *Service) runPipeline(ctx context.Context, name string, inputs map[string]string, trigger string) (core.WorkflowRevision, error) {
+func (s *Service) runPipeline(ctx context.Context, name string, inputs map[string]string, trigger string, onStarted func(string) error) (core.WorkflowRevision, error) {
 	resources, err := s.Store.ListWorkflowResources(ctx, "")
 	if err != nil {
 		return core.WorkflowRevision{}, err
@@ -365,6 +405,10 @@ func (s *Service) runPipeline(ctx context.Context, name string, inputs map[strin
 	revision := core.WorkflowRevision{ID: ulid.Make().String(), ResourceID: resource.ID, ConfigSHA: resource.ConfigSHA, SpecDigest: resource.SpecDigest,
 		State: "running", Trigger: trigger, Sources: snapshot, Outputs: map[string]map[string]string{}, CreatedAt: started, StartedAt: &started}
 	if err := s.Store.CreateWorkflowRevision(ctx, revision); err != nil {
+		return revision, err
+	}
+	if err := onStarted(revision.ID); err != nil {
+		s.failRevision(ctx, source, &revision, err)
 		return revision, err
 	}
 	root, err := os.MkdirTemp("", "dispatch-pipeline-")

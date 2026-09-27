@@ -38,7 +38,7 @@ type HelmExecutor struct {
 type helmClientFactory func(core.Server, string, string) (helmClient, error)
 
 type helmClient interface {
-	UpgradeInstall(context.Context, string, core.App, map[string]interface{}) error
+	UpgradeInstall(context.Context, string, core.App, core.Deployment, map[string]interface{}) error
 	Status(context.Context, string) error
 	Uninstall(context.Context, string) error
 }
@@ -48,6 +48,7 @@ type sdkHelmClient struct {
 	configuration *action.Configuration
 	registry      *registry.Client
 	settings      *cli.EnvSettings
+	server        core.Server
 }
 
 var helmNamePart = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -131,7 +132,7 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 			return err
 		}
 	}
-	if err := client.UpgradeInstall(ctx, release, app, values); err != nil {
+	if err := client.UpgradeInstall(ctx, release, app, deployment, values); err != nil {
 		return fmt.Errorf("install Helm release: %w", err)
 	}
 	if err := progress(core.DeploymentChecking, "Checking Helm release status"); err != nil {
@@ -237,7 +238,7 @@ func newSDKHelmClient(server core.Server, namespace, workspace string) (helmClie
 		return nil, err
 	}
 	configuration.RegistryClient = registryClient
-	return &sdkHelmClient{configuration: configuration, registry: registryClient, settings: settings}, nil
+	return &sdkHelmClient{configuration: configuration, registry: registryClient, settings: settings, server: server}, nil
 }
 
 // HelmReleaseManifest returns the rendered YAML stored with an installed release.
@@ -334,7 +335,8 @@ func releaseValuesMatch(installed *helmrelease.Release, deployment core.Deployme
 	return bytes.Equal(actualJSON, expectedJSON)
 }
 
-func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app core.App, values map[string]interface{}) error {
+func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app core.App, deployment core.Deployment, values map[string]interface{}) error {
+	metadata := newHelmDeploymentMetadata(app, deployment)
 	chartOptions := action.ChartPathOptions{
 		RepoURL: app.HelmRepository,
 		Version: app.HelmVersion,
@@ -371,10 +373,13 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 		install.Atomic = true
 		install.Wait = true
 		install.Timeout = helmOperationTimeout
+		install.Description = metadata.description()
+		install.PostRenderer = metadata
 		var installed *helmrelease.Release
 		installed, err = install.RunWithContext(ctx, chart, values)
 		if err == nil && installed != nil {
 			c.lastManifest = installed.Manifest
+			err = c.labelRelease(ctx, installed, metadata)
 		}
 		return err
 	}
@@ -391,10 +396,13 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	upgrade.Wait = true
 	upgrade.Timeout = helmOperationTimeout
 	upgrade.MaxHistory = c.settings.MaxHistory
+	upgrade.Description = metadata.description()
+	upgrade.PostRenderer = metadata
 	var installed *helmrelease.Release
 	installed, err = upgrade.RunWithContext(ctx, release, chart, values)
 	if err == nil && installed != nil {
 		c.lastManifest = installed.Manifest
+		err = c.labelRelease(ctx, installed, metadata)
 	}
 	return err
 }

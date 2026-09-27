@@ -298,7 +298,7 @@ func (s *Service) HandlePush(ctx context.Context, connectionID, deliveryID strin
 				return created, listErr
 			}
 			for _, resource := range resources {
-				if resource.Active && resourceReferences(resource, push.Repository, push.Branch) {
+				if resource.Active && !resource.Temporary && resourceReferences(resource, push.Repository, push.Branch) {
 					matches = true
 					break
 				}
@@ -332,7 +332,7 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
 		resources, listErr := s.Store.ListWorkflowResources(ctx, source.ID)
 		err = listErr
 		for _, resource := range resources {
-			if err != nil || !resource.Active || resource.State == "invalid" || resource.Kind != KindApplication {
+			if err != nil || !resource.Active || resource.Temporary || resource.State == "invalid" || resource.Kind != KindApplication {
 				continue
 			}
 			configChanged := sameSource(event.Repository, event.Branch, source.Repository, source.Branch)
@@ -437,7 +437,7 @@ func (s *Service) PollOnce(ctx context.Context) error {
 			continue
 		}
 		for _, resource := range resources {
-			if !resource.Active || resource.State == "invalid" || resource.Kind != KindApplication {
+			if !resource.Active || resource.Temporary || resource.State == "invalid" || resource.Kind != KindApplication {
 				continue
 			}
 			snapshot, err := s.resolveResourceSources(ctx, source, resource)
@@ -528,6 +528,9 @@ func (s *Service) Activate(ctx context.Context, id string) (core.WorkflowResourc
 	if err != nil {
 		return resource, core.WorkflowRevision{}, err
 	}
+	if resource.Temporary && resource.State == "removed" {
+		return resource, core.WorkflowRevision{}, errors.New("deleted PR preview cannot be activated")
+	}
 	if resource.State == "invalid" {
 		return resource, core.WorkflowRevision{}, fmt.Errorf("fix the application configuration before activating it: %s", resource.LastError)
 	}
@@ -575,6 +578,99 @@ func (s *Service) Start(ctx context.Context, resourceID, trigger string) (core.W
 		return core.WorkflowRevision{}, err
 	}
 	return s.startWithSnapshot(ctx, resource, source, snapshot, trigger)
+}
+
+// CreateTemporaryApplication stores an inline configuration beside a repository
+// source so it can use the source's credentials without changing the repository.
+// Repository sync deliberately leaves temporary resources alone.
+func (s *Service) CreateTemporaryApplication(ctx context.Context, sourceID string, contents []byte) (core.WorkflowResource, error) {
+	source, err := s.Store.GetConfigSource(ctx, sourceID)
+	if err != nil {
+		return core.WorkflowResource{}, err
+	}
+	if !source.Active {
+		return core.WorkflowResource{}, errors.New("configuration source is not active")
+	}
+	documents, err := Parse("temporary.yaml", contents)
+	if err != nil {
+		return core.WorkflowResource{}, err
+	}
+	if len(documents) != 1 || documents[0].Kind != KindApplication || documents[0].Spec == nil {
+		return core.WorkflowResource{}, errors.New("provide exactly one Application document")
+	}
+	document := documents[0]
+	if err := s.validateApplicationServices(ctx, source.ProjectID, document); err != nil {
+		return core.WorkflowResource{}, err
+	}
+	serviceIDs, err := s.applicationServiceIDs(ctx, source.ProjectID, document)
+	if err != nil {
+		return core.WorkflowResource{}, err
+	}
+	digest, err := document.Digest()
+	if err != nil {
+		return core.WorkflowResource{}, err
+	}
+	encoded, err := document.MarshalYAML()
+	if err != nil {
+		return core.WorkflowResource{}, err
+	}
+	now := time.Now().UTC()
+	id := ulid.Make().String()
+	resource := core.WorkflowResource{ID: id, ConfigSourceID: source.ID, APIVersion: document.APIVersion,
+		Kind: document.Kind, Name: document.Metadata.Name, Path: "temporary/" + id + ".yaml",
+		Document: string(encoded), SpecDigest: digest, ConfigSHA: source.LastSeenSHA, Temporary: true,
+		Active: true, State: "ready", ServiceIDs: serviceIDs, CreatedAt: now, UpdatedAt: now}
+	if _, err := s.resolveResourceSources(ctx, source, resource); err != nil {
+		return core.WorkflowResource{}, err
+	}
+	if err := s.Store.CreateWorkflowResource(ctx, resource); err != nil {
+		return core.WorkflowResource{}, err
+	}
+	return resource, nil
+}
+
+// UpdateTemporaryApplication changes only an inline Application. It keeps its
+// resource identity, preview trigger, and Helm release so the next run upgrades
+// the existing preview.
+func (s *Service) UpdateTemporaryApplication(ctx context.Context, id string, contents []byte) (core.WorkflowResource, error) {
+	resource, err := s.Store.GetWorkflowResource(ctx, id)
+	if err != nil {
+		return resource, err
+	}
+	if !resource.Temporary || !resource.Active || resource.Kind != KindApplication {
+		return resource, errors.New("choose an active temporary Application")
+	}
+	documents, err := Parse(resource.Path, contents)
+	if err != nil {
+		return resource, err
+	}
+	if len(documents) != 1 || documents[0].Kind != KindApplication || documents[0].Spec == nil || documents[0].Metadata.Name != resource.Name {
+		return resource, errors.New("keep the temporary Application name and provide one complete document")
+	}
+	source, err := s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
+	if err != nil {
+		return resource, err
+	}
+	if err := s.validateApplicationServices(ctx, source.ProjectID, documents[0]); err != nil {
+		return resource, err
+	}
+	serviceIDs, err := s.applicationServiceIDs(ctx, source.ProjectID, documents[0])
+	if err != nil {
+		return resource, err
+	}
+	digest, err := documents[0].Digest()
+	if err != nil {
+		return resource, err
+	}
+	encoded, err := documents[0].MarshalYAML()
+	if err != nil {
+		return resource, err
+	}
+	resource.Document, resource.SpecDigest, resource.ServiceIDs, resource.UpdatedAt = string(encoded), digest, serviceIDs, time.Now().UTC()
+	if _, err := s.resolveResourceSources(ctx, source, resource); err != nil {
+		return resource, err
+	}
+	return resource, s.Store.UpdateWorkflowResource(ctx, resource)
 }
 
 // Recheck under a per-resource scheduling lock so overlapping sync, push, and

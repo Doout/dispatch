@@ -193,7 +193,7 @@ func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource
 		return repositoryAccess{}, err
 	}
 	if source.GitHubAppID != "" {
-		token, err := s.GitHub.InstallationToken(ctx, source.GitHubAppID)
+		token, err := s.GitHub.RepositoryToken(ctx, source.GitHubAppID, repository)
 		if err != nil {
 			return repositoryAccess{}, err
 		}

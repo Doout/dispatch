@@ -201,6 +201,16 @@ func ParseCommand(message string) (command, arguments string) {
 	return command, arguments
 }
 
+// CommentDeliveryID identifies a command by its GitHub comment rather than
+// its transport delivery. A webhook and a poll of the same comment then share
+// the existing event and group deduplication keys.
+func CommentDeliveryID(event core.IncomingEvent) string {
+	if event.Kind != core.EventKindPullRequestComment || event.SourceCommentID == "" {
+		return event.DeliveryID
+	}
+	return "comment:" + event.ProviderConnectionID + ":" + event.Repository + ":" + event.SourceCommentID
+}
+
 func NormalizeRepository(repository string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(repository), "/"))
 }

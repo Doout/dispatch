@@ -155,11 +155,11 @@ func TestDeploymentCatalogProjectIsolationAndEnvironmentComparison(t *testing.T)
 	if rr.Code != 404 {
 		t.Fatal("private cursor accepted")
 	}
-	rr = call(a.deploymentPermission(core.PermissionProjectView, a.compareEnvironments), "/?from=catalog-env-0", "catalog-env-1")
+	rr = call(a.deploymentPermission(core.PermissionProjectView)(http.HandlerFunc(a.compareEnvironments)).ServeHTTP, "/?from=catalog-env-0", "catalog-env-1")
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "/values/replicas") || strings.Contains(rr.Body.String(), "catalog-private-password") {
 		t.Fatalf("cross environment comparison: %d %s", rr.Code, rr.Body.String())
 	}
-	rr = call(a.deploymentPermission(core.PermissionProjectView, a.compareEnvironments), "/?from=catalog-env-2", "catalog-env-1")
+	rr = call(a.deploymentPermission(core.PermissionProjectView)(http.HandlerFunc(a.compareEnvironments)).ServeHTTP, "/?from=catalog-env-2", "catalog-env-1")
 	if rr.Code != 404 {
 		t.Fatal("cross project comparison accepted")
 	}

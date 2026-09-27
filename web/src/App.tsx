@@ -332,11 +332,12 @@ export default function DispatchApp() {
       navigateRoute({ view: "connections" }, { replace: true });
       void (async () => {
         try {
-          await api.updateGitHubApp(setupID, {
-            installationId: installationID,
-          });
+          const existing = overview.githubApps.find(connection => connection.id === setupID);
+          if (!existing?.installationId) {
+            await api.updateGitHubApp(setupID, { installationId: installationID });
+          }
           await api.verifyGitHubApp(setupID);
-          setConnectionNotice("GitHub App installed and verified.");
+          setConnectionNotice("GitHub App installation connected. Existing organizations remain connected.");
           await load(true);
         } catch (cause) {
           setConnectionNotice((cause as Error).message);

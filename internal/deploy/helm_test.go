@@ -22,7 +22,7 @@ type recordingHelmClient struct {
 	values    map[string]interface{}
 }
 
-func (c *recordingHelmClient) UpgradeInstall(_ context.Context, release string, app core.App, values map[string]interface{}) error {
+func (c *recordingHelmClient) UpgradeInstall(_ context.Context, release string, app core.App, _ core.Deployment, values map[string]interface{}) error {
 	c.operation, c.release, c.app, c.values = "upgrade-install", release, app, values
 	return nil
 }

@@ -16,16 +16,6 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-func (a *API) registerReleaseRoutes(r chi.Router) {
-	r.Post("/apps/{id}/release-preview", a.appPermission(core.PermissionDeploymentRun, a.previewApplicationRelease))
-	r.Get("/apps/{id}/activity", a.appPermission(core.PermissionProjectView, a.applicationReleaseActivity))
-	r.Get("/deployments/{id}/release", a.deploymentPermission(core.PermissionProjectView, a.getDeploymentRelease))
-	r.Put("/deployments/{id}/release", a.deploymentPermission(core.PermissionProjectConfigure, a.updateDeploymentRelease))
-	r.Post("/deployments/{id}/rollback-preview", a.deploymentPermission(core.PermissionDeploymentRun, a.previewDeploymentRollback))
-	r.Post("/deployments/{id}/rollback", a.deploymentPermission(core.PermissionDeploymentRun, a.rollbackDeploymentRelease))
-	r.Get("/deployments/{id}/diagnosis", a.deploymentPermission(core.PermissionProjectView, a.diagnoseDeploymentRelease))
-}
-
 func (a *API) previewApplicationRelease(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Revision string `json:"revision"`

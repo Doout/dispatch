@@ -412,6 +412,10 @@ func TestGitHubAppManifestIsPublic(t *testing.T) {
 	if public, ok := result.Manifest["public"].(bool); !ok || !public {
 		t.Fatalf("GitHub App manifest must be public: %#v", result.Manifest)
 	}
+	permissions, ok := result.Manifest["default_permissions"].(map[string]any)
+	if !ok || permissions["contents"] != "read" || permissions["pull_requests"] != "write" || permissions["issues"] != "write" || permissions["statuses"] != "write" {
+		t.Fatalf("GitHub App manifest is missing repository access: %#v", permissions)
+	}
 }
 
 func TestStructuredHelmValuesEncodeAsOverrides(t *testing.T) {

@@ -26,15 +26,16 @@ type deploymentCatalogItem struct {
 	Sync         *catalogSync     `json:"sync,omitempty"`
 }
 type catalogSync struct {
-	StaleAfterSeconds int        `json:"staleAfterSeconds"`
-	Configuration     string     `json:"configuration"`
-	Revision          string     `json:"revision"`
-	Drift             string     `json:"drift"`
-	Health            string     `json:"health"`
-	Supported         bool       `json:"supported"`
-	CheckedAt         *time.Time `json:"checkedAt,omitempty"`
-	Message           string     `json:"message"`
-	HealthMessage     string     `json:"healthMessage,omitempty"`
+	StaleAfterSeconds    int        `json:"staleAfterSeconds"`
+	ConfigurationMessage string     `json:"configurationMessage,omitempty"`
+	Configuration        string     `json:"configuration"`
+	Revision             string     `json:"revision"`
+	Drift                string     `json:"drift"`
+	Health               string     `json:"health"`
+	Supported            bool       `json:"supported"`
+	CheckedAt            *time.Time `json:"checkedAt,omitempty"`
+	Message              string     `json:"message"`
+	HealthMessage        string     `json:"healthMessage,omitempty"`
 }
 
 func (a *API) catalogItems(r *http.Request) ([]deploymentCatalogItem, error) {
@@ -121,7 +122,7 @@ func (a *API) catalogItems(r *http.Request) ([]deploymentCatalogItem, error) {
 		if e != nil {
 			return nil, e
 		}
-		item.Sync = &catalogSync{Configuration: status.Configuration.State, Revision: status.Revision.State, Drift: status.Drift.State, Health: status.Drift.Health, Supported: status.Supported, CheckedAt: status.Drift.CheckedAt, Message: status.Drift.Message, HealthMessage: status.Drift.HealthMessage}
+		item.Sync = &catalogSync{Configuration: status.Configuration.State, ConfigurationMessage: status.Configuration.Message, Revision: status.Revision.State, Drift: status.Drift.State, Health: status.Drift.Health, Supported: status.Supported, CheckedAt: status.Drift.CheckedAt, Message: status.Drift.Message, HealthMessage: status.Drift.HealthMessage}
 		item.Sync.StaleAfterSeconds = 900
 		if a.observations != nil {
 			configuration, e := a.observations.Config(ctx, app.ID)

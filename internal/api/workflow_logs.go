@@ -78,7 +78,8 @@ func (a *API) watchWorkflowLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		allowed := false
-		a.workflowRevisionPermission(core.PermissionProjectView, func(http.ResponseWriter, *http.Request) { allowed = true })(auth, r.WithContext(ctx))
+		checkAccess := a.workflowRevisionPermission(core.PermissionProjectView)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { allowed = true }))
+		checkAccess.ServeHTTP(auth, r.WithContext(ctx))
 		if !allowed {
 			send("auth-error", 403)
 			return

@@ -120,6 +120,7 @@ func run(logger *slog.Logger) error {
 	}
 	go controller.RunRelayConsumers(shutdownCtx)
 	go controller.RunWorkflowPoller(shutdownCtx)
+	go controller.RunPreviewPoller(shutdownCtx)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: controller,
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,

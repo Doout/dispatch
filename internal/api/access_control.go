@@ -227,46 +227,50 @@ func (a *API) requireProject(w http.ResponseWriter, r *http.Request, permission 
 	return false
 }
 
-func (a *API) ownerOnly(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (a *API) ownerOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.requireControllerOwner(w, r) {
-			next(w, r)
+			next.ServeHTTP(w, r)
 		}
-	}
+	})
 }
 
-func (a *API) directUserOnly(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (a *API) directUserOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, impersonating := currentImpersonator(r.Context()); impersonating {
 			problem(w, http.StatusForbidden, "Unavailable while viewing as another user", "Return to your account before changing sign-in credentials.")
 			return
 		}
-		next(w, r)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *API) projectPermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if a.requireProject(w, r, permission, chi.URLParam(r, "id")) {
+				next.ServeHTTP(w, r)
+			}
+		})
 	}
 }
 
-func (a *API) projectPermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if a.requireProject(w, r, permission, chi.URLParam(r, "id")) {
-			next(w, r)
-		}
-	}
-}
-
-func (a *API) appPermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		app, err := a.store.GetApp(r.Context(), chi.URLParam(r, "id"))
-		if errors.Is(err, store.ErrNotFound) {
-			problem(w, http.StatusNotFound, "Application not found", "This application no longer exists.")
-			return
-		}
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		if a.requireProject(w, r, permission, app.ProjectID) {
-			next(w, r)
-		}
+func (a *API) appPermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			app, err := a.store.GetApp(r.Context(), chi.URLParam(r, "id"))
+			if errors.Is(err, store.ErrNotFound) {
+				problem(w, http.StatusNotFound, "Application not found", "This application no longer exists.")
+				return
+			}
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			if a.requireProject(w, r, permission, app.ProjectID) {
+				next.ServeHTTP(w, r)
+			}
+		})
 	}
 }
 
@@ -306,195 +310,211 @@ func previewGroupAppIDs(group core.PreviewGroup) []string {
 	return appIDs
 }
 
-func (a *API) previewGroupPermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		group, err := a.store.GetPreviewGroup(r.Context(), chi.URLParam(r, "id"))
-		if errors.Is(err, store.ErrNotFound) {
-			problem(w, http.StatusNotFound, "Preview group not found", "This preview group no longer exists.")
-			return
-		}
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		if a.requireApps(w, r, permission, previewGroupAppIDs(group)) {
-			next(w, r)
-		}
-	}
-}
-
-func (a *API) previewGroupRunPermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		run, err := a.store.GetPreviewGroupRun(r.Context(), chi.URLParam(r, "id"))
-		if errors.Is(err, store.ErrNotFound) {
-			problem(w, http.StatusNotFound, "Preview group run not found", "This preview run no longer exists.")
-			return
-		}
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		group, err := a.store.GetPreviewGroup(r.Context(), run.GroupID)
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		if a.requireApps(w, r, permission, previewGroupAppIDs(group)) {
-			next(w, r)
-		}
-	}
-}
-
-func (a *API) eventTriggerPermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := a.store.ListEventTriggers(r.Context(), "")
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		for _, item := range items {
-			if item.ID != chi.URLParam(r, "id") {
-				continue
+func (a *API) previewGroupPermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			group, err := a.store.GetPreviewGroup(r.Context(), chi.URLParam(r, "id"))
+			if errors.Is(err, store.ErrNotFound) {
+				problem(w, http.StatusNotFound, "Preview group not found", "This preview group no longer exists.")
+				return
 			}
-			app, appErr := a.store.GetApp(r.Context(), item.AppID)
-			if appErr != nil {
-				a.internal(w, appErr)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			if a.requireApps(w, r, permission, previewGroupAppIDs(group)) {
+				next.ServeHTTP(w, r)
+			}
+		})
+	}
+}
+
+func (a *API) previewGroupRunPermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			run, err := a.store.GetPreviewGroupRun(r.Context(), chi.URLParam(r, "id"))
+			if errors.Is(err, store.ErrNotFound) {
+				problem(w, http.StatusNotFound, "Preview group run not found", "This preview run no longer exists.")
+				return
+			}
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			group, err := a.store.GetPreviewGroup(r.Context(), run.GroupID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			if a.requireApps(w, r, permission, previewGroupAppIDs(group)) {
+				next.ServeHTTP(w, r)
+			}
+		})
+	}
+}
+
+func (a *API) eventTriggerPermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			items, err := a.store.ListEventTriggers(r.Context(), "")
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			for _, item := range items {
+				if item.ID != chi.URLParam(r, "id") {
+					continue
+				}
+				app, appErr := a.store.GetApp(r.Context(), item.AppID)
+				if appErr != nil {
+					a.internal(w, appErr)
+					return
+				}
+				if a.requireProject(w, r, permission, app.ProjectID) {
+					next.ServeHTTP(w, r)
+				}
+				return
+			}
+			problem(w, http.StatusNotFound, "Event trigger not found", "This event trigger no longer exists.")
+		})
+	}
+}
+
+func (a *API) deploymentPermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			deployment, err := a.store.GetDeployment(r.Context(), chi.URLParam(r, "id"))
+			if errors.Is(err, store.ErrNotFound) {
+				problem(w, http.StatusNotFound, "Deployment not found", "This deployment no longer exists.")
+				return
+			}
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			app, err := a.store.GetApp(r.Context(), deployment.AppID)
+			if err != nil {
+				a.internal(w, err)
 				return
 			}
 			if a.requireProject(w, r, permission, app.ProjectID) {
-				next(w, r)
+				next.ServeHTTP(w, r)
 			}
-			return
-		}
-		problem(w, http.StatusNotFound, "Event trigger not found", "This event trigger no longer exists.")
+		})
 	}
 }
 
-func (a *API) deploymentPermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		deployment, err := a.store.GetDeployment(r.Context(), chi.URLParam(r, "id"))
-		if errors.Is(err, store.ErrNotFound) {
-			problem(w, http.StatusNotFound, "Deployment not found", "This deployment no longer exists.")
-			return
-		}
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		app, err := a.store.GetApp(r.Context(), deployment.AppID)
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		if a.requireProject(w, r, permission, app.ProjectID) {
-			next(w, r)
-		}
+func (a *API) configSourcePermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			source, err := a.store.GetConfigSource(r.Context(), chi.URLParam(r, "id"))
+			if errors.Is(err, store.ErrNotFound) {
+				problem(w, http.StatusNotFound, "Configuration source not found", "This source no longer exists.")
+				return
+			}
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			if a.requireProject(w, r, permission, source.ProjectID) {
+				next.ServeHTTP(w, r)
+			}
+		})
 	}
 }
 
-func (a *API) configSourcePermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		source, err := a.store.GetConfigSource(r.Context(), chi.URLParam(r, "id"))
-		if errors.Is(err, store.ErrNotFound) {
-			problem(w, http.StatusNotFound, "Configuration source not found", "This source no longer exists.")
-			return
-		}
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		if a.requireProject(w, r, permission, source.ProjectID) {
-			next(w, r)
-		}
+func (a *API) workflowResourcePermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resource, err := a.store.GetWorkflowResource(r.Context(), chi.URLParam(r, "id"))
+			if errors.Is(err, store.ErrNotFound) {
+				problem(w, http.StatusNotFound, "Workflow resource not found", "This resource no longer exists.")
+				return
+			}
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			source, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			if a.requireProject(w, r, permission, source.ProjectID) {
+				next.ServeHTTP(w, r)
+			}
+		})
 	}
 }
 
-func (a *API) workflowResourcePermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		resource, err := a.store.GetWorkflowResource(r.Context(), chi.URLParam(r, "id"))
-		if errors.Is(err, store.ErrNotFound) {
-			problem(w, http.StatusNotFound, "Workflow resource not found", "This resource no longer exists.")
-			return
-		}
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		source, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		if a.requireProject(w, r, permission, source.ProjectID) {
-			next(w, r)
-		}
+func (a *API) workflowRevisionPermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			revision, err := a.store.GetWorkflowRevision(r.Context(), chi.URLParam(r, "id"))
+			if errors.Is(err, store.ErrNotFound) {
+				problem(w, http.StatusNotFound, "Workflow revision not found", "This revision no longer exists.")
+				return
+			}
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			resource, err := a.store.GetWorkflowResource(r.Context(), revision.ResourceID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			source, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			if a.requireProject(w, r, permission, source.ProjectID) {
+				next.ServeHTTP(w, r)
+			}
+		})
 	}
 }
 
-func (a *API) workflowRevisionPermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		revision, err := a.store.GetWorkflowRevision(r.Context(), chi.URLParam(r, "id"))
-		if errors.Is(err, store.ErrNotFound) {
-			problem(w, http.StatusNotFound, "Workflow revision not found", "This revision no longer exists.")
-			return
-		}
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		resource, err := a.store.GetWorkflowResource(r.Context(), revision.ResourceID)
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		source, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		if a.requireProject(w, r, permission, source.ProjectID) {
-			next(w, r)
-		}
+func (a *API) workflowStagePermission(permission core.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			stage, err := a.store.GetWorkflowStageRun(r.Context(), chi.URLParam(r, "id"))
+			if errors.Is(err, store.ErrNotFound) {
+				problem(w, http.StatusNotFound, "Stage not found", "This stage no longer exists.")
+				return
+			}
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			revision, err := a.store.GetWorkflowRevision(r.Context(), stage.RevisionID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			resource, err := a.store.GetWorkflowResource(r.Context(), revision.ResourceID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			source, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			if a.requireProject(w, r, permission, source.ProjectID) {
+				next.ServeHTTP(w, r)
+			}
+		})
 	}
 }
 
-func (a *API) workflowStagePermission(permission core.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		stage, err := a.store.GetWorkflowStageRun(r.Context(), chi.URLParam(r, "id"))
-		if errors.Is(err, store.ErrNotFound) {
-			problem(w, http.StatusNotFound, "Stage not found", "This stage no longer exists.")
-			return
-		}
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		revision, err := a.store.GetWorkflowRevision(r.Context(), stage.RevisionID)
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		resource, err := a.store.GetWorkflowResource(r.Context(), revision.ResourceID)
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		source, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
-		if err != nil {
-			a.internal(w, err)
-			return
-		}
-		if a.requireProject(w, r, permission, source.ProjectID) {
-			next(w, r)
-		}
-	}
-}
-
-func (a *API) serverPermission(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (a *API) serverPermission(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := currentIdentity(r.Context())
 		if identity.SystemRole == core.UserRoleOwner {
-			next(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		serverID := chi.URLParam(r, "id")
@@ -510,12 +530,12 @@ func (a *API) serverPermission(next http.HandlerFunc) http.HandlerFunc {
 		}
 		for _, app := range apps {
 			if app.ServerID == serverID && projects[app.ProjectID] {
-				next(w, r)
+				next.ServeHTTP(w, r)
 				return
 			}
 		}
 		problem(w, http.StatusForbidden, "Access denied", "This server is not used by one of your projects.")
-	}
+	})
 }
 
 func (a *API) authMe(w http.ResponseWriter, r *http.Request) {
@@ -587,9 +607,6 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) accessOverview(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	users, err := a.store.ListUsers(r.Context())
 	if err != nil {
 		a.internal(w, err)
@@ -645,9 +662,6 @@ func validUserState(state string) bool {
 }
 
 func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	var input userRequest
 	if !decode(w, r, &input) {
 		return
@@ -688,9 +702,6 @@ func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) updateUser(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	user, err := a.store.GetUser(r.Context(), chi.URLParam(r, "id"))
 	if errors.Is(err, store.ErrNotFound) {
 		problem(w, http.StatusNotFound, "User not found", "This user no longer exists.")
@@ -750,9 +761,6 @@ func (a *API) updateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	user, err := a.store.GetUser(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -791,9 +799,6 @@ type teamRequest struct {
 }
 
 func (a *API) createTeam(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	var input teamRequest
 	if !decode(w, r, &input) {
 		return
@@ -821,9 +826,6 @@ func (a *API) createTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) updateTeam(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	team, err := a.store.GetTeam(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -876,9 +878,6 @@ func (a *API) replaceMembers(ctx context.Context, teamID string, userIDs []strin
 }
 
 func (a *API) deleteTeam(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	if err := a.store.DeleteTeam(r.Context(), chi.URLParam(r, "id")); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			problem(w, http.StatusNotFound, "Team not found", "This team no longer exists.")
@@ -908,9 +907,6 @@ func validProjectRole(role string) bool {
 }
 
 func (a *API) upsertRoleAssignment(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	var input roleAssignmentRequest
 	if !decode(w, r, &input) {
 		return
@@ -969,9 +965,6 @@ func (a *API) upsertRoleAssignment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteRoleAssignment(w http.ResponseWriter, r *http.Request) {
-	if !a.requireControllerOwner(w, r) {
-		return
-	}
 	if err := a.store.DeleteRoleAssignment(r.Context(), chi.URLParam(r, "id")); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			problem(w, http.StatusNotFound, "Access grant not found", "This grant no longer exists.")
@@ -1128,6 +1121,13 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 		}
 	}
 	overview.ConfigSources = configSources
+	templates := overview.WorkflowPreviewTemplates[:0]
+	for _, template := range overview.WorkflowPreviewTemplates {
+		if configSourceIDs[template.ConfigSourceID] {
+			templates = append(templates, template)
+		}
+	}
+	overview.WorkflowPreviewTemplates = templates
 	resourceIDs := map[string]bool{}
 	resources := overview.WorkflowResources[:0]
 	for _, resource := range overview.WorkflowResources {

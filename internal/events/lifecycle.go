@@ -27,6 +27,17 @@ func (l DeploymentLifecycle) StartPreview(ctx context.Context, preview core.Prev
 		return StartResult{}, err
 	}
 	instance := previewApplication(template, preview)
+	githubURL := "https://github.com"
+	if triggers, err := l.Store.ListEventTriggers(ctx, template.ID); err == nil {
+		for _, trigger := range triggers {
+			if trigger.ID == preview.TriggerID && trigger.GitHubAppID != "" {
+				if connection, err := l.Store.GetGitHubApp(ctx, trigger.GitHubAppID); err == nil {
+					githubURL = strings.TrimRight(connection.WebURL, "/")
+				}
+			}
+		}
+	}
+	instance.HelmProvenance.PullRequests[0].URL = githubURL + "/" + preview.Repository + "/pull/" + strconv.Itoa(preview.PullRequestNumber)
 	if err := l.Store.CreateApp(ctx, instance); err != nil {
 		return StartResult{}, fmt.Errorf("create preview application: %w", err)
 	}
@@ -136,6 +147,7 @@ func previewApplication(template core.App, preview core.PreviewEnvironment) core
 	instance.PreDeployHook = preview.PreDeployHook
 	instance.PostDeployHook = preview.PostDeployHook
 	instance.HookEnvironment = preview.HookEnvironment
+	instance.HelmProvenance = core.HelmProvenance{PullRequests: []core.HelmPullRequest{{Repository: preview.Repository, Number: preview.PullRequestNumber}}}
 	instance.State = "preview"
 	instance.CreatedAt = time.Now().UTC()
 	return instance

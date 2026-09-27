@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, type Overview, type WorkflowJobResult, type WorkflowResource } from "../api";
@@ -81,6 +81,30 @@ describe("workflow resource run details", () => {
     render(<WorkflowResourceDialog resource={resource} overview={overview} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={open} />);
     await userEvent.click(await screen.findByRole("button", { name: /Unchanged · Manifests/ }));
     expect(open).toHaveBeenCalledWith("retained-release");
+  });
+
+  it("opens stage deployment logs and reports a stage failure", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([{ id: "stage", revisionId: "revision-1", stageName: "development", targetRef: "dev", state: "failed", approval: "automatic", createdAt: resource.createdAt, deploymentIds: ["release"], error: "Helm readiness timed out" }]);
+    vi.spyOn(api, "deployment").mockResolvedValue({ id: "release", appId: "app", commitSha: "abc", specDigest: "", state: "failed", message: "Waiting for available replicas", createdAt: resource.createdAt });
+    vi.spyOn(api, "logs").mockResolvedValue([{ id: 1, deploymentId: "release", level: "info", message: "Upgrading chart", createdAt: resource.createdAt }]);
+    render(<WorkflowResourceDialog resource={resource} overview={overview} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "View progress & logs" }));
+    expect(await screen.findByText(/Upgrading chart/)).not.toBeNull();
+    expect(screen.getByText("Waiting for available replicas")).not.toBeNull();
+    expect(screen.getByRole("alert").textContent).toBe("Helm readiness timed out");
+  });
+
+  it("refreshes a running stage when a deployment becomes available", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    const stage = { id: "stage", revisionId: "revision-1", stageName: "development", targetRef: "dev", state: "running", approval: "automatic", createdAt: resource.createdAt };
+    vi.spyOn(api, "workflowStages").mockResolvedValueOnce([stage]).mockResolvedValue([{ ...stage, deploymentIds: ["release"] }]);
+    vi.spyOn(api, "deployment").mockResolvedValue({ id: "release", appId: "app", commitSha: "abc", specDigest: "", state: "starting", message: "Installing release", createdAt: resource.createdAt });
+    vi.spyOn(api, "logs").mockResolvedValue([{ id: 1, deploymentId: "release", level: "info", message: "Helm install started", createdAt: resource.createdAt }]);
+    render(<WorkflowResourceDialog resource={resource} overview={overview} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "View progress & logs" }));
+    expect(await screen.findByText(/Preparing deployments/)).not.toBeNull();
+    await waitFor(() => expect(screen.getByText(/Helm install started/)).not.toBeNull(), { timeout: 4500 });
   });
 
   it("opens the failed job output and lets operators inspect another job", async () => {

@@ -156,6 +156,56 @@ func TestInstallationTokenIsSignedAndCached(t *testing.T) {
 	}
 }
 
+func TestVerifyReportsRegistrationAndInstallationPermissionGaps(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemValue := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	masterKey := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(masterKey, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(masterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/app/installations":
+			_, _ = w.Write([]byte(`[{"id":73,"account":{"login":"platform"}}]`))
+		case strings.HasPrefix(r.URL.Path, "/repos/") && strings.HasSuffix(r.URL.Path, "/installation"):
+			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/app":
+			_, _ = w.Write([]byte(`{"id":42,"slug":"dispatch","permissions":{"contents":"read","issues":"read","pull_requests":"read","statuses":"write"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/app/installations/73":
+			_, _ = w.Write([]byte(`{"id":73,"repository_selection":"selected","permissions":{"contents":"read","issues":"read","pull_requests":"read","statuses":"read"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/73/access_tokens":
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC(), "permissions": map[string]string{"contents": "read", "issues": "read", "pull_requests": "read", "statuses": "read"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/installation/repositories":
+			_, _ = w.Write([]byte(`{"total_count":2,"repositories":[]}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	manager := New(nil, vault)
+	privateKey, webhookSecret, err := manager.EncryptCredentials("connection-1", string(pemValue), "0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Store = testStore{connection: core.GitHubAppConnection{ID: "connection-1", APIURL: server.URL, AppID: 42, InstallationID: 73, EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret}}
+	result, err := manager.Verify(context.Background(), "connection-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AppPermissionsAvailable || !result.InstallationPermissionsAvailable || !result.TokenPermissionsAvailable || len(result.MissingAppPermissions) != 2 || result.MissingAppPermissions[0].Name != "issues" || result.MissingAppPermissions[1].Name != "pull_requests" || len(result.MissingInstallationPermissions) != 3 || result.MissingInstallationPermissions[0].Name != "issues" || result.MissingInstallationPermissions[1].Name != "pull_requests" || result.MissingInstallationPermissions[2].Name != "statuses" || len(result.MissingTokenPermissions) != 3 {
+		t.Fatalf("unexpected permission audit: %#v", result)
+	}
+}
+
 func TestListRepositoriesUsesInstallationTokenAndPaginates(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -173,6 +223,10 @@ func TestListRepositoriesUsesInstallationTokenAndPaginates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/app/installations":
+			_, _ = w.Write([]byte(`[{"id":73,"account":{"login":"platform"}}]`))
+		case strings.HasPrefix(r.URL.Path, "/repos/") && strings.HasSuffix(r.URL.Path, "/installation"):
+			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/73/access_tokens":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC()})
 		case r.Method == http.MethodGet && r.URL.Path == "/installation/repositories":
@@ -231,6 +285,10 @@ func TestWorkflowRepositoryOperations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/app/installations":
+			_, _ = w.Write([]byte(`[{"id":73,"account":{"login":"platform"}}]`))
+		case strings.HasPrefix(r.URL.Path, "/repos/") && strings.HasSuffix(r.URL.Path, "/installation"):
+			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/73/access_tokens":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC()})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/platform/config/commits/main":

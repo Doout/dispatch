@@ -71,6 +71,145 @@ afterEach(() => {
 });
 
 describe("applications overview", () => {
+  it("lists temporary PR previews outside their credential source and opens the saved comment settings", async () => {
+    const user = userEvent.setup();
+    const configured: Overview = {
+      ...overview,
+      projectPermissions: { "project-1": ["project.view", "project.configure", "deployment.run"] },
+      githubApps: [{ id: "github-1", name: "Dispatch dev", webUrl: "https://github.example.com", apiUrl: "https://github.example.com/api/v3", appId: 1, installationId: 2, privateKeyConfigured: true, webhookSecretConfigured: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      configSources: [{ id: "slots", projectId: "project-1", name: "Slots", repository: "Example/devops", branch: "main", path: "slots", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      workflowResources: [{ id: "preview", configSourceId: "slots", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "dev-preview-42", path: "temporary/preview.yaml", document: "kind: Application", specDigest: "digest", configSha: "abc", temporary: true, previewPullRequests: [{ repository: "example/service", number: 42, url: "https://github.example.com/example/service/pull/42" }, { repository: "example/ui", number: 84, url: "https://github.example.com/example/ui/pull/84" }], active: true, state: "ready", sourceCount: 2, jobCount: 2, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+    };
+    vi.spyOn(api, "workflowPreviewTriggers").mockResolvedValue([{ id: "trigger", resourceId: "preview", githubAppId: "github-1", repository: "Example/service", pullRequestNumber: 42, command: "/preview", previewUrl: "https://dev.example.test/app/preview/42", createdAt: "2026-01-01T00:00:00Z" }]);
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+    expect(screen.queryByRole("button", { name: /Show .* in Slots/ })).toBeNull();
+    expect(screen.getByRole("row", { name: /PR previews/ })).toBeTruthy();
+    expect(screen.getByRole("row", { name: /dev-preview-42/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "example/service pull request #42" }).getAttribute("href")).toBe("https://github.example.com/example/service/pull/42");
+    expect(screen.getByRole("link", { name: "example/ui pull request #84" }).getAttribute("href")).toBe("https://github.example.com/example/ui/pull/84");
+    expect(within(screen.getByRole("row", { name: /PR previews/ })).queryByRole("button")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Edit dev-preview-42 preview" }));
+    expect(await screen.findByRole("heading", { name: "Edit dev-preview-42" })).toBeTruthy();
+    expect((await screen.findByLabelText(/^Comment command/) as HTMLInputElement).value).toBe("/preview");
+    expect((screen.getByLabelText("PR number") as HTMLInputElement).value).toBe("42");
+  });
+
+  it("requires confirmation before deleting a PR preview", async () => {
+    const user = userEvent.setup();
+    const configured: Overview = {
+      ...overview,
+      configSources: [{ id: "slots", projectId: "project-1", name: "Slots", repository: "Example/devops", branch: "main", path: "slots", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      workflowResources: [{ id: "preview", configSourceId: "slots", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "dev-preview-42", path: "temporary/preview.yaml", document: "kind: Application", specDigest: "digest", configSha: "abc", temporary: true, active: true, state: "ready", sourceCount: 2, jobCount: 2, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+    };
+    const remove = vi.spyOn(api, "deleteTemporaryWorkflowResource").mockResolvedValue(undefined);
+    const onChanged = vi.fn().mockResolvedValue(undefined);
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={onChanged} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+    await user.click(screen.getByLabelText("Options for dev-preview-42"));
+    await user.click(screen.getByRole("menuitem", { name: "Delete preview" }));
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Delete PR preview" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Delete preview" }));
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("preview"));
+    expect(onChanged).toHaveBeenCalledOnce();
+  });
+
+  it("creates a comment driven preview from saved YAML", async () => {
+    const user = userEvent.setup();
+    const configured: Overview = {
+      ...overview,
+      projectPermissions: { "project-1": ["project.view", "project.configure", "deployment.run"] },
+      githubApps: [{ id: "github-1", name: "Dispatch dev", webUrl: "https://github.example.com", apiUrl: "https://github.example.com/api/v3", appId: 1, installationId: 2, privateKeyConfigured: true, webhookSecretConfigured: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      configSources: [{ id: "slots", projectId: "project-1", name: "Slots", repository: "Example/devops", branch: "main", path: "slots", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+    };
+    const resource = { id: "preview", configSourceId: "slots", apiVersion: "dispatch/v1alpha1", kind: "Application" as const, name: "preview-42", path: "temporary/preview.yaml", document: "kind: Application\nmetadata:\n  name: preview-42\n", specDigest: "digest", configSha: "abc", temporary: true, active: true, state: "ready", sourceCount: 1, jobCount: 1, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
+    const importFile = vi.spyOn(api, "importWorkflowPreviewDocument").mockResolvedValue({ document: "kind: Application\nmetadata:\n  name: preview-__PREVIEW_ID__\n", path: ".dispatch/preview.yaml", headSha: "abcdef1234567890" });
+    const create = vi.spyOn(api, "createTemporaryWorkflowResource").mockResolvedValue(resource);
+    const trigger = vi.spyOn(api, "createWorkflowPreviewTrigger").mockResolvedValue({ id: "trigger", resourceId: "preview", githubAppId: "github-1", repository: "Example/service", pullRequestNumber: 42, command: "/preview", previewUrl: "https://dev.example.test/app/preview/42", createdAt: "2026-01-01T00:00:00Z" });
+    const onChanged = vi.fn().mockResolvedValue(undefined);
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={onChanged} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("menuitem", { name: "One-off PR preview" }));
+    await user.type(screen.getByLabelText(/^PR repository/), "Example/service");
+    await user.type(screen.getByLabelText("PR number"), "42");
+    await user.type(screen.getByLabelText(/^YAML file path in PR branch/), ".dispatch/preview.yaml");
+    await user.click(screen.getByRole("button", { name: "Load YAML from PR" }));
+    await vi.waitFor(() => expect(importFile).toHaveBeenCalledWith({ githubAppId: "github-1", repository: "Example/service", pullRequestNumber: 42, path: ".dispatch/preview.yaml" }));
+    expect((screen.getByLabelText(/^Application YAML/) as HTMLTextAreaElement).value).toContain("preview-__PREVIEW_ID__");
+    await user.type(screen.getByLabelText(/^Preview URL/), "https://dev.example.test/app/preview/42");
+    await user.click(screen.getByRole("button", { name: "Create preview" }));
+    await vi.waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ configSourceId: "slots", previewId: "42" })));
+    expect(trigger).toHaveBeenCalledWith("preview", expect.objectContaining({ repository: "Example/service", pullRequestNumber: 42, command: "/preview" }));
+    expect(onChanged).toHaveBeenCalledOnce();
+  });
+
+  it("creates a reusable PR preview template from a saved preview", async () => {
+    const user = userEvent.setup();
+    const configured: Overview = {
+      ...overview,
+      projectPermissions: { "project-1": ["project.view", "project.configure", "deployment.run"] },
+      githubApps: [{ id: "github-1", name: "Dispatch dev", webUrl: "https://github.example.com", apiUrl: "https://github.example.com/api/v3", appId: 1, installationId: 2, privateKeyConfigured: true, webhookSecretConfigured: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      configSources: [{ id: "slots", projectId: "project-1", name: "Slots", repository: "Example/devops", branch: "main", path: "slots", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      workflowResources: [{ id: "preview", configSourceId: "slots", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "dev-preview-42", path: "temporary/preview.yaml", document: "apiVersion: dispatch/v1alpha1\nkind: Application\nmetadata:\n  name: dev-preview-42\nspec:\n  sources:\n    service:\n      repository: Example/service\n", specDigest: "digest", configSha: "abc", temporary: true, active: true, state: "ready", sourceCount: 1, jobCount: 1, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+    };
+    vi.spyOn(api, "workflowPreviewTriggers").mockResolvedValue([{ id: "trigger", resourceId: "preview", githubAppId: "github-1", repository: "Example/service", pullRequestNumber: 42, command: "/preview", previewUrl: "https://dev.example.test/app/preview/42", createdAt: "2026-01-01T00:00:00Z" }]);
+    const create = vi.spyOn(api, "createWorkflowPreviewTemplate").mockResolvedValue({ id: "template", configSourceId: "slots", githubAppId: "github-1", name: "dev-preview-42 template", repository: "Example/service", command: "/preview", previewUrl: "https://dev.example.test/app/preview/{{ instance.id }}", document: "", active: true, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" });
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("menuitem", { name: "PR preview template" }));
+    expect(screen.getByRole("heading", { name: "New PR preview template" })).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText(/^Start from a saved preview/), "preview");
+    await vi.waitFor(() => expect((screen.getByLabelText(/^Application YAML template/) as HTMLTextAreaElement).value).toContain("dev-preview-{{ instance.id }}"));
+    await user.click(screen.getByRole("button", { name: "Create template" }));
+    await vi.waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ configSourceId: "slots", githubAppId: "github-1", repository: "Example/service", command: "/preview", previewUrl: "https://dev.example.test/app/preview/{{ instance.id }}", active: true })));
+  });
+
+  it("creates a GitHub template without copying YAML into Dispatch", async () => {
+    const user = userEvent.setup();
+    const configured: Overview = {
+      ...overview,
+      projectPermissions: { "project-1": ["project.view", "project.configure", "deployment.run"] },
+      githubApps: [{ id: "github-1", name: "Dispatch dev", webUrl: "https://github.example.com", apiUrl: "https://github.example.com/api/v3", appId: 1, installationId: 2, privateKeyConfigured: true, webhookSecretConfigured: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      configSources: [{ id: "slots", projectId: "project-1", name: "Slots", repository: "Example/devops", branch: "main", path: "slots", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+    };
+    const create = vi.spyOn(api, "createWorkflowPreviewTemplate").mockResolvedValue({} as never);
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("menuitem", { name: "PR preview template" }));
+    await user.type(screen.getByLabelText("Template name"), "dev previews");
+    await user.type(screen.getByLabelText(/^PR repository/), "Example/service");
+    await user.click(screen.getByLabelText(/^Preview URL pattern/));
+    await user.paste("https://dev.example.test/preview/{{ instance.id }}");
+    await user.selectOptions(screen.getByLabelText(/^Template definition/), "github");
+    await user.type(screen.getByLabelText(/^Template repository/), "Example/devops");
+    await user.type(screen.getByLabelText(/^Template YAML path/), "deployment/templates/dev-preview.yaml");
+    expect((screen.getByLabelText(/^Application YAML template/) as HTMLTextAreaElement).readOnly).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Create template" }));
+    await vi.waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ document: "", gitSource: { repository: "Example/devops", branch: "main", path: "deployment/templates/dev-preview.yaml" } })));
+  });
+
+  it("opens template settings from its row and links GitHub edits", async () => {
+    const user = userEvent.setup();
+    const configured: Overview = {
+      ...overview,
+      projectPermissions: { "project-1": ["project.view", "project.configure", "deployment.run"] },
+      githubApps: [{ id: "github-1", name: "Dispatch dev", webUrl: "https://github.example.com", apiUrl: "https://github.example.com/api/v3", appId: 1, installationId: 2, privateKeyConfigured: true, webhookSecretConfigured: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      configSources: [{ id: "slots", projectId: "project-1", name: "Slots", repository: "Example/devops", branch: "main", path: "slots", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+    };
+    configured.workflowPreviewTemplates = [{ id: "template-1", configSourceId: "slots", githubAppId: "github-1", name: "dev previews", repository: "Example/service", command: "/preview", previewUrl: "https://dev.example.test/preview/{{ instance.id }}", document: "kind: Application", active: true, gitSource: { repository: "Example/devops", branch: "main", path: "deployment/templates/dev-preview.yaml", commitSha: "abc1234567890" }, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }];
+    const sync = vi.spyOn(api, "syncWorkflowPreviewTemplate").mockResolvedValue(configured.workflowPreviewTemplates[0]);
+    const update = vi.spyOn(api, "updateWorkflowPreviewTemplate").mockResolvedValue(configured.workflowPreviewTemplates[0]);
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+    await user.click(screen.getByLabelText("Options for dev previews"));
+    await user.click(screen.getByRole("menuitem", { name: "Sync from GitHub" }));
+    await vi.waitFor(() => expect(sync).toHaveBeenCalledWith("template-1"));
+    await user.click(screen.getByRole("button", { name: "Edit dev previews template" }));
+    expect(screen.getByRole("link", { name: "Edit YAML in GitHub" }).getAttribute("href")).toBe("https://github.example.com/Example/devops/edit/main/deployment/templates/dev-preview.yaml");
+    await user.clear(screen.getByLabelText(/^Template branch/));
+    await user.type(screen.getByLabelText(/^Template branch/), "review");
+    await user.click(screen.getByRole("button", { name: "Save template" }));
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith("template-1", expect.objectContaining({ gitSource: { repository: "Example/devops", branch: "review", path: "deployment/templates/dev-preview.yaml" } })));
+  });
+
   it("opens topology through client navigation without changing the hook order", async () => {
     const configured: Overview = {
       ...overview,

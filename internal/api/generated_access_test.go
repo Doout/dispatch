@@ -67,7 +67,7 @@ func TestGeneratedApplicationsRespectProjectVisibility(t *testing.T) {
 		route.URLParams.Add("id", id)
 		r = r.WithContext(context.WithValue(withIdentity(r.Context(), identityForUser(user)), chi.RouteCtxKey, route))
 		w := httptest.NewRecorder()
-		a.serverPermission(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })(w, r)
+		a.serverPermission(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })).ServeHTTP(w, r)
 		want := 403
 		if id == "allowed" {
 			want = 204

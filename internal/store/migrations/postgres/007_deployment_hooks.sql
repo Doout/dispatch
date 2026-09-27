@@ -1,2 +1,0 @@
-ALTER TABLE apps ADD COLUMN pre_deploy_hook TEXT NOT NULL DEFAULT '';
-ALTER TABLE apps ADD COLUMN post_deploy_hook TEXT NOT NULL DEFAULT '';
