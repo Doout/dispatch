@@ -200,3 +200,23 @@ func TestUntrustedForwardingCannotClaimHTTPS(t *testing.T) {
 		t.Fatal("HSTS set on untrusted HTTP")
 	}
 }
+
+func TestSuccessfulLoginClearsAccountFailures(t *testing.T) {
+	handler, cleanup := testHandlerWithDemo(t, AuthConfig{Username: "operator", Password: "correct horse battery staple"}, false)
+	defer cleanup()
+	for i := 0; i < 2; i++ {
+		response := authCall(handler, http.MethodPost, "/api/v1/auth/login", `{"username":"operator","password":"wrong password"}`)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("failed sign-in %d: %d", i, response.Code)
+		}
+	}
+	response := authCall(handler, http.MethodPost, "/api/v1/auth/login", `{"username":"operator","password":"correct horse battery staple"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid sign-in: %d %s", response.Code, response.Body.String())
+	}
+	api := handler.(*API)
+	count, err := api.store.AuthThrottleCount(context.Background(), throttleKey("password:account", "operator"), time.Now().Add(-passwordWindow))
+	if err != nil || count != 0 {
+		t.Fatalf("failures remain after successful sign-in: %d %v", count, err)
+	}
+}
