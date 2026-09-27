@@ -68,7 +68,14 @@ func TestServiceProvisionRunRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs, err := data.ListServiceProvisionRuns(ctx, "project")
-	if err != nil || len(runs) != 3 || runs[0].State != "failed" {
+	if err != nil || len(runs) != 3 {
 		t.Fatalf("runs: %+v, %v", runs, err)
+	}
+	states := map[string]string{}
+	for _, item := range runs {
+		states[item.ID] = item.State
+	}
+	if states["run"] != "failed" || states["second"] != "failed" || states["finished"] != "succeeded" {
+		t.Fatalf("run states: %+v", states)
 	}
 }
