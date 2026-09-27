@@ -408,8 +408,8 @@ type GitHubAppConnection struct {
 	UpdatedAt               time.Time  `json:"updatedAt"`
 }
 
-// Secret is write-only except for its identifying metadata. EncryptedValue is
-// persisted by the store but is never serialized to API clients.
+// EncryptedValue is persisted by the store but is never serialized to API
+// clients. PublicValue holds an SSH public key or a plain environment value.
 type Secret struct {
 	ID                  string       `json:"id"`
 	Name                string       `json:"name"`
@@ -491,6 +491,9 @@ type SecretType string
 
 const (
 	SecretTypeText             SecretType = "text"
+	SecretTypeEnvironment      SecretType = "environment_variable"
+	SecretTypeJSON             SecretType = "json"
+	SecretTypeEnvironmentJSON  SecretType = "environment_json"
 	SecretTypeAPIToken         SecretType = "api_token"
 	SecretTypeGitHubToken      SecretType = "github_token"
 	SecretTypeSSHPrivateKey    SecretType = "ssh_private_key"
@@ -499,11 +502,19 @@ const (
 
 func ValidSecretType(value SecretType) bool {
 	switch value {
-	case SecretTypeText, SecretTypeAPIToken, SecretTypeGitHubToken, SecretTypeSSHPrivateKey, SecretTypeRegistryPassword:
+	case SecretTypeText, SecretTypeEnvironment, SecretTypeJSON, SecretTypeEnvironmentJSON, SecretTypeAPIToken, SecretTypeGitHubToken, SecretTypeSSHPrivateKey, SecretTypeRegistryPassword:
 		return true
 	default:
 		return false
 	}
+}
+
+func PlainSecretType(value SecretType) bool {
+	return value == SecretTypeEnvironment || value == SecretTypeEnvironmentJSON
+}
+
+func JSONSecretType(value SecretType) bool {
+	return value == SecretTypeJSON || value == SecretTypeEnvironmentJSON
 }
 
 const SecretEnvironmentPrefix = "__DISPATCH_SECRET__"

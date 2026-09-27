@@ -21,6 +21,17 @@ type memoryStore struct {
 	network core.PrivateNetwork
 }
 
+func TestResolverReturnsPlainVariableWithoutVault(t *testing.T) {
+	resolver := New(memoryStore{secret: core.Secret{
+		ID: "url", Type: core.SecretTypeEnvironment, Source: core.SecretSourceLocal,
+		PublicValue: "https://example.test/app",
+	}}, nil)
+	value, err := resolver.Resolve(context.Background(), "url")
+	if err != nil || string(value) != "https://example.test/app" {
+		t.Fatalf("resolve plain value: %q, %v", value, err)
+	}
+}
+
 func (m memoryStore) GetPrivateNetwork(context.Context, string) (core.PrivateNetwork, error) {
 	return m.network, nil
 }

@@ -27,6 +27,7 @@ spec:
       secrets:
         REGISTRY_PASSWORD:
           secretRef: registry-password
+          key: auth.password
       outputs: [imageRepository, imageTag]
     build-ui:
       runFrom: chart
@@ -65,6 +66,9 @@ spec:
 	}
 	if got := documents[0].Spec.Stages[0].Approval; got != "automatic" {
 		t.Fatalf("default approval = %q", got)
+	}
+	if got := documents[0].Spec.Jobs["build-service"].Secrets["REGISTRY_PASSWORD"].Key; got != "auth.password" {
+		t.Fatalf("JSON key = %q", got)
 	}
 }
 

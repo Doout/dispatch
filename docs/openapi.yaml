@@ -1524,7 +1524,7 @@ paths:
   /secrets:
     get:
       operationId: listSecrets
-      description: Lists write-only secret metadata. Values are never returned.
+      description: Lists saved values. Plain values include publicValue; encrypted secrets return metadata only.
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
     post:
@@ -1538,7 +1538,7 @@ paths:
               required: [name, type, environmentVariable]
               properties:
                 name: { type: string, maxLength: 80 }
-                type: { type: string, enum: [text, api_token, github_token, ssh_private_key, registry_password], default: text }
+                type: { type: string, enum: [text, json, environment_variable, environment_json, api_token, github_token, ssh_private_key, registry_password], default: text }
                 source: { type: string, enum: [local, external], default: local }
                 environmentVariable: { type: string, maxLength: 128 }
                 value: { type: string, maxLength: 65536, writeOnly: true }
@@ -1547,7 +1547,7 @@ paths:
                 externalSecretId: { type: string, maxLength: 2048, description: Provider secret ID. Required when source is external. }
                 externalField: { type: string, maxLength: 256, description: Optional dot-separated field selected from a structured provider value. }
       responses:
-        "201": { description: Encrypted secret created; only metadata is returned. }
+        "201": { description: Value created. Plain values are returned; encrypted secret contents are omitted. }
         "400": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
   /secrets/{secretId}:
@@ -1568,7 +1568,7 @@ paths:
               required: [name, type, environmentVariable]
               properties:
                 name: { type: string, maxLength: 80 }
-                type: { type: string, enum: [text, api_token, github_token, ssh_private_key, registry_password] }
+                type: { type: string, enum: [text, json, environment_variable, environment_json, api_token, github_token, ssh_private_key, registry_password] }
                 source: { type: string, enum: [local, external] }
                 environmentVariable: { type: string, maxLength: 128 }
                 value: { type: string, maxLength: 65536, writeOnly: true, description: Omit to retain the current value. }
@@ -1577,7 +1577,7 @@ paths:
                 externalSecretId: { type: string, maxLength: 2048 }
                 externalField: { type: string, maxLength: 256 }
       responses:
-        "200": { description: Secret metadata updated. }
+        "200": { description: Value updated. Plain values are returned; encrypted secret contents are omitted. }
         "404": { $ref: "#/components/responses/Problem" }
     delete:
       operationId: deleteSecret

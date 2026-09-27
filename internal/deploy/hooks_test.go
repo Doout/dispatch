@@ -17,6 +17,29 @@ import (
 
 type outputRecorder struct{ outputs map[string]string }
 
+type plainValueResolver struct{}
+
+func (plainValueResolver) Resolve(context.Context, string) ([]byte, error) {
+	return []byte("https://example.test/app"), nil
+}
+
+func TestHookExecutorPassesPlainValueToBuild(t *testing.T) {
+	var captured []string
+	executor := HookExecutor{Next: &captureExecutor{}, Resolver: plainValueResolver{}, runHook: func(_ context.Context, _ string, _ string, environment []string) error {
+		captured = environment
+		return nil
+	}}
+	app := core.App{PreDeployHook: "test -n \"$DEV_URL\"", HookEnvironment: map[string]string{
+		core.SecretEnvironmentKey("url", "DEV_URL"): "",
+	}}
+	if err := executor.Deploy(context.Background(), core.Deployment{}, app, core.Server{}, func(core.DeploymentState, string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains("\n"+strings.Join(captured, "\n")+"\n", "\nDEV_URL=https://example.test/app\n") {
+		t.Fatalf("plain value was not passed to the build: %#v", captured)
+	}
+}
+
 func (r *outputRecorder) UpdateDeploymentOutputs(_ context.Context, _ string, outputs map[string]string) error {
 	r.outputs = outputs
 	return nil
