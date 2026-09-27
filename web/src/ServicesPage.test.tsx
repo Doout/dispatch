@@ -27,13 +27,14 @@ it("shows check location and prevents viewers from running checks", async () => 
  await userEvent.setup().click(screen.getByText("orders-db"));
  expect(screen.getByText(/Connected · Dispatch controller/)).not.toBeNull();
  expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
- expect(screen.queryByRole("button", { name: "Register service" })).toBeNull();
+ expect(screen.queryByRole("button", { name: "Add service" })).toBeNull();
 });
 it("starts PostgreSQL setup with one connection URL", async () => {
  const save = vi.spyOn(api, "saveService").mockResolvedValue(service);
  render(<ServicesPage overview={{ ...overview, services: [] }} onChanged={async () => {}} />);
  const user = userEvent.setup();
- await user.click(screen.getByRole("button", { name: "Register service" }));
+ await user.click(screen.getByRole("button", { name: "Add service" }));
+ await user.click(screen.getByRole("button", { name: /Connect an existing service/ }));
  expect(screen.getByRole("button", { name: "Connection URL" }).getAttribute("aria-pressed")).toBe("true");
  await user.type(screen.getByLabelText("Name"), "orders-db");
  await user.type(screen.getByLabelText("PostgreSQL URL"), "postgresql://app@db.example.com/orders");
@@ -46,7 +47,8 @@ it("keeps manual PostgreSQL defaults behind advanced options", async () => {
  const save = vi.spyOn(api, "saveService").mockResolvedValue(service);
  render(<ServicesPage overview={{ ...overview, services: [] }} onChanged={async () => {}} />);
  const user = userEvent.setup();
- await user.click(screen.getByRole("button", { name: "Register service" }));
+ await user.click(screen.getByRole("button", { name: "Add service" }));
+ await user.click(screen.getByRole("button", { name: /Connect an existing service/ }));
  await user.click(screen.getByRole("button", { name: "Enter details" }));
  expect(screen.getByText("Port, TLS, and secret sources").closest("details")?.open).toBe(false);
  await user.type(screen.getByLabelText("Name"), "orders-db");
@@ -59,6 +61,20 @@ it("keeps manual PostgreSQL defaults behind advanced options", async () => {
  expect(save.mock.calls[0][1].fields.port.value).toBe("5432");
  expect(save.mock.calls[0][1].fields.sslmode.value).toBe("verify-full");
  expect(save.mock.calls[0][1].fields.password.sensitive).toBe(true);
+});
+it("creates a service from a template using an existing PostgreSQL service", async () => {
+ vi.spyOn(api, "serviceTemplates").mockResolvedValue([{ id: "template", name: "New database", projectId: "p", description: "Add a database to a cluster", serviceType: "postgresql", configSha: "abc123", outputs: { connectionUrl: { sensitive: true } }, inputs: { cluster: { type: "service", serviceType: "postgresql", required: true }, database: { type: "string", required: true } } }]);
+ vi.spyOn(api, "serviceProvisionRuns").mockResolvedValue([]);
+ const start = vi.spyOn(api, "startServiceProvision").mockResolvedValue({ id: "run", templateId: "template", projectId: "p", serviceName: "new-db", state: "queued", createdAt: "2026-09-27T00:00:00Z" });
+ render(<ServicesPage overview={overview} onChanged={async () => {}} />);
+ const user = userEvent.setup();
+ await user.click(screen.getByRole("button", { name: "Add service" }));
+ await user.click(await screen.findByRole("button", { name: /New database/ }));
+ await user.type(screen.getByLabelText("Service name"), "new-db");
+ await user.selectOptions(screen.getByLabelText("cluster"), "db");
+ await user.type(screen.getByLabelText("database"), "orders");
+ await user.click(screen.getByRole("button", { name: "Create service" }));
+ await waitFor(() => expect(start).toHaveBeenCalledWith("template", { name: "new-db", description: "", inputs: { cluster: "db", database: "orders" } }));
 });
 it("requires a replacement when switching a saved password from a global secret", async () => {
  const referenced = { ...service, fields: { ...service.fields, password: { sensitive: true, configured: true, secretRef: "secret-1" } } };
