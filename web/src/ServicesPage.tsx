@@ -1,11 +1,12 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { CaretDown } from "@phosphor-icons/react";
-import { api, Overview, ServiceConnection, ServiceInput } from "./api";
+import { api, Overview, ServiceConnection, ServiceInput, ServiceTemplate } from "./api";
 import { PageHeader } from "./PageHeader";
 import { canManageAnyProject, canManageProject } from "./permissions";
 import { ApplicationServices } from "./ApplicationServices";
 import { useDeploymentCatalog } from "./deployments/DeploymentCatalog";
 import { ServiceOperations } from "./ServiceOperations";
+import { ServiceTemplateForm } from "./ServiceTemplateForm";
 
 type FieldRow = { name: string; value: string; sensitive: boolean; secretRef: string; source: "value" | "secret"; changed: boolean; saved: boolean };
 const pgFields = ["host", "port", "database", "username", "password", "sslmode", "caCert"];
@@ -15,6 +16,13 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
  const [project, setProject] = useState("");
  const [rotation,setRotation] = useState(false);
  const [editing, setEditing] = useState<ServiceConnection | "new" | null>(null);
+ const [adding, setAdding] = useState(false);
+ const [template, setTemplate] = useState<ServiceTemplate | null>(null);
+ const [templates, setTemplates] = useState<ServiceTemplate[]>([]);
+ const [runs, setRuns] = useState<import("./api").ServiceProvisionRun[]>([]);
+ const [templatesError, setTemplatesError] = useState("");
+ useEffect(() => { void api.serviceTemplates().then(setTemplates).catch(e => setTemplatesError(e instanceof Error ? e.message : String(e))); }, []);
+ useEffect(() => { const refresh = () => { void api.serviceProvisionRuns().then(setRuns).catch(() => {}); }; refresh(); const timer = window.setInterval(refresh, 5000); return () => window.clearInterval(timer); }, []);
  const [removing, setRemoving] = useState<string | null>(null);
  const [expanded, setExpanded] = useState<string[]>([]);
  const [impacts, setImpacts] = useState<string[]>([]);
@@ -30,18 +38,27 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
  const managed=catalog.find(a=>a.appId===application);
  const app = overview.apps.find(a => a.id === application) ?? (managed ? {id:managed.appId,name:managed.appName,projectId:managed.projectId,generated:true,template:false} : undefined);
  if (app) return <ApplicationServices application={app} overview={overview} onChanged={onChanged} onBack={() => setApplication(null)} />;
+ if (template) return <ServiceTemplateForm template={template} overview={overview} onBack={() => setTemplate(null)} onSaved={onChanged} />;
  if (editing) return <ServiceEditor rotation={rotation} key={editing === "new" ? "new" : editing.id} item={editing === "new" ? undefined : editing} overview={overview} initialProject={project} onBack={() => setEditing(null)} onSaved={async () => { await onChanged(); setEditing(null); }} />;
+ if (adding) return <div className="page-layout services-page editor-page"><PageHeader view="services" title="Add service" action={{ label: "Back", onClick: () => setAdding(false), tone: "quiet" }} />
+  <p className="service-intro">Choose how to add a service to a project.</p>
+  <div className="service-add-options"><button className="service-add-option" onClick={() => {setAdding(false);setEditing("new")}}><strong>Connect an existing service</strong><span>Enter a connection URL or connection fields.</span></button>
+  {templates.filter(item => (!project || item.projectId === project) && canManageProject(overview, item.projectId, "project.configure") && canManageProject(overview, item.projectId, "deployment.run")).map(item => <button key={item.id} className="service-add-option" onClick={() => {setAdding(false);setTemplate(item)}}><strong>{item.name}</strong><span>{item.description || `Create ${item.serviceType === "postgresql" ? "a PostgreSQL database" : "a service"} from a template.`}</span><small>{overview.projects.find(p => p.id === item.projectId)?.name}</small></button>)}</div>
+  {!templates.length && <p className="service-help">No service templates are configured. Add a ServiceTemplate YAML document to a synced repository to create resources through a provisioner.</p>}
+  {templatesError && <p role="alert" className="error">{templatesError}</p>}
+ </div>;
  return <div className="page-layout services-page">
-  <PageHeader view="services" action={canManageAnyProject(overview, "project.configure") ? { label: "Register service", onClick: () => {setRotation(false);setEditing("new")} } : undefined} />
-  <p className="service-intro">Connect an existing database or dependency to applications in a project.</p>
+  <PageHeader view="services" action={canManageAnyProject(overview, "project.configure") ? { label: "Add service", onClick: () => setAdding(true) } : undefined} />
+  <p className="service-intro">Create a service from a template or connect one that already exists.</p>
   {overview.projects.length > 1 && <label className="service-filter">Project<select value={project} onChange={e => setProject(e.target.value)}><option value="">All projects</option>{overview.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
+  {runs.filter(run => (!project || run.projectId === project) && (run.state === "queued" || run.state === "running" || run.state === "failed")).slice(-5).reverse().map(run => <div key={run.id} className="service-provision-status" role="status"><strong>{run.serviceName} · {run.state === "failed" ? "Provisioning failed" : "Provisioning"}</strong><p>{run.error || run.phase || "Waiting for the provider to finish."}</p></div>)}
   {!services.length && <p className="empty-state">No services registered{project ? " in this project" : " yet"}.</p>}
   <div className="service-list">{services.map(service => {
    const manage = canManageProject(overview, service.projectId, "project.configure");
    const isExpanded = expanded.includes(service.id);
    const impactOpen = impacts.includes(service.id);
    return <details className="service-card" key={service.id} open={isExpanded} onToggle={e => { const open = e.currentTarget.open; setExpanded(current => open ? [...new Set([...current, service.id])] : current.filter(id => id !== service.id)); }}>
-    <summary className="service-card-summary"><span><strong>{service.name}</strong><small>{service.type === "postgresql" ? "PostgreSQL" : "Generic"} · {overview.projects.find(p => p.id === service.projectId)?.name}</small></span><span className={`service-status service-status-${service.check?.state ?? "untested"}`}>{service.check?.state === "succeeded" ? "Check passed" : service.check?.state === "failed" ? "Check failed" : "Not tested"}</span><CaretDown size={18} aria-hidden="true" /></summary>
+    <summary className="service-card-summary"><span><strong>{service.name}</strong><small>{service.type === "postgresql" ? "PostgreSQL" : "Generic"} · {overview.projects.find(p => p.id === service.projectId)?.name}{service.templateName ? ` · ${service.templateName}` : ""}</small></span><span className={`service-status service-status-${service.check?.state ?? "untested"}`}>{service.check?.state === "succeeded" ? "Check passed" : service.check?.state === "failed" ? "Check failed" : "Not tested"}</span><CaretDown size={18} aria-hidden="true" /></summary>
     {isExpanded && <div className="service-card-body">
      {service.description && <p>{service.description}</p>}
      {manage && <div className="service-actions"><button className="quiet-button" onClick={() => {setRotation(false);setEditing(service)}}>Edit</button><button className="quiet-button" onClick={() => {setRotation(true);setEditing(service)}}>Rotate credentials</button><button className="quiet-button" disabled={!!busy} onClick={() => void act(service.id, "check")}>{busy === service.id ? "Working…" : "Test connection"}</button></div>}
@@ -109,7 +126,7 @@ function ServiceEditor({ item, overview, initialProject, onBack, onSaved, rotati
    await onSaved();
   } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
  }
- return <div className="page-layout services-page editor-page"><PageHeader view="services" title={item ? `${rotation ? "Rotate credentials for" : "Edit"} ${item.name}` : "Register service"} action={{ label: "Back", onClick: onBack, tone: "quiet" }} />
+ return <div className="page-layout services-page editor-page"><PageHeader view="services" title={item ? `${rotation ? "Rotate credentials for" : "Edit"} ${item.name}` : "Connect existing service"} action={{ label: "Back", onClick: onBack, tone: "quiet" }} />
   <form className="service-form" onSubmit={e => void save(e)}>
    <div className="service-form-grid"><label>Project<select disabled={!!item} value={projectId} onChange={e => setProject(e.target.value)}>{allowed.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Name<input required pattern="[a-z0-9][a-z0-9.\-]{0,62}" disabled={!!item} value={name} onChange={e => setName(e.target.value)} placeholder="orders-db-production" /></label><label>Type<select disabled={!!item} value={type} onChange={e => { const t = e.target.value as ServiceConnection["type"]; setType(t); setRows(initialRows(t)); setRemoved([]); setUrlMode(false); }}><option value="postgresql">PostgreSQL</option><option value="generic">Generic</option></select></label><label>Description<input value={description} onChange={e => setDescription(e.target.value)} /></label></div>
    {type === "postgresql" ? <section className="service-pg-form">
