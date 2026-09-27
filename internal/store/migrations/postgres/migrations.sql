@@ -1030,3 +1030,11 @@ ALTER TABLE workflow_preview_triggers ADD COLUMN template_id TEXT REFERENCES wor
 ALTER TABLE workflow_preview_templates ADD COLUMN git_source TEXT NOT NULL DEFAULT 'null';
 ALTER TABLE workflow_preview_triggers ADD COLUMN template_source TEXT NOT NULL DEFAULT 'null';
 ALTER TABLE workflow_preview_templates ADD COLUMN watch_repositories TEXT NOT NULL DEFAULT '[]';
+
+-- dispatch:migration 057_auth_throttle
+CREATE TABLE auth_throttle (
+    key_hash TEXT PRIMARY KEY,
+    hits INTEGER NOT NULL,
+    window_started_at BIGINT NOT NULL
+);
+CREATE INDEX auth_throttle_window ON auth_throttle(window_started_at);

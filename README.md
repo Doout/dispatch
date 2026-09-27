@@ -170,7 +170,8 @@ See [edge nodes and private routes](docs/private-networks.md).
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DISPATCH_ADDR` | `127.0.0.1:8080` | Controller listen address |
-| `DISPATCH_PUBLIC_URL` | none | Public origin used for callbacks and install commands |
+| `DISPATCH_PUBLIC_URL` | none | HTTPS origin for callbacks and browser security headers |
+| `DISPATCH_TRUSTED_PROXY_CIDRS` | none | Comma-separated CIDRs for reverse proxies allowed to supply client addresses and HTTPS scheme |
 | `DISPATCH_HOST` | `dispatch.localhost` | Hostname in the Compose Traefik route |
 | `DATABASE_URL` | `dispatch.db` | SQLite path or PostgreSQL URL |
 | `DISPATCH_EXECUTOR` | `simulation` | `simulation` or `docker` |

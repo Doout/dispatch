@@ -386,3 +386,54 @@ func (s *SQLStore) ListRoleAssignments(ctx context.Context) ([]core.RoleAssignme
 	}
 	return items, rows.Err()
 }
+
+// ChangeUserPassword updates the hash and revokes every session in one transaction.
+func (s *SQLStore) ChangeUserPassword(ctx context.Context, id, oldHash, newHash string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE users SET password_hash=?,updated_at=? WHERE id=? AND password_hash=?`), newHash, stamp(now), id, oldHash)
+	if err := changed(result, err); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.q(`DELETE FROM admin_sessions WHERE user_id=?`), id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLStore) AuthThrottleCount(ctx context.Context, key string, since time.Time) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT hits FROM auth_throttle WHERE key_hash=? AND window_started_at>?`), key, since.Unix()).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return count, err
+}
+
+func (s *SQLStore) RecordAuthAttempt(ctx context.Context, key string, now time.Time, window time.Duration) (int, error) {
+	// Stale keys are not useful after the longest throttle window.
+	if _, err := s.db.ExecContext(ctx, s.q(`DELETE FROM auth_throttle WHERE window_started_at<?`), now.Add(-24*time.Hour).Unix()); err != nil {
+		return 0, err
+	}
+	var count int
+	cutoff := now.Add(-window).Unix()
+	err := s.db.QueryRowContext(ctx, s.q(`INSERT INTO auth_throttle(key_hash,hits,window_started_at) VALUES(?,1,?)
+		ON CONFLICT(key_hash) DO UPDATE SET
+		hits=CASE WHEN auth_throttle.window_started_at<=? THEN 1 ELSE auth_throttle.hits+1 END,
+		window_started_at=CASE WHEN auth_throttle.window_started_at<=? THEN excluded.window_started_at ELSE auth_throttle.window_started_at END
+		RETURNING hits`), key, now.Unix(), cutoff, cutoff).Scan(&count)
+	return count, err
+}
+
+func (s *SQLStore) ClearAuthAttempts(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, s.q(`DELETE FROM auth_throttle WHERE key_hash=?`), key)
+	return err
+}
+
+func (s *SQLStore) ReleaseAuthAttempt(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, s.q(`UPDATE auth_throttle SET hits=CASE WHEN hits>0 THEN hits-1 ELSE 0 END WHERE key_hash=?`), key)
+	return err
+}
