@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionsPage } from "./ConnectionsPage";
 import { api, type Overview, type PrivateNetwork } from "./api";
@@ -22,7 +22,10 @@ const overview: Overview = {
   relayWebhooks: [],
 };
 
-beforeEach(() => { vi.spyOn(api, "githubAppInstallations").mockResolvedValue([]); });
+beforeEach(() => {
+  vi.spyOn(api, "githubAppInstallations").mockResolvedValue([]);
+  vi.spyOn(api, "githubAppRepositories").mockResolvedValue([]);
+});
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -131,16 +134,15 @@ describe("connections page", () => {
       missingAppPermissions: [{ name: "pull_requests", required: "write", granted: "read" }],
       missingInstallationPermissions: [{ name: "pull_requests", required: "write", granted: "read" }],
     } });
-    render(<ConnectionsPage overview={{ ...overview, githubApps: [connection] }} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={{ ...overview, githubApps: [connection] }} selectedConnectionID="app-1" notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Verify permissions" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Verify permissions" }));
 
-    expect(await screen.findByText("App registration needs these repository permissions:")).toBeTruthy();
-    expect(screen.getByText("The installation still needs these repository permissions approved:")).toBeTruthy();
-    expect(screen.getAllByText("Pull requests: write (currently read)")).toHaveLength(2);
-    expect(screen.getByRole("link", { name: /Edit App permissions/ })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Approve installation access/ })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Install or reinstall App/ })).toBeTruthy();
+    expect(await screen.findByText("App registration needs write for pull_requests; GitHub grants read.")).toBeTruthy();
+    expect(screen.getByText("Installation needs write for pull_requests; GitHub grants read.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Change App permissions/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Approve account access/ })).toBeTruthy();
   });
 });
 
@@ -162,13 +164,30 @@ it("shows both organization installations without replacing the current connecti
   {id: 73, account: "Alpha", target: "Organization", repositorySelection: "all", webUrl: "https://github.example.com/organizations/Alpha/settings/installations/73"},
   {id: 74, account: "Beta", target: "Organization", repositorySelection: "selected", webUrl: "https://github.example.com/organizations/Beta/settings/installations/74", missingPermissions: [{name: "issues", required: "write", granted: "read"}]},
  ]);
+ vi.spyOn(api, "githubAppRepositories").mockResolvedValue([
+  {id: 1, fullName: "Alpha/service", name: "service", owner: "Alpha", defaultBranch: "main", private: true, webUrl: "https://github.example.com/Alpha/service"},
+  {id: 2, fullName: "Beta/ui", name: "ui", owner: "Beta", defaultBranch: "main", private: false, webUrl: "https://github.example.com/Beta/ui"},
+ ]);
  const update = vi.spyOn(api, "updateGitHubApp");
- render(<ConnectionsPage overview={{...overview, githubApps: [connection]}} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
- fireEvent.click(screen.getByRole("button", {name: "Refresh installations"}));
- expect(await screen.findByText("2 connected")).toBeTruthy();
+ const open = vi.fn();
+ const watched = { ...overview, githubApps: [connection], eventTriggers: [
+  {id: "trigger", appId: "app", githubAppId: "app", provider: "github" as const, repository: "Alpha/service", command: "/preview", enabled: true, secretIds: [], createdAt: "", updatedAt: ""},
+  {id: "missing", appId: "app", githubAppId: "app", provider: "github" as const, repository: "Gamma/docs", command: "/preview", enabled: true, secretIds: [], createdAt: "", updatedAt: ""},
+ ] };
+ const page = render(<ConnectionsPage overview={watched} notice="" onNotice={() => undefined} onChanged={async () => undefined} onOpenConnection={open} />);
+ expect(screen.getByRole("link", {name: "View details"}).getAttribute("href")).toBe("/connections/app");
+ expect(screen.queryByText("Connected accounts")).toBeNull();
+ fireEvent.click(screen.getByRole("link", {name: "View details"}));
+ expect(open).toHaveBeenCalledWith("app");
+ page.rerender(<ConnectionsPage overview={watched} selectedConnectionID="app" notice="" onNotice={() => undefined} onChanged={async () => undefined} onOpenConnection={open} />);
+ expect(await screen.findByRole("heading", {name: "Connected accounts"})).toBeTruthy();
+ expect(screen.getByText(/All repositories · 1 accessible/)).toBeTruthy();
+ expect(screen.getByText(/Selected repositories · 1 accessible/)).toBeTruthy();
  expect(screen.getByRole("link", {name: "Manage Alpha access"})).toBeTruthy();
  expect(screen.getByRole("link", {name: "Manage Beta access"})).toBeTruthy();
  expect(screen.getByRole("alert").textContent).toContain("Missing permissions");
- expect(screen.queryByText("Choose an installation")).toBeNull();
+ expect(screen.getAllByText("Application preview: /preview")).toHaveLength(2);
+ expect(screen.getByText("App access confirmed")).toBeTruthy();
+ expect(screen.getByText("No App access")).toBeTruthy();
  expect(update).not.toHaveBeenCalled();
 });

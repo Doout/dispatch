@@ -18,6 +18,7 @@ export type AppRoute = {
   analyticsFilters?: AnalyticsFilters;
   operationsFilters?: OperationsFilters;
   serverID?: string;
+  connectionID?: string;
   applicationID?: string;
   configurationSourceID?: string;
   applicationSection?: ApplicationSection;
@@ -47,6 +48,7 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
   }
   if (first === "events") return { view: "events", eventSection: segments[1] === "activity" ? "activity" : "rules" };
   if (first === "servers") return { view: "servers", serverID: segments[1] || undefined };
+  if (first === "connections") return { view: "connections", connectionID: segments[1] || undefined };
   if (first === "operations") {
     const params = new URLSearchParams(location.search);
     const filters: OperationsFilters = {};
@@ -113,6 +115,7 @@ export function routePath(route: AppRoute) {
   }
   if (route.view === "events") return route.eventSection === "activity" ? "/events/activity" : "/events";
   if (route.view === "servers" && route.serverID) return `/servers/${encodeURIComponent(route.serverID)}/topology`;
+  if (route.view === "connections" && route.connectionID) return `/connections/${encodeURIComponent(route.connectionID)}`;
   return `/${route.view}`;
 }
 
