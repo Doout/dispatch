@@ -42,6 +42,10 @@ type Store interface {
 	CreateAdminSession(context.Context, string, time.Time, time.Time) error
 	CreateUserSession(context.Context, string, string, time.Time, time.Time) error
 	DeleteSession(context.Context, string) error
+	ChangeUserPassword(context.Context, string, string, string, time.Time) error
+	AuthThrottleCount(context.Context, string, time.Time) (int, error)
+	RecordAuthAttempt(context.Context, string, time.Time, time.Duration) (int, error)
+	ClearAuthAttempts(context.Context, string) error
 	AdminSessionValid(context.Context, string, time.Time) (bool, error)
 	SessionUser(context.Context, string, time.Time) (core.User, error)
 	CreateUser(context.Context, core.User) error
