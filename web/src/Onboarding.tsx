@@ -21,8 +21,13 @@ export function ServerForm({ onChanged, onCancel, server, repairing = false, sec
   const editing = Boolean(server);
   const savedSSHKeys = secrets.filter((secret) => secret.type === "ssh_private_key");
   const [name, setName] = useState(server?.name ?? "");
-  const [runtime, setRuntime] = useState<"docker" | "kubernetes" | "openshift" | "relay">(server?.runtime ?? initialRuntime);
-  const [remoteAddress, setRemoteAddress] = useState(server?.runtime === "docker" ? server.address : "");
+  const [runtime, setRuntime] = useState<Server["runtime"]>(server?.runtime ?? initialRuntime);
+  const [remoteAddress, setRemoteAddress] = useState(server?.runtime === "docker" || server?.runtime === "builder" ? server.address : "");
+  const [builderSSHSecretID, setBuilderSSHSecretID] = useState(server?.builder?.sshSecretId ?? "");
+  const [builderHostKey, setBuilderHostKey] = useState(server?.builder?.hostKey ?? "");
+  const [builderCapacity, setBuilderCapacity] = useState(server?.builder?.maxConcurrent ?? 1);
+  const [builderFingerprint, setBuilderFingerprint] = useState("");
+  const [scanningBuilder, setScanningBuilder] = useState(false);
   const [relayAddress, setRelayAddress] = useState(server?.runtime === "relay" ? server.address : "");
   const [relayAccessToken, setRelayAccessToken] = useState(() => server ? "" : newRelayToken());
   const [relayInstallMethod, setRelayInstallMethod] = useState<"manual" | "ssh">("manual");
@@ -68,6 +73,20 @@ export function ServerForm({ onChanged, onCancel, server, repairing = false, sec
       setError((cause as Error).message);
     } finally {
       setScanningSSH(false);
+    }
+  }
+
+  async function scanBuilderHost() {
+    setScanningBuilder(true);
+    setError("");
+    try {
+      const result = await api.scanBuilderSSHHost(remoteAddress.trim());
+      setBuilderHostKey(result.hostKey);
+      setBuilderFingerprint(result.fingerprint);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setScanningBuilder(false);
     }
   }
 
@@ -140,8 +159,9 @@ export function ServerForm({ onChanged, onCancel, server, repairing = false, sec
       }
       const address = runtime === "relay" ? relayAddress : remoteAddress;
       const relay = runtime === "relay" && relayAccessToken.trim() ? { accessToken: relayAccessToken } : undefined;
-      if (server) await api.updateServer(server.id, { name, address, kubernetes, relay });
-      else await api.createServer({ name, address, runtime, kubernetes, relay });
+      const builder = runtime === "builder" ? { sshSecretId: builderSSHSecretID, hostKey: builderHostKey.trim(), maxConcurrent: builderCapacity } : undefined;
+      if (server) await api.updateServer(server.id, { name, address, kubernetes, relay, builder });
+      else await api.createServer({ name, address, runtime, kubernetes, relay, builder });
       await onChanged();
     } catch (cause) {
       setError((cause as Error).message);
@@ -160,9 +180,9 @@ export function ServerForm({ onChanged, onCancel, server, repairing = false, sec
   }
 
   return <form className={`resource-form server-form server-form-${runtime}`} onSubmit={submit} aria-busy={busy}>
-    {runtime !== "relay" && <div className="form-section-heading wide"><div><strong>Target</strong></div></div>}
+    {runtime !== "relay" && <div className="form-section-heading wide"><div><strong>{runtime === "builder" ? "Builder" : "Target"}</strong></div></div>}
     <label><span>Server name</span><input placeholder={runtime === "relay" ? "event-relay" : runtime === "openshift" ? "openshift-cluster" : runtime === "kubernetes" ? "preview-cluster" : "build-01"} value={name} onChange={(event) => setName(event.target.value)} required /></label>
-    <label><span>Server type</span><select value={runtime} disabled={editing} onChange={(event) => setRuntime(event.target.value as "docker" | "kubernetes" | "openshift" | "relay")}><option value="docker">Docker target</option><option value="kubernetes">Kubernetes target</option><option value="openshift">OpenShift target</option><option value="relay">Webhook relay</option></select>{editing && <small>Server type cannot be changed.</small>}</label>
+    <label><span>Server type</span><select value={runtime} disabled={editing} onChange={(event) => setRuntime(event.target.value as Server["runtime"])}><option value="docker">Docker target</option><option value="kubernetes">Kubernetes target</option><option value="openshift">OpenShift target</option><option value="builder">Docker builder</option><option value="relay">Webhook relay</option></select>{editing && <small>Server type cannot be changed.</small>}</label>
     {runtime !== "relay" && <div className="form-section-heading wide"><div><strong>Connection</strong></div></div>}
     {runtime === "relay" ? <>
       <label className="wide"><span>Relay URL</span><input type="url" placeholder="https://relay.example.com" value={relayAddress} onChange={(event) => setRelayAddress(event.target.value)} required spellCheck={false} /></label>
@@ -200,6 +220,15 @@ export function ServerForm({ onChanged, onCancel, server, repairing = false, sec
         </div>}
       </fieldset>}
       <div className="relay-durability-note wide"><LockKey size={16} /><p>Events stay queued until acknowledged.</p></div>
+    </> : runtime === "builder" ? <>
+      <p className="wide">Build image jobs on this host. Other workflow commands still run on the controller.</p>
+      <label className="wide"><span>Docker SSH URL</span><input placeholder="ssh://builder@build.example.com" value={remoteAddress} onChange={(event) => { setRemoteAddress(event.target.value); setBuilderHostKey(""); setBuilderFingerprint(""); }} required spellCheck={false} /></label>
+      <label><span>SSH key</span><select value={builderSSHSecretID} onChange={(event) => setBuilderSSHSecretID(event.target.value)} required><option value="">Choose a saved key</option>{savedSSHKeys.map((secret) => <option key={secret.id} value={secret.id}>{secret.name}</option>)}</select></label>
+      <label><span>Concurrent jobs</span><input type="number" min={1} max={16} value={builderCapacity} onChange={(event) => setBuilderCapacity(Number(event.target.value))} required /></label>
+      <small className="wide">The SSH user needs Docker access. {savedSSHKeys.length ? "Use a key without a passphrase." : "Add an SSH private key under Variables first."}</small>
+      <label className="wide"><span>SSH host public key</span><textarea placeholder="ssh-ed25519 AAAA..." value={builderHostKey} onChange={(event) => { setBuilderHostKey(event.target.value); setBuilderFingerprint(""); }} required spellCheck={false} /></label>
+      <div className="wide relay-host-key"><div><strong>Host key fingerprint</strong><code>{builderFingerprint || "Check the host, or paste a verified key"}</code></div><button type="button" className="quiet-button" disabled={scanningBuilder || !remoteAddress.trim()} onClick={() => void scanBuilderHost()}>{scanningBuilder ? "Checking..." : "Check host"}</button></div>
+      <small className="wide">Compare the fingerprint with the builder host before saving. Dispatch pins the public key for Docker connections.</small>
     </> : runtime === "docker" ? <>
       <label><span>Connection</span><select value="remote" disabled><option value="remote">Remote server</option></select></label>
       <label><span>Address</span><input placeholder="docker-host.example.com" value={remoteAddress} onChange={(event) => setRemoteAddress(event.target.value)} required spellCheck={false} /></label>
@@ -231,7 +260,7 @@ export function ServerForm({ onChanged, onCancel, server, repairing = false, sec
     </>}
     {fileError && <p className="form-error" role="alert">{fileError}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="dialog-actions">{onCancel && <button type="button" className="quiet-button" onClick={onCancel}>Cancel</button>}<button className="primary-button" disabled={busy || !name.trim() || (runtime === "relay" ? !relayAddress.trim() || (!editing && (!relayAccessToken.trim() || (relayInstallMethod === "ssh" && (!sshHost.trim() || !sshUser.trim() || !sshFingerprint || (sshCredentialSource === "password" ? !sshPassword : sshCredentialSource === "saved" ? !sshSecretID : !sshPrivateKey.trim()))))) : runtime === "docker" ? !remoteAddress.trim() : runtime === "openshift" ? !editing && !loginCommand.trim() : kubeconfigSource === "path" ? !kubeconfigPath.trim() : !kubeconfig.trim() && !server?.kubernetes?.kubeconfigStored)}>{busy ? runtime === "openshift" && !editing ? "Connecting..." : runtime === "relay" && relayInstallMethod === "ssh" && !editing ? "Installing..." : runtime === "relay" ? "Connecting..." : "Saving..." : editing ? "Save changes" : runtime === "openshift" ? "Connect OpenShift" : runtime === "relay" ? relayInstallMethod === "ssh" ? "Install and connect" : "Connect relay" : "Add server"}</button></div>
+    <div className="dialog-actions">{onCancel && <button type="button" className="quiet-button" onClick={onCancel}>Cancel</button>}<button className="primary-button" disabled={busy || !name.trim() || (runtime === "relay" ? !relayAddress.trim() || (!editing && (!relayAccessToken.trim() || (relayInstallMethod === "ssh" && (!sshHost.trim() || !sshUser.trim() || !sshFingerprint || (sshCredentialSource === "password" ? !sshPassword : sshCredentialSource === "saved" ? !sshSecretID : !sshPrivateKey.trim()))))) : runtime === "builder" ? !remoteAddress.trim() || !builderSSHSecretID || !builderHostKey.trim() || builderCapacity < 1 || builderCapacity > 16 : runtime === "docker" ? !remoteAddress.trim() : runtime === "openshift" ? !editing && !loginCommand.trim() : kubeconfigSource === "path" ? !kubeconfigPath.trim() : !kubeconfig.trim() && !server?.kubernetes?.kubeconfigStored)}>{busy ? runtime === "openshift" && !editing ? "Connecting..." : runtime === "relay" && relayInstallMethod === "ssh" && !editing ? "Installing..." : runtime === "relay" ? "Connecting..." : "Saving..." : editing ? "Save changes" : runtime === "openshift" ? "Connect OpenShift" : runtime === "relay" ? relayInstallMethod === "ssh" ? "Install and connect" : "Connect relay" : "Add server"}</button></div>
   </form>;
 }
 

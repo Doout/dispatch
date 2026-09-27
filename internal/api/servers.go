@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/doout/dispatch/internal/openshift"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
+	"golang.org/x/crypto/ssh"
 )
 
 func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
@@ -21,12 +25,13 @@ func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
 }
 
 type createServerRequest struct {
-	Name       string                   `json:"name"`
-	Address    string                   `json:"address"`
-	Runtime    string                   `json:"runtime"`
-	AgentMode  string                   `json:"agentMode"`
-	Kubernetes *kubernetesServerRequest `json:"kubernetes"`
-	Relay      *relayServerRequest      `json:"relay"`
+	Name       string                    `json:"name"`
+	Address    string                    `json:"address"`
+	Runtime    string                    `json:"runtime"`
+	AgentMode  string                    `json:"agentMode"`
+	Kubernetes *kubernetesServerRequest  `json:"kubernetes"`
+	Relay      *relayServerRequest       `json:"relay"`
+	Builder    *core.BuilderServerConfig `json:"builder"`
 }
 
 type relayServerRequest struct {
@@ -109,8 +114,14 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item.Address, item.State, item.AgentMode, item.Relay = address, "connecting", "outbound", &core.RelayServerConfig{EncryptedAccessToken: encrypted, AccessTokenConfigured: true}
+	case core.ServerRuntimeBuilder:
+		if detail := a.validateBuilder(r.Context(), input.Address, input.Builder); detail != "" {
+			problem(w, http.StatusBadRequest, "Builder connection invalid", detail)
+			return
+		}
+		item.Address, item.State, item.AgentMode, item.Builder = input.Address, "ready", "ssh", input.Builder
 	default:
-		problem(w, http.StatusBadRequest, "Runtime unavailable", "Use docker, kubernetes, openshift, or relay.")
+		problem(w, http.StatusBadRequest, "Runtime unavailable", "Use docker, kubernetes, openshift, builder, or relay.")
 		return
 	}
 	if err := a.store.CreateServer(r.Context(), item); err != nil {
@@ -121,10 +132,11 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateServerRequest struct {
-	Name       string                   `json:"name"`
-	Address    string                   `json:"address"`
-	Kubernetes *kubernetesServerRequest `json:"kubernetes"`
-	Relay      *relayServerRequest      `json:"relay"`
+	Name       string                    `json:"name"`
+	Address    string                    `json:"address"`
+	Kubernetes *kubernetesServerRequest  `json:"kubernetes"`
+	Relay      *relayServerRequest       `json:"relay"`
+	Builder    *core.BuilderServerConfig `json:"builder"`
 }
 
 func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +214,12 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 			item.Relay.EncryptedAccessToken, item.Relay.AccessTokenConfigured = encrypted, true
 		}
 		item.State = "connecting"
+	case core.ServerRuntimeBuilder:
+		if detail := a.validateBuilder(r.Context(), input.Address, input.Builder); detail != "" {
+			problem(w, http.StatusBadRequest, "Builder connection invalid", detail)
+			return
+		}
+		item.Address, item.Builder = input.Address, input.Builder
 	default:
 		problem(w, http.StatusConflict, "Runtime unavailable", "This server uses an unsupported runtime.")
 		return
@@ -224,9 +242,59 @@ func normalizeServerRuntime(runtime string) string {
 		return core.ServerRuntimeOpenShift
 	case core.ServerRuntimeRelay:
 		return core.ServerRuntimeRelay
+	case core.ServerRuntimeBuilder:
+		return core.ServerRuntimeBuilder
 	default:
 		return strings.ToLower(strings.TrimSpace(runtime))
 	}
+}
+
+func (a *API) validateBuilder(ctx context.Context, address string, config *core.BuilderServerConfig) string {
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Scheme != "ssh" || parsed.Hostname() == "" || parsed.User == nil || parsed.User.Username() == "" || parsed.User.String() != parsed.User.Username() || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "Enter an SSH URL such as ssh://builder@host.example.com."
+	}
+	if parsed.Port() != "" {
+		port, err := strconv.Atoi(parsed.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return "Enter a valid SSH port."
+		}
+	}
+	if config == nil || config.SSHSecretID == "" || config.HostKey == "" || config.MaxConcurrent < 1 || config.MaxConcurrent > 16 {
+		return "Choose an SSH key, paste the host public key, and set capacity from 1 to 16."
+	}
+	if _, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(config.HostKey)); err != nil || len(bytes.TrimSpace(rest)) != 0 {
+		return "Paste the host public key in OpenSSH format."
+	}
+	secret, err := a.store.GetSecret(ctx, config.SSHSecretID)
+	if err != nil || secret.Type != core.SecretTypeSSHPrivateKey {
+		return "Choose a saved SSH private key."
+	}
+	return ""
+}
+
+func (a *API) scanBuilderSSHHost(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Address string `json:"address"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	parsed, err := url.Parse(strings.TrimSpace(input.Address))
+	if err != nil || parsed.Scheme != "ssh" || parsed.Hostname() == "" {
+		problem(w, http.StatusBadRequest, "Builder address invalid", "Enter an SSH URL before checking the host key.")
+		return
+	}
+	port := parsed.Port()
+	if port == "" {
+		port = "22"
+	}
+	fingerprint, key, err := scanSSHHost(r.Context(), net.JoinHostPort(parsed.Hostname(), port))
+	if err != nil {
+		problem(w, http.StatusBadGateway, "SSH host unavailable", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"fingerprint": fingerprint, "hostKey": key})
 }
 
 func validateRelayAddress(value string) (string, string) {

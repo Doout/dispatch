@@ -1047,3 +1047,6 @@ ALTER TABLE workflow_preview_triggers ADD COLUMN max_auto_runs_per_hour INTEGER 
 
 -- dispatch:migration 059_preview_test_comments
 ALTER TABLE workflow_preview_comments ADD COLUMN status_comment_id TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 060_docker_builders
+ALTER TABLE servers ADD COLUMN builder_config TEXT NOT NULL DEFAULT '{}';

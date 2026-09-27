@@ -204,6 +204,22 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 	for name, value := range secrets {
 		environment = append(environment, name+"="+value)
 	}
+	if job.Builder == "docker" {
+		prelude += "Waiting for an available Docker builder...\n"
+		progress(prelude)
+		builder, release, err := r.service.acquireDockerBuilder(ctx)
+		if err != nil {
+			return nil, prelude, err
+		}
+		defer release()
+		builderEnv, cleanup, err := r.service.dockerBuilderEnvironment(ctx, builder)
+		if err != nil {
+			return nil, prelude, err
+		}
+		defer cleanup()
+		environment = append(environment, builderEnv...)
+		prelude += "Using Docker builder " + builder.Name + "\n"
+	}
 	var logs limitedBuffer
 	logs.limit = maxJobLogBytes
 	_, _ = logs.Write([]byte(prelude + "Running command...\n"))

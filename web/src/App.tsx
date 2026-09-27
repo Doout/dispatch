@@ -1231,7 +1231,7 @@ export function DeploymentsPage({
       canManageProject(overview, app.projectId, "deployment.run"),
   );
   const ready = overview.servers.some(
-    (server) => server.state === "ready" && server.runtime !== "relay",
+    (server) => server.state === "ready" && server.runtime !== "relay" && server.runtime !== "builder",
   );
   const canAddApp =
     ready && canManageAnyProject(overview, "project.configure");
@@ -2044,7 +2044,10 @@ export function ServersPage({
   onTopology?: (server: Server) => void;
 }) {
   const targets = overview.servers.filter(
-    (server) => server.runtime !== "relay",
+    (server) => server.runtime !== "relay" && server.runtime !== "builder",
+  );
+  const builders = overview.servers.filter(
+    (server) => server.runtime === "builder",
   );
   const relays = overview.servers.filter(
     (server) => server.runtime === "relay",
@@ -2063,6 +2066,7 @@ export function ServersPage({
         items={[
           { label: "Targets", value: targets.length },
           { label: "Target ready", value: ready },
+          { label: "Builders", value: builders.length },
           { label: "Relays", value: relays.length },
           { label: "Relay connected", value: connected },
         ]}
@@ -2169,6 +2173,33 @@ export function ServersPage({
         ) : (
           <div className="section-empty">No deployment targets.</div>
         )}
+      </section>
+      <section className="server-section">
+        <div className="section-title">
+          <div>
+            <h2>Docker builders</h2>
+            <p>Workflow jobs with <code>builder: docker</code> use this pool.</p>
+          </div>
+        </div>
+        {builders.length ? (
+          <div className="resource-table-wrap">
+            <table className="resource-table server-table">
+              <thead><tr><th>Server</th><th>Docker connection</th><th>Capacity</th><th>Status</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead>
+              <tbody>{builders.map((server) => (
+                <tr key={server.id}>
+                  <td data-label="Server"><strong>{server.name}</strong></td>
+                  <td data-label="Docker connection"><span className="connection">{server.address}</span></td>
+                  <td data-label="Capacity">{server.builder?.maxConcurrent ?? 1} jobs</td>
+                  <td data-label="Status"><StatusLabel state={server.state} /></td>
+                  <td className="row-actions"><div className="table-icon-actions">{canManage && <>
+                    <TableIconAction label={`Edit ${server.name}`} tooltip="Edit" onClick={() => onEdit(server)}><PencilSimple size={16} /></TableIconAction>
+                    <TableIconAction label={`Delete ${server.name}`} tooltip="Delete" danger onClick={() => onDelete(server)}><Trash size={16} /></TableIconAction>
+                  </>}</div></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <div className="section-empty">No Docker builders.</div>}
       </section>
       {canManage && <section className="server-section relay-section">
         <div className="section-title">

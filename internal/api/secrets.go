@@ -363,6 +363,17 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	servers, err := a.store.ListServers(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	for _, server := range servers {
+		if server.Builder != nil && server.Builder.SSHSecretID == id {
+			problem(w, http.StatusConflict, "Credential in use", "Remove this credential from the Docker builder before deleting it.")
+			return
+		}
+	}
 	apps, err := a.store.ListApps(r.Context())
 	if err != nil {
 		a.internal(w, err)

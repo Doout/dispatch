@@ -136,6 +136,22 @@ a plain JSON value shows the whole object to owners.
 
 Application jobs default to `reuse: onInputMatch`. Matching jobs share successful results across Applications in the same repository configuration. Concurrent requests for identical inputs wait for the first build. This coordination works within one controller; it does not coordinate multiple controller replicas.
 
+### Docker builders
+
+Add a **Docker builder** under **Servers > Add server** to move image builds off the controller. Enter an `ssh://user@host` URL, choose a saved SSH private key, and set the number of concurrent jobs the host can handle. **Check host** fetches its public key and fingerprint; compare the fingerprint with the host before saving. You can also paste a verified public key. The SSH user must be able to access the Docker socket. Add more builder servers to increase capacity.
+
+Opt a job in with `builder: docker`:
+
+```yaml
+jobs:
+  build-image:
+    builder: docker
+    runFrom: service
+    run: docker build -t registry.example.com/service:latest . && docker push registry.example.com/service:latest
+```
+
+The job's shell and source checkout remain on the controller. Docker commands use a pinned SSH connection to a builder daemon; Docker sends the build context to that host. Avoid host volume mounts and commands that require the daemon to see controller file paths. A job waits for a free builder slot and can be cancelled while waiting. Builder capacity is coordinated within one controller process.
+
 The fingerprint includes the job definition, declared source revisions, inputs, resolved secrets, and controller platform. Changing a secret invalidates the result. Separate configuration sources do not share results.
 
 If only the service repository changes, `build-ui` reuses its latest successful result. Dispatch runs the job when there is no prior result, a declared output is missing, or an input changed. Pipeline and `finally` jobs always run.

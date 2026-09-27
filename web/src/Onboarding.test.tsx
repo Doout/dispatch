@@ -2,8 +2,9 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerForm } from "./Onboarding";
+import { api } from "./api";
 
 afterEach(cleanup);
 
@@ -41,5 +42,37 @@ describe("relay installation", () => {
 
     await user.click(screen.getByRole("radio", { name: "Paste key" }));
     expect(screen.getByRole("textbox", { name: /^Private key/ })).not.toBeNull();
+  });
+});
+
+describe("Docker builder setup", () => {
+  it("fills the pinned key after checking the SSH host", async () => {
+    const scan = vi.spyOn(api, "scanBuilderSSHHost").mockResolvedValue({ fingerprint: "SHA256:verified", hostKey: "ssh-ed25519 AAAAhost" });
+    try {
+      const user = userEvent.setup();
+      render(<ServerForm onChanged={async () => undefined} />);
+      await user.selectOptions(screen.getByRole("combobox", { name: /^Server type/ }), "builder");
+      await user.type(screen.getByRole("textbox", { name: "Docker SSH URL" }), "ssh://build@example.com");
+      await user.click(screen.getByRole("button", { name: "Check host" }));
+      expect(scan).toHaveBeenCalledWith("ssh://build@example.com");
+      expect((screen.getByRole("textbox", { name: "SSH host public key" }) as HTMLTextAreaElement).value).toBe("ssh-ed25519 AAAAhost");
+      expect(screen.getByText("SHA256:verified")).not.toBeNull();
+    } finally {
+      scan.mockRestore();
+    }
+  });
+
+  it("asks for a saved key, pinned host key, and capacity", async () => {
+    const user = userEvent.setup();
+    render(<ServerForm onChanged={async () => undefined} secrets={[{
+      id: "builder-key", name: "Builder key", type: "ssh_private_key", environmentVariable: "BUILDER_KEY",
+      createdAt: "2026-08-19T00:00:00Z", updatedAt: "2026-08-19T00:00:00Z",
+    }]} />);
+    await user.selectOptions(screen.getByRole("combobox", { name: /^Server type/ }), "builder");
+    expect(screen.getByRole("textbox", { name: /^Docker SSH URL/ })).not.toBeNull();
+    expect(screen.getByRole("combobox", { name: "SSH key" })).not.toBeNull();
+    expect(screen.getByRole("spinbutton", { name: "Concurrent jobs" })).not.toBeNull();
+    expect(screen.getByRole("textbox", { name: /^SSH host public key/ })).not.toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Private key" })).toBeNull();
   });
 });
