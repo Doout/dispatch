@@ -404,10 +404,14 @@ spec:
     pullRequestComment:
       sources: [service]
       command: /preview
+      autoDeploy: false
+      maxAutoRunsPerHour: 2
   # jobs, deployments, and stages use the Application schema
 ```
 
 The template uses the Application `spec` schema for sources, jobs, deployments, and stages. `spec.triggers.pullRequestComment` declares the comment command and the source aliases whose PR comments can create instances. For a service/UI workflow, use `sources: [service, ui]`; other sources remain dependencies and can still accept explicit linked-PR overrides. The GitHub App and repository access connection are selected in Dispatch. `WorkflowTemplate` itself does not imply a PR trigger.
+
+Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` is set. Automatic updates are limited to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. A new `/preview` comment always starts a run, regardless of the limit. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
 
 | Variable | Value |
 | --- | --- |

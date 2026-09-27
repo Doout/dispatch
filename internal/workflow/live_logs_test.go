@@ -45,3 +45,29 @@ func TestRedactPartialLogSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelledJobStopsShellChildren(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runtime := &jobRuntime{root: root, paths: map[string]string{"service": root}, revision: core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"service": {Alias: "service"}}}}
+	finished := make(chan error, 1)
+	go func() {
+		_, _, err := runtime.runJobCommand(ctx, JobSpec{RunFrom: "service", Run: "(sleep 1; touch finished) & wait"}, nil, func(string) {})
+		finished <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-finished:
+		if err == nil {
+			t.Fatal("cancelled job succeeded")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancelled job did not stop")
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(root, "finished")); !os.IsNotExist(err) {
+		t.Fatalf("shell child continued after cancellation: %v", err)
+	}
+}

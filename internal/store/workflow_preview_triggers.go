@@ -10,13 +10,13 @@ import (
 )
 
 func (s *SQLStore) CreateWorkflowPreviewTrigger(ctx context.Context, item core.WorkflowPreviewTrigger) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source) VALUES(?,?,?,?,?,?,?,?,?,?,?)`),
-		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource))
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour)
 	return err
 }
 
 func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.WorkflowPreviewTrigger, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,report_comment_id,linked_pull_requests,template_id,created_at,closed_at,template_source FROM workflow_preview_triggers ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,report_comment_id,linked_pull_requests,template_id,created_at,closed_at,template_source,auto_deploy,max_auto_runs_per_hour FROM workflow_preview_triggers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -28,7 +28,7 @@ func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.Work
 		var closed sql.NullString
 		var templateID sql.NullString
 		var linked, templateSource string
-		if err := rows.Scan(&item.ID, &item.ResourceID, &item.GitHubAppID, &item.Repository, &item.PullRequestNumber, &item.Command, &item.PreviewURL, &item.ReportCommentID, &linked, &templateID, &created, &closed, &templateSource); err != nil {
+		if err := rows.Scan(&item.ID, &item.ResourceID, &item.GitHubAppID, &item.Repository, &item.PullRequestNumber, &item.Command, &item.PreviewURL, &item.ReportCommentID, &linked, &templateID, &created, &closed, &templateSource, &item.AutoDeploy, &item.MaxAutoRunsPerHour); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(templateSource), &item.TemplateSource); err != nil {
@@ -46,10 +46,10 @@ func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.Work
 }
 
 func (s *SQLStore) UpdateWorkflowPreviewTrigger(ctx context.Context, item core.WorkflowPreviewTrigger) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET github_app_id=?,repository=?,pull_request_number=?,command=?,preview_url=?,
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET github_app_id=?,repository=?,pull_request_number=?,command=?,preview_url=?,auto_deploy=?,max_auto_runs_per_hour=?,
 		report_comment_id=CASE WHEN github_app_id=? AND repository=? AND pull_request_number=? THEN report_comment_id ELSE '' END,
 		linked_pull_requests=CASE WHEN github_app_id=? AND repository=? AND pull_request_number=? THEN linked_pull_requests ELSE '{}' END
-		WHERE id=? AND closed_at IS NULL`), item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL,
+		WHERE id=? AND closed_at IS NULL`), item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, item.AutoDeploy, item.MaxAutoRunsPerHour,
 		item.GitHubAppID, item.Repository, item.PullRequestNumber, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.ID)
 	return changed(result, err)
 }
@@ -70,13 +70,14 @@ func (s *SQLStore) UpdateWorkflowPreviewTriggerComment(ctx context.Context, id, 
 }
 
 func (s *SQLStore) PendingWorkflowPreviewReports(ctx context.Context, triggerID string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, s.q(`SELECT DISTINCT c.revision_id FROM workflow_preview_comments c
-		JOIN workflow_revisions r ON r.id=c.revision_id
-		JOIN workflow_preview_triggers t ON t.id=c.trigger_id
-		WHERE c.trigger_id=? AND r.state='succeeded' AND NOT EXISTS (
-			SELECT 1 FROM workflow_preview_reports p WHERE p.revision_id=c.revision_id
+	rows, err := s.db.QueryContext(ctx, s.q(`SELECT r.id FROM workflow_revisions r
+		JOIN workflow_preview_triggers t ON t.resource_id=r.resource_id
+		WHERE t.id=? AND r.state='succeeded' AND
+		(r.trigger_name='pull request update' OR EXISTS (
+			SELECT 1 FROM workflow_preview_comments c WHERE c.trigger_id=t.id AND c.revision_id=r.id))
+		AND NOT EXISTS (SELECT 1 FROM workflow_preview_reports p WHERE p.revision_id=r.id
 			AND p.repository=t.repository AND p.pull_request_number=t.pull_request_number)
-		ORDER BY c.revision_id`), triggerID)
+		ORDER BY r.created_at`), triggerID)
 	if err != nil {
 		return nil, err
 	}

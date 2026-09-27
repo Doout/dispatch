@@ -1994,6 +1994,8 @@ paths:
                 repository: { type: string }
                 pullRequestNumber: { type: integer, minimum: 1 }
                 command: { type: string, default: /preview }
+                autoDeploy: { type: boolean, default: false }
+                maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2 }
                 previewUrl: { type: string, format: uri, description: HTTPS URL to post when the workflow succeeds. }
       responses:
         "201": { description: Comment trigger created. }
@@ -2073,6 +2075,8 @@ paths:
                 name: { type: string }
                 repository: { type: string, description: "Fallback owner/repository when YAML does not declare spec.triggers.pullRequestComment.sources" }
                 command: { type: string, example: /preview, description: "Fallback command when YAML does not declare its trigger" }
+                autoDeploy: { type: boolean, default: false, description: "Deploy new PR heads automatically; WorkflowTemplate YAML overrides this field." }
+                maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2, description: "Rolling per-preview limit for automatic starts; comment commands bypass it." }
                 previewUrl: { type: string, description: "HTTPS URL containing {{ instance.id }}" }
                 document: { type: string, maxLength: 1048576, description: "WorkflowTemplate YAML containing {{ instance.id }} in its name and every Helm release name" }
                 gitSource:
@@ -2107,6 +2111,8 @@ paths:
                 name: { type: string }
                 repository: { type: string }
                 command: { type: string }
+                autoDeploy: { type: boolean, default: false }
+                maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2 }
                 previewUrl: { type: string }
                 document: { type: string, maxLength: 1048576 }
                 gitSource:
@@ -2162,6 +2168,8 @@ paths:
                 repository: { type: string }
                 pullRequestNumber: { type: integer, minimum: 1 }
                 command: { type: string, default: /preview }
+                autoDeploy: { type: boolean, default: false }
+                maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2 }
                 previewUrl: { type: string, format: uri }
       responses:
         "200": { description: Trigger updated. }

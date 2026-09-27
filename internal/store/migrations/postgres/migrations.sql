@@ -1038,3 +1038,10 @@ CREATE TABLE auth_throttle (
     window_started_at BIGINT NOT NULL
 );
 CREATE INDEX auth_throttle_window ON auth_throttle(window_started_at);
+
+-- dispatch:migration 058_preview_auto_deploy_policy
+ALTER TABLE workflow_preview_templates ADD COLUMN auto_deploy BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE workflow_preview_templates ADD COLUMN max_auto_runs_per_hour INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE workflow_preview_triggers ADD COLUMN auto_deploy BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE workflow_preview_triggers ADD COLUMN max_auto_runs_per_hour INTEGER NOT NULL DEFAULT 2;
+

@@ -128,8 +128,10 @@ type WorkflowTemplateTriggers struct {
 	PullRequestComment *PullRequestCommentTrigger `json:"pullRequestComment,omitempty" yaml:"pullRequestComment,omitempty"`
 }
 type PullRequestCommentTrigger struct {
-	Sources []string `json:"sources" yaml:"sources"`
-	Command string   `json:"command" yaml:"command"`
+	Sources            []string `json:"sources" yaml:"sources"`
+	Command            string   `json:"command" yaml:"command"`
+	AutoDeploy         bool     `json:"autoDeploy,omitempty" yaml:"autoDeploy,omitempty"`
+	MaxAutoRunsPerHour int      `json:"maxAutoRunsPerHour,omitempty" yaml:"maxAutoRunsPerHour,omitempty"`
 }
 
 func ReadWorkflowTemplateTrigger(contents []byte) (*PullRequestCommentTrigger, map[string]SourceSpec, error) {

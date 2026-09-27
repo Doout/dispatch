@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/doout/dispatch/internal/core"
 )
@@ -238,9 +239,54 @@ func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.Workflo
 }
 
 func (s *SQLStore) UpdateWorkflowRevision(ctx context.Context, item core.WorkflowRevision) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_revisions SET state=?,sources=?,outputs=?,error=?,started_at=?,finished_at=? WHERE id=?`),
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_revisions SET state=?,sources=?,outputs=?,error=?,started_at=?,finished_at=? WHERE id=? AND state!='cancelled'`),
 		item.State, jsonText(item.Sources), jsonText(item.Outputs), item.Error, nullTime(item.StartedAt), nullTime(item.FinishedAt), item.ID)
 	return changed(result, err)
+}
+
+// SupersedeWorkflowRevisions marks queued and running work terminal before a
+// newer preview is scheduled. Workers may finish asynchronously, so their
+// ordinary updates cannot write over the cancelled state.
+func (s *SQLStore) SupersedeWorkflowRevisions(ctx context.Context, resourceID string) ([]string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, s.q(`SELECT id FROM workflow_revisions WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')`), resourceID)
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return ids, tx.Commit()
+	}
+	now := stamp(time.Now().UTC())
+	const reason = "Superseded by a newer preview run"
+	for _, table := range []string{"workflow_job_results", "workflow_stage_runs"} {
+		if _, err := tx.ExecContext(ctx, s.q(`UPDATE `+table+` SET state='cancelled',error=?,finished_at=? WHERE revision_id IN (SELECT id FROM workflow_revisions WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')) AND state IN ('queued','running','awaiting_approval')`), reason, now, resourceID); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_revisions SET state='cancelled',error=?,finished_at=? WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')`), reason, now, resourceID); err != nil {
+		return nil, err
+	}
+	return ids, tx.Commit()
 }
 
 const workflowRevisionSelect = `SELECT id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at FROM workflow_revisions`
@@ -300,7 +346,7 @@ func (s *SQLStore) CreateWorkflowJobResult(ctx context.Context, item core.Workfl
 }
 
 func (s *SQLStore) UpdateWorkflowJobResult(ctx context.Context, item core.WorkflowJobResult) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_job_results SET state=?,sources=?,outputs=?,log=?,error=?,started_at=?,finished_at=? WHERE id=?`),
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_job_results SET state=?,sources=?,outputs=?,log=?,error=?,started_at=?,finished_at=? WHERE id=? AND state!='cancelled'`),
 		item.State, jsonText(item.Sources), jsonText(item.Outputs), item.Log, item.Error, nullTime(item.StartedAt), nullTime(item.FinishedAt), item.ID)
 	return changed(result, err)
 }
@@ -352,7 +398,7 @@ func (s *SQLStore) CreateWorkflowStageRun(ctx context.Context, item core.Workflo
 }
 
 func (s *SQLStore) UpdateWorkflowStageRun(ctx context.Context, item core.WorkflowStageRun) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_stage_runs SET state=?,approval=?,deployment_ids=?,check_runs=?,error=?,started_at=?,finished_at=?,deployment_results=? WHERE id=?`),
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_stage_runs SET state=?,approval=?,deployment_ids=?,check_runs=?,error=?,started_at=?,finished_at=?,deployment_results=? WHERE id=? AND state!='cancelled'`),
 		item.State, item.Approval, jsonText(item.DeploymentIDs), jsonText(item.CheckRuns), item.Error, nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.DeploymentResults), item.ID)
 	return changed(result, err)
 }

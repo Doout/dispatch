@@ -44,12 +44,12 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	if err := data.UpdateWorkflowPreviewTriggerComment(ctx, "trigger", "12345"); err != nil {
 		t.Fatal(err)
 	}
-	trigger := core.WorkflowPreviewTrigger{ID: "trigger", GitHubAppID: "github", Repository: "Example/service", PullRequestNumber: 42, Command: "/ship", PreviewURL: "https://new.example.test"}
+	trigger := core.WorkflowPreviewTrigger{ID: "trigger", GitHubAppID: "github", Repository: "Example/service", PullRequestNumber: 42, Command: "/ship", AutoDeploy: true, MaxAutoRunsPerHour: 3, PreviewURL: "https://new.example.test"}
 	if err := data.UpdateWorkflowPreviewTrigger(ctx, trigger); err != nil {
 		t.Fatal(err)
 	}
 	items, err := data.ListWorkflowPreviewTriggers(ctx)
-	if err != nil || len(items) != 1 || items[0].Command != "/ship" || items[0].PreviewURL != trigger.PreviewURL || items[0].ReportCommentID != "12345" || items[0].LinkedPullRequests["ui"] != 84 {
+	if err != nil || len(items) != 1 || items[0].Command != "/ship" || !items[0].AutoDeploy || items[0].MaxAutoRunsPerHour != 3 || items[0].PreviewURL != trigger.PreviewURL || items[0].ReportCommentID != "12345" || items[0].LinkedPullRequests["ui"] != 84 {
 		t.Fatalf("editing the same PR lost comment state: %+v, %v", items, err)
 	}
 	trigger.PullRequestNumber = 1500
@@ -59,5 +59,12 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	items, err = data.ListWorkflowPreviewTriggers(ctx)
 	if err != nil || len(items) != 1 || items[0].PullRequestNumber != 1500 || items[0].ReportCommentID != "" || len(items[0].LinkedPullRequests) != 0 {
 		t.Fatalf("changing the PR kept old comment state: %+v, %v", items, err)
+	}
+	if err := data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: "auto-run", ResourceID: "resource", State: "succeeded", Trigger: "pull request update", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := data.PendingWorkflowPreviewReports(ctx, "trigger")
+	if err != nil || len(pending) != 1 || pending[0] != "auto-run" {
+		t.Fatalf("automatic run was not ready for reporting: %v, %v", pending, err)
 	}
 }

@@ -263,6 +263,15 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 	var body strings.Builder
 	body.WriteString("\n### Preview commands\n\nPost a new comment on this PR:\n\n")
 	fmt.Fprintf(&body, "- `%s`: run again with the latest commits from this PR and its linked PRs.\n", command)
+	if trigger.AutoDeploy {
+		limit := trigger.MaxAutoRunsPerHour
+		if limit <= 0 {
+			limit = 2
+		}
+		fmt.Fprintf(&body, "\nNew commits deploy automatically, up to %d times per preview in a rolling hour. `%s` runs immediately even when that limit is reached.\n", limit, command)
+	} else {
+		body.WriteString("\nNew commits do not deploy automatically. A newer commit cancels a queued or running preview.\n")
+	}
 	if len(aliases) == 0 {
 		return body.String()
 	}

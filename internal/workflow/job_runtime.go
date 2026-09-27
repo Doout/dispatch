@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
@@ -203,6 +204,16 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 	_, _ = logs.Write([]byte(prelude + "Running command...\n"))
 	progress(logs.String())
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-eu", "-c", command)
+	// The shell can spawn a long-running build client. Cancel the whole group so
+	// a superseded preview stops consuming worker capacity.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, environment, &logs, &logs
 	done := make(chan struct{})
 	flushed := make(chan struct{})

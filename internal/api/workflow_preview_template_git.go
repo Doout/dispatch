@@ -60,6 +60,9 @@ func (a *API) fetchPreviewTemplateGitSource(ctx context.Context, item core.Workf
 	if err := applyPreviewTemplateTrigger(&item); err != nil {
 		return item, err
 	}
+	if err := validatePreviewAutoPolicy(&item.MaxAutoRunsPerHour); err != nil {
+		return item, err
+	}
 	if err := validatePreviewTemplateDocument(item); err != nil {
 		return item, err
 	}

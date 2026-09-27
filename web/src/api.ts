@@ -402,6 +402,8 @@ export type WorkflowPreviewTemplate = {
   name: string;
   repository: string;
   command: string;
+  autoDeploy?: boolean;
+  maxAutoRunsPerHour?: number;
   previewUrl: string;
   document: string;
   active: boolean;
@@ -417,13 +419,15 @@ export type WorkflowPreviewTrigger = {
   repository: string;
   pullRequestNumber: number;
   command: string;
+  autoDeploy?: boolean;
+  maxAutoRunsPerHour?: number;
   previewUrl?: string;
   linkedPullRequests?: Record<string, number>;
   reportCommentId?: string;
   createdAt: string;
   closedAt?: string;
 };
-export type WorkflowPreviewTriggerInput = Pick<WorkflowPreviewTrigger, "githubAppId" | "repository" | "pullRequestNumber" | "command" | "previewUrl">;
+export type WorkflowPreviewTriggerInput = Pick<WorkflowPreviewTrigger, "githubAppId" | "repository" | "pullRequestNumber" | "command" | "autoDeploy" | "maxAutoRunsPerHour" | "previewUrl">;
 export type WorkflowSourceRevision = {
   alias: string;
   repository: string;
