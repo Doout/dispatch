@@ -166,11 +166,12 @@ export type Server = {
   id: string;
   name: string;
   address: string;
-  runtime: "docker" | "kubernetes" | "openshift" | "relay";
+  runtime: "docker" | "kubernetes" | "openshift" | "builder" | "relay";
   state: string;
   agentMode: string;
   kubernetes?: KubernetesServerConfig;
   relay?: RelayServerConfig;
+  builder?: { sshSecretId: string; hostKey: string; maxConcurrent: number };
   createdAt: string;
 };
 export type RelayWebhook = {
@@ -1054,10 +1055,11 @@ export const api = {
   createServer: (body: {
     name: string;
     address?: string;
-    runtime: "docker" | "kubernetes" | "openshift" | "relay";
+    runtime: "docker" | "kubernetes" | "openshift" | "builder" | "relay";
     agentMode?: string;
     kubernetes?: KubernetesServerInput;
     relay?: { accessToken?: string };
+    builder?: { sshSecretId: string; hostKey: string; maxConcurrent: number };
   }) =>
     request<Server>("/api/v1/servers", {
       method: "POST",
@@ -1067,6 +1069,11 @@ export const api = {
     request<{ fingerprint: string }>("/api/v1/relay/ssh/scan", {
       method: "POST",
       body: JSON.stringify({ host, port }),
+    }),
+  scanBuilderSSHHost: (address: string) =>
+    request<{ fingerprint: string; hostKey: string }>("/api/v1/builders/ssh/scan", {
+      method: "POST",
+      body: JSON.stringify({ address }),
     }),
   installRelayOverSSH: (body: RelaySSHInstallInput) =>
     request<{ status: string; output: string }>("/api/v1/relay/ssh/install", {
@@ -1080,6 +1087,7 @@ export const api = {
       address?: string;
       kubernetes?: KubernetesServerInput;
       relay?: { accessToken?: string };
+      builder?: { sshSecretId: string; hostKey: string; maxConcurrent: number };
     },
   ) =>
     request<Server>(`/api/v1/servers/${id}`, {

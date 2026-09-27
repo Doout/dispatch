@@ -82,4 +82,8 @@ func (a *API) connectionsRoutes(r chi.Router) {
 		r.Post("/ssh/scan", a.scanRelaySSHHost)
 		r.Post("/ssh/install", a.installRelayOverSSH)
 	})
+	r.Route("/builders", func(r chi.Router) {
+		r.Use(a.ownerOnly)
+		r.Post("/ssh/scan", a.scanBuilderSSHHost)
+	})
 }

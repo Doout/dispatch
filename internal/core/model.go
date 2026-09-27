@@ -25,6 +25,7 @@ type Server struct {
 	AgentMode  string                  `json:"agentMode"`
 	Kubernetes *KubernetesServerConfig `json:"kubernetes,omitempty"`
 	Relay      *RelayServerConfig      `json:"relay,omitempty"`
+	Builder    *BuilderServerConfig    `json:"builder,omitempty"`
 	CreatedAt  time.Time               `json:"createdAt"`
 }
 
@@ -33,11 +34,20 @@ const (
 	ServerRuntimeKubernetes = "kubernetes"
 	ServerRuntimeOpenShift  = "openshift"
 	ServerRuntimeRelay      = "relay"
+	ServerRuntimeBuilder    = "builder"
 )
 
 func IsDeploymentRuntime(runtime string) bool {
 	runtime = strings.ToLower(strings.TrimSpace(runtime))
 	return runtime == ServerRuntimeDocker || IsKubernetesRuntime(runtime)
+}
+
+// BuilderServerConfig connects workflow Docker clients to a dedicated daemon.
+// The SSH key remains in the secret store; the host key pins the remote host.
+type BuilderServerConfig struct {
+	SSHSecretID   string `json:"sshSecretId"`
+	HostKey       string `json:"hostKey"`
+	MaxConcurrent int    `json:"maxConcurrent"`
 }
 
 func IsKubernetesRuntime(runtime string) bool {

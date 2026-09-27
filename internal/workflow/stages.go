@@ -150,6 +150,9 @@ func (s *Service) runStageCheck(ctx context.Context, resource core.WorkflowResou
 
 func (s *Service) resolveTarget(ctx context.Context, ref string) (core.Server, error) {
 	if item, err := s.Store.GetServer(ctx, ref); err == nil {
+		if !core.IsDeploymentRuntime(item.Runtime) {
+			return item, fmt.Errorf("server %s is not a deployment target", ref)
+		}
 		if item.State != "ready" {
 			return item, fmt.Errorf("target %s is not ready", ref)
 		}
@@ -161,6 +164,9 @@ func (s *Service) resolveTarget(ctx context.Context, ref string) (core.Server, e
 	}
 	for _, item := range items {
 		if strings.EqualFold(item.Name, ref) {
+			if !core.IsDeploymentRuntime(item.Runtime) {
+				return item, fmt.Errorf("server %s is not a deployment target", ref)
+			}
 			if item.State != "ready" {
 				return item, fmt.Errorf("target %s is not ready", ref)
 			}

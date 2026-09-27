@@ -31,10 +31,12 @@ type Service struct {
 	Logger       *slog.Logger
 	Repositories *repositoryCache
 
-	mu         sync.Mutex
-	locks      map[string]*sync.Mutex
-	buildLocks map[string]*buildLock
-	runCancels map[string]context.CancelFunc
+	mu           sync.Mutex
+	locks        map[string]*sync.Mutex
+	buildLocks   map[string]*buildLock
+	builderSlots map[string]chan struct{}
+	builderWake  chan struct{}
+	runCancels   map[string]context.CancelFunc
 }
 
 type DeploymentRunner interface {

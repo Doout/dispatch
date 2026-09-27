@@ -84,6 +84,7 @@ type SourceSpec struct {
 }
 
 type JobSpec struct {
+	Builder     string                   `json:"builder,omitempty" yaml:"builder,omitempty"`
 	SourcePaths map[string][]string      `json:"sourcePaths,omitempty" yaml:"sourcePaths,omitempty"`
 	RunFrom     string                   `json:"runFrom" yaml:"runFrom"`
 	Sources     []string                 `json:"sources,omitempty" yaml:"sources,omitempty"`
@@ -439,6 +440,9 @@ func validateJobs(prefix string, jobs map[string]JobSpec, sources map[string]Sou
 		}
 		if strings.TrimSpace(job.Run) == "" {
 			return fmt.Errorf("%s.%s.run is required", prefix, name)
+		}
+		if job.Builder != "" && job.Builder != "docker" {
+			return fmt.Errorf("%s.%s.builder must be docker", prefix, name)
 		}
 		for _, alias := range job.Sources {
 			if _, ok := sources[alias]; !ok {

@@ -256,11 +256,16 @@ func (a *API) scanRelaySSHHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func scanSSHHostKey(ctx context.Context, address string) (string, error) {
-	var fingerprint string
+	fingerprint, _, err := scanSSHHost(ctx, address)
+	return fingerprint, err
+}
+
+func scanSSHHost(ctx context.Context, address string) (string, string, error) {
+	var fingerprint, publicKey string
 	dialer := net.Dialer{Timeout: 8 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
@@ -268,15 +273,16 @@ func scanSSHHostKey(ctx context.Context, address string) (string, error) {
 		User: "dispatch-host-scan",
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 			fingerprint = ssh.FingerprintSHA256(key)
+			publicKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 			return errors.New("host key captured")
 		},
 		Timeout: 8 * time.Second,
 	}
 	_, _, _, _ = ssh.NewClientConn(conn, address, config)
 	if fingerprint == "" {
-		return "", errors.New("the server did not present an SSH host key")
+		return "", "", errors.New("the server did not present an SSH host key")
 	}
-	return fingerprint, nil
+	return fingerprint, publicKey, nil
 }
 
 func (a *API) installRelayOverSSH(w http.ResponseWriter, r *http.Request) {

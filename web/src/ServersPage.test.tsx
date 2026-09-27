@@ -32,6 +32,18 @@ const overview: Overview = {
 afterEach(cleanup);
 
 describe("server actions", () => {
+	 it("separates builders from deployment targets", () => {
+		const withBuilder = { ...overview, servers: [...overview.servers, {
+			id: "builder-1", name: "build-host", address: "ssh://build@example.com", runtime: "builder" as const,
+			state: "ready", agentMode: "ssh", builder: { sshSecretId: "key", hostKey: "ssh-ed25519 AAAA", maxConcurrent: 2 },
+			createdAt: "2026-08-19T12:00:00Z",
+		}] };
+		render(<ServersPage overview={withBuilder} onChanged={async () => undefined} onAdd={() => undefined} onRepair={() => undefined} onEdit={() => undefined} onDelete={() => undefined} />);
+		expect(screen.getByText("Docker builders")).not.toBeNull();
+		expect(screen.getByText("build-host")).not.toBeNull();
+		expect(screen.getByText("2 jobs")).not.toBeNull();
+		expect(screen.getByRole("button", { name: "Edit build-host" })).not.toBeNull();
+	});
   it("uses the shared icon controls and tooltip labels", () => {
     const onRepair = vi.fn();
     const onEdit = vi.fn();
