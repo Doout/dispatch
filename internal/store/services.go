@@ -304,9 +304,12 @@ func (s *SQLStore) captureServiceBindings(ctx context.Context, tx *changeTx, d c
 			if field.SecretRef == "" {
 				continue
 			}
-			var source, cipher string
-			if err = tx.QueryRowContext(ctx, s.q(`SELECT secret_source,encrypted_value FROM secrets WHERE id=?`), field.SecretRef).Scan(&source, &cipher); err != nil {
+			var source, cipher, secretType string
+			if err = tx.QueryRowContext(ctx, s.q(`SELECT secret_type,secret_source,encrypted_value FROM secrets WHERE id=?`), field.SecretRef).Scan(&secretType, &source, &cipher); err != nil {
 				return errors.New("service credential is unavailable")
+			}
+			if core.PlainSecretType(core.SecretType(secretType)) {
+				return errors.New("plain variables cannot be used as service credentials")
 			}
 			if source == "" || source == string(core.SecretSourceLocal) {
 				field.CapturedSecretID = field.SecretRef

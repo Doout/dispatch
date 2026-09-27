@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"net/http"
@@ -47,10 +48,19 @@ func validateSecretInput(name string, secretType core.SecretType, environmentVar
 		return "DISPATCH_ variables are reserved by the controller."
 	}
 	if requireValue && (value == nil || *value == "") {
+		if core.PlainSecretType(secretType) {
+			return "Enter a variable value."
+		}
 		return "Enter a secret value."
 	}
 	if value != nil && len(*value) > 64<<10 {
 		return "Keep the secret value under 64 KiB."
+	}
+	if value != nil && *value != "" && core.JSONSecretType(secretType) {
+		var object map[string]any
+		if err := json.Unmarshal([]byte(*value), &object); err != nil || object == nil || len(object) == 0 {
+			return "Enter a non-empty JSON object."
+		}
 	}
 	if value != nil && *value != "" && secretType == core.SecretTypeSSHPrivateKey {
 		if _, err := sshPublicKey(*value); err != nil {
@@ -136,10 +146,6 @@ func (a *API) listSecrets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
-	if a.eventConfig.Vault == nil {
-		problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before saving credentials.")
-		return
-	}
 	var input secretRequest
 	if !decode(w, r, &input) {
 		return
@@ -147,6 +153,14 @@ func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
 	input.Name, input.EnvironmentVariable = strings.TrimSpace(input.Name), strings.TrimSpace(input.EnvironmentVariable)
 	secretType := normalizeSecretType(input.Type)
 	secretSource := normalizeSecretSource(input.Source)
+	if !core.PlainSecretType(secretType) && a.eventConfig.Vault == nil {
+		problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before saving credentials.")
+		return
+	}
+	if core.PlainSecretType(secretType) && secretSource != core.SecretSourceLocal {
+		problem(w, http.StatusBadRequest, "Invalid variable", "Plain variables must be stored in Dispatch.")
+		return
+	}
 	if input.Generate {
 		if secretSource != core.SecretSourceLocal || secretType != core.SecretTypeSSHPrivateKey {
 			problem(w, http.StatusBadRequest, "Invalid secret", "Only SSH private keys can be generated.")
@@ -180,10 +194,14 @@ func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	item := core.Secret{ID: ulid.Make().String(), Name: input.Name, Type: secretType, Source: secretSource, EnvironmentVariable: input.EnvironmentVariable,
 		ExternalStoreID: strings.TrimSpace(input.ExternalStoreID), ExternalSecretID: strings.TrimSpace(input.ExternalSecretID), ExternalField: strings.TrimSpace(input.ExternalField), CreatedAt: now, UpdatedAt: now}
-	if item.Source == core.SecretSourceLocal && item.Type == core.SecretTypeSSHPrivateKey {
+	if core.PlainSecretType(item.Type) {
+		item.PublicValue = *input.Value
+	} else if item.Source == core.SecretSourceLocal && item.Type == core.SecretTypeSSHPrivateKey {
 		item.PublicValue, _ = sshPublicKey(*input.Value)
 	}
-	if item.Source == core.SecretSourceLocal {
+	if core.PlainSecretType(item.Type) {
+		item.EncryptedValue = ""
+	} else if item.Source == core.SecretSourceLocal {
 		encrypted, err := a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
 		if err != nil {
 			a.internal(w, err)
@@ -201,10 +219,6 @@ func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
-	if a.eventConfig.Vault == nil {
-		problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before saving credentials.")
-		return
-	}
 	item, err := a.store.GetSecret(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		a.notFoundOrInternal(w, err, "Secret")
@@ -226,6 +240,48 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(input.Source) != "" {
 		secretSource = normalizeSecretSource(input.Source)
 	}
+	if !core.PlainSecretType(secretType) && a.eventConfig.Vault == nil {
+		problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before saving credentials.")
+		return
+	}
+	if core.PlainSecretType(secretType) && secretSource != core.SecretSourceLocal {
+		problem(w, http.StatusBadRequest, "Invalid variable", "Plain variables must be stored in Dispatch.")
+		return
+	}
+	if core.PlainSecretType(secretType) != core.PlainSecretType(item.Type) && (input.Value == nil || *input.Value == "") {
+		problem(w, http.StatusBadRequest, "Invalid variable", "Enter a new value when changing between a secret and a plain variable.")
+		return
+	}
+	if core.JSONSecretType(secretType) && secretType != item.Type && (input.Value == nil || *input.Value == "") {
+		problem(w, http.StatusBadRequest, "Invalid variable", "Enter a JSON value when changing to JSON.")
+		return
+	}
+	if core.PlainSecretType(secretType) && !core.PlainSecretType(item.Type) {
+		apps, listErr := a.store.ListApps(r.Context())
+		if listErr != nil {
+			a.internal(w, listErr)
+			return
+		}
+		for _, app := range apps {
+			if app.SourceCredentialID == item.ID {
+				problem(w, http.StatusConflict, "Credential in use", "Remove this value from the application source before making it plain.")
+				return
+			}
+		}
+		services, listErr := a.store.ListServices(r.Context(), "")
+		if listErr != nil {
+			a.internal(w, listErr)
+			return
+		}
+		for _, service := range services {
+			for _, field := range service.Fields {
+				if field.SecretRef == item.ID {
+					problem(w, http.StatusConflict, "Credential in use", "Remove this value from the service before making it plain.")
+					return
+				}
+			}
+		}
+	}
 	if input.Generate {
 		if secretSource != core.SecretSourceLocal || secretType != core.SecretTypeSSHPrivateKey {
 			problem(w, http.StatusBadRequest, "Invalid secret", "Only SSH private keys can be generated.")
@@ -243,7 +299,7 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	validationValue := input.Value
-	if secretSource == core.SecretSourceLocal && (validationValue == nil || *validationValue == "") && (secretType != item.Type || item.Source == core.SecretSourceExternal) {
+	if secretSource == core.SecretSourceLocal && !core.PlainSecretType(secretType) && (validationValue == nil || *validationValue == "") && (secretType != item.Type || item.Source == core.SecretSourceExternal) {
 		if item.Source == core.SecretSourceExternal {
 			problem(w, http.StatusBadRequest, "Invalid secret", "Enter a value when moving an external secret into Dispatch.")
 			return
@@ -267,7 +323,12 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	item.Name, item.Type, item.Source, item.EnvironmentVariable, item.UpdatedAt = input.Name, secretType, secretSource, input.EnvironmentVariable, time.Now().UTC()
-	if secretSource == core.SecretSourceLocal && input.Value != nil && *input.Value != "" {
+	if core.PlainSecretType(secretType) {
+		if input.Value != nil && *input.Value != "" {
+			item.PublicValue = *input.Value
+		}
+		item.EncryptedValue = ""
+	} else if secretSource == core.SecretSourceLocal && input.Value != nil && *input.Value != "" {
 		item.EncryptedValue, err = a.eventConfig.Vault.Encrypt("secret:"+item.ID, []byte(*input.Value))
 		if err != nil {
 			a.internal(w, err)
@@ -277,6 +338,8 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 	if secretSource == core.SecretSourceExternal {
 		item.EncryptedValue, item.PublicValue = "", ""
 		item.ExternalStoreID, item.ExternalSecretID, item.ExternalField = strings.TrimSpace(input.ExternalStoreID), strings.TrimSpace(input.ExternalSecretID), strings.TrimSpace(input.ExternalField)
+	} else if core.PlainSecretType(item.Type) {
+		// The plain value is already set above or preserved from the prior version.
 	} else if item.Type == core.SecretTypeSSHPrivateKey {
 		value := validationValue
 		if input.Value != nil && *input.Value != "" {

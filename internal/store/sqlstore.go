@@ -174,7 +174,7 @@ func (s *SQLStore) UpdateSecret(ctx context.Context, secret core.Secret) error {
 	if err = changed(result, err); err != nil {
 		return err
 	}
-	if previous.EncryptedValue != secret.EncryptedValue || previous.Source != secret.Source || previous.ExternalStoreID != secret.ExternalStoreID || previous.ExternalSecretID != secret.ExternalSecretID || previous.ExternalField != secret.ExternalField {
+	if previous.EncryptedValue != secret.EncryptedValue || previous.PublicValue != secret.PublicValue || previous.Type != secret.Type || previous.Source != secret.Source || previous.ExternalStoreID != secret.ExternalStoreID || previous.ExternalSecretID != secret.ExternalSecretID || previous.ExternalField != secret.ExternalField {
 		if err = s.updateServiceSecretRevisions(ctx, tx, secret.ID); err != nil {
 			return err
 		}

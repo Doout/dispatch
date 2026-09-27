@@ -114,6 +114,24 @@ spec:
       run: ./scripts/publish-result.sh
 ```
 
+Saved Variables can hold a JSON object, either encrypted as a JSON secret or
+visible as a plain JSON value. A job can select a scalar key from that object:
+
+```yaml
+secrets:
+  APP_CONFIG_APIKEY:
+    secretRef: APP_CONFIG
+    key: APIKEY
+  APP_CONFIG_URL:
+    secretRef: APP_CONFIG
+    key: URL
+```
+
+`key` also accepts a nested path such as `auth.token`. Missing keys and object
+or array values fail the job before its command starts. Omit `key` to pass the
+entire JSON object as one environment variable. A JSON secret hides every key;
+a plain JSON value shows the whole object to owners.
+
 `runFrom` selects the repository that contains the script. `sources` adds repositories that the command reads. Runtime templates expose `path`, `commit`, and `branch` for each declared source.
 
 Application jobs default to `reuse: onInputMatch`. Matching jobs share successful results across Applications in the same repository configuration. Concurrent requests for identical inputs wait for the first build. This coordination works within one controller; it does not coordinate multiple controller replicas.

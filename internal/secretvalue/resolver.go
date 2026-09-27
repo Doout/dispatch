@@ -58,6 +58,12 @@ func (r *Resolver) Resolve(ctx context.Context, id string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load secret: %w", err)
 	}
+	if core.PlainSecretType(secret.Type) {
+		if secret.Source != "" && secret.Source != core.SecretSourceLocal {
+			return nil, errors.New("plain variables must be stored locally")
+		}
+		return []byte(secret.PublicValue), nil
+	}
 	if secret.Source == "" || secret.Source == core.SecretSourceLocal {
 		if r.Vault == nil {
 			return nil, errors.New("local secret storage is not configured")

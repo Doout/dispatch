@@ -252,9 +252,11 @@ func (r *jobRuntime) resolveSecrets(ctx context.Context, bindings map[string]Sec
 	result := map[string]string{}
 	for environment, binding := range bindings {
 		id := ""
+		var saved core.Secret
 		for _, secret := range secrets {
 			if secret.ID == binding.SecretRef || strings.EqualFold(secret.Name, binding.SecretRef) {
 				id = secret.ID
+				saved = secret
 				break
 			}
 		}
@@ -265,10 +267,52 @@ func (r *jobRuntime) resolveSecrets(ctx context.Context, bindings map[string]Sec
 		if err != nil {
 			return nil, fmt.Errorf("resolve secret %s: %w", binding.SecretRef, err)
 		}
-		result[environment] = string(value)
+		if binding.Key != "" {
+			if !core.JSONSecretType(saved.Type) {
+				clear(value)
+				return nil, fmt.Errorf("value %s is not JSON", binding.SecretRef)
+			}
+			selected, selectErr := selectJSONKey(value, binding.Key)
+			if selectErr != nil {
+				clear(value)
+				return nil, fmt.Errorf("value %s: %w", binding.SecretRef, selectErr)
+			}
+			result[environment] = selected
+		} else {
+			result[environment] = string(value)
+		}
 		clear(value)
 	}
 	return result, nil
+}
+
+func selectJSONKey(contents []byte, path string) (string, error) {
+	if !jsonKeyPathPattern.MatchString(path) {
+		return "", errors.New("invalid JSON key path")
+	}
+	var object map[string]any
+	if err := json.Unmarshal(contents, &object); err != nil || object == nil {
+		return "", errors.New("value is not a JSON object")
+	}
+	var current any = object
+	for _, key := range strings.Split(path, ".") {
+		fields, ok := current.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("JSON key %s is not available", path)
+		}
+		current, ok = fields[key]
+		if !ok {
+			return "", fmt.Errorf("JSON key %s is not available", path)
+		}
+	}
+	switch value := current.(type) {
+	case string:
+		return value, nil
+	case bool, float64:
+		return fmt.Sprint(value), nil
+	default:
+		return "", fmt.Errorf("JSON key %s must contain a string, number, or boolean", path)
+	}
 }
 
 func (r *jobRuntime) checkout(ctx context.Context, alias string) (string, error) {

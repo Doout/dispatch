@@ -8,7 +8,7 @@ describe("application routes", () => {
     expect(routePath({ view: "events" })).toBe("/events");
     expect(routePath({ view: "projects" })).toBe("/projects");
     expect(routePath({ view: "servers" })).toBe("/servers");
-    expect(routePath({ view: "secrets" })).toBe("/secrets");
+    expect(routePath({ view: "secrets" })).toBe("/variables");
     expect(routePath({ view: "connections" })).toBe("/connections");
   });
 
@@ -48,6 +48,11 @@ describe("application routes", () => {
   it("keeps legacy view query URLs readable", () => {
     expect(readRoute({ pathname: "/", search: "?view=connections" })).toEqual({ view: "connections" });
     expect(readRoute({ pathname: "/", search: "?view=applications&section=helm" })).toEqual({ view: "applications", applicationSection: "helm" });
+  });
+
+  it("opens the Variables page and keeps old Secrets links valid", () => {
+    expect(readRoute({ pathname: "/variables", search: "" })).toEqual({ view: "secrets" });
+    expect(readRoute({ pathname: "/secrets", search: "" })).toEqual({ view: "secrets" });
   });
 
   it("restores analytics filters from a shared link and ignores unsupported values", () => {

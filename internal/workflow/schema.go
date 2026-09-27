@@ -95,6 +95,7 @@ type JobSpec struct {
 
 type SecretBinding struct {
 	SecretRef string `json:"secretRef" yaml:"secretRef"`
+	Key       string `json:"key,omitempty" yaml:"key,omitempty"`
 }
 
 type DeploymentSpec struct {
@@ -137,10 +138,11 @@ type CheckSpec struct {
 }
 
 var (
-	namePattern     = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$`)
-	aliasPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	outputPattern   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,127}$`)
-	templatePattern = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
+	namePattern        = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$`)
+	aliasPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	outputPattern      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,127}$`)
+	jsonKeyPathPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$`)
+	templatePattern    = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
 )
 
 // Parse decodes every YAML document in a file. JSON is accepted because it is
@@ -455,6 +457,9 @@ func validateJobs(prefix string, jobs map[string]JobSpec, sources map[string]Sou
 		for environment, binding := range job.Secrets {
 			if !outputPattern.MatchString(environment) || strings.TrimSpace(binding.SecretRef) == "" {
 				return fmt.Errorf("%s.%s.secrets.%s requires secretRef", prefix, name, environment)
+			}
+			if binding.Key != "" && !jsonKeyPathPattern.MatchString(binding.Key) {
+				return fmt.Errorf("%s.%s.secrets.%s has an invalid JSON key path", prefix, name, environment)
 			}
 		}
 		seen := map[string]bool{}

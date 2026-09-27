@@ -95,6 +95,9 @@ func TestSourceAuthenticationRejectsIncompatibleTypedSecret(t *testing.T) {
 	if err := ValidateSourceCredentialType(SourceAuthSSHKey, core.SecretTypeText); err != nil {
 		t.Fatalf("legacy text secrets should remain compatible: %v", err)
 	}
+	if err := ValidateSourceCredentialType(SourceAuthGitHubToken, core.SecretTypeEnvironment); err == nil {
+		t.Fatal("plain environment variables must not be accepted as repository credentials")
+	}
 }
 
 func TestGitBackedHelmChartValidationRejectsTraversal(t *testing.T) {

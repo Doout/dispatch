@@ -12,7 +12,7 @@ export const pageTitles: Record<View, string> = {
   projects: "Projects",
   servers: "Servers",
   services: "Services",
-  secrets: "Secrets",
+  secrets: "Variables",
   connections: "Connections",
   access: "Access",
 };

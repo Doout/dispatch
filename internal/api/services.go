@@ -168,8 +168,12 @@ func (a *API) serviceInput(r *http.Request, in serviceRequest, item core.Service
 			if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
 				return item, errors.New("a controller owner must attach global secret references")
 			}
-			if _, err := a.store.GetSecret(r.Context(), *input.SecretRef); err != nil {
+			secret, err := a.store.GetSecret(r.Context(), *input.SecretRef)
+			if err != nil {
 				return item, errors.New("secret reference is unavailable")
+			}
+			if core.PlainSecretType(secret.Type) {
+				return item, errors.New("plain variables cannot be used as service credentials")
 			}
 		}
 		if input.SecretRef != nil {

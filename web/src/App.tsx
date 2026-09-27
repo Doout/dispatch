@@ -794,7 +794,7 @@ export default function DispatchApp() {
           {!loading && overview && view === "secrets" && !canManageSecrets && (
             <UnavailablePage
               view="secrets"
-              title="Secrets unavailable"
+              title="Variables unavailable"
               body="Controller owner access is required."
             />
           )}
@@ -999,7 +999,7 @@ export function Nav({
           ? [
               {
                 id: "secrets" as View,
-                label: "Secrets",
+                label: "Variables",
                 icon: <Key size={18} />,
                 count: overview?.secrets.length ?? 0,
               },
@@ -2534,6 +2534,13 @@ const secretTypeOptions: Array<{
     placeholder: "Enter a secret value",
   },
   {
+    value: "json",
+    label: "JSON",
+    defaultName: "",
+    environmentVariable: "JSON_VALUE",
+    placeholder: '{"APIKEY":"...","URL":"https://example.com"}',
+  },
+  {
     value: "api_token",
     label: "API token",
     defaultName: "API token",
@@ -2577,7 +2584,12 @@ export function SecretsPage({
 }) {
   const [editing, setEditing] = useState<Secret | null>(null);
   const [creating, setCreating] = useState(false);
+  const [valueKind, setValueKind] = useState<"secret" | "plain">(
+    overview.secretStorageConfigured ? "secret" : "plain",
+  );
+  const [valueFilter, setValueFilter] = useState<"all" | "secret" | "plain">("all");
   const [secretType, setSecretType] = useState<SecretType>("text");
+  const [plainFormat, setPlainFormat] = useState<"text" | "json">("text");
   const [secretSource, setSecretSource] = useState<SecretSource>("local");
   const [name, setName] = useState("");
   const [environmentVariable, setEnvironmentVariable] =
@@ -2597,19 +2609,21 @@ export function SecretsPage({
   const fileInput = useRef<HTMLInputElement>(null);
 
   function open(secret?: Secret) {
-    const type = secret?.type ?? "text";
+    const plain = secret?.type === "environment_variable" || secret?.type === "environment_json";
+    const type = plain ? "text" : secret?.type ?? "text";
     setEditing(secret ?? null);
     setCreating(true);
+    setValueKind(secret ? (plain ? "plain" : "secret") : (overview.secretStorageConfigured ? "secret" : "plain"));
     setSecretType(type);
+    setPlainFormat(secret?.type === "environment_json" ? "json" : "text");
     setSecretSource(secret?.source ?? "local");
     setName(secret?.name ?? "");
     setEnvironmentVariable(
       secret?.environmentVariable ??
-        secretTypeOptions.find((option) => option.value === type)
-          ?.environmentVariable ??
-        "SECRET_VALUE",
+        (plain || !overview.secretStorageConfigured ? "VARIABLE_VALUE" :
+          secretTypeOptions.find((option) => option.value === type)?.environmentVariable ?? "SECRET_VALUE"),
     );
-    setValue("");
+    setValue(plain ? secret?.publicValue ?? "" : "");
     setExternalStoreID(
       secret?.externalStoreId ?? overview.secretStores?.[0]?.id ?? "",
     );
@@ -2670,12 +2684,16 @@ export function SecretsPage({
     event.preventDefault();
     setBusy(true);
     setError("");
+    const plain = valueKind === "plain";
+    const type = plain ? (plainFormat === "json" ? "environment_json" : "environment_variable") : secretType;
+    const source = plain ? "local" : secretSource;
     const generate =
+      !plain &&
       secretSource === "local" &&
       secretType === "ssh_private_key" &&
       sshSource === "generate";
     const reference =
-      secretSource === "external"
+      source === "external"
         ? {
             externalStoreId: externalStoreID,
             externalSecretId: externalSecretID,
@@ -2683,28 +2701,38 @@ export function SecretsPage({
           }
         : {};
     try {
+      if ((type === "json" || type === "environment_json") && value) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(value);
+        } catch {
+          throw new Error("Enter a valid JSON object.");
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Object.keys(parsed).length)
+          throw new Error("Enter a non-empty JSON object.");
+      }
       const saved = editing
         ? await api.updateSecret(editing.id, {
             name,
-            type: secretType,
-            source: secretSource,
+            type,
+            source,
             environmentVariable,
             ...reference,
             ...(generate
               ? { generate: true }
-              : secretSource === "local" && value
+              : source === "local" && value
                 ? { value }
                 : {}),
           })
         : await api.createSecret({
             name,
-            type: secretType,
-            source: secretSource,
+            type,
+            source,
             environmentVariable,
             ...reference,
             ...(generate
               ? { generate: true }
-              : secretSource === "local"
+              : source === "local"
                 ? { value }
                 : {}),
           });
@@ -2739,13 +2767,31 @@ export function SecretsPage({
     (option) => option.value === secretType,
   )!;
   const usesGeneratedKey =
+    valueKind === "secret" &&
     secretSource === "local" &&
     secretType === "ssh_private_key" &&
     sshSource === "generate";
   const accept =
     secretType === "ssh_private_key"
       ? ".key,.pem,text/plain,application/x-pem-file"
+      : secretType === "json"
+        ? ".json,application/json,text/plain"
       : ".txt,.env,.token,.key,.pem,text/plain";
+  const isPlain = (item: Secret) => item.type === "environment_variable" || item.type === "environment_json";
+  const plainCount = overview.secrets.filter(isPlain).length;
+  const visibleValues = overview.secrets.filter((item) =>
+    valueFilter === "all" || isPlain(item) === (valueFilter === "plain"),
+  );
+
+  async function copyPlainValue(secret: Secret) {
+    try {
+      await navigator.clipboard.writeText(secret.publicValue ?? "");
+      setCopiedID(secret.id);
+      window.setTimeout(() => setCopiedID((current) => current === secret.id ? "" : current), 1800);
+    } catch {
+      setError("Could not copy the value.");
+    }
+  }
 
   return (
     <div className="page-layout">
@@ -2760,18 +2806,16 @@ export function SecretsPage({
                 tone: "quiet",
               }
             : {
-                label: "Add secret",
+                label: "Add value",
                 onClick: () => open(),
-                disabled: !overview.secretStorageConfigured,
               }
         }
       />
       {!overview.secretStorageConfigured && (
-        <div className="error-banner secret-storage-notice" role="status">
-          <strong>Encrypted storage is not configured</strong>
+        <div className="error-banner variable-storage-notice" role="status">
+          <strong>Secret storage is not configured</strong>
           <span>
-            Set DISPATCH_MASTER_KEY_FILE and restart the controller before
-            adding secrets.
+            Set DISPATCH_MASTER_KEY_FILE and restart the controller to add secrets. Plain values remain available.
           </span>
         </div>
       )}
@@ -2782,13 +2826,26 @@ export function SecretsPage({
         >
           <header>
             <h2 id="secret-editor-title">
-              {editing ? "Update secret" : "New secret"}
+              {editing ? "Edit value" : "New value"}
             </h2>
           </header>
           <div className="inline-create-body">
             <form className="resource-form secret-form" onSubmit={save}>
               <div className="secret-form-main">
-                <fieldset className="secret-storage-source">
+                <fieldset className="secret-value-kind">
+                  <legend>How should Dispatch store this value?</legend>
+                  <div>
+                    <label>
+                      <input type="radio" name="value-kind" checked={valueKind === "secret"} disabled={!overview.secretStorageConfigured} onChange={() => { setValueKind("secret"); setValue(""); }} />
+                      <span><LockSimple size={17} /><strong>Secret</strong><small>Encrypted and hidden after saving</small></span>
+                    </label>
+                    <label>
+                      <input type="radio" name="value-kind" checked={valueKind === "plain"} onChange={() => { setValueKind("plain"); setSecretType("text"); setSecretSource("local"); setValue(""); if (environmentVariable === "SECRET_VALUE") setEnvironmentVariable("VARIABLE_VALUE"); }} />
+                      <span><Key size={17} /><strong>Plain value</strong><small>Stored unencrypted; visible to owners</small></span>
+                    </label>
+                  </div>
+                </fieldset>
+                {valueKind === "secret" && <fieldset className="secret-storage-source">
                   <legend>Source</legend>
                   <div>
                     <label>
@@ -2825,9 +2882,16 @@ export function SecretsPage({
                       </span>
                     </label>
                   </div>
-                </fieldset>
+                </fieldset>}
                 <div className="secret-identity-fields">
-                  <label className="secret-type-field">
+                  {valueKind === "plain" && <label className="secret-type-field">
+                    <span>Type</span>
+                    <select value={plainFormat} onChange={(event) => { setPlainFormat(event.target.value as "text" | "json"); setValue(""); }}>
+                      <option value="text">Text</option>
+                      <option value="json">JSON</option>
+                    </select>
+                  </label>}
+                  {valueKind === "secret" && <label className="secret-type-field">
                     <span>Type</span>
                     <select
                       value={secretType}
@@ -2841,7 +2905,7 @@ export function SecretsPage({
                         </option>
                       ))}
                     </select>
-                  </label>
+                  </label>}
                   <label>
                     <span>Name</span>
                     <input
@@ -2869,7 +2933,7 @@ export function SecretsPage({
                   </label>
                 </div>
                 {secretSource === "local" &&
-                  secretType === "ssh_private_key" && (
+                  valueKind === "secret" && secretType === "ssh_private_key" && (
                     <fieldset className="secret-key-source">
                       <legend>Key source</legend>
                       <div>
@@ -2904,7 +2968,7 @@ export function SecretsPage({
                       </div>
                     </fieldset>
                   )}
-                {secretSource === "external" ? (
+                {valueKind === "secret" && secretSource === "external" ? (
                   <div className="external-secret-fields">
                     <label>
                       <span>Secret store</span>
@@ -2953,15 +3017,15 @@ export function SecretsPage({
                       <div className="secret-value-heading">
                         <div>
                           <label htmlFor="secret-value">
-                            {editing ? "New value (optional)" : "Secret value"}
+                            {valueKind === "plain" ? "Value" : editing ? "New value (optional)" : "Secret value"}
                           </label>
-                          {editing && (
+                          {editing && valueKind === "secret" && (
                             <small>
                               Leave blank to keep the current value.
                             </small>
                           )}
                         </div>
-                        <div className="secret-upload">
+                        {valueKind === "secret" && <div className="secret-upload">
                           <input
                             ref={fileInput}
                             className="sr-only"
@@ -2981,23 +3045,34 @@ export function SecretsPage({
                           <span aria-live="polite">
                             {fileName || "64 KiB max"}
                           </span>
-                        </div>
+                        </div>}
                       </div>
-                      <textarea
+                      {valueKind === "plain" && plainFormat === "text" ? <input
                         id="secret-value"
-                        required={!editing}
+                        required
+                        value={value}
+                        onChange={(event) => setValue(event.target.value)}
+                        placeholder="https://example.com/api"
+                        spellCheck={false}
+                      /> : <textarea
+                        id="secret-value"
+                        required={!editing || isPlain(editing)}
                         value={value}
                         onChange={(event) => {
                           setValue(event.target.value);
                           setFileName("");
                         }}
                         placeholder={
-                          editing
+                          editing && !isPlain(editing)
                             ? "Leave blank to keep the value"
-                            : selectedType.placeholder
+                            : (valueKind === "plain" ? '{"APIKEY":"...","URL":"https://example.com"}' : selectedType.placeholder)
                         }
                         spellCheck={false}
-                      />
+                      />}
+                      {(secretType === "json" && valueKind === "secret" || plainFormat === "json" && valueKind === "plain") &&
+                        <small>In workflow YAML, bind a key with <code>secretRef: {name.trim() || environmentVariable}</code> and <code>key: APIKEY</code>. {valueKind === "plain" && "Choose Secret if any key is a credential."}</small>}
+                      {editing && isPlain(editing) !== (valueKind === "plain") &&
+                        <small className="variable-conversion-note">{valueKind === "plain" ? "Enter a new plain value. Dispatch cannot show the current secret." : "Enter a new secret value before saving."}</small>}
                     </div>
                   )
                 )}
@@ -3030,9 +3105,10 @@ export function SecretsPage({
                       busy ||
                       !name.trim() ||
                       !environmentVariable.trim() ||
-                      (secretSource === "external"
+                      (valueKind === "secret" && !overview.secretStorageConfigured) ||
+                      (valueKind === "secret" && secretSource === "external"
                         ? !externalStoreID || !externalSecretID.trim()
-                        : !editing && !usesGeneratedKey && !value.trim())
+                        : (!editing || isPlain(editing) !== (valueKind === "plain") || (valueKind === "plain" && plainFormat === "json" && editing.type !== "environment_json") || (valueKind === "secret" && secretType === "json" && editing.type !== "json")) && !usesGeneratedKey && !value.trim())
                     }
                   >
                     {busy
@@ -3042,8 +3118,8 @@ export function SecretsPage({
                           ? "Replace key"
                           : "Generate key"
                         : editing
-                          ? "Update secret"
-                          : "Save secret"}
+                          ? "Save changes"
+                          : valueKind === "plain" ? "Add variable" : "Add secret"}
                   </button>
                 </div>
               </div>
@@ -3058,105 +3134,49 @@ export function SecretsPage({
       )}
       {!creating &&
         (overview.secrets.length ? (
-          <div className="resource-table-wrap">
-            <table className="resource-table secret-table">
-              <thead>
-                <tr>
-                  <th>Secret</th>
-                  <th>Type</th>
-                  <th>Source</th>
-                  <th>Environment variable</th>
-                  <th>Used by</th>
-                  <th className="actions-head">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {overview.secrets.map((secret) => {
-                  const hookUses =
-                    overview.eventTriggers.filter((trigger) =>
-                      trigger.secretIds.includes(secret.id),
-                    ).length +
-                    overview.previewGroups
-                      .flatMap((group) => group.components)
-                      .filter((component) =>
-                        component.secretIds?.includes(secret.id),
-                      ).length +
-                    overview.apps.filter((app) =>
-                      app.hookSecretIds?.includes(secret.id),
-                    ).length;
-                  const sourceUses = overview.apps.filter(
-                    (app) => app.sourceCredentialId === secret.id,
-                  ).length;
-                  const uses = hookUses + sourceUses;
-                  const store = overview.secretStores?.find(
-                    (item) => item.id === secret.externalStoreId,
-                  );
-                  return (
-                    <tr key={secret.id}>
-                      <td data-label="Secret">
-                        <strong>{secret.name}</strong>
-                      </td>
-                      <td data-label="Type">
-                        <span className="secret-type-label">
-                          {secretTypeLabel(secret.type)}
-                        </span>
-                      </td>
-                      <td data-label="Source">
-                        <span className="secret-source-label">
-                          {secret.source === "external"
-                            ? (store?.name ?? "External")
-                            : "Dispatch"}
-                        </span>
-                      </td>
-                      <td data-label="Environment variable">
-                        <code>{secret.environmentVariable}</code>
-                      </td>
-                      <td data-label="Used by">{uses}</td>
-                      <td className="row-actions">
-                        <div className="table-icon-actions">
-                          {secret.publicValue && (
-                            <TableIconAction
-                              label={`View public key for ${secret.name}`}
-                              tooltip="Public key"
-                              onClick={() => setPublicKeySecret(secret)}
-                            >
-                              <Key size={16} />
-                            </TableIconAction>
-                          )}
-                          <TableIconAction
-                            label={`Edit ${secret.name}`}
-                            tooltip="Edit"
-                            onClick={() => open(secret)}
-                          >
-                            <PencilSimple size={16} />
-                          </TableIconAction>
-                          <TableIconAction
-                            label={`Delete ${secret.name}`}
-                            tooltip="Delete"
-                            danger
-                            onClick={() => onDelete(secret)}
-                          >
-                            <Trash size={16} />
-                          </TableIconAction>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <section className="variables-inventory" aria-label="Saved values">
+            <div className="variables-toolbar">
+              <div className="variables-filters" role="group" aria-label="Filter values">
+                <button type="button" aria-pressed={valueFilter === "all"} onClick={() => setValueFilter("all")}>All <span>{overview.secrets.length}</span></button>
+                <button type="button" aria-pressed={valueFilter === "plain"} onClick={() => setValueFilter("plain")}>Plain values <span>{plainCount}</span></button>
+                <button type="button" aria-pressed={valueFilter === "secret"} onClick={() => setValueFilter("secret")}>Secrets <span>{overview.secrets.length - plainCount}</span></button>
+              </div>
+            </div>
+            {visibleValues.length ? <div className="variables-list">{visibleValues.map((secret) => {
+              const plain = isPlain(secret);
+              const hookUses = overview.eventTriggers.filter((trigger) => trigger.secretIds.includes(secret.id)).length
+                + overview.previewGroups.flatMap((group) => group.components).filter((component) => component.secretIds?.includes(secret.id)).length
+                + overview.apps.filter((app) => app.hookSecretIds?.includes(secret.id)).length;
+              const sourceUses = overview.apps.filter((app) => app.sourceCredentialId === secret.id).length;
+              const uses = hookUses + sourceUses;
+              const store = overview.secretStores?.find((item) => item.id === secret.externalStoreId);
+              return <article className="variable-row" key={secret.id}>
+                <div className="variable-identity">
+                  <div><strong>{secret.name}</strong><span className={plain ? "variable-kind plain" : "variable-kind secret"}>{plain ? "Plain value" : "Secret"}</span></div>
+                  <code>{secret.environmentVariable}</code>
+                </div>
+                <div className="variable-preview">
+                  <span>Value</span>
+                  {plain ? <code>{secret.publicValue}</code> : <span className="variable-hidden"><LockSimple size={14} />Hidden after saving</span>}
+                </div>
+                <div className="variable-details">
+                  <span>{plain ? "Dispatch" : secret.source === "external" ? (store?.name ?? "External store") : "Dispatch"}</span>
+                  <span>{secret.type === "environment_json" ? "JSON" : plain ? "Environment variable" : secretTypeLabel(secret.type)} · {uses === 1 ? "1 use" : `${uses} uses`}</span>
+                </div>
+                <div className="variable-actions">
+                  {plain && <button type="button" onClick={() => void copyPlainValue(secret)} aria-label={`Copy ${secret.name}`}><Copy size={16} />{copiedID === secret.id ? "Copied" : "Copy"}</button>}
+                  {secret.type === "ssh_private_key" && secret.publicValue && <button type="button" onClick={() => setPublicKeySecret(secret)} aria-label={`View public key for ${secret.name}`}><Key size={16} />Public key</button>}
+                  <button type="button" onClick={() => open(secret)} aria-label={`Edit ${secret.name}`}><PencilSimple size={16} />Edit</button>
+                  <button type="button" className="variable-delete" onClick={() => onDelete(secret)} aria-label={`Delete ${secret.name}`}><Trash size={16} />Delete</button>
+                </div>
+              </article>;
+            })}</div> : <p className="variables-filter-empty">No {valueFilter === "plain" ? "plain values" : "secrets"} yet.</p>}
+          </section>
         ) : (
           <div>
             <EmptyState
-              title="No secrets"
-              action={
-                overview.secretStorageConfigured
-                  ? { label: "Add secret", onClick: () => open() }
-                  : undefined
-              }
+              title="No variables"
+              action={{ label: "Add value", onClick: () => open() }}
             />
           </div>
         ))}

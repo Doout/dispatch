@@ -657,6 +657,9 @@ export type GitHubAppManifest = {
 };
 export type SecretType =
   | "text"
+  | "environment_variable"
+  | "environment_json"
+  | "json"
   | "api_token"
   | "github_token"
   | "ssh_private_key"
