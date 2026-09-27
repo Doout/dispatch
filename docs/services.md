@@ -4,7 +4,7 @@ A Service registers a connection to an existing dependency. Dispatch does not cr
 
 ## Register and test
 
-Open **Services > Register service**, choose a project, and select PostgreSQL or Generic. Project admins and operators can register connections. Viewers can inspect metadata, and deployers can run applications with existing bindings.
+Open **Services > Register service**, choose a project, and select PostgreSQL or Generic. New PostgreSQL services start with one connection URL field. Select **Enter details** if you have a host, database, username, and password instead. Port, TLS mode, CA certificate, and global secret sources are under advanced options. Project admins and operators can register connections. Viewers can inspect metadata, and deployers can run applications with existing bindings.
 
 PostgreSQL accepts a URL or individual fields: `host`, `port`, `database`, `username`, `password`, `sslmode`, and optional PEM `caCert`. The default port is 5432 and the default TLS mode is `verify-full`. Supported explicit alternatives are `verify-ca`, `require`, and `disable`. URL query options are limited to `sslmode`; supply a CA certificate through `caCert`. The generated `connectionUrl` correctly escapes usernames, passwords, and database names. When a private CA is required, bind `caCert` separately using the application's supported certificate configuration.
 
@@ -12,7 +12,7 @@ Generic services expose named string fields. Mark credentials sensitive. A URL c
 
 Sensitive fields are encrypted, write-only, and separate from controller-wide secrets. An omitted field is preserved during updates. To clear a field, submit `{ "remove": true }`; supplying an empty string explicitly replaces the value with an empty string. Only the controller owner can attach global secret references, including external secret references. Operators can preserve or remove an existing reference or replace it with a local value.
 
-**Test connection** runs from the Dispatch controller with a ten-second timeout. PostgreSQL checks authentication and executes `SELECT 1`; generic checks establish a TCP connection. Results show the check location, time, and duration. They do not prove application-network reachability or continuous health. A private service can be registered even when the controller cannot reach it.
+Expand a service to edit it or run **Test connection**. Connection fields and application impact are available in separate expandable sections. The check runs from the Dispatch controller with a ten-second timeout. PostgreSQL checks authentication and executes `SELECT 1`; generic checks establish a TCP connection. Results show the check location and time. They do not prove application-network reachability or continuous health. A private service can be registered even when the controller cannot reach it.
 
 ## Bind applications
 
