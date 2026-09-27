@@ -79,12 +79,17 @@ describe("applications overview", () => {
       githubApps: [{ id: "github-1", name: "Dispatch dev", webUrl: "https://github.example.com", apiUrl: "https://github.example.com/api/v3", appId: 1, installationId: 2, privateKeyConfigured: true, webhookSecretConfigured: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
       configSources: [{ id: "slots", projectId: "project-1", name: "Slots", repository: "Example/devops", branch: "main", path: "slots", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
       workflowResources: [{ id: "preview", configSourceId: "slots", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "dev-preview-42", path: "temporary/preview.yaml", document: "kind: Application", specDigest: "digest", configSha: "abc", temporary: true, previewPullRequests: [{ repository: "example/service", number: 42, url: "https://github.example.com/example/service/pull/42" }, { repository: "example/ui", number: 84, url: "https://github.example.com/example/ui/pull/84" }], active: true, state: "ready", sourceCount: 2, jobCount: 2, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      workflowRevisions: [
+        { id: "qa", resourceId: "preview", configSha: "abc", specDigest: "digest", state: "failed", trigger: "pull request test 17", sources: {}, createdAt: "2026-01-02T00:00:00Z" },
+        { id: "deployed", resourceId: "preview", configSha: "abc", specDigest: "digest", state: "succeeded", trigger: "pull request comment 10", sources: {}, createdAt: "2026-01-01T00:00:00Z" },
+      ],
     };
     vi.spyOn(api, "workflowPreviewTriggers").mockResolvedValue([{ id: "trigger", resourceId: "preview", githubAppId: "github-1", repository: "Example/service", pullRequestNumber: 42, command: "/preview", previewUrl: "https://dev.example.test/app/preview/42", createdAt: "2026-01-01T00:00:00Z" }]);
     render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
     expect(screen.queryByRole("button", { name: /Show .* in Slots/ })).toBeNull();
     expect(screen.getByRole("row", { name: /PR previews/ })).toBeTruthy();
     expect(screen.getByRole("row", { name: /dev-preview-42/ })).toBeTruthy();
+    expect(within(screen.getByRole("row", { name: /dev-preview-42/ })).getByText("succeeded")).toBeTruthy();
     expect(screen.getByRole("link", { name: "example/service pull request #42" }).getAttribute("href")).toBe("https://github.example.com/example/service/pull/42");
     expect(screen.getByRole("link", { name: "example/ui pull request #84" }).getAttribute("href")).toBe("https://github.example.com/example/ui/pull/84");
     expect(within(screen.getByRole("row", { name: /PR previews/ })).queryByRole("button")).toBeNull();

@@ -131,11 +131,14 @@ type Store interface {
 	CloseWorkflowPreviewTrigger(context.Context, string, time.Time) error
 	ReserveWorkflowPreviewComment(context.Context, string, string) (bool, error)
 	CompleteWorkflowPreviewComment(context.Context, string, string, string) error
+	UpdateWorkflowPreviewTestComment(context.Context, string, string, string) error
+	WorkflowPreviewTestComment(context.Context, string) (string, error)
 	ReleaseWorkflowPreviewComment(context.Context, string, string) error
 	CreateWorkflowEvent(context.Context, core.WorkflowEvent) (bool, error)
 	UpdateWorkflowEvent(context.Context, core.WorkflowEvent) error
 	CreateWorkflowRevision(context.Context, core.WorkflowRevision) error
 	SupersedeWorkflowRevisions(context.Context, string) ([]string, error)
+	SupersedeWorkflowTestRevisions(context.Context, string) ([]string, error)
 	UpdateWorkflowRevision(context.Context, core.WorkflowRevision) error
 	GetWorkflowRevision(context.Context, string) (core.WorkflowRevision, error)
 	ListWorkflowRevisions(context.Context, string, int) ([]core.WorkflowRevision, error)

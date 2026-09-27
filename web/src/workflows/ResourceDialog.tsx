@@ -5,7 +5,7 @@ import { StageProgress } from "./StageProgress";
 import { relative } from "../presentation";
 import { useDialogFocus } from "../useDialogFocus";
 import { canManageProject } from "../permissions";
-import { workflowResourceStatus, workflowResourceStatusLabel } from "./status";
+import { isPreviewCheckRun, workflowResourceStatus, workflowResourceStatusLabel } from "./status";
 
 export function WorkflowResourceDialog({ resource, overview, onClose, onChanged, onOpenDeploymentManifests }: { resource: WorkflowResource; overview: Overview; onClose: () => void; onChanged: () => Promise<void>; onOpenDeploymentManifests: (deploymentID: string) => void }) {
   const dialogRef = useDialogFocus(onClose);
@@ -25,7 +25,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const canRun = Boolean(source && canManageProject(overview, source.projectId, "deployment.run"));
   const canApprove = Boolean(source && canManageProject(overview, source.projectId, "stage.approve"));
   const selectedJob = jobs.find((job) => job.id === selectedJobID) ?? jobs[0];
-  const resourceStatus = workflowResourceStatus(resource, revisions[0]?.state);
+  const resourceStatus = workflowResourceStatus(resource, revisions.find((item) => !isPreviewCheckRun(item))?.state);
 
   useEffect(() => {
     let active = true;
@@ -103,7 +103,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
         {resource.lastEvaluation && <details className="workflow-evaluation"><summary><CheckCircle size={16} weight="fill" /><strong>No deployment changes</strong><time dateTime={resource.lastEvaluation.checkedAt} title={new Date(resource.lastEvaluation.checkedAt).toLocaleString()}>Checked {relative(resource.lastEvaluation.checkedAt)}</time></summary><p>Rendered resources match the last deployments. No new run was needed.</p><ul aria-label="Latest checked sources">{Object.entries(resource.lastEvaluation.sources).map(([alias, input]) => <li key={alias}><span>{alias}</span><code title={input.commitSha}>{input.commitSha.slice(0, 12)}</code></li>)}</ul></details>}
         <div className="workflow-resource-columns">
           <section><div className="workflow-section-heading"><h3>Configuration</h3><span>{resource.apiVersion}</span></div>{resource.kind === "Application" && <div className="workflow-managed-guide"><strong>Add another application</strong><span>Add another YAML file under <code>{source?.path || "the watched path"}</code>. The next sync adds it as a separate row pending activation.</span></div>}<pre className="workflow-document">{resource.document}</pre></section>
-          <section><div className="workflow-section-heading"><h3>Runs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setRevisionID(event.target.value)}>{revisions.map((item) => <option key={item.id} value={item.id}>{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
+          <section><div className="workflow-section-heading"><h3>Runs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setRevisionID(event.target.value)}>{revisions.map((item) => <option key={item.id} value={item.id}>{isPreviewCheckRun(item) ? "Checks · " : ""}{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
             {!revision && <p className="workflow-empty-note">No runs.</p>}
             {revision && <><dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>{revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}

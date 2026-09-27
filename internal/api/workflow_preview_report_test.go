@@ -94,3 +94,21 @@ func TestWorkflowPreviewReportHelpRetainsLinkedPRsAndTemplateCommit(t *testing.T
 		}
 	}
 }
+
+func TestWorkflowPreviewTestReportKeepsDeploymentReportSeparate(t *testing.T) {
+	revision := core.WorkflowRevision{ID: "test-run", State: "failed", Error: "check qa failed", Trigger: "pull request test 17"}
+	stages := []core.WorkflowStageRun{{StageName: "development", State: "failed", CheckRuns: map[string]string{"qa": "pipeline-run"}, Error: "check qa: command failed"}}
+	body := workflowPreviewTestReport(revision, stages, "https://preview.example.test/42")
+	for _, want := range []string{"Preview checks failed", "https://preview.example.test/42", "`qa`", "check qa: command failed", "Dispatch"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("test report omitted %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "Preview commands") || strings.Contains(body, "Status:** Ready") {
+		t.Fatalf("test result replaced the deployment report: %s", body)
+	}
+	revision.State = "cancelled"
+	if cancelled := workflowPreviewTestReport(revision, stages, "https://preview.example.test/42"); !strings.Contains(cancelled, "Preview checks cancelled") {
+		t.Fatalf("cancelled test still looked successful: %s", cancelled)
+	}
+}

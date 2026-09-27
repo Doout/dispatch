@@ -118,27 +118,34 @@ func (s *Service) deployStage(ctx context.Context, resource core.WorkflowResourc
 	}
 	for _, name := range sortedCheckNames(stage.Checks) {
 		check := stage.Checks[name]
-		inputs := map[string]string{}
-		for key, value := range check.With {
-			rendered, err := renderRuntime(value, nil, revision.Sources, nil, &stage)
-			if err != nil {
-				return err
-			}
-			inputs[key] = rendered
+		if check.When == "onDemand" {
+			continue
 		}
-		checkRevision, err := s.runPipeline(ctx, check.PipelineRef, inputs, resource.Name+"/"+stage.Name, func(id string) error {
-			run.CheckRuns[name] = id
-			return s.Store.UpdateWorkflowStageRun(ctx, *run)
-		})
-		if err != nil {
-			return fmt.Errorf("check %s: %w", name, err)
-		}
-		run.CheckRuns[name] = checkRevision.ID
-		if err := s.Store.UpdateWorkflowStageRun(ctx, *run); err != nil {
+		if err := s.runStageCheck(ctx, resource, revision, stage, run, name, check); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *Service) runStageCheck(ctx context.Context, resource core.WorkflowResource, revision core.WorkflowRevision, stage StageSpec, run *core.WorkflowStageRun, name string, check CheckSpec) error {
+	inputs := map[string]string{}
+	for key, value := range check.With {
+		rendered, err := renderRuntime(value, nil, revision.Sources, nil, &stage)
+		if err != nil {
+			return fmt.Errorf("check %s input %s: %w", name, key, err)
+		}
+		inputs[key] = rendered
+	}
+	checkRevision, err := s.runPipeline(ctx, check.PipelineRef, inputs, resource.Name+"/"+stage.Name+"/"+name, func(id string) error {
+		run.CheckRuns[name] = id
+		return s.Store.UpdateWorkflowStageRun(ctx, *run)
+	})
+	if err != nil {
+		return fmt.Errorf("check %s: %w", name, err)
+	}
+	run.CheckRuns[name] = checkRevision.ID
+	return s.Store.UpdateWorkflowStageRun(ctx, *run)
 }
 
 func (s *Service) resolveTarget(ctx context.Context, ref string) (core.Server, error) {
@@ -420,11 +427,19 @@ func (s *Service) runPipeline(ctx context.Context, name string, inputs map[strin
 		return revision, err
 	}
 	if err := onStarted(revision.ID); err != nil {
+		if ctx.Err() != nil {
+			s.cancelPipelineRevision(&revision, ctx.Err())
+			return revision, ctx.Err()
+		}
 		s.failRevision(ctx, source, &revision, err)
 		return revision, err
 	}
 	root, err := os.MkdirTemp("", "dispatch-pipeline-")
 	if err != nil {
+		if ctx.Err() != nil {
+			s.cancelPipelineRevision(&revision, ctx.Err())
+			return revision, ctx.Err()
+		}
 		s.failRevision(ctx, source, &revision, err)
 		return revision, err
 	}
@@ -433,13 +448,27 @@ func (s *Service) runPipeline(ctx context.Context, name string, inputs map[strin
 	defer runtime.close()
 	revision.Outputs, err = runtime.executeJobs(ctx, resource, documents[0].Pipeline.Jobs, documents[0].Pipeline.Finally, true)
 	if err != nil {
+		if ctx.Err() != nil {
+			s.cancelPipelineRevision(&revision, ctx.Err())
+			return revision, ctx.Err()
+		}
 		s.failRevision(ctx, source, &revision, err)
 		return revision, err
+	}
+	if ctx.Err() != nil {
+		s.cancelPipelineRevision(&revision, ctx.Err())
+		return revision, ctx.Err()
 	}
 	finished := time.Now().UTC()
 	revision.State, revision.FinishedAt = "succeeded", &finished
 	err = s.Store.UpdateWorkflowRevision(ctx, revision)
 	return revision, err
+}
+
+func (s *Service) cancelPipelineRevision(revision *core.WorkflowRevision, cause error) {
+	finished := time.Now().UTC()
+	revision.State, revision.Error, revision.FinishedAt = "cancelled", cause.Error(), &finished
+	_ = s.Store.UpdateWorkflowRevision(context.Background(), *revision)
 }
 
 func (s *Service) ApproveStage(ctx context.Context, id string) (core.WorkflowStageRun, error) {

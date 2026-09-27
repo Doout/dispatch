@@ -74,3 +74,53 @@ func TestSupersedeWorkflowRevisionsCancelsActiveWork(t *testing.T) {
 		t.Fatalf("late stage write revived cancelled run: %v", err)
 	}
 }
+
+func TestSupersedeWorkflowTestRevisionsKeepsPendingPromotion(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "preview-checks.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	if err := data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreateSecret(ctx, core.Secret{ID: "credential", Name: "Credential", Type: core.SecretTypeGitHubToken, EncryptedValue: "fixture", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", CredentialSecretID: "credential", Name: "Source", Repository: "example/repo", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "preview", ConfigSourceID: "source", Kind: "Application", Name: "preview", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, revision := range []core.WorkflowRevision{
+		{ID: "promotion", ResourceID: "preview", State: "awaiting_approval", Trigger: "pull request comment 1", CreatedAt: now},
+		{ID: "test", ResourceID: "preview", State: "running", Trigger: "pull request test 2", CreatedAt: now.Add(time.Second)},
+	} {
+		if err := data.CreateWorkflowRevision(ctx, revision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := data.CreateWorkflowStageRun(ctx, core.WorkflowStageRun{ID: "test-stage", RevisionID: "test", StageName: "development", State: "running", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := data.SupersedeWorkflowTestRevisions(ctx, "preview")
+	if err != nil || len(ids) != 1 || ids[0] != "test" {
+		t.Fatalf("cancelled revisions = %v, %v", ids, err)
+	}
+	for id, want := range map[string]string{"promotion": "awaiting_approval", "test": "cancelled"} {
+		item, err := data.GetWorkflowRevision(ctx, id)
+		if err != nil || item.State != want {
+			t.Fatalf("revision %s = %+v, %v", id, item, err)
+		}
+	}
+	stage, err := data.GetWorkflowStageRun(ctx, "test-stage")
+	if err != nil || stage.State != "cancelled" {
+		t.Fatalf("test stage = %+v, %v", stage, err)
+	}
+}

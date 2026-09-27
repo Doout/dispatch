@@ -67,4 +67,38 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	if err != nil || len(pending) != 1 || pending[0] != "auto-run" {
 		t.Fatalf("automatic run was not ready for reporting: %v, %v", pending, err)
 	}
+	if err := data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: "test-run", ResourceID: "resource", State: "failed", Trigger: "pull request test 17", CreatedAt: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := data.ReserveWorkflowPreviewComment(ctx, "trigger", "17")
+	if err != nil || !reserved {
+		t.Fatalf("test command was not reserved: %v, %v", reserved, err)
+	}
+	if err := data.CompleteWorkflowPreviewComment(ctx, "trigger", "17", "test-run"); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.UpdateWorkflowPreviewTestComment(ctx, "trigger", "17", "status-comment"); err != nil {
+		t.Fatal(err)
+	}
+	statusComment, err := data.WorkflowPreviewTestComment(ctx, "test-run")
+	if err != nil || statusComment != "status-comment" {
+		t.Fatalf("test status comment was not retained: %q, %v", statusComment, err)
+	}
+	pending, err = data.PendingWorkflowPreviewReports(ctx, "trigger")
+	if err != nil || len(pending) != 2 || pending[1] != "test-run" {
+		t.Fatalf("failed on-demand test was not ready for reporting: %v, %v", pending, err)
+	}
+	if err := data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: "cancelled-test", ResourceID: "resource", State: "cancelled", Trigger: "pull request test 18", CreatedAt: now.Add(2 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := data.ReserveWorkflowPreviewComment(ctx, "trigger", "18"); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.CompleteWorkflowPreviewComment(ctx, "trigger", "18", "cancelled-test"); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = data.PendingWorkflowPreviewReports(ctx, "trigger")
+	if err != nil || len(pending) != 3 || pending[2] != "cancelled-test" {
+		t.Fatalf("cancelled on-demand test was not ready for reporting: %v, %v", pending, err)
+	}
 }

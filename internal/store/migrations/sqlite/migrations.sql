@@ -1086,3 +1086,6 @@ ALTER TABLE workflow_preview_templates ADD COLUMN auto_deploy BOOLEAN NOT NULL D
 ALTER TABLE workflow_preview_templates ADD COLUMN max_auto_runs_per_hour INTEGER NOT NULL DEFAULT 2;
 ALTER TABLE workflow_preview_triggers ADD COLUMN auto_deploy BOOLEAN NOT NULL DEFAULT 0;
 ALTER TABLE workflow_preview_triggers ADD COLUMN max_auto_runs_per_hour INTEGER NOT NULL DEFAULT 2;
+
+-- dispatch:migration 058_preview_test_comments
+ALTER TABLE workflow_preview_comments ADD COLUMN status_comment_id TEXT NOT NULL DEFAULT '';

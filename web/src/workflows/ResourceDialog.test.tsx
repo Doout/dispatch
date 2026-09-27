@@ -63,6 +63,18 @@ afterEach(() => {
 });
 
 describe("workflow resource run details", () => {
+  it("keeps the deployment healthy when an on-demand check fails", () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    const withChecks = { ...overview, workflowRevisions: [
+      { id: "check", resourceId: resource.id, configSha: "abc123", specDigest: "sha256:test", state: "failed", trigger: "pull request test 17", sources: {}, createdAt: "2026-09-02T20:01:00Z" },
+      { id: "deployment", resourceId: resource.id, configSha: "abc123", specDigest: "sha256:test", state: "succeeded", trigger: "pull request comment 1", sources: {}, createdAt: "2026-09-01T20:01:00Z" },
+    ] } as Overview;
+    render(<WorkflowResourceDialog resource={resource} overview={withChecks} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    expect(screen.getByText("succeeded")).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Checks · failed/ })).toBeTruthy();
+  });
+
   it("shows the latest unchanged source check without adding it to run history", async () => {
     vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
     vi.spyOn(api, "workflowStages").mockResolvedValue([]);
@@ -103,7 +115,7 @@ describe("workflow resource run details", () => {
     vi.spyOn(api, "logs").mockResolvedValue([{ id: 1, deploymentId: "release", level: "info", message: "Helm install started", createdAt: resource.createdAt }]);
     render(<WorkflowResourceDialog resource={resource} overview={overview} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
     await userEvent.click(await screen.findByRole("button", { name: "View progress & logs" }));
-    expect(await screen.findByText(/Preparing deployments/)).not.toBeNull();
+    expect(await screen.findByText(/Stage is running/)).not.toBeNull();
     await waitFor(() => expect(screen.getByText(/Helm install started/)).not.toBeNull(), { timeout: 4500 });
   });
 

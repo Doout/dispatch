@@ -58,7 +58,7 @@ import { WorkflowResourceDialog } from "./workflows/ResourceDialog";
 import { TemporaryPreviewForm } from "./workflows/TemporaryPreviewForm";
 import { PreviewTemplateForm, previewTemplateGitURL } from "./workflows/PreviewTemplateForm";
 import { WorkflowTopologyPage } from "./workflows/TopologyPage";
-import { workflowResourceStatus, workflowResourceStatusLabel } from "./workflows/status";
+import { isPreviewCheckRun, workflowResourceStatus, workflowResourceStatusLabel } from "./workflows/status";
 
 export function ApplicationsPage({ overview, section, applicationID, configurationSourceID, creating, onToggleCreate, onChanged, onDeploy, onDelete, onDeleteGroup, onNavigate, onOpenTopology = () => {}, onOpenConfigurationTopology = () => {}, onOpenWorkflowStage = () => {}, onOpenDeploymentManifests = () => {}, onOpenDeployment, onCloseTopology = () => {} }: { overview: Overview; section: ApplicationSection; applicationID?: string; configurationSourceID?: string; creating: boolean; onToggleCreate: () => void; onChanged: () => Promise<void>; onDeploy: (appID: string) => void; onDelete: (application: AppModel) => void; onDeleteGroup: (group: PreviewGroup) => void; onNavigate: (view: View) => void; onOpenTopology?: (resource: WorkflowResource) => void; onOpenConfigurationTopology?: (source: ConfigSource) => void; onOpenWorkflowStage?: (applicationID: string, stageName: string) => void; onOpenDeploymentManifests?: (deploymentID: string) => void; onOpenDeployment?: (id: string) => void; onCloseTopology?: () => void }) {
   const catalog = useDeploymentCatalog();
@@ -182,7 +182,7 @@ function workflowResourceSummary(source: ConfigSource, resources: WorkflowResour
   if (source.state === "syncing") return { state: "running", label: "Syncing", detail: synced };
   if (!resources.length) return { state: source.state, label: source.state === "ready" ? "Synced" : source.state, detail: synced };
   const statuses = resources.map((resource) => {
-    const latest = (overview.workflowRevisions ?? []).find((revision) => revision.resourceId === resource.id);
+    const latest = (overview.workflowRevisions ?? []).find((revision) => revision.resourceId === resource.id && !isPreviewCheckRun(revision));
     return workflowResourceStatus(resource, latest?.state);
   });
   const failed = statuses.filter((status) => status === "failed" || status === "degraded").length;
@@ -332,7 +332,7 @@ function ApplicationInventory({ onOpenDeployment, overview, onDeploy, onSync, on
   }
 
   function workflowResourceRow(resource: WorkflowResource, source?: ConfigSource, nested = false) {
-    const latest = (overview.workflowRevisions ?? []).filter((item) => item.resourceId === resource.id).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    const latest = (overview.workflowRevisions ?? []).filter((item) => item.resourceId === resource.id && !isPreviewCheckRun(item)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
     const stages = workflowStages(resource, overview);
     const expanded = expandedResourceIDs.has(resource.id);
     const target = resource.targetRefs?.join(", ") || (resource.kind === "Pipeline" ? "Stage check" : "No stage");

@@ -755,24 +755,30 @@ func (s *Service) startWithSnapshot(ctx context.Context, resource core.WorkflowR
 	if err := s.Store.CreateWorkflowRevision(ctx, revision); err != nil {
 		return revision, err
 	}
+	s.launchRun(revision.ID, func(runCtx context.Context) {
+		s.runApplication(runCtx, resource, source, revision)
+	})
+	return revision, nil
+}
+
+func (s *Service) launchRun(revisionID string, run func(context.Context)) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	if s.runCancels == nil {
 		s.runCancels = map[string]context.CancelFunc{}
 	}
-	s.runCancels[revision.ID] = cancel
+	s.runCancels[revisionID] = cancel
 	s.mu.Unlock()
 	go func() {
 		defer cancel()
 		defer func() {
 			s.mu.Lock()
-			delete(s.runCancels, revision.ID)
+			delete(s.runCancels, revisionID)
 			s.mu.Unlock()
 		}()
-		go s.watchRunCancellation(runCtx, revision.ID, cancel)
-		s.runApplication(runCtx, resource, source, revision)
+		go s.watchRunCancellation(runCtx, revisionID, cancel)
+		run(runCtx)
 	}()
-	return revision, nil
 }
 
 func (s *Service) watchRunCancellation(ctx context.Context, revisionID string, cancel context.CancelFunc) {
