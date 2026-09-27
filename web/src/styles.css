@@ -1080,7 +1080,7 @@ code { font-family: var(--mono); }
 .variables-filters button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 10px; color: #52616d; background: transparent; border: 1px solid transparent; border-radius: 7px; cursor: pointer; font-size: 11px; font-weight: 650; }
 .variables-filters button[aria-pressed="true"] { color: var(--blue); background: #fff; border-color: var(--rule-strong); }
 .variables-filters button span { color: var(--muted); font: 600 10px var(--mono); }
-.variable-row { display: grid; grid-template-columns: minmax(220px, 1.2fr) minmax(210px, 1.3fr) minmax(130px, .7fr) auto; align-items: center; gap: 20px; min-height: 90px; padding: 16px 18px; border-bottom: 1px solid var(--rule); }
+.variable-row { display: grid; grid-template-columns: minmax(220px, 1.2fr) minmax(210px, 1.3fr) minmax(130px, .7fr) 260px; align-items: center; gap: 20px; min-height: 90px; padding: 16px 18px; border-bottom: 1px solid var(--rule); }
 .variable-row:last-child { border-bottom: 0; }
 .variable-identity, .variable-preview, .variable-details { display: grid; gap: 6px; min-width: 0; }
 .variable-identity > div { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
@@ -1097,7 +1097,7 @@ code { font-family: var(--mono); }
 .variable-actions button:hover { color: var(--blue); background: var(--blue-soft); }
 .variable-actions .variable-delete:hover { color: var(--red); background: var(--red-soft); }
 .variables-filter-empty { margin: 0; padding: 28px 18px; color: var(--muted); font-size: 12px; }
-@media (max-width: 1050px) {
+@media (max-width: 1200px) {
   .variable-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 20px; }
   .variable-actions { justify-content: flex-start; }
 }
