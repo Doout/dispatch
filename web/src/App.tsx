@@ -886,7 +886,7 @@ export default function DispatchApp() {
         />
       )}
       {changingPassword && (
-        <ChangePasswordDialog onClose={() => setChangingPassword(false)} />
+        <ChangePasswordDialog onClose={() => setChangingPassword(false)} onChanged={() => void logout()} />
       )}
       {viewingAccountProfile && (
         <AccountProfileDialog
@@ -3985,6 +3985,8 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
       if (failure.status === 409) {
         setSetupRequired(false);
         setError("Administrator already exists. Sign in instead.");
+      } else if (failure.status === 429) {
+        setError("Too many sign-in attempts. Try again later.");
       } else
         setError(
           setupRequired ? failure.message : "Incorrect username or password.",
