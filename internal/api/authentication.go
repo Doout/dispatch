@@ -42,7 +42,7 @@ func (a *API) authorize(next http.Handler) http.Handler {
 			return
 		}
 		if valid {
-			if !a.clearPasswordFailures(w, r, username) {
+			if !a.passwordSucceeded(w, r, username) {
 				return
 			}
 			ctx, ok := a.authorizedContext(w, r, identity)
@@ -50,9 +50,6 @@ func (a *API) authorize(next http.Handler) http.Handler {
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
-			return
-		}
-		if !a.recordPasswordFailure(w, r, username) {
 			return
 		}
 		unauthorized(w, setupRequired)
@@ -171,13 +168,10 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !valid {
-		if !a.recordPasswordFailure(w, r, username) {
-			return
-		}
 		unauthorized(w, setupRequired)
 		return
 	}
-	if !a.clearPasswordFailures(w, r, username) {
+	if !a.passwordSucceeded(w, r, username) {
 		return
 	}
 	token, err := a.createSession(r.Context(), userID, identity)

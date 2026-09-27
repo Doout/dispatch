@@ -84,39 +84,35 @@ func (a *API) limitPublicAuth(next http.Handler) http.Handler {
 
 func (a *API) passwordAllowed(w http.ResponseWriter, r *http.Request, username string) bool {
 	now := time.Now().UTC()
-	for _, item := range []struct {
-		key   string
-		limit int
-	}{
-		{throttleKey("password:account", username), passwordAccountLimit},
-		{throttleKey("password:client", a.clientAddress(r)), passwordClientLimit},
-	} {
-		count, err := a.store.AuthThrottleCount(r.Context(), item.key, now.Add(-passwordWindow))
-		if err != nil {
-			a.internal(w, err)
-			return false
-		}
-		if count >= item.limit {
-			tooManyAuthAttempts(w, int(passwordWindow.Seconds()))
-			return false
-		}
+	accountKey := throttleKey("password:account", username)
+	clientKey := throttleKey("password:client", a.clientAddress(r))
+	accountCount, err := a.store.RecordAuthAttempt(r.Context(), accountKey, now, passwordWindow)
+	if err != nil {
+		a.internal(w, err)
+		return false
+	}
+	if accountCount > passwordAccountLimit {
+		tooManyAuthAttempts(w, int(passwordWindow.Seconds()))
+		return false
+	}
+	clientCount, err := a.store.RecordAuthAttempt(r.Context(), clientKey, now, passwordWindow)
+	if err != nil {
+		a.internal(w, err)
+		return false
+	}
+	if clientCount > passwordClientLimit {
+		tooManyAuthAttempts(w, int(passwordWindow.Seconds()))
+		return false
 	}
 	return true
 }
 
-func (a *API) recordPasswordFailure(w http.ResponseWriter, r *http.Request, username string) bool {
-	now := time.Now().UTC()
-	for _, key := range []string{throttleKey("password:account", username), throttleKey("password:client", a.clientAddress(r))} {
-		if _, err := a.store.RecordAuthAttempt(r.Context(), key, now, passwordWindow); err != nil {
-			a.internal(w, err)
-			return false
-		}
-	}
-	return true
-}
-
-func (a *API) clearPasswordFailures(w http.ResponseWriter, r *http.Request, username string) bool {
+func (a *API) passwordSucceeded(w http.ResponseWriter, r *http.Request, username string) bool {
 	if err := a.store.ClearAuthAttempts(r.Context(), throttleKey("password:account", username)); err != nil {
+		a.internal(w, err)
+		return false
+	}
+	if err := a.store.ReleaseAuthAttempt(r.Context(), throttleKey("password:client", a.clientAddress(r))); err != nil {
 		a.internal(w, err)
 		return false
 	}

@@ -46,6 +46,7 @@ type Store interface {
 	AuthThrottleCount(context.Context, string, time.Time) (int, error)
 	RecordAuthAttempt(context.Context, string, time.Time, time.Duration) (int, error)
 	ClearAuthAttempts(context.Context, string) error
+	ReleaseAuthAttempt(context.Context, string) error
 	AdminSessionValid(context.Context, string, time.Time) (bool, error)
 	SessionUser(context.Context, string, time.Time) (core.User, error)
 	CreateUser(context.Context, core.User) error

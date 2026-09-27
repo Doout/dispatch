@@ -432,3 +432,8 @@ func (s *SQLStore) ClearAuthAttempts(ctx context.Context, key string) error {
 	_, err := s.db.ExecContext(ctx, s.q(`DELETE FROM auth_throttle WHERE key_hash=?`), key)
 	return err
 }
+
+func (s *SQLStore) ReleaseAuthAttempt(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, s.q(`UPDATE auth_throttle SET hits=CASE WHEN hits>0 THEN hits-1 ELSE 0 END WHERE key_hash=?`), key)
+	return err
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,5 +219,36 @@ func TestSuccessfulLoginClearsAccountFailures(t *testing.T) {
 	count, err := api.store.AuthThrottleCount(context.Background(), throttleKey("password:account", "operator"), time.Now().Add(-passwordWindow))
 	if err != nil || count != 0 {
 		t.Fatalf("failures remain after successful sign-in: %d %v", count, err)
+	}
+}
+
+func TestConcurrentPasswordGuessesCannotPassTheLimit(t *testing.T) {
+	handler, cleanup := testHandlerWithDemo(t, AuthConfig{Username: "operator", Password: "correct horse battery staple"}, false)
+	defer cleanup()
+	const attempts = 24
+	results := make(chan int, attempts)
+	var workers sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			results <- authCall(handler, http.MethodPost, "/api/v1/auth/login", `{"username":"operator","password":"wrong password"}`).Code
+		}()
+	}
+	workers.Wait()
+	close(results)
+	checked, limited := 0, 0
+	for status := range results {
+		switch status {
+		case http.StatusUnauthorized:
+			checked++
+		case http.StatusTooManyRequests:
+			limited++
+		default:
+			t.Fatalf("unexpected response to concurrent guess: %d", status)
+		}
+	}
+	if checked != passwordAccountLimit || limited != attempts-passwordAccountLimit {
+		t.Fatalf("checked %d guesses and limited %d; want %d and %d", checked, limited, passwordAccountLimit, attempts-passwordAccountLimit)
 	}
 }
