@@ -224,12 +224,12 @@ func TestSourcePathValidationAndConservativeMatching(t *testing.T) {
 	job := JobSpec{RunFrom: "app", Run: "true", SourcePaths: map[string][]string{"app": {"scripts"}}}
 	for _, bad := range []string{"../outside", "/absolute", "", "**/*.go", "a/../../b"} {
 		job.SourcePaths["app"] = []string{bad}
-		if err := validateJobs("jobs", map[string]JobSpec{"build": job}, map[string]SourceSpec{"app": {}}, nil); err == nil {
+		if err := validateJobs("jobs", map[string]JobSpec{"build": job}, map[string]SourceSpec{"app": {}}, nil, false); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
 	}
 	job.SourcePaths = map[string][]string{"unknown": {"scripts"}}
-	if err := validateJobs("jobs", map[string]JobSpec{"build": job}, map[string]SourceSpec{"app": {}}, nil); err == nil {
+	if err := validateJobs("jobs", map[string]JobSpec{"build": job}, map[string]SourceSpec{"app": {}}, nil, false); err == nil {
 		t.Fatal("accepted undeclared input")
 	}
 	job.SourcePaths = map[string][]string{"app": {"scripts"}}

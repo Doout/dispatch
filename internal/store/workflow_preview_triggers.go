@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
@@ -72,7 +73,8 @@ func (s *SQLStore) UpdateWorkflowPreviewTriggerComment(ctx context.Context, id, 
 func (s *SQLStore) PendingWorkflowPreviewReports(ctx context.Context, triggerID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT r.id FROM workflow_revisions r
 		JOIN workflow_preview_triggers t ON t.resource_id=r.resource_id
-		WHERE t.id=? AND r.state='succeeded' AND
+		WHERE t.id=? AND (r.state='succeeded' OR
+			(r.state IN ('failed','cancelled') AND r.trigger_name LIKE 'pull request test %')) AND
 		(r.trigger_name='pull request update' OR EXISTS (
 			SELECT 1 FROM workflow_preview_comments c WHERE c.trigger_id=t.id AND c.revision_id=r.id))
 		AND NOT EXISTS (SELECT 1 FROM workflow_preview_reports p WHERE p.revision_id=r.id
@@ -110,6 +112,20 @@ func (s *SQLStore) ReserveWorkflowPreviewComment(ctx context.Context, triggerID,
 func (s *SQLStore) CompleteWorkflowPreviewComment(ctx context.Context, triggerID, commentID, revisionID string) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_comments SET revision_id=? WHERE trigger_id=? AND comment_id=?`), revisionID, triggerID, commentID)
 	return changed(result, err)
+}
+
+func (s *SQLStore) UpdateWorkflowPreviewTestComment(ctx context.Context, triggerID, sourceCommentID, statusCommentID string) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_comments SET status_comment_id=? WHERE trigger_id=? AND comment_id=?`), statusCommentID, triggerID, sourceCommentID)
+	return changed(result, err)
+}
+
+func (s *SQLStore) WorkflowPreviewTestComment(ctx context.Context, revisionID string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT status_comment_id FROM workflow_preview_comments WHERE revision_id=?`), revisionID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 func (s *SQLStore) ReleaseWorkflowPreviewComment(ctx context.Context, triggerID, commentID string) error {

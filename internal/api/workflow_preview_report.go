@@ -181,6 +181,25 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 		if err != nil {
 			return err
 		}
+		if strings.HasPrefix(revision.Trigger, "pull request test ") {
+			statusCommentID, err := a.store.WorkflowPreviewTestComment(ctx, revision.ID)
+			if err != nil {
+				return err
+			}
+			body := workflowPreviewTestReport(revision, stages, trigger.PreviewURL)
+			commentID, err := postWorkflowPreviewComment(ctx, notifier, a.eventConfig.GitHubToken,
+				trigger.Repository, trigger.PullRequestNumber, statusCommentID, body)
+			if err != nil {
+				return err
+			}
+			if err := a.store.UpdateWorkflowPreviewTestComment(ctx, trigger.ID, strings.TrimPrefix(revision.Trigger, "pull request test "), commentID); err != nil {
+				return err
+			}
+			if err := a.store.SaveWorkflowPreviewReportComment(ctx, revision.ID, trigger.Repository, trigger.PullRequestNumber, commentID); err != nil {
+				return err
+			}
+			continue
+		}
 		body := workflowPreviewReportForTrigger(revision, resource, stages, trigger.PreviewURL, connection.WebURL, trigger)
 		commentID, err := notifier.UpdateComment(ctx, trigger.Repository, trigger.PullRequestNumber, trigger.ReportCommentID, body)
 		if err != nil {
@@ -195,6 +214,36 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 		}
 	}
 	return nil
+}
+
+func workflowPreviewTestReport(revision core.WorkflowRevision, stages []core.WorkflowStageRun, previewURL string) string {
+	status := "Passed"
+	if revision.State == "cancelled" {
+		status = "Cancelled"
+	} else if revision.State == "failed" {
+		status = "Failed"
+	}
+	var body strings.Builder
+	fmt.Fprintf(&body, "<!-- dispatch-preview-test:%s -->\n### Preview checks %s\n\n**URL:** [Deployed preview](%s)\n", revision.ID, strings.ToLower(status), previewURL)
+	for _, stage := range stages {
+		fmt.Fprintf(&body, "\n**%s**\n", stage.StageName)
+		names := make([]string, 0, len(stage.CheckRuns))
+		for name := range stage.CheckRuns {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Fprintf(&body, "- `%s`\n", name)
+		}
+		if stage.Error != "" {
+			fmt.Fprintf(&body, "\n%s\n", stage.Error)
+		}
+	}
+	if len(stages) == 0 && revision.Error != "" {
+		fmt.Fprintf(&body, "\n%s\n", revision.Error)
+	}
+	body.WriteString("\nOpen the preview run in Dispatch for check logs.\n")
+	return body.String()
 }
 
 func workflowPreviewReportBody(revision core.WorkflowRevision, resource core.WorkflowResource, stages []core.WorkflowStageRun, previewURL, githubURL string, links ...core.HelmPullRequest) string {
@@ -263,6 +312,7 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 	var body strings.Builder
 	body.WriteString("\n### Preview commands\n\nPost a new comment on this PR:\n\n")
 	fmt.Fprintf(&body, "- `%s`: run again with the latest commits from this PR and its linked PRs.\n", command)
+	fmt.Fprintf(&body, "- `%s test`: run on-demand checks against the deployed preview, when configured. This does not rebuild or redeploy it.\n", command)
 	if trigger.AutoDeploy {
 		limit := trigger.MaxAutoRunsPerHour
 		if limit <= 0 {

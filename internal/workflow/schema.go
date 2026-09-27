@@ -135,6 +135,7 @@ type StageSpec struct {
 type CheckSpec struct {
 	PipelineRef string            `json:"pipelineRef" yaml:"pipelineRef"`
 	With        map[string]string `json:"with,omitempty" yaml:"with,omitempty"`
+	When        string            `json:"when,omitempty" yaml:"when,omitempty"`
 }
 
 var (
@@ -288,10 +289,10 @@ func validateApplication(document ApplicationDocument) error {
 	if err := validateSources(document.Spec.Sources); err != nil {
 		return err
 	}
-	if err := validateJobs("spec.jobs", document.Spec.Jobs, document.Spec.Sources, nil); err != nil {
+	if err := validateJobs("spec.jobs", document.Spec.Jobs, document.Spec.Sources, nil, false); err != nil {
 		return err
 	}
-	if err := validateJobs("spec.finally", document.Spec.Finally, document.Spec.Sources, nil); err != nil {
+	if err := validateJobs("spec.finally", document.Spec.Finally, document.Spec.Sources, nil, false); err != nil {
 		return err
 	}
 	for name, deployment := range document.Spec.Deployments {
@@ -353,6 +354,9 @@ func validateApplication(document ApplicationDocument) error {
 			if !aliasPattern.MatchString(name) || strings.TrimSpace(check.PipelineRef) == "" {
 				return fmt.Errorf("spec.stages[%d].checks.%s requires pipelineRef", index, name)
 			}
+			if check.When != "" && check.When != "automatic" && check.When != "onDemand" {
+				return fmt.Errorf("spec.stages[%d].checks.%s.when must be automatic or onDemand", index, name)
+			}
 			for key, value := range check.With {
 				if !aliasPattern.MatchString(key) {
 					return fmt.Errorf("spec.stages[%d].checks.%s.with.%s has an invalid input name", index, name, key)
@@ -384,10 +388,10 @@ func validatePipeline(document PipelineDocument) error {
 	if err := validateSources(document.Spec.Sources); err != nil {
 		return err
 	}
-	if err := validateJobs("spec.jobs", document.Spec.Jobs, document.Spec.Sources, document.Spec.Inputs); err != nil {
+	if err := validateJobs("spec.jobs", document.Spec.Jobs, document.Spec.Sources, document.Spec.Inputs, true); err != nil {
 		return err
 	}
-	return validateJobs("spec.finally", document.Spec.Finally, document.Spec.Sources, document.Spec.Inputs)
+	return validateJobs("spec.finally", document.Spec.Finally, document.Spec.Sources, document.Spec.Inputs, true)
 }
 
 func validateHeader(meta TypeMeta, metadata Metadata) error {
@@ -425,12 +429,12 @@ func validateSources(sources map[string]SourceSpec) error {
 	return nil
 }
 
-func validateJobs(prefix string, jobs map[string]JobSpec, sources map[string]SourceSpec, inputs map[string]InputSpec) error {
+func validateJobs(prefix string, jobs map[string]JobSpec, sources map[string]SourceSpec, inputs map[string]InputSpec, sourceFree bool) error {
 	for name, job := range jobs {
 		if !aliasPattern.MatchString(name) {
 			return fmt.Errorf("%s.%s has an invalid name", prefix, name)
 		}
-		if _, ok := sources[job.RunFrom]; !ok {
+		if _, ok := sources[job.RunFrom]; !ok && (!sourceFree || job.RunFrom != "") {
 			return fmt.Errorf("%s.%s.runFrom references unknown source %q", prefix, name, job.RunFrom)
 		}
 		if strings.TrimSpace(job.Run) == "" {

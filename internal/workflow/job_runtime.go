@@ -159,6 +159,9 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 	result.Log, result.FinishedAt = logText, &finished
 	if err != nil {
 		result.State, result.Error = "failed", err.Error()
+		if ctx.Err() != nil {
+			result.State = "cancelled"
+		}
 		_ = r.service.Store.UpdateWorkflowJobResult(context.Background(), result)
 		return nil, err
 	}
@@ -191,7 +194,9 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 		return nil, prelude, err
 	}
 	cwd := r.paths[job.RunFrom]
-	if cwd == "" {
+	if job.RunFrom == "" {
+		cwd = r.root
+	} else if cwd == "" {
 		return nil, prelude, fmt.Errorf("source %s was not checked out", job.RunFrom)
 	}
 	outputPath := filepath.Join(r.root, "output-"+safePathPart(job.RunFrom)+"-"+ulid.Make().String()+".env")
@@ -419,7 +424,10 @@ func completeOutputs(outputs map[string]string, declared []string) bool {
 }
 
 func jobSourceAliases(job JobSpec) []string {
-	aliases := append([]string{job.RunFrom}, job.Sources...)
+	aliases := append([]string{}, job.Sources...)
+	if job.RunFrom != "" {
+		aliases = append(aliases, job.RunFrom)
+	}
 	slices.Sort(aliases)
 	return uniqueStrings(aliases)
 }

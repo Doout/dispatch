@@ -207,7 +207,7 @@ spec:
       run: ./scripts/upload-results.sh
 ```
 
-A stage check starts a named active Pipeline and waits for it. Pipeline `finally` jobs run after the main jobs, including after a failure.
+A stage check starts a named active Pipeline and waits for it. Pipeline `finally` jobs run after the main jobs, including after a failure. Pipeline jobs that only use inputs can omit `runFrom`; Dispatch runs them in an empty working directory.
 
 ## Event delivery
 
@@ -413,6 +413,44 @@ The template uses the Application `spec` schema for sources, jobs, deployments, 
 
 Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` is set. Automatic updates are limited to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. A new `/preview` comment always starts a run, regardless of the limit. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
 
+Set `when: onDemand` on an expensive stage check to keep it out of deployments. A trusted `/preview test` comment runs on-demand checks on stages that completed in the latest preview deployment. A later stage may still be waiting for approval. The command uses that deployment's source commits and URL. It starts no builds or Helm upgrades, and a repeated test command cancels the older test run without cancelling a pending promotion. Dispatch replies on the PR when checks start and updates that reply with the result. Check logs appear in the preview's run history. Checks without `when` run during deployment as before; `when: automatic` makes that choice explicit.
+
+For example, pair a cheap deployment check with a QA pipeline that runs only on request:
+
+```yaml
+stages:
+  - name: development
+    targetRef: dev
+    deploy: [preview]
+    approval: automatic
+    url: "https://dev.example.com/app/preview/{{ instance.id }}"
+    checks:
+      health:
+        pipelineRef: preview-health
+        with:
+          url: "{{ stage.url }}"
+      qa:
+        pipelineRef: preview-qa
+        when: onDemand
+        with:
+          url: "{{ stage.url }}"
+```
+
+Both pipeline names must refer to active `kind: Pipeline` resources. A URL-only pipeline can omit sources and `runFrom`:
+
+```yaml
+apiVersion: dispatch/v1alpha1
+kind: Pipeline
+metadata:
+  name: preview-health
+spec:
+  inputs:
+    url: {type: string, required: true}
+  jobs:
+    health:
+      run: curl --fail --silent --show-error "{{ inputs.url }}/health"
+```
+
 | Variable | Value |
 | --- | --- |
 | `{{ instance.id }}` | Unique instance ID, including a collision suffix when needed |
@@ -427,7 +465,7 @@ Dispatch replaces `{{ instance.id }}` and creates an `Application` for each prev
 
 #### Promoting a template through stages
 
-A `WorkflowTemplate` retains the full ordered `spec.stages` list when Dispatch creates its Application. Each run builds once and promotes the same source commits and build outputs through those stages. A stage finishes only after its deployments and all configured checks succeed. A failed deployment or check stops promotion; `approval: required` pauses before the next environment deploys.
+A `WorkflowTemplate` retains the full ordered `spec.stages` list when Dispatch creates its Application. Each run builds once and promotes the same source commits and build outputs through those stages. A stage finishes after its deployments and automatic checks succeed. A failed deployment or automatic check stops promotion; `approval: required` pauses before the next environment deploys.
 
 For example, extend the stage list with:
 

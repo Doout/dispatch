@@ -47,7 +47,7 @@ export function StageProgress({ stage, onOpenManifests }: { stage: WorkflowStage
     {stage.error && <p className="form-error" role="alert">{stage.error}</p>}
     {error && <p className="form-error" role="alert">Could not refresh stage progress: {error}</p>}
     {loading && <p>Loading stage progress...</p>}
-    {!loading && deployments.length === 0 && checks.length === 0 && <p>{stage.state === "awaiting_approval" ? "Waiting for approval." : stage.state === "queued" ? "Waiting to start." : stage.state === "running" ? "Preparing deployments. Logs will appear when a deployment starts." : "No deployment or check output was recorded."}</p>}
+    {!loading && deployments.length === 0 && checks.length === 0 && <p>{stage.state === "awaiting_approval" ? "Waiting for approval." : stage.state === "queued" ? "Waiting to start." : stage.state === "running" ? "Stage is running. Deployment or check logs will appear when work starts." : "No deployment or check output was recorded."}</p>}
     {deployments.map(({ deployment, log }) => <section className="workflow-job-output" key={deployment.id} aria-label={`${deployment.app?.name ?? deployment.id} deployment output`}>
       <header><div><strong>{deployment.app?.name ?? deployment.id}</strong><span>{deployment.state}</span></div><button title="Open manifests" aria-label="Open manifests" onClick={() => onOpenManifests(deployment.id)}><FileCode size={16} /></button></header>
       {deployment.message && <p>{deployment.message}</p>}

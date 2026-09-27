@@ -248,12 +248,26 @@ func (s *SQLStore) UpdateWorkflowRevision(ctx context.Context, item core.Workflo
 // newer preview is scheduled. Workers may finish asynchronously, so their
 // ordinary updates cannot write over the cancelled state.
 func (s *SQLStore) SupersedeWorkflowRevisions(ctx context.Context, resourceID string) ([]string, error) {
+	return s.supersedeWorkflowRevisions(ctx, resourceID, false)
+}
+
+func (s *SQLStore) SupersedeWorkflowTestRevisions(ctx context.Context, resourceID string) ([]string, error) {
+	return s.supersedeWorkflowRevisions(ctx, resourceID, true)
+}
+
+func (s *SQLStore) supersedeWorkflowRevisions(ctx context.Context, resourceID string, testsOnly bool) ([]string, error) {
+	filter := ""
+	reason := "Superseded by a newer preview run"
+	if testsOnly {
+		filter = " AND trigger_name LIKE 'pull request test %'"
+		reason = "Superseded by a newer preview test"
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, s.q(`SELECT id FROM workflow_revisions WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')`), resourceID)
+	rows, err := tx.QueryContext(ctx, s.q(`SELECT id FROM workflow_revisions WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')`+filter), resourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -277,13 +291,12 @@ func (s *SQLStore) SupersedeWorkflowRevisions(ctx context.Context, resourceID st
 		return ids, tx.Commit()
 	}
 	now := stamp(time.Now().UTC())
-	const reason = "Superseded by a newer preview run"
 	for _, table := range []string{"workflow_job_results", "workflow_stage_runs"} {
-		if _, err := tx.ExecContext(ctx, s.q(`UPDATE `+table+` SET state='cancelled',error=?,finished_at=? WHERE revision_id IN (SELECT id FROM workflow_revisions WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')) AND state IN ('queued','running','awaiting_approval')`), reason, now, resourceID); err != nil {
+		if _, err := tx.ExecContext(ctx, s.q(`UPDATE `+table+` SET state='cancelled',error=?,finished_at=? WHERE revision_id IN (SELECT id FROM workflow_revisions WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')`+filter+`) AND state IN ('queued','running','awaiting_approval')`), reason, now, resourceID); err != nil {
 			return nil, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_revisions SET state='cancelled',error=?,finished_at=? WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')`), reason, now, resourceID); err != nil {
+	if _, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_revisions SET state='cancelled',error=?,finished_at=? WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')`+filter), reason, now, resourceID); err != nil {
 		return nil, err
 	}
 	return ids, tx.Commit()

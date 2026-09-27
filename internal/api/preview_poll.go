@@ -256,6 +256,9 @@ func (a *API) pollPreviewTarget(ctx context.Context, target *previewPollTarget) 
 			if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
 				return err
 			}
+			if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
+				continue
+			}
 			seen, err := a.store.IncomingEventExists(ctx, event.Provider, event.DeliveryID)
 			if err != nil {
 				return err
@@ -540,6 +543,9 @@ func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.
 func (a *API) processWorkflowPreviewComment(ctx context.Context, target *previewPollTarget, event core.IncomingEvent, resolver events.GitHubResolver) error {
 	a.temporaryPreviewMu.Lock()
 	defer a.temporaryPreviewMu.Unlock()
+	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
+		return a.processWorkflowPreviewTestComment(ctx, target, event)
+	}
 	for _, candidate := range target.workflowTemplates {
 		template, err := a.store.GetWorkflowPreviewTemplate(ctx, candidate.ID)
 		if errors.Is(err, store.ErrNotFound) {
