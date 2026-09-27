@@ -13,7 +13,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 it("preserves a saved password when editing ordinary service metadata", async () => {
  const save = vi.spyOn(api, "saveService").mockResolvedValue(service);
  render(<ServicesPage overview={overview} onChanged={async () => {}} />);
- const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Edit" }));
+ const user = userEvent.setup(); await user.click(screen.getByText("orders-db")); await user.click(await screen.findByRole("button", { name: "Edit" }));
  expect((screen.getByLabelText("password") as HTMLInputElement).value).toBe("");
  await user.type(screen.getByLabelText("Description"), "Application database");
  await user.click(screen.getByRole("button", { name: "Save service" }));
@@ -21,12 +21,57 @@ it("preserves a saved password when editing ordinary service metadata", async ()
  expect(save.mock.calls[0][1].fields.password).toBeUndefined();
  expect(save.mock.calls[0][1].description).toBe("Application database");
 });
-it("shows check location and prevents viewers from running checks", () => {
+it("shows check location and prevents viewers from running checks", async () => {
  const member: Overview = { ...overview, identity: { ...overview.identity!, systemRole: "member" }, projectPermissions: { p: ["project.view"] }, services: [{ ...service, check: { state: "succeeded", message: "Connected", location: "Dispatch controller", checkedAt: "2026-09-19T00:00:00Z", durationMs: 4 } }] };
  render(<ServicesPage overview={member} onChanged={async () => {}} />);
- expect(screen.getByText(/Dispatch controller/)).not.toBeNull();
+ await userEvent.setup().click(screen.getByText("orders-db"));
+ expect(screen.getByText(/Connected · Dispatch controller/)).not.toBeNull();
  expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
  expect(screen.queryByRole("button", { name: "Register service" })).toBeNull();
+});
+it("starts PostgreSQL setup with one connection URL", async () => {
+ const save = vi.spyOn(api, "saveService").mockResolvedValue(service);
+ render(<ServicesPage overview={{ ...overview, services: [] }} onChanged={async () => {}} />);
+ const user = userEvent.setup();
+ await user.click(screen.getByRole("button", { name: "Register service" }));
+ expect(screen.getByRole("button", { name: "Connection URL" }).getAttribute("aria-pressed")).toBe("true");
+ await user.type(screen.getByLabelText("Name"), "orders-db");
+ await user.type(screen.getByLabelText("PostgreSQL URL"), "postgresql://app@db.example.com/orders");
+ await user.click(screen.getByRole("button", { name: "Save service" }));
+ await waitFor(() => expect(save).toHaveBeenCalled());
+ expect(save.mock.calls[0][1].connectionUrl).toBe("postgresql://app@db.example.com/orders");
+ expect(save.mock.calls[0][1].fields.password).toBeUndefined();
+});
+it("keeps manual PostgreSQL defaults behind advanced options", async () => {
+ const save = vi.spyOn(api, "saveService").mockResolvedValue(service);
+ render(<ServicesPage overview={{ ...overview, services: [] }} onChanged={async () => {}} />);
+ const user = userEvent.setup();
+ await user.click(screen.getByRole("button", { name: "Register service" }));
+ await user.click(screen.getByRole("button", { name: "Enter details" }));
+ expect(screen.getByText("Port, TLS, and secret sources").closest("details")?.open).toBe(false);
+ await user.type(screen.getByLabelText("Name"), "orders-db");
+ await user.type(screen.getByLabelText("host"), "db.example.com");
+ await user.type(screen.getByLabelText("database"), "orders");
+ await user.type(screen.getByLabelText("username"), "app");
+ await user.type(screen.getByLabelText("password"), "secret");
+ await user.click(screen.getByRole("button", { name: "Save service" }));
+ await waitFor(() => expect(save).toHaveBeenCalled());
+ expect(save.mock.calls[0][1].fields.port.value).toBe("5432");
+ expect(save.mock.calls[0][1].fields.sslmode.value).toBe("verify-full");
+ expect(save.mock.calls[0][1].fields.password.sensitive).toBe(true);
+});
+it("requires a replacement when switching a saved password from a global secret", async () => {
+ const referenced = { ...service, fields: { ...service.fields, password: { sensitive: true, configured: true, secretRef: "secret-1" } } };
+ const save = vi.spyOn(api, "saveService").mockResolvedValue(referenced);
+ render(<ServicesPage overview={{ ...overview, services: [referenced], secrets: [{ id: "secret-1", name: "Database password" } as Overview["secrets"][number]] }} onChanged={async () => {}} />);
+ const user = userEvent.setup();
+ await user.click(screen.getByText("orders-db"));
+ await user.click(await screen.findByRole("button", { name: "Edit" }));
+ await user.click(screen.getByText("Port, TLS, and secret sources"));
+ await user.selectOptions(screen.getByLabelText("password source"), "value");
+ await user.click(screen.getByRole("button", { name: "Save service" }));
+ expect(screen.getByRole("alert").textContent).toMatch(/replacement value for password/);
+ expect(save).not.toHaveBeenCalled();
 });
 it("creates a Docker runtime binding without copying credentials into it", async () => {
  vi.spyOn(api, "serviceBindings").mockResolvedValue([]);
