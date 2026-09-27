@@ -10,7 +10,7 @@ import (
 
 func (a *API) routes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, a.logRequest)
+	r.Use(middleware.RequestID, middleware.Recoverer, a.securityHeaders, a.logRequest)
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -39,15 +39,15 @@ func (a *API) routes() http.Handler {
 
 // Webhooks, OAuth callbacks, and edge node requests verify their own credentials.
 func (a *API) publicRoutes(r chi.Router) {
-	r.Get("/auth/status", a.authStatus)
-	r.Post("/auth/setup", a.setupAdmin)
+	r.With(a.limitPublicAuth).Get("/auth/status", a.authStatus)
+	r.With(a.limitPublicAuth).Post("/auth/setup", a.setupAdmin)
 	r.Post("/auth/login", a.login)
-	r.Get("/auth/providers", a.publicAuthProviders)
-	r.Post("/auth/discover", a.discoverAuth)
-	r.Post("/auth/providers/{id}/start", a.startOAuth)
-	r.Get("/auth/callback", a.completeOAuth)
+	r.With(a.limitPublicAuth).Get("/auth/providers", a.publicAuthProviders)
+	r.With(a.limitPublicAuth).Post("/auth/discover", a.discoverAuth)
+	r.With(a.limitPublicAuth).Post("/auth/providers/{id}/start", a.startOAuth)
+	r.With(a.limitPublicAuth).Get("/auth/callback", a.completeOAuth)
 	r.Get("/auth/providers/manifest/callback", a.completeAuthProviderManifest)
-	r.Post("/auth/exchange", a.exchangeOAuthCode)
+	r.With(a.limitPublicAuth).Post("/auth/exchange", a.exchangeOAuthCode)
 	r.Post("/events/github", a.githubWebhook)
 	r.Post("/events/github/apps/{id}", a.githubAppWebhook)
 	r.Get("/github-apps/manifest/callback", a.completeGitHubAppManifest)

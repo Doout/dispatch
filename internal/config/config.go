@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ type Config struct {
 	AdminUsername      string
 	AdminPassword      string
 	PublicURL          string
+	TrustedProxyCIDRs  string
 	MasterKeyFile      string
 	DockerSocket       string
 	WebhookSecret      string
@@ -30,22 +32,23 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:             env("DISPATCH_ADDR", "127.0.0.1:8080"),
-		DatabaseURL:      env("DATABASE_URL", "dispatch.db"),
-		Executor:         env("DISPATCH_EXECUTOR", "simulation"),
-		Demo:             strings.EqualFold(os.Getenv("DISPATCH_DEMO"), "true"),
-		AdminToken:       os.Getenv("DISPATCH_ADMIN_TOKEN"),
-		AdminUsername:    strings.TrimSpace(os.Getenv("DISPATCH_ADMIN_USERNAME")),
-		AdminPassword:    os.Getenv("DISPATCH_ADMIN_PASSWORD"),
-		PublicURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("DISPATCH_PUBLIC_URL")), "/"),
-		MasterKeyFile:    os.Getenv("DISPATCH_MASTER_KEY_FILE"),
-		DockerSocket:     env("DISPATCH_DOCKER_SOCKET", "/var/run/docker.sock"),
-		WebhookSecret:    os.Getenv("DISPATCH_GITHUB_WEBHOOK_SECRET"),
-		PreviewCommand:   env("DISPATCH_PREVIEW_COMMAND", "/preview"),
-		GitHubAPIURL:     env("DISPATCH_GITHUB_API_URL", "https://api.github.com"),
-		GitHubToken:      os.Getenv("DISPATCH_GITHUB_TOKEN"),
-		RepositoryCache:  env("DISPATCH_REPOSITORY_CACHE", "repository-cache"),
-		AnalyticsEnabled: !strings.EqualFold(os.Getenv("DISPATCH_ANALYTICS_ENABLED"), "false"),
+		Addr:              env("DISPATCH_ADDR", "127.0.0.1:8080"),
+		DatabaseURL:       env("DATABASE_URL", "dispatch.db"),
+		Executor:          env("DISPATCH_EXECUTOR", "simulation"),
+		Demo:              strings.EqualFold(os.Getenv("DISPATCH_DEMO"), "true"),
+		AdminToken:        os.Getenv("DISPATCH_ADMIN_TOKEN"),
+		AdminUsername:     strings.TrimSpace(os.Getenv("DISPATCH_ADMIN_USERNAME")),
+		AdminPassword:     os.Getenv("DISPATCH_ADMIN_PASSWORD"),
+		PublicURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("DISPATCH_PUBLIC_URL")), "/"),
+		TrustedProxyCIDRs: strings.TrimSpace(os.Getenv("DISPATCH_TRUSTED_PROXY_CIDRS")),
+		MasterKeyFile:     os.Getenv("DISPATCH_MASTER_KEY_FILE"),
+		DockerSocket:      env("DISPATCH_DOCKER_SOCKET", "/var/run/docker.sock"),
+		WebhookSecret:     os.Getenv("DISPATCH_GITHUB_WEBHOOK_SECRET"),
+		PreviewCommand:    env("DISPATCH_PREVIEW_COMMAND", "/preview"),
+		GitHubAPIURL:      env("DISPATCH_GITHUB_API_URL", "https://api.github.com"),
+		GitHubToken:       os.Getenv("DISPATCH_GITHUB_TOKEN"),
+		RepositoryCache:   env("DISPATCH_REPOSITORY_CACHE", "repository-cache"),
+		AnalyticsEnabled:  !strings.EqualFold(os.Getenv("DISPATCH_ANALYTICS_ENABLED"), "false"),
 	}
 	cfg.AnalyticsDirectory = env("DISPATCH_ANALYTICS_DIRECTORY", filepath.Join(filepath.Dir(cfg.MasterKeyFile), "analytics"))
 	if cfg.Executor != "simulation" && cfg.Executor != "docker" {
@@ -68,6 +71,13 @@ func Load() (Config, error) {
 	}
 	if !strings.HasPrefix(cfg.PreviewCommand, "/") || strings.ContainsAny(cfg.PreviewCommand, " \t\r\n") || len(cfg.PreviewCommand) > 64 {
 		return Config{}, errors.New("DISPATCH_PREVIEW_COMMAND must start with / and contain no whitespace")
+	}
+	for _, entry := range strings.Split(cfg.TrustedProxyCIDRs, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			if _, _, err := net.ParseCIDR(entry); err != nil {
+				return Config{}, errors.New("DISPATCH_TRUSTED_PROXY_CIDRS must contain valid CIDR ranges")
+			}
+		}
 	}
 	return cfg, nil
 }

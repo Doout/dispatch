@@ -49,54 +49,23 @@ func (a *API) discoverAuth(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	identifier := strings.TrimSpace(input.Identifier)
+	_ = input.Identifier
 	providers, err := a.store.ListAuthProviders(r.Context())
 	if err != nil {
 		a.internal(w, err)
 		return
 	}
-	enabled := map[string]core.AuthProvider{}
 	public := []publicAuthProvider{}
 	for _, item := range providers {
 		if item.State == core.AuthProviderStateReady {
-			enabled[item.ID] = item
 			public = append(public, publicProvider(item))
 		}
 	}
-	local := false
-	if user, err := a.store.GetUserByUsername(r.Context(), identifier); err == nil && user.PasswordHash != "" && user.State == core.UserStateActive {
-		local = true
-	}
-	if strings.Contains(identifier, "@") {
-		if user, err := a.store.GetUserByEmail(r.Context(), identifier); err == nil && user.PasswordHash != "" && user.State == core.UserStateActive {
-			local = true
-		}
-	}
-	identities, err := a.store.FindExternalIdentitiesByLogin(r.Context(), identifier)
-	if err != nil {
-		a.internal(w, err)
+	if len(public) == 0 {
+		writeJSON(w, http.StatusOK, authDiscovery{Method: "password", Password: true})
 		return
 	}
-	matches := []publicAuthProvider{}
-	seen := map[string]bool{}
-	for _, identity := range identities {
-		if item, ok := enabled[identity.ProviderID]; ok && !seen[item.ID] {
-			matches = append(matches, publicProvider(item))
-			seen[item.ID] = true
-		}
-	}
-	if len(matches) == 1 && !local {
-		writeJSON(w, http.StatusOK, authDiscovery{Method: "provider", Provider: &matches[0]})
-		return
-	}
-	if len(matches) > 0 || !local {
-		if len(matches) == 0 {
-			matches = public
-		}
-		writeJSON(w, http.StatusOK, authDiscovery{Method: "choose", Providers: matches, Password: local || len(matches) == 0})
-		return
-	}
-	writeJSON(w, http.StatusOK, authDiscovery{Method: "password", Password: true})
+	writeJSON(w, http.StatusOK, authDiscovery{Method: "choose", Providers: public, Password: true})
 }
 
 func (a *API) startOAuth(w http.ResponseWriter, r *http.Request) {
@@ -271,8 +240,8 @@ func (a *API) publicOrigin(r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
-	} else if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded == "http" || forwarded == "https" {
-		scheme = forwarded
+	} else if a.trustedProxyPeer(r) && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+		scheme = "https"
 	}
 	return scheme + "://" + r.Host
 }

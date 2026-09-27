@@ -597,9 +597,10 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	originalHash := user.PasswordHash
 	user.PasswordHash = string(hash)
 	user.UpdatedAt = time.Now().UTC()
-	if err := a.store.UpdateUser(r.Context(), user); err != nil {
+	if err := a.store.ChangeUserPassword(r.Context(), user.ID, originalHash, user.PasswordHash, user.UpdatedAt); err != nil {
 		a.internal(w, err)
 		return
 	}
