@@ -17,11 +17,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type sessionState struct {
-	expires  time.Time
-	identity core.Identity
-}
-
 func (a *API) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if identity, valid := a.bearerIdentity(r); valid {
@@ -34,12 +29,22 @@ func (a *API) authorize(next http.Handler) http.Handler {
 		}
 
 		username, password, basic := r.BasicAuth()
+		if !basic {
+			unauthorized(w, false)
+			return
+		}
+		if !a.passwordAllowed(w, r, username) {
+			return
+		}
 		identity, _, valid, setupRequired, err := a.passwordIdentity(r.Context(), username, password)
 		if err != nil {
 			a.internal(w, err)
 			return
 		}
-		if basic && valid {
+		if valid {
+			if !a.passwordSucceeded(w, r, username) {
+				return
+			}
 			ctx, ok := a.authorizedContext(w, r, identity)
 			if !ok {
 				return
@@ -87,19 +92,6 @@ func (a *API) bearerIdentity(r *http.Request) (core.Identity, bool) {
 	}
 	if a.auth.AdminToken != "" && secureEqual(provided, a.auth.AdminToken) {
 		return controllerIdentity("token"), true
-	}
-	a.sessionMu.RLock()
-	session, found := a.sessions[provided]
-	a.sessionMu.RUnlock()
-	if found && time.Now().Before(session.expires) {
-		if session.identity.ID == "controller-owner" {
-			return session.identity, true
-		}
-		user, err := a.store.GetUser(r.Context(), session.identity.ID)
-		if err == nil && user.State == core.UserStateActive {
-			return identityForUser(user), true
-		}
-		return core.Identity{}, false
 	}
 	now := time.Now().UTC()
 	user, err := a.store.SessionUser(r.Context(), sessionHash(provided), now)
@@ -166,13 +158,20 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	identity, userID, valid, setupRequired, err := a.passwordIdentity(r.Context(), strings.TrimSpace(input.Username), input.Password)
+	username := strings.TrimSpace(input.Username)
+	if !a.passwordAllowed(w, r, username) {
+		return
+	}
+	identity, userID, valid, setupRequired, err := a.passwordIdentity(r.Context(), username, input.Password)
 	if err != nil {
 		a.internal(w, err)
 		return
 	}
 	if !valid {
 		unauthorized(w, setupRequired)
+		return
+	}
+	if !a.passwordSucceeded(w, r, username) {
 		return
 	}
 	token, err := a.createSession(r.Context(), userID, identity)
@@ -191,9 +190,6 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 			a.internal(w, err)
 			return
 		}
-		a.sessionMu.Lock()
-		delete(a.sessions, provided)
-		a.sessionMu.Unlock()
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -215,14 +211,6 @@ func (a *API) createSession(ctx context.Context, userID string, identity core.Id
 	if err != nil {
 		return "", err
 	}
-	a.sessionMu.Lock()
-	for existing, session := range a.sessions {
-		if now.After(session.expires) {
-			delete(a.sessions, existing)
-		}
-	}
-	a.sessions[token] = sessionState{expires: expires, identity: identity}
-	a.sessionMu.Unlock()
 	return token, nil
 }
 

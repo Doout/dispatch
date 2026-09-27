@@ -54,3 +54,10 @@ func TestLoadRejectsUnsafePublicURL(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadRejectsInvalidTrustedProxyRanges(t *testing.T) {
+	t.Setenv("DISPATCH_TRUSTED_PROXY_CIDRS", "10.0.0.0/8,not-a-network")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid trusted proxy network to fail")
+	}
+}
