@@ -63,6 +63,17 @@ afterEach(() => {
 });
 
 describe("workflow resource run details", () => {
+  it("does not query owner-only preview settings for a project viewer", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    const triggers = vi.spyOn(api, "workflowPreviewTriggers");
+    const viewer = { ...overview, identity: { ...overview.identity!, systemRole: "member" as const } };
+    render(<WorkflowResourceDialog resource={{ ...resource, temporary: true }} overview={viewer} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    await waitFor(() => expect(api.workflowStages).toHaveBeenCalled());
+    expect(triggers).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("shows automatic health and comment-only E2E tests without opening stage logs", async () => {
     vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
     vi.spyOn(api, "workflowStages").mockResolvedValue([{ id: "stage", revisionId: "revision-1", stageName: "development", targetRef: "dev", state: "succeeded", approval: "automatic", createdAt: resource.createdAt, checkRuns: { health: "health-run" } }]);

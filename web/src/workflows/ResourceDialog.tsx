@@ -28,6 +28,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const canConfigure = Boolean(source && canManageProject(overview, source.projectId, "project.configure"));
   const canRun = Boolean(source && canManageProject(overview, source.projectId, "deployment.run"));
   const canApprove = Boolean(source && canManageProject(overview, source.projectId, "stage.approve"));
+  const isOwner = overview.identity?.systemRole === "owner";
   const selectedJob = jobs.find((job) => job.id === selectedJobID) ?? jobs[0];
   const resourceStatus = workflowResourceStatus(resource, revisions.find((item) => !isPreviewCheckRun(item))?.state);
 
@@ -35,7 +36,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     let active = true;
     setPreviewCommand(undefined);
     setCommandError("");
-    if (resource.temporary) {
+    if (resource.temporary && isOwner) {
       void api.workflowPreviewTriggers().then(triggers => {
         if (active) setPreviewCommand(triggers.find(trigger => trigger.resourceId === resource.id && !trigger.closedAt)?.command);
       }).catch(cause => {
@@ -43,7 +44,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
       });
     }
     return () => { active = false; };
-  }, [resource.id, resource.temporary]);
+  }, [resource.id, resource.temporary, isOwner]);
 
   useEffect(() => {
     let active = true;
