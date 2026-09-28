@@ -112,11 +112,7 @@ func (s *Service) repositoryFiles(ctx context.Context, source core.ConfigSource,
 		return nil, err
 	}
 	defer os.RemoveAll(root)
-	cache := s.Repositories
-	if cache == nil {
-		cache = newRepositoryCache("")
-		s.Repositories = cache
-	}
+	cache := s.repositoryCache()
 	worktree, err := cache.checkout(ctx, access.url, access.credentialID, source.Branch, revision, filepath.Join(root, "repository"), access.environment)
 	if err != nil {
 		return nil, err

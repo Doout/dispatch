@@ -450,7 +450,7 @@ func (s *Service) runPipeline(ctx context.Context, name string, inputs map[strin
 		return revision, err
 	}
 	defer os.RemoveAll(root)
-	runtime := &jobRuntime{service: s, source: source, revision: revision, root: root, paths: map[string]string{}, inputs: inputs}
+	runtime := &jobRuntime{service: s, source: source, revision: revision, root: root, paths: map[string]string{}, inputs: inputs, maxParallelJobs: documents[0].Pipeline.MaxParallelJobs}
 	defer runtime.close()
 	revision.Outputs, err = runtime.executeJobs(ctx, resource, documents[0].Pipeline.Jobs, documents[0].Pipeline.Finally, true)
 	if err != nil {

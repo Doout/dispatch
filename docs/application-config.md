@@ -134,6 +134,29 @@ a plain JSON value shows the whole object to owners.
 
 `runFrom` selects the repository that contains the script. `sources` adds repositories that the command reads. Runtime templates expose `path`, `commit`, and `branch` for each declared source.
 
+Application jobs run two at a time by default. Set `spec.maxParallelJobs` from 1 to 32 to change the limit. Use 1 for scripts that share generated files through a checkout. Parallel jobs have separate working directories, checkouts, output files, and Docker login files. Stages start after all jobs succeed. A failed job cancels other running jobs and prevents pending jobs from starting; `finally` jobs still run afterward in name order.
+
+Use `needs` to wait for another job's success. Names do not establish dependencies in parallel mode:
+
+```yaml
+spec:
+  maxParallelJobs: 2
+  jobs:
+    build-service:
+      runFrom: service
+      run: ./scripts/build-image.sh
+    build-ui:
+      runFrom: ui
+      run: ./scripts/build-image.sh
+    verify-images:
+      needs: [build-service, build-ui]
+      runFrom: chart
+      reuse: never
+      run: ./scripts/verify-images.sh
+```
+
+`needs` controls order. Each reusable job must still declare all sources and inputs it reads. Use `reuse: never` for checks of external state or jobs with side effects. Missing dependencies and cycles fail configuration validation. `finally` jobs do not accept `needs`.
+
 Application jobs default to `reuse: onInputMatch`. Matching jobs share successful results across Applications in the same repository configuration. Concurrent requests for identical inputs wait for the first build. This coordination works within one controller; it does not coordinate multiple controller replicas.
 
 ### Docker builders
@@ -151,6 +174,8 @@ jobs:
 ```
 
 The job's shell and source checkout remain on the controller. Docker commands use a pinned SSH connection to a builder daemon; Docker sends the build context to that host. Avoid host volume mounts and commands that require the daemon to see controller file paths. A job waits for a free builder slot and can be cancelled while waiting. Builder capacity is coordinated within one controller process.
+
+Dispatch prefers the same available builder for a configuration and its source repositories across commits and preview instances. This keeps Docker layer caches warm. If that builder is full, Dispatch uses another available builder. Jobs on the controller use its existing Docker daemon and cache. Dispatch enables BuildKit and does not prune layer caches after jobs. Recreating a builder or pruning its cache removes those layers. Registry cache export and Dockerfile package cache mounts remain options for the build script; Dispatch does not add flags to arbitrary commands. Layers whose inputs change still rebuild.
 
 The fingerprint includes the job definition, declared source revisions, inputs, resolved secrets, and controller platform. Changing a secret invalidates the result. Separate configuration sources do not share results.
 
@@ -223,7 +248,7 @@ spec:
       run: ./scripts/upload-results.sh
 ```
 
-A stage check starts a named active Pipeline and waits for it. Pipeline `finally` jobs run after the main jobs, including after a failure. Pipeline jobs that only use inputs can omit `runFrom`; Dispatch runs them in an empty working directory.
+A stage check starts a named active Pipeline and waits for it. Pipeline jobs stay serial by default. Set `spec.maxParallelJobs` to enable parallel jobs, with the same isolation and `needs` rules as Applications. Pipeline `finally` jobs run after the main jobs, including after a failure. Pipeline jobs that only use inputs can omit `runFrom`; Dispatch runs them in an empty working directory.
 
 ## Event delivery
 

@@ -160,8 +160,12 @@ func addJobs(topology *Topology, jobs map[string]JobSpec, prefix, kind string) {
 		topology.Nodes = append(topology.Nodes, TopologyNode{ID: id, Column: column, Kind: prefix, Label: name, Detail: kind, Metadata: compactMetadata(map[string]string{
 			"Runs from": job.RunFrom,
 			"Outputs":   strings.Join(job.Outputs, ", "),
+			"Needs":     strings.Join(job.Needs, ", "),
 		})})
 		seen := map[string]bool{}
+		for _, dependency := range job.Needs {
+			topology.Edges = append(topology.Edges, TopologyEdge{From: nodeID(prefix, dependency), To: id, Kind: "needs"})
+		}
 		for _, source := range append([]string{job.RunFrom}, job.Sources...) {
 			if source == "" || seen[source] {
 				continue

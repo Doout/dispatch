@@ -165,7 +165,7 @@ func TestExecuteJobsRebuildsOnlyChangedSource(t *testing.T) {
 	if err := data.CreateWorkflowJobResult(ctx, uiResult); err != nil {
 		t.Fatal(err)
 	}
-	runtime := &jobRuntime{service: &Service{Store: data}, source: config, revision: current, root: root,
+	runtime := &jobRuntime{service: &Service{Store: data}, source: config, revision: current, root: root, maxParallelJobs: 1,
 		paths: map[string]string{"chart": chartPath, "service": servicePath, "ui": uiPath}}
 	outputs, err := runtime.executeJobs(ctx, resource, jobs, nil, false)
 	if err != nil {
@@ -235,7 +235,7 @@ func TestExecuteJobsRebuildsOnlyChangedUISource(t *testing.T) {
 	if err := data.CreateWorkflowJobResult(ctx, serviceResult); err != nil {
 		t.Fatal(err)
 	}
-	runtime := &jobRuntime{service: &Service{Store: data}, source: config, revision: current, root: root,
+	runtime := &jobRuntime{service: &Service{Store: data}, source: config, revision: current, root: root, maxParallelJobs: 1,
 		paths: map[string]string{"chart": chartPath, "service": servicePath, "ui": uiPath}}
 	outputs, err := runtime.executeJobs(ctx, resource, jobs, nil, false)
 	if err != nil {

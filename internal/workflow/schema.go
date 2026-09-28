@@ -113,19 +113,21 @@ type ServiceTemplateOutputSpec struct {
 }
 
 type ApplicationSpec struct {
-	Reporting   *core.WorkflowReporting   `json:"reporting,omitempty" yaml:"reporting,omitempty"`
-	Sources     map[string]SourceSpec     `json:"sources" yaml:"sources"`
-	Jobs        map[string]JobSpec        `json:"jobs,omitempty" yaml:"jobs,omitempty"`
-	Deployments map[string]DeploymentSpec `json:"deployments,omitempty" yaml:"deployments,omitempty"`
-	Stages      []StageSpec               `json:"stages,omitempty" yaml:"stages,omitempty"`
-	Finally     map[string]JobSpec        `json:"finally,omitempty" yaml:"finally,omitempty"`
+	MaxParallelJobs int                       `json:"maxParallelJobs,omitempty" yaml:"maxParallelJobs,omitempty"`
+	Reporting       *core.WorkflowReporting   `json:"reporting,omitempty" yaml:"reporting,omitempty"`
+	Sources         map[string]SourceSpec     `json:"sources" yaml:"sources"`
+	Jobs            map[string]JobSpec        `json:"jobs,omitempty" yaml:"jobs,omitempty"`
+	Deployments     map[string]DeploymentSpec `json:"deployments,omitempty" yaml:"deployments,omitempty"`
+	Stages          []StageSpec               `json:"stages,omitempty" yaml:"stages,omitempty"`
+	Finally         map[string]JobSpec        `json:"finally,omitempty" yaml:"finally,omitempty"`
 }
 
 type PipelineSpec struct {
-	Inputs  map[string]InputSpec  `json:"inputs,omitempty" yaml:"inputs,omitempty"`
-	Sources map[string]SourceSpec `json:"sources,omitempty" yaml:"sources,omitempty"`
-	Jobs    map[string]JobSpec    `json:"jobs" yaml:"jobs"`
-	Finally map[string]JobSpec    `json:"finally,omitempty" yaml:"finally,omitempty"`
+	MaxParallelJobs int                   `json:"maxParallelJobs,omitempty" yaml:"maxParallelJobs,omitempty"`
+	Inputs          map[string]InputSpec  `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	Sources         map[string]SourceSpec `json:"sources,omitempty" yaml:"sources,omitempty"`
+	Jobs            map[string]JobSpec    `json:"jobs" yaml:"jobs"`
+	Finally         map[string]JobSpec    `json:"finally,omitempty" yaml:"finally,omitempty"`
 }
 
 type InputSpec struct {
@@ -142,6 +144,7 @@ type SourceSpec struct {
 }
 
 type JobSpec struct {
+	Needs       []string                 `json:"needs,omitempty" yaml:"needs,omitempty"`
 	Builder     string                   `json:"builder,omitempty" yaml:"builder,omitempty"`
 	SourcePaths map[string][]string      `json:"sourcePaths,omitempty" yaml:"sourcePaths,omitempty"`
 	RunFrom     string                   `json:"runFrom" yaml:"runFrom"`
@@ -442,6 +445,9 @@ func applyJobDefaults(jobs map[string]JobSpec) {
 }
 
 func validateApplication(document ApplicationDocument) error {
+	if err := validateJobConcurrency(document.Spec.MaxParallelJobs); err != nil {
+		return err
+	}
 	if document.Spec.Reporting != nil {
 		policy := document.Spec.Reporting
 		if policy.StatusContext != "" && (len(policy.StatusContext) > 100 || strings.ContainsAny(policy.StatusContext, "\r\n") || strings.TrimSpace(policy.StatusContext) != policy.StatusContext || strings.EqualFold(policy.StatusContext, "Dispatch/deployment")) {
@@ -545,6 +551,9 @@ func validateApplication(document ApplicationDocument) error {
 }
 
 func validatePipeline(document PipelineDocument) error {
+	if err := validateJobConcurrency(document.Spec.MaxParallelJobs); err != nil {
+		return err
+	}
 	if err := validateHeader(document.TypeMeta, document.Metadata); err != nil {
 		return err
 	}
@@ -604,7 +613,13 @@ func validateSources(sources map[string]SourceSpec) error {
 }
 
 func validateJobs(prefix string, jobs map[string]JobSpec, sources map[string]SourceSpec, inputs map[string]InputSpec, sourceFree bool) error {
+	if err := validateJobDependencies(prefix, jobs); err != nil {
+		return err
+	}
 	for name, job := range jobs {
+		if prefix == "spec.finally" && len(job.Needs) > 0 {
+			return fmt.Errorf("%s.%s.needs is not supported; finally jobs run in name order", prefix, name)
+		}
 		if !aliasPattern.MatchString(name) {
 			return fmt.Errorf("%s.%s has an invalid name", prefix, name)
 		}
