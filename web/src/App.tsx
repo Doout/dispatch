@@ -1585,6 +1585,16 @@ function EventsPage({
 }) {
   const [hookTarget, setHookTarget] = useState<EventHookTarget | null>(null);
   const [eventRun, setEventRun] = useState<import("./api").WorkflowRevision>();
+  const [runLinkError, setRunLinkError] = useState("");
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("run");
+    if (!id) return;
+    let active = true;
+    void api.workflowRevision(id).then(revision => {
+      if (active) setEventRun(revision);
+    }).catch(cause => { if (active) setRunLinkError(`Could not open the QA run: ${(cause as Error).message}`); });
+    return () => { active = false; };
+  }, []);
 
   if (hookTarget)
     return (
@@ -1616,6 +1626,7 @@ function EventsPage({
     );
   const eventResource = overview.workflowResources?.find(item => item.id === eventRun?.resourceId);
   return <>
+    {runLinkError && <p className="form-error" role="alert">{runLinkError}</p>}
     <EventsListPage
       accessVersion={JSON.stringify([overview.identity, overview.projectPermissions])}
       section={section}

@@ -51,6 +51,14 @@ func (a *API) processWorkflowPreviewTestComment(ctx context.Context, target *pre
 			return err
 		}
 
+		if a.eventConfig.GitHubApps != nil {
+			a.previewReportMu.Lock()
+			reportErr := a.reportWorkflowFeedback(ctx, trigger.ResourceID)
+			a.previewReportMu.Unlock()
+			if reportErr != nil && a.logger != nil {
+				a.logger.Warn("preview QA feedback pending", "error", reportErr)
+			}
+		}
 		body := fmt.Sprintf("<!-- dispatch-preview-test:%s -->\n### Preview checks running\n\nChecks are running against [the deployed preview](%s). This command does not rebuild or redeploy it.\n", revision.ID, trigger.PreviewURL)
 		commentID, err := a.postPreviewTestReply(ctx, trigger, "", body)
 		if err != nil {

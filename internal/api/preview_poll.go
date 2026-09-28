@@ -59,7 +59,7 @@ func (a *API) PollPreviewsOnce(ctx context.Context) error {
 			joined = errors.Join(joined, fmt.Errorf("%s: %w", target.repository, err))
 		}
 	}
-	return joined
+	return errors.Join(joined, a.reconcileWorkflowFeedback(ctx))
 }
 
 func (a *API) previewPollTargets(ctx context.Context) ([]*previewPollTarget, error) {

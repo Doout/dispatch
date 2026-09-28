@@ -157,6 +157,10 @@ type Store interface {
 	CreateWorkflowEvent(context.Context, core.WorkflowEvent) (bool, error)
 	UpdateWorkflowEvent(context.Context, core.WorkflowEvent) error
 	CreateWorkflowRevision(context.Context, core.WorkflowRevision) error
+	UpdateWorkflowFeedback(context.Context, string, *core.WorkflowFeedback) error
+	PendingWorkflowFeedback(context.Context, string) ([]core.WorkflowRevision, error)
+	AcquireWorkflowFeedbackLease(context.Context, string, string, time.Time, time.Time) (bool, error)
+	ReleaseWorkflowFeedbackLease(context.Context, string, string) error
 	SupersedeWorkflowRevisions(context.Context, string) ([]string, error)
 	SupersedeWorkflowTestRevisions(context.Context, string) ([]string, error)
 	UpdateWorkflowRevision(context.Context, core.WorkflowRevision) error

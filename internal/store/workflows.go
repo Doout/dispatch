@@ -272,9 +272,9 @@ func workflowEventActivity(item core.WorkflowEvent, source core.ConfigSource) co
 }
 
 func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.WorkflowRevision) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`),
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.ResourceID, item.ConfigSHA, item.SpecDigest, item.State, item.Trigger, jsonText(item.Sources), jsonText(item.Outputs), item.Error,
-		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt))
+		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.PullRequests), jsonText(item.Feedback), item.Feedback != nil && !item.Feedback.Complete)
 	return err
 }
 
@@ -342,7 +342,7 @@ func (s *SQLStore) supersedeWorkflowRevisions(ctx context.Context, resourceID st
 	return ids, tx.Commit()
 }
 
-const workflowRevisionSelect = `SELECT id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at FROM workflow_revisions`
+const workflowRevisionSelect = `SELECT id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback FROM workflow_revisions`
 
 func (s *SQLStore) GetWorkflowRevision(ctx context.Context, id string) (core.WorkflowRevision, error) {
 	item, err := scanWorkflowRevision(s.db.QueryRowContext(ctx, s.q(workflowRevisionSelect+` WHERE id=?`), id))
@@ -381,12 +381,14 @@ func (s *SQLStore) ListWorkflowRevisions(ctx context.Context, resourceID string,
 
 func scanWorkflowRevision(row scanner) (core.WorkflowRevision, error) {
 	var item core.WorkflowRevision
-	var sources, outputs, created string
+	var sources, outputs, created, pullRequests, feedback string
 	var started, finished sql.NullString
 	err := row.Scan(&item.ID, &item.ResourceID, &item.ConfigSHA, &item.SpecDigest, &item.State, &item.Trigger, &sources, &outputs,
-		&item.Error, &created, &started, &finished)
+		&item.Error, &created, &started, &finished, &pullRequests, &feedback)
 	_ = json.Unmarshal([]byte(sources), &item.Sources)
 	_ = json.Unmarshal([]byte(outputs), &item.Outputs)
+	_ = json.Unmarshal([]byte(pullRequests), &item.PullRequests)
+	_ = json.Unmarshal([]byte(feedback), &item.Feedback)
 	item.CreatedAt, item.StartedAt, item.FinishedAt = parseTime(created), parseNullTime(started), parseNullTime(finished)
 	return item, err
 }
@@ -518,4 +520,48 @@ func (s *SQLStore) ListReusableWorkflowJobResults(ctx context.Context, resourceI
 		results = append(results, item)
 	}
 	return results, rows.Err()
+}
+
+// Feedback updates are separate from worker updates so reporting progress cannot
+// be overwritten by the worker's original revision snapshot.
+func (s *SQLStore) UpdateWorkflowFeedback(ctx context.Context, id string, feedback *core.WorkflowFeedback) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_revisions SET feedback=?,feedback_pending=? WHERE id=?`), jsonText(feedback), feedback != nil && !feedback.Complete, id)
+	return changed(result, err)
+}
+
+func (s *SQLStore) PendingWorkflowFeedback(ctx context.Context, resourceID string) ([]core.WorkflowRevision, error) {
+	query := workflowRevisionSelect + ` WHERE feedback_pending=TRUE`
+	args := []any{}
+	if resourceID != "" {
+		query += ` AND resource_id=?`
+		args = append(args, resourceID)
+	}
+	rows, err := s.db.QueryContext(ctx, s.q(query+` ORDER BY id`), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.WorkflowRevision{}
+	for rows.Next() {
+		item, err := scanWorkflowRevision(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLStore) AcquireWorkflowFeedbackLease(ctx context.Context, resourceID, holder string, now, until time.Time) (bool, error) {
+	result, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_feedback_leases(resource_id,holder,lease_until) VALUES(?,?,?)
+ ON CONFLICT(resource_id) DO UPDATE SET holder=excluded.holder,lease_until=excluded.lease_until WHERE workflow_feedback_leases.lease_until<?`), resourceID, holder, stamp(until), stamp(now))
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count > 0, err
+}
+func (s *SQLStore) ReleaseWorkflowFeedbackLease(ctx context.Context, resourceID, holder string) error {
+	_, err := s.db.ExecContext(ctx, s.q(`DELETE FROM workflow_feedback_leases WHERE resource_id=? AND holder=?`), resourceID, holder)
+	return err
 }

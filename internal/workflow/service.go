@@ -799,6 +799,11 @@ func (s *Service) startIfChanged(ctx context.Context, resource core.WorkflowReso
 func (s *Service) startWithSnapshot(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, snapshot map[string]core.WorkflowSourceRevision, trigger string) (core.WorkflowRevision, error) {
 	revision := core.WorkflowRevision{ID: ulid.Make().String(), ResourceID: resource.ID, ConfigSHA: resource.ConfigSHA, SpecDigest: resource.SpecDigest,
 		State: "queued", Trigger: trigger, Sources: snapshot, Outputs: map[string]map[string]string{}, CreatedAt: time.Now().UTC()}
+	var err error
+	revision.PullRequests, err = s.previewPullRequests(ctx, resource, snapshot)
+	if err != nil {
+		return revision, err
+	}
 	if err := s.Store.CreateWorkflowRevision(ctx, revision); err != nil {
 		return revision, err
 	}

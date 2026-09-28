@@ -154,7 +154,17 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 	}
 	defer data.Close()
 	steps := migrationSteps(t, "sqlite")
-	if err := data.applyMigrations(ctx, steps[:len(steps)-1]); err != nil {
+	boundary := 0
+	for i, step := range steps {
+		if step.version == "063_event_activity" {
+			boundary = i
+			break
+		}
+	}
+	if boundary == 0 {
+		t.Fatal("event migration not found")
+	}
+	if err := data.applyMigrations(ctx, steps[:boundary]); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -177,7 +187,8 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 		triggerID := "trigger" + templateID
 		revisionID := "revision" + templateID
 		must(data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: triggerID, TemplateID: templateID, ResourceID: "workflow", GitHubAppID: "github", Repository: "team/ui", PullRequestNumber: number, Command: "/preview", CreatedAt: now}))
-		must(data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: revisionID, ResourceID: "workflow", State: "succeeded", Trigger: "pull request comment " + triggerID, CreatedAt: now}))
+		_, err := data.db.ExecContext(ctx, `INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at) VALUES(?,?,'','','succeeded',?,'{}','{}','',?)`, revisionID, "workflow", "pull request comment "+triggerID, stamp(now))
+		must(err)
 		reserved, err := data.ReserveWorkflowPreviewComment(ctx, triggerID, triggerID)
 		must(err)
 		if !reserved {

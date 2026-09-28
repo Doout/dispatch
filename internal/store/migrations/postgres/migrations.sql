@@ -1112,3 +1112,14 @@ INSERT INTO event_activity(id,project_id,dedup_key,rule_id,transport,state,creat
 SELECT r.id || ':' || c.id,a.project_id,'preview-group:' || r.id || ':' || c.id,'group:' || r.group_id,'history',r.state,r.created_at,json_build_object('id',r.id || ':' || c.id,'projectId',a.project_id,'ruleId','group:' || r.group_id,'name',a.name,'transport','history','kind','preview_group_component','repository',x.repository,'pullRequest',x.pull_request,'state',r.state,'previewUrl',CASE WHEN c.entrypoint=TRUE THEN r.entrypoint_url ELSE '' END,'createdAt',r.created_at)::text
 FROM preview_group_runs r JOIN preview_group_components c ON c.group_id=r.group_id JOIN apps a ON a.id=c.app_id
  JOIN preview_group_sources x ON x.run_id=r.id AND x.component_id=c.id;
+
+-- dispatch:migration 064_workflow_feedback
+ALTER TABLE workflow_revisions ADD COLUMN pull_requests TEXT NOT NULL DEFAULT 'null';
+ALTER TABLE workflow_revisions ADD COLUMN feedback TEXT NOT NULL DEFAULT 'null';
+ALTER TABLE workflow_revisions ADD COLUMN feedback_pending BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX workflow_feedback_pending ON workflow_revisions(resource_id,id) WHERE feedback_pending;
+CREATE TABLE workflow_feedback_leases (
+ resource_id TEXT PRIMARY KEY REFERENCES workflow_resources(id) ON DELETE CASCADE,
+ holder TEXT NOT NULL,
+ lease_until TEXT NOT NULL
+);

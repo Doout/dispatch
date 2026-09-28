@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
@@ -84,6 +85,12 @@ func (s *Service) publishStatus(ctx context.Context, source core.ConfigSource, r
 	if s.GitHub == nil || source.GitHubAppID == "" {
 		return
 	}
+	statusContext := "Dispatch/deployment"
+	resource, err := s.Store.GetWorkflowResource(ctx, revision.ResourceID)
+	if err == nil && resource.Kind == KindPipeline {
+		statusContext = "Dispatch/pipeline/" + resource.Name
+		description = strings.Replace(description, "Deployment", "Pipeline", 1)
+	}
 	seen := map[string]bool{}
 	for _, item := range revision.Sources {
 		key := normalizeRepository(item.Repository) + "@" + item.CommitSHA
@@ -91,7 +98,7 @@ func (s *Service) publishStatus(ctx context.Context, source core.ConfigSource, r
 			continue
 		}
 		seen[key] = true
-		if err := s.GitHub.SetCommitStatus(ctx, source.GitHubAppID, item.Repository, item.CommitSHA, state, description, ""); err != nil && s.Logger != nil {
+		if err := s.GitHub.SetCommitStatusWithContext(ctx, source.GitHubAppID, item.Repository, item.CommitSHA, state, statusContext, description, ""); err != nil && s.Logger != nil {
 			s.Logger.Warn("commit status was not published", "repository", item.Repository, "error", err)
 		}
 	}

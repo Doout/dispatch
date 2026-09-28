@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, CheckCircle, Copy, FileCode, RocketLaunch, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
 import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun, WorkflowRevision } from "../api";
+import { RunFeedback } from "./RunFeedback";
 import { StageProgress } from "./StageProgress";
 import { StageTests, configuredStageTests } from "./StageTests";
 import { relative } from "../presentation";
@@ -58,7 +59,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const [nextJobs, nextStages, nextRevision] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID), initialRevisionID ? api.workflowRevision(revisionID) : Promise.resolve(undefined)]);
+        const [nextJobs, nextStages, nextRevision] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID), initialRevisionID || revisions.find(item => item.id === revisionID)?.feedback ? api.workflowRevision(revisionID) : Promise.resolve(undefined)]);
         if (active) {
           setLiveRevision(nextRevision);
           setJobs(nextJobs);
@@ -128,6 +129,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
           <section><div className="workflow-section-heading"><h3>Runs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setRevisionID(event.target.value)}>{revisions.map((item) => <option key={item.id} value={item.id}>{isPreviewCheckRun(item) ? "Checks · " : ""}{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
             {!revision && <p className="workflow-empty-note">No runs.</p>}
             {revision && <><dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>{revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
+              {revision.feedback && <RunFeedback feedback={revision.feedback} overview={overview} />}
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}
               {jobs.length > 0 && <div className="workflow-run-list workflow-job-list"><h4>Jobs</h4>{jobs.map((job) => <button type="button" key={job.id} className={job.id === selectedJob?.id ? "active" : ""} aria-pressed={job.id === selectedJob?.id} aria-label={`${job.jobName}, ${job.state}`} onClick={() => setSelectedJobID(job.id)}><span className={`status-label ${job.state}`}><i />{job.state}</span><strong>{job.jobName}</strong>{job.reusedFromId && <small>Reused</small>}</button>)}</div>}
               {selectedJob && <section className="workflow-job-output" aria-label={`${selectedJob.jobName} job output`}><header><div><TerminalWindow size={15} /><strong>{selectedJob.jobName}</strong><span>{selectedJob.state}</span></div><button type="button" aria-label={`Copy ${selectedJob.jobName} output`} title={copiedJobID === selectedJob.id ? "Copied" : "Copy output"} disabled={!selectedJob.log && !selectedJob.error} onClick={() => void copyJobLog(selectedJob)}>{copiedJobID === selectedJob.id ? <Check size={15} /> : <Copy size={15} />}</button></header>{selectedJob.error && <p>{selectedJob.error}</p>}<pre tabIndex={0}>{selectedJob.log || selectedJob.error || "No output was captured."}</pre></section>}

@@ -111,7 +111,42 @@ type WorkflowSourceRevision struct {
 	Path          string            `json:"path,omitempty"`
 }
 
+// WorkflowPullRequest captures the PR identity when a deployment is scheduled.
+type WorkflowPullRequest struct {
+	URL         string `json:"url,omitempty"`
+	GitHubAppID string `json:"githubAppId"`
+	Repository  string `json:"repository"`
+	Number      int    `json:"number"`
+	CommitSHA   string `json:"commitSha"`
+}
+
+type WorkflowReporting struct {
+	StatusContext   string `json:"statusContext,omitempty" yaml:"statusContext,omitempty"`
+	ReviewOnSuccess string `json:"reviewOnSuccess,omitempty" yaml:"reviewOnSuccess,omitempty"`
+	ReviewOnFailure string `json:"reviewOnFailure,omitempty" yaml:"reviewOnFailure,omitempty"`
+}
+
+type WorkflowFeedbackTarget struct {
+	WorkflowPullRequest
+	Status     string `json:"status,omitempty"`
+	Review     string `json:"review,omitempty"`
+	ReviewID   int64  `json:"reviewId,omitempty"`
+	Error      string `json:"error,omitempty"`
+	SkipReason string `json:"skipReason,omitempty"`
+}
+
+type WorkflowFeedback struct {
+	WorkflowReporting
+	DeploymentID string                   `json:"deploymentId"`
+	PreviewURL   string                   `json:"previewUrl,omitempty"`
+	Targets      []WorkflowFeedbackTarget `json:"targets"`
+	Complete     bool                     `json:"complete"`
+}
+
 type WorkflowRevision struct {
+	PullRequests []WorkflowPullRequest `json:"pullRequests,omitempty"`
+	Feedback     *WorkflowFeedback     `json:"feedback,omitempty"`
+
 	ID         string                            `json:"id"`
 	ResourceID string                            `json:"resourceId"`
 	ConfigSHA  string                            `json:"configSha"`
