@@ -35,6 +35,15 @@ func newRepositoryCache(root string) *repositoryCache {
 	return &repositoryCache{root: filepath.Clean(root), locks: map[string]*sync.Mutex{}}
 }
 
+func (s *Service) repositoryCache() *repositoryCache {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Repositories == nil {
+		s.Repositories = newRepositoryCache("")
+	}
+	return s.Repositories
+}
+
 func (c *repositoryCache) checkout(ctx context.Context, repositoryURL, credentialID, branch, commit, destination string, environment []string) (*cachedWorktree, error) {
 	key := repositoryCacheKey(repositoryURL, credentialID)
 	unlock := c.lock(key)

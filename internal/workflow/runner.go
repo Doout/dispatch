@@ -34,7 +34,7 @@ func (s *Service) runApplication(ctx context.Context, resource core.WorkflowReso
 		return
 	}
 	defer os.RemoveAll(root)
-	runtime := &jobRuntime{service: s, source: source, revision: revision, root: root, paths: map[string]string{}}
+	runtime := &jobRuntime{service: s, source: source, revision: revision, root: root, paths: map[string]string{}, maxParallelJobs: document.Spec.MaxParallelJobs}
 	defer runtime.close()
 	revision.Outputs, err = runtime.executeJobs(ctx, resource, document.Spec.Jobs, document.Spec.Finally, false)
 	if err != nil {

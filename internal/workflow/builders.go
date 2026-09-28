@@ -20,7 +20,11 @@ import (
 
 // A slot is held for the duration of the job, including image push. Waiting
 // jobs can be cancelled without occupying builder capacity.
-func (s *Service) acquireDockerBuilder(ctx context.Context) (core.Server, func(), error) {
+func (s *Service) acquireDockerBuilder(ctx context.Context, cacheKeys ...string) (core.Server, func(), error) {
+	cacheKey := ""
+	if len(cacheKeys) > 0 {
+		cacheKey = cacheKeys[0]
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -48,6 +52,7 @@ func (s *Service) acquireDockerBuilder(ctx context.Context) (core.Server, func()
 		var chosen core.Server
 		var slot chan struct{}
 		best := 2.0
+		bestCache := ""
 		for _, builder := range builders {
 			current := s.builderSlots[builder.ID]
 			if current == nil || cap(current) != builder.Builder.MaxConcurrent && len(current) == 0 {
@@ -55,8 +60,14 @@ func (s *Service) acquireDockerBuilder(ctx context.Context) (core.Server, func()
 				s.builderSlots[builder.ID] = current
 			}
 			load := float64(len(current)) / float64(cap(current))
-			if len(current) < cap(current) && load < best {
+			score := builderCacheScore(cacheKey, builder)
+			preferred := load < best
+			if cacheKey != "" {
+				preferred = score > bestCache
+			}
+			if len(current) < cap(current) && preferred {
 				chosen, slot, best = builder, current, load
+				bestCache = score
 			}
 		}
 		if slot != nil {

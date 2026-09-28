@@ -68,27 +68,18 @@ func (s *Service) lockBuild(ctx context.Context, key string) (func(), error) {
 }
 
 type jobRuntime struct {
-	service   *Service
-	source    core.ConfigSource
-	revision  core.WorkflowRevision
-	root      string
-	paths     map[string]string
-	inputs    map[string]string
-	worktrees []*cachedWorktree
+	maxParallelJobs int
+	service         *Service
+	source          core.ConfigSource
+	revision        core.WorkflowRevision
+	root            string
+	paths           map[string]string
+	inputs          map[string]string
+	worktrees       []*cachedWorktree
 }
 
 func (r *jobRuntime) executeJobs(ctx context.Context, resource core.WorkflowResource, jobs, final map[string]JobSpec, pipeline bool) (map[string]map[string]string, error) {
-	outputs := map[string]map[string]string{}
-	var runErr error
-	for _, name := range sortedResourceNames(jobs) {
-		job := jobs[name]
-		values, err := r.executeJob(ctx, resource, name, job, pipeline)
-		if err != nil {
-			runErr = fmt.Errorf("job %s: %w", name, err)
-			break
-		}
-		outputs[name] = values
-	}
+	outputs, runErr := r.executeMainJobs(ctx, resource, jobs, pipeline)
 	for _, name := range sortedResourceNames(final) {
 		job := final[name]
 		job.Reuse = "never"
@@ -201,13 +192,19 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 	}
 	outputPath := filepath.Join(r.root, "output-"+safePathPart(job.RunFrom)+"-"+ulid.Make().String()+".env")
 	environment := workflowEnvironment(jobRevision, jobPaths, outputPath)
+	dockerConfig, err := isolatedDockerConfig(r.root)
+	if err != nil {
+		return nil, prelude, err
+	}
+	defer os.RemoveAll(dockerConfig)
+	environment = append(environment, "DOCKER_CONFIG="+dockerConfig, "DOCKER_BUILDKIT=1", "BUILDKIT_PROGRESS=plain")
 	for name, value := range secrets {
 		environment = append(environment, name+"="+value)
 	}
 	if job.Builder == "docker" {
 		prelude += "Waiting for an available Docker builder...\n"
 		progress(prelude)
-		builder, release, err := r.service.acquireDockerBuilder(ctx)
+		builder, release, err := r.service.acquireDockerBuilder(ctx, r.builderCacheKey(job))
 		if err != nil {
 			return nil, prelude, err
 		}
@@ -361,11 +358,7 @@ func (r *jobRuntime) checkout(ctx context.Context, alias string) (string, error)
 	}
 	defer access.cleanup()
 	root := filepath.Join(r.root, "sources", safePathPart(alias))
-	cache := r.service.Repositories
-	if cache == nil {
-		cache = newRepositoryCache("")
-		r.service.Repositories = cache
-	}
+	cache := r.service.repositoryCache()
 	worktree, err := cache.checkout(ctx, access.url, access.credentialID, revision.Branch, revision.CommitSHA, root, access.environment)
 	if err != nil {
 		return "", fmt.Errorf("checkout source %s: %w", alias, err)
