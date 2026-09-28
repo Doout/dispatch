@@ -193,6 +193,7 @@ type Store interface {
 	AppHasDeployments(context.Context, string) (bool, error)
 	ListApps(context.Context) ([]core.App, error)
 	ListActiveApps(context.Context) ([]core.App, error)
+	ListAppsForUsage(context.Context) ([]core.App, error)
 	GetApp(context.Context, string) (core.App, error)
 
 	CreateDeployment(context.Context, core.Deployment) error

@@ -1,3 +1,4 @@
+import { SecretUsageDialog, useSecretUsage, VariableUsageButton } from "./SecretUsage";
 import { releaseClient, type ReleasePreview } from "./deployments/releaseClient";
 import { OperationsPage } from "./OperationsPage";
 import { SettingsPage } from "./SettingsPage";
@@ -2616,6 +2617,8 @@ export function SecretsPage({
   onDelete: (secret: Secret) => void;
 }) {
   const [editing, setEditing] = useState<Secret | null>(null);
+  const [usageSecret, setUsageSecret] = useState<Secret | null>(null);
+  const usage = useSecretUsage(overview);
   const [creating, setCreating] = useState(false);
   const [valueKind, setValueKind] = useState<"secret" | "plain">(
     overview.secretStorageConfigured ? "secret" : "plain",
@@ -3177,11 +3180,6 @@ export function SecretsPage({
             </div>
             {visibleValues.length ? <div className="variables-list">{visibleValues.map((secret) => {
               const plain = isPlain(secret);
-              const hookUses = overview.eventTriggers.filter((trigger) => trigger.secretIds.includes(secret.id)).length
-                + overview.previewGroups.flatMap((group) => group.components).filter((component) => component.secretIds?.includes(secret.id)).length
-                + overview.apps.filter((app) => app.hookSecretIds?.includes(secret.id)).length;
-              const sourceUses = overview.apps.filter((app) => app.sourceCredentialId === secret.id).length;
-              const uses = hookUses + sourceUses;
               const store = overview.secretStores?.find((item) => item.id === secret.externalStoreId);
               return <article className="variable-row" key={secret.id}>
                 <div className="variable-identity">
@@ -3194,7 +3192,8 @@ export function SecretsPage({
                 </div>
                 <div className="variable-details">
                   <span>{plain ? "Dispatch" : secret.source === "external" ? (store?.name ?? "External store") : "Dispatch"}</span>
-                  <span>{secret.type === "environment_json" ? "JSON" : plain ? "Environment variable" : secretTypeLabel(secret.type)} · {uses === 1 ? "1 use" : `${uses} uses`}</span>
+                  <span>{secret.type === "environment_json" ? "JSON" : plain ? "Environment variable" : secretTypeLabel(secret.type)}</span>
+                  <VariableUsageButton secret={secret} usage={usage.items?.find(item => item.secretId === secret.id)} loading={usage.loading} error={usage.error} onClick={() => setUsageSecret(secret)} />
                 </div>
                 <div className="variable-actions">
                   {plain && <button type="button" onClick={() => void copyPlainValue(secret)} aria-label={`Copy ${secret.name}`}><Copy size={16} />{copiedID === secret.id ? "Copied" : "Copy"}</button>}
@@ -3213,6 +3212,7 @@ export function SecretsPage({
             />
           </div>
         ))}
+      {usageSecret && <SecretUsageDialog secret={usageSecret} usage={usage.items?.find(item => item.secretId === usageSecret.id)} loading={usage.loading} error={usage.error} onRetry={usage.refresh} onClose={() => setUsageSecret(null)} />}
       {publicKeySecret && (
         <PublicKeyDialog
           secret={publicKeySecret}
