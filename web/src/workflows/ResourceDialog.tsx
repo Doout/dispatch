@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { Check, CheckCircle, Copy, FileCode, RocketLaunch, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
-import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun } from "../api";
+import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun, WorkflowRevision } from "../api";
 import { StageProgress } from "./StageProgress";
 import { relative } from "../presentation";
 import { useDialogFocus } from "../useDialogFocus";
 import { canManageProject } from "../permissions";
 import { isPreviewCheckRun, workflowResourceStatus, workflowResourceStatusLabel } from "./status";
 
-export function WorkflowResourceDialog({ resource, overview, onClose, onChanged, onOpenDeploymentManifests }: { resource: WorkflowResource; overview: Overview; onClose: () => void; onChanged: () => Promise<void>; onOpenDeploymentManifests: (deploymentID: string) => void }) {
+export function WorkflowResourceDialog({ resource, overview, onClose, onChanged, onOpenDeploymentManifests, initialRevisionID }:  { resource: WorkflowResource; overview: Overview; initialRevisionID?: string; onClose: () => void; onChanged: () => Promise<void>; onOpenDeploymentManifests: (deploymentID: string) => void }) {
   const dialogRef = useDialogFocus(onClose);
   const revisions = (overview.workflowRevisions ?? []).filter((item) => item.resourceId === resource.id).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  const [revisionID, setRevisionID] = useState(revisions[0]?.id ?? "");
+  const [revisionID, setRevisionID] = useState(initialRevisionID ?? revisions[0]?.id ?? "");
   const [jobs, setJobs] = useState<WorkflowJobResult[]>([]);
   const [stages, setStages] = useState<WorkflowStageRun[]>([]);
   const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
@@ -19,7 +19,8 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const [runLoading, setRunLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const revision = revisions.find((item) => item.id === revisionID);
+  const [liveRevision,setLiveRevision]=useState<WorkflowRevision>();
+  const revision = liveRevision?.id===revisionID ? liveRevision : revisions.find((item) => item.id === revisionID);
   const source = (overview.configSources ?? []).find((item) => item.id === resource.configSourceId);
   const canConfigure = Boolean(source && canManageProject(overview, source.projectId, "project.configure"));
   const canRun = Boolean(source && canManageProject(overview, source.projectId, "deployment.run"));
@@ -29,6 +30,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
 
   useEffect(() => {
     let active = true;
+    setLiveRevision(undefined);
     setJobs([]);
     setStages([]);
     setSelectedJobID("");
@@ -38,8 +40,9 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const [nextJobs, nextStages] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID)]);
+        const [nextJobs, nextStages, nextRevision] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID), initialRevisionID ? api.workflowRevision(revisionID) : Promise.resolve(undefined)]);
         if (active) {
+          setLiveRevision(nextRevision);
           setJobs(nextJobs);
           setStages(nextStages);
           setSelectedJobID(current => current || nextJobs.find(job => job.state === "failed")?.id || nextJobs[0]?.id || "");
@@ -56,7 +59,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     }
     void refresh();
     return () => { active = false; clearTimeout(timer); };
-  }, [revisionID]);
+  }, [revisionID,initialRevisionID]);
 
   async function copyJobLog(job: WorkflowJobResult) {
     await navigator.clipboard.writeText(job.log || job.error || "");

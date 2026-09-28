@@ -15,8 +15,22 @@ func (a *API) processWorkflowPreviewTestComment(ctx context.Context, target *pre
 			continue
 		}
 		reserved, err := a.store.ReserveWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID)
-		if err != nil || !reserved {
+		if err != nil {
 			return err
+		}
+		if !reserved {
+			revisionID, err := a.store.WorkflowPreviewCommentRevision(ctx, trigger.ID, event.SourceCommentID)
+			if err != nil {
+				return err
+			}
+			if revisionID == "" {
+				return nil
+			}
+			resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+			if err != nil {
+				return err
+			}
+			return a.workflowPreviewRunActivity(ctx, target, event, trigger, resource, revisionID)
 		}
 		if strings.TrimSpace(event.Arguments) != "test" {
 			return a.previewTestStartError(ctx, trigger, event.SourceCommentID, "Use `"+trigger.Command+" test` without extra arguments.")
@@ -25,9 +39,17 @@ func (a *API) processWorkflowPreviewTestComment(ctx context.Context, target *pre
 		if err != nil {
 			return a.previewTestStartError(ctx, trigger, event.SourceCommentID, err.Error())
 		}
+		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+		if err != nil {
+			return err
+		}
 		if err := a.store.CompleteWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID, revision.ID); err != nil {
 			return err
 		}
+		if err := a.workflowPreviewRunActivity(ctx, target, event, trigger, resource, revision.ID); err != nil {
+			return err
+		}
+
 		body := fmt.Sprintf("<!-- dispatch-preview-test:%s -->\n### Preview checks running\n\nChecks are running against [the deployed preview](%s). This command does not rebuild or redeploy it.\n", revision.ID, trigger.PreviewURL)
 		commentID, err := a.postPreviewTestReply(ctx, trigger, "", body)
 		if err != nil {

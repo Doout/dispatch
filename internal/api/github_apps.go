@@ -748,17 +748,21 @@ func (a *API) processGitHubWebhook(w http.ResponseWriter, r *http.Request, secre
 	}
 	event.ProviderConnectionID = connectionID
 	event.DeliveryID = events.CommentDeliveryID(event)
-	groupRuns, err := groupService.Process(r.Context(), event)
-	if err != nil {
-		problem(w, http.StatusUnprocessableEntity, "Preview group event rejected", err.Error())
-		return
-	}
-	result, err := eventService.Process(r.Context(), event)
-	if err != nil {
+	target := &previewPollTarget{connectionID: connectionID, repository: events.NormalizeRepository(event.Repository), transport: "webhook"}
+	if err := a.previewDeliveryActivity(r.Context(), target, event, "running", nil); err != nil {
 		a.internal(w, err)
 		return
 	}
-	result.PreviewGroupRuns = groupRuns
+	result, err := a.consumeGitHubPreviewEvent(r.Context(), event, groupService, eventService)
+	state := "processed"
+	if err != nil {
+		state = "failed"
+	}
+	err = errors.Join(err, a.previewDeliveryActivity(r.Context(), target, event, state, err))
+	if err != nil {
+		problem(w, http.StatusUnprocessableEntity, "Preview event rejected", err.Error())
+		return
+	}
 	status := http.StatusAccepted
 	if result.Duplicate {
 		status = http.StatusOK

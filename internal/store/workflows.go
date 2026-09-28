@@ -216,19 +216,59 @@ func scanWorkflowResource(row scanner) (core.WorkflowResource, error) {
 }
 
 func (s *SQLStore) CreateWorkflowEvent(ctx context.Context, item core.WorkflowEvent) (bool, error) {
-	result, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_events(id,config_source_id,provider,delivery_id,kind,repository,branch,commit_sha,state,error,created_at,processed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(config_source_id,provider,delivery_id) DO NOTHING`),
-		item.ID, item.ConfigSourceID, item.Provider, item.DeliveryID, item.Kind, item.Repository, item.Branch, item.CommitSHA,
-		item.State, item.Error, stamp(item.CreatedAt), nullTime(item.ProcessedAt))
+	source, err := s.GetConfigSource(ctx, item.ConfigSourceID)
+	if err != nil {
+		return false, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, s.q(`INSERT INTO workflow_events(id,config_source_id,provider,delivery_id,kind,repository,branch,commit_sha,state,error,created_at,processed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(config_source_id,provider,delivery_id) DO NOTHING`), item.ID, item.ConfigSourceID, item.Provider, item.DeliveryID, item.Kind, item.Repository, item.Branch, item.CommitSHA, item.State, item.Error, stamp(item.CreatedAt), nullTime(item.ProcessedAt))
 	if err != nil {
 		return false, err
 	}
 	count, err := result.RowsAffected()
-	return count > 0, err
+	if err != nil {
+		return false, err
+	}
+	if count > 0 {
+		if err := s.saveEventActivity(ctx, tx, "workflow-event:"+item.ID, workflowEventActivity(item, source)); err != nil {
+			return false, err
+		}
+	}
+	return count > 0, tx.Commit()
 }
 
 func (s *SQLStore) UpdateWorkflowEvent(ctx context.Context, item core.WorkflowEvent) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_events SET state=?,error=?,processed_at=? WHERE id=?`), item.State, item.Error, nullTime(item.ProcessedAt), item.ID)
-	return changed(result, err)
+	source, err := s.GetConfigSource(ctx, item.ConfigSourceID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_events SET state=?,error=?,processed_at=? WHERE id=?`), item.State, item.Error, nullTime(item.ProcessedAt), item.ID)
+	if err := changed(result, err); err != nil {
+		return err
+	}
+	if err := s.saveEventActivity(ctx, tx, "workflow-event:"+item.ID, workflowEventActivity(item, source)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func workflowEventActivity(item core.WorkflowEvent, source core.ConfigSource) core.EventActivity {
+	transport := "webhook"
+	if item.Provider == "poll" {
+		transport = "poll"
+	}
+	return core.EventActivity{ID: item.ID, ProjectID: source.ProjectID, RuleID: "configuration:" + source.ID, Name: source.Name, Transport: transport,
+		Kind: item.Kind, Repository: item.Repository, Branch: item.Branch, CommitSHA: item.CommitSHA, State: item.State, Message: item.Error,
+		ResourceID: item.ResourceID, RevisionIDs: item.RevisionIDs, CreatedAt: item.CreatedAt}
 }
 
 func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.WorkflowRevision) error {

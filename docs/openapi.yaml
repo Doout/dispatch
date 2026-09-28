@@ -2741,6 +2741,66 @@ paths:
       responses:
         "201": { description: Event trigger created. }
         "400": { $ref: "#/components/responses/Problem" }
+  /events/rules:
+    get:
+      operationId: listEventRules
+      description: List visible repository polling and preview rules with watched repositories and latest polling checks.
+      responses:
+        '200':
+          description: Visible event rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, name, kind, repositories, mode, enabled]
+                  properties:
+                    id: {type: string}
+                    name: {type: string}
+                    kind: {type: string}
+                    repositories: {type: array, items: {type: string}}
+                    command: {type: string}
+                    branch: {type: string}
+                    mode: {type: string, enum: [poll, webhook, webhook_poll]}
+                    intervalSeconds: {type: integer}
+                    enabled: {type: boolean}
+                    error: {type: string}
+                    check:
+                      $ref: '#/components/schemas/EventActivity'
+        '401':
+          $ref: '#/components/responses/Problem'
+  /events/activity:
+    get:
+      operationId: listEventActivity
+      description: Delivery history for visible projects. Project access and transport filtering apply before counting and pagination. Routine successful checks are shown on rules; failures and recovery appear in history.
+      parameters:
+      - name: transport
+        in: query
+        schema: {type: string, enum: [poll, webhook, history]}
+      - name: before
+        in: query
+        description: The next cursor returned by the preceding page, with the same filter.
+        schema: {type: string}
+      responses:
+        '200':
+          description: Event activity page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EventActivity'
+                  total: {type: integer}
+                  next: {type: string}
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
   /event-triggers:
     get:
       operationId: listEventTriggers
@@ -3020,6 +3080,30 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    EventActivity:
+      type: object
+      description: Delivery metadata without raw payloads or credentials. Processed describes event handling, not the outcome of the linked run.
+      required: [id, projectId, ruleId, name, transport, kind, repository, state, createdAt]
+      properties:
+        id: {type: string}
+        projectId: {type: string}
+        ruleId: {type: string}
+        name: {type: string}
+        transport: {type: string, enum: [poll, webhook, history]}
+        kind: {type: string}
+        repository: {type: string}
+        branch: {type: string}
+        commitSha: {type: string}
+        pullRequest: {type: integer}
+        command: {type: string}
+        state: {type: string}
+        message: {type: string}
+        resourceId: {type: string}
+        revisionIds: {type: array, items: {type: string}}
+        previewUrl: {type: string}
+        createdAt: {type: string, format: date-time}
+        check: {type: boolean}
+
     AnalyticsCounts:
       type: object
       required: [runs, succeeded, failed, cancelled, reused, durationSeconds, durationSamples, successRate, meanDurationSeconds, medianDurationSeconds, p95DurationSeconds]

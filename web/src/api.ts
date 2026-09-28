@@ -343,6 +343,20 @@ export type DeploymentLog = {
   message: string;
   createdAt: string;
 };
+export type EventActivity = {
+ id: string; projectId: string; ruleId: string; name: string;
+ transport: "poll" | "webhook" | "history"; kind: string; repository: string;
+ branch?: string; commitSha?: string; pullRequest?: number; command?: string;
+ state: string; message?: string; resourceId?: string; revisionIds?: string[];
+ previewUrl?: string; createdAt: string; check?: boolean;
+};
+export type EventRule = {
+ canEditHooks?: boolean;
+ id: string; name: string; kind: "configuration" | "template" | "preview" | "trigger" | "group";
+ repositories: string[]; command?: string; branch?: string; mode: string;
+ intervalSeconds?: number; enabled: boolean; pullRequest?: number; error?: string; check?: EventActivity;
+};
+export type EventActivityPage = { items: EventActivity[]; next?: string; total: number };
 export type ConfigSource = {
   id: string;
   projectId: string;
@@ -873,6 +887,9 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+ workflowRevision: (id: string) => request<WorkflowRevision>(`/api/v1/workflow/revisions/${id}`),
+ eventRules: () => request<EventRule[]>("/api/v1/events/rules"),
+ eventActivity: (transport = "", before = "") => request<EventActivityPage>(`/api/v1/events/activity?${new URLSearchParams({transport,before})}`),
  applicationSync: (id: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/sync`),
  checkApplicationDrift: (id: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/drift/check`,{method:"POST"}),
  reapplyApplication: (id: string,deploymentId: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/reapply`,{method:"POST",body:JSON.stringify({deploymentId})}),

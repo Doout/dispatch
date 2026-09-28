@@ -14,6 +14,11 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	SaveEventActivity(context.Context, string, core.EventActivity) error
+	SavePollCheck(context.Context, string, core.EventActivity) error
+	CountEventActivity(context.Context, core.EventActivitySearch) (int, error)
+	SearchEventActivity(context.Context, core.EventActivitySearch) ([]core.EventActivity, error)
+
 	GetControllerSettings(context.Context) (core.ControllerSettings, error)
 	SaveControllerSettings(context.Context, core.ControllerSettings) error
 	SearchDeploymentHistory(context.Context, core.DeploymentSearch) ([]core.Deployment, error)
@@ -144,6 +149,7 @@ type Store interface {
 	PendingWorkflowPreviewReports(context.Context, string) ([]string, error)
 	CloseWorkflowPreviewTrigger(context.Context, string, time.Time) error
 	ReserveWorkflowPreviewComment(context.Context, string, string) (bool, error)
+	WorkflowPreviewCommentRevision(context.Context, string, string) (string, error)
 	CompleteWorkflowPreviewComment(context.Context, string, string, string) error
 	UpdateWorkflowPreviewTestComment(context.Context, string, string, string) error
 	WorkflowPreviewTestComment(context.Context, string) (string, error)

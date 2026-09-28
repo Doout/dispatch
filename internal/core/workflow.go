@@ -160,6 +160,8 @@ type WorkflowStageRun struct {
 }
 
 type WorkflowEvent struct {
+	ResourceID     string     `json:"resourceId,omitempty"`
+	RevisionIDs    []string   `json:"revisionIds,omitempty"`
 	ID             string     `json:"id"`
 	ConfigSourceID string     `json:"configSourceId"`
 	Provider       string     `json:"provider"`

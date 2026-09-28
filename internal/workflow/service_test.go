@@ -369,6 +369,14 @@ spec:
 		t.Fatalf("source-only change reloaded configuration content; tree reads=%d", treeReads.Load())
 	}
 
+	activity, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{source.ProjectID}})
+	if err != nil || len(activity) != 1 || activity[0].Transport != "poll" || activity[0].ResourceID != resource.ID || len(activity[0].RevisionIDs) != 1 || activity[0].RevisionIDs[0] != revisions[0].ID {
+		t.Fatalf("poll did not record its accepted run: %+v %v", activity, err)
+	}
+	checks, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{source.ProjectID}, ChecksOnly: true})
+	if err != nil || len(checks) != 1 || checks[0].State != "processed" {
+		t.Fatalf("poll health missing: %+v %v", checks, err)
+	}
 	initialDigest := resource.SpecDigest
 	configVersion.Store(2)
 	makePollDue(t, ctx, data, source.ID)
