@@ -34,7 +34,7 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 			return data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "resource", ConfigSourceID: "config", Kind: "Application", Name: "preview-42", Temporary: true, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now})
 		},
 		func() error {
-			return data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "resource", GitHubAppID: "github", Repository: "Example/service", PullRequestNumber: 42, Command: "/preview", PreviewURL: "https://old.example.test", LinkedPullRequests: map[string]int{"ui": 84}, CreatedAt: now})
+			return data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "resource", GitHubAppID: "github", Repository: "Example/service", PullRequestNumber: 42, Command: "/preview", PreviewURL: "https://old.example.test", LinkedPullRequests: map[string]int{"ui": 84}, SourceDefaults: map[string]core.WorkflowPreviewSourceDefault{"ui": {Repository: "Example/ui", Branch: "develop"}}, CreatedAt: now})
 		},
 	} {
 		if err := create(); err != nil {
@@ -51,6 +51,9 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	items, err := data.ListWorkflowPreviewTriggers(ctx)
 	if err != nil || len(items) != 1 || items[0].Command != "/ship" || !items[0].AutoDeploy || items[0].MaxAutoRunsPerHour != 3 || items[0].PreviewURL != trigger.PreviewURL || items[0].ReportCommentID != "12345" || items[0].LinkedPullRequests["ui"] != 84 {
 		t.Fatalf("editing the same PR lost comment state: %+v, %v", items, err)
+	}
+	if items[0].SourceDefaults["ui"].Branch != "develop" {
+		t.Fatal("source defaults did not survive persistence and editing")
 	}
 	trigger.PullRequestNumber = 1500
 	if err := data.UpdateWorkflowPreviewTrigger(ctx, trigger); err != nil {
@@ -100,5 +103,31 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	pending, err = data.PendingWorkflowPreviewReports(ctx, "trigger")
 	if err != nil || len(pending) != 3 || pending[2] != "cancelled-test" {
 		t.Fatalf("cancelled on-demand test was not ready for reporting: %v, %v", pending, err)
+	}
+	resource, err := data.GetWorkflowResource(ctx, "resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource.Document, resource.SpecDigest = "restored-document", "restored-digest"
+	trigger.LinkedPullRequests = map[string]int{"worker": 5}
+	trigger.SourceDefaults = map[string]core.WorkflowPreviewSourceDefault{"ui": {Repository: "Example/ui", Branch: "release"}}
+	if err := data.SaveWorkflowPreviewSources(ctx, resource, trigger); err != nil {
+		t.Fatal(err)
+	}
+	items, err = data.ListWorkflowPreviewTriggers(ctx)
+	if err != nil || items[0].LinkedPullRequests["worker"] != 5 || items[0].SourceDefaults["ui"].Branch != "release" {
+		t.Fatalf("source defaults and links did not persist together: %+v, %v", items, err)
+	}
+	resource.Active = false
+	if err := data.UpdateWorkflowResource(ctx, resource); err != nil {
+		t.Fatal(err)
+	}
+	trigger.LinkedPullRequests = map[string]int{"ui": 99}
+	if err := data.SaveWorkflowPreviewSources(ctx, resource, trigger); err == nil {
+		t.Fatal("updated sources on an inactive preview")
+	}
+	items, err = data.ListWorkflowPreviewTriggers(ctx)
+	if err != nil || items[0].LinkedPullRequests["worker"] != 5 || items[0].LinkedPullRequests["ui"] != 0 {
+		t.Fatalf("failed resource update did not roll back links: %+v, %v", items, err)
 	}
 }

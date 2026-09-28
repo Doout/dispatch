@@ -1123,3 +1123,6 @@ CREATE TABLE workflow_feedback_leases (
  holder TEXT NOT NULL,
  lease_until TEXT NOT NULL
 );
+
+-- dispatch:migration 065_preview_source_defaults
+ALTER TABLE workflow_preview_triggers ADD COLUMN source_defaults TEXT NOT NULL DEFAULT '{}';

@@ -74,6 +74,10 @@ func (a *API) previewDeliveryActivity(ctx context.Context, target *previewPollTa
 }
 
 func (a *API) workflowPreviewRunActivity(ctx context.Context, target *previewPollTarget, event core.IncomingEvent, trigger core.WorkflowPreviewTrigger, resource core.WorkflowResource, revisionID string) error {
+	return a.workflowPreviewActivity(ctx, target, event, trigger, resource, revisionID, "running", "")
+}
+
+func (a *API) workflowPreviewActivity(ctx context.Context, target *previewPollTarget, event core.IncomingEvent, trigger core.WorkflowPreviewTrigger, resource core.WorkflowResource, revisionID, state, message string) error {
 	source, err := a.store.GetConfigSource(ctx, resource.ConfigSourceID)
 	if err != nil {
 		return err
@@ -94,7 +98,10 @@ func (a *API) workflowPreviewRunActivity(ctx context.Context, target *previewPol
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
 		kind = "preview_test"
 	}
-	item := core.EventActivity{ID: ulid.Make().String(), ProjectID: source.ProjectID, RuleID: ruleID, Name: name, Transport: transport, Kind: kind, Repository: target.repository, PullRequest: event.PullRequestNumber, Command: event.Command, CommitSHA: event.HeadSHA, State: "running", ResourceID: resource.ID, RevisionIDs: []string{revisionID}, PreviewURL: trigger.PreviewURL, CreatedAt: time.Now().UTC()}
+	item := core.EventActivity{ID: ulid.Make().String(), ProjectID: source.ProjectID, RuleID: ruleID, Name: name, Transport: transport, Kind: kind, Repository: target.repository, PullRequest: event.PullRequestNumber, Command: event.Command, CommitSHA: event.HeadSHA, State: state, Message: message, ResourceID: resource.ID, PreviewURL: trigger.PreviewURL, CreatedAt: time.Now().UTC()}
+	if revisionID != "" {
+		item.RevisionIDs = []string{revisionID}
+	}
 	return a.store.SaveEventActivity(ctx, previewDeliveryKey(event, ruleID), item)
 }
 

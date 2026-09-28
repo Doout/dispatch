@@ -186,8 +186,9 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 		}
 		triggerID := "trigger" + templateID
 		revisionID := "revision" + templateID
-		must(data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: triggerID, TemplateID: templateID, ResourceID: "workflow", GitHubAppID: "github", Repository: "team/ui", PullRequestNumber: number, Command: "/preview", CreatedAt: now}))
-		_, err := data.db.ExecContext(ctx, `INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at) VALUES(?,?,'','','succeeded',?,'{}','{}','',?)`, revisionID, "workflow", "pull request comment "+triggerID, stamp(now))
+		_, err := data.db.ExecContext(ctx, `INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,template_id,created_at) VALUES(?,?,'github','team/ui',?,'/preview',?,?)`, triggerID, "workflow", number, nullString(templateID), stamp(now))
+		must(err)
+		_, err = data.db.ExecContext(ctx, `INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at) VALUES(?,?,'','','succeeded',?,'{}','{}','',?)`, revisionID, "workflow", "pull request comment "+triggerID, stamp(now))
 		must(err)
 		reserved, err := data.ReserveWorkflowPreviewComment(ctx, triggerID, triggerID)
 		must(err)
@@ -197,6 +198,11 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 		must(data.CompleteWorkflowPreviewComment(ctx, triggerID, triggerID, revisionID))
 	}
 	must(data.Migrate(ctx))
+	triggers, err := data.ListWorkflowPreviewTriggers(ctx)
+	must(err)
+	if len(triggers) != 2 || len(triggers[0].SourceDefaults) != 0 || len(triggers[1].SourceDefaults) != 0 {
+		t.Fatal("upgrade did not preserve legacy preview triggers", triggers)
+	}
 	for _, templateID := range []string{"", "template"} {
 		triggerID := "trigger" + templateID
 		ruleID := "preview:" + triggerID

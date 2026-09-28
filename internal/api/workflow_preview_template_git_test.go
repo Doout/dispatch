@@ -54,6 +54,7 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 	revision.Store(1)
 	var failRead atomic.Bool
 	var uiRevision atomic.Int32
+	var uiClosed atomic.Bool
 	uiRevision.Store(1)
 	validDocument := "apiVersion: dispatch/v1alpha1\nkind: WorkflowTemplate\nmetadata:\n  name: preview-{{ instance.id }}\nspec:\n  triggers:\n    pullRequestComment:\n      sources: [service, ui]\n      command: /preview\n  sources:\n    service:\n      repository: example/service\n      ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    ui:\n      repository: example/ui\n      branch: main\n"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +73,17 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 			if strings.HasSuffix(r.URL.Path, "/85") {
 				sha = strings.Repeat("f", 40)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": "open", "head": map[string]string{"ref": "ui-feature", "sha": sha}, "base": map[string]string{"ref": "main"}})
+			state := "open"
+			if uiClosed.Load() {
+				state = "closed"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "head": map[string]string{"ref": "ui-feature", "sha": sha}, "base": map[string]string{"ref": "main"}})
+		case r.URL.Path == "/repos/example/service/issues/comments":
+			comments := []map[string]any{}
+			for i, body := range []string{"/preview", "/preview without ui"} {
+				comments = append(comments, map[string]any{"id": 107 + i, "body": body, "issue_url": "https://github.example/repos/example/service/issues/42", "author_association": "MEMBER", "created_at": time.Now().Add(-time.Minute).UTC(), "user": map[string]string{"login": "operator"}})
+			}
+			_ = json.NewEncoder(w).Encode(comments)
 		case strings.Contains(r.URL.Path, "/statuses/"):
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{}`))
@@ -144,6 +155,10 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 			t.Fatalf("watching dependency comments: %s", target.repository)
 		}
 	}
+	missingTarget := &previewPollTarget{connectionID: "github", repository: template.Repository, workflowTemplates: []core.WorkflowPreviewTemplate{template}}
+	if err := a.processWorkflowPreviewComment(ctx, missingTarget, core.IncomingEvent{Command: "/preview", Arguments: "without ui", PullRequestNumber: 11}, events.GitHubResolver{}); err == nil {
+		t.Fatal("unlink created an instance before the preview existed")
+	}
 	ignored := &previewPollTarget{connectionID: "github", repository: "example/devops", workflowTemplates: []core.WorkflowPreviewTemplate{template}}
 	if err := a.processWorkflowPreviewComment(ctx, ignored, core.IncomingEvent{Command: "/preview", PullRequestNumber: 11}, events.GitHubResolver{}); err != nil {
 		t.Fatal(err)
@@ -167,7 +182,7 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 	}
 	resolver := events.GitHubResolver{BaseURL: server.URL, Client: server.Client()}
 	target := &previewPollTarget{connectionID: "github", repository: template.Repository, workflowTemplates: []core.WorkflowPreviewTemplate{template}}
-	event := core.IncomingEvent{Repository: template.Repository, PullRequestNumber: 42, Command: "/preview", SourceCommentID: "comment-1", Arguments: "with ui=#84", HeadSHA: strings.Repeat("a", 40), TrustedActor: true}
+	event := core.IncomingEvent{Repository: template.Repository, PullRequestNumber: 42, Command: "/preview", SourceCommentID: "101", Arguments: "with ui=#84", HeadSHA: strings.Repeat("a", 40), TrustedActor: true}
 	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err == nil {
 		t.Fatal("new preview was created from a template with a sync error")
 	}
@@ -221,10 +236,13 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 	if initialRuns[0].Sources["ui"].CommitSHA != strings.Repeat("d", 40) {
 		t.Fatal("linked UI PR was not pinned")
 	}
+	if target.workflowTriggers[0].SourceDefaults["ui"].Branch != "main" {
+		t.Fatal("template instance did not retain its UI default branch")
+	}
 	initialID := initialRuns[0].ID
 	// A bare command keeps the link and resolves the UI PR's latest head.
 	uiRevision.Store(2)
-	event.SourceCommentID, event.Arguments = "comment-2", ""
+	event.SourceCommentID, event.Arguments = "102", ""
 	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +257,7 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 		}
 	}
 	// A later comment changes the link on the same instance.
-	event.SourceCommentID, event.Arguments = "comment-3", "with ui=#85"
+	event.SourceCommentID, event.Arguments = "103", "with ui=#85"
 	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +282,105 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 	if recovered.Document != strings.ReplaceAll(validDocument, "name: preview-", "name: updated-") {
 		t.Fatal("PR overrides changed the reusable definition")
 	}
+	// Simulate an instance created before source-default capture. Unlinking
+	// must recover the template's branch, not keep the pinned UI PR commit.
+	legacyResource, err := data.GetWorkflowResource(ctx, resources[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.workflowTriggers[0].SourceDefaults = nil
+	if err := data.SaveWorkflowPreviewSources(ctx, legacyResource, target.workflowTriggers[0]); err != nil {
+		t.Fatal(err)
+	}
+	event.SourceCommentID, event.Arguments = "104", "without ui=#85"
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	runs = waitForRuns(4)
+	unlinkedID, err := data.WorkflowPreviewCommentRevision(ctx, target.workflowTriggers[0].ID, event.SourceCommentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlinked, err := data.GetWorkflowRevision(ctx, unlinkedID)
+	if err != nil || unlinked.Sources["ui"].CommitSHA != strings.Repeat("b", 40) || unlinked.Sources["ui"].Branch != "main" {
+		t.Fatalf("unlink did not deploy the default UI branch: %+v, %v", unlinked.Sources, err)
+	}
+	for _, pr := range unlinked.PullRequests {
+		if pr.Repository == "example/ui" {
+			t.Fatal("unlinked UI PR remained a QA feedback target")
+		}
+	}
+	updatedTriggers, err = data.ListWorkflowPreviewTriggers(ctx)
+	if err != nil || updatedTriggers[0].LinkedPullRequests["ui"] != 0 || updatedTriggers[0].SourceDefaults["ui"].Branch != "main" {
+		t.Fatalf("unlink or recovered default was not persisted: %+v, %v", updatedTriggers, err)
+	}
+	// The same delivery does not redeploy. A new bare command stays on main.
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(4)
+	event.SourceCommentID, event.Arguments = "105", ""
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(5)
+	bareID, err := data.WorkflowPreviewCommentRevision(ctx, target.workflowTriggers[0].ID, event.SourceCommentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, err := data.GetWorkflowRevision(ctx, bareID)
+	if err != nil || bare.Sources["ui"].CommitSHA != strings.Repeat("b", 40) {
+		t.Fatal("bare command reattached the unlinked UI PR", err)
+	}
+	event.SourceCommentID, event.Arguments = "106", "with ui=#84"
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(6)
+	// An already processed conditional unlink cannot remove a newer link or
+	// fail its old PR-number guard when polling redelivers the comment.
+	event.SourceCommentID, event.Arguments = "104", "without ui=#85"
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(6)
+	updatedTriggers, err = data.ListWorkflowPreviewTriggers(ctx)
+	if err != nil || updatedTriggers[0].LinkedPullRequests["ui"] != 84 {
+		t.Fatal("replayed unlink changed a newer PR link", err)
+	}
+	// Polling reaches a corrective unlink after an earlier command fails on
+	// a closed linked PR. The next scan supersedes that older failed command.
+	uiClosed.Store(true)
+	pollTarget := &previewPollTarget{connectionID: "github", repository: "example/service", commands: map[string]bool{"/preview": true}, activePRs: map[int]bool{42: true}, workflowTriggers: target.workflowTriggers}
+	pollTarget.workflowTriggers[0].PreviewURL = "" // This test verifies polling, not notification delivery.
+	if err := a.scanPreviewTarget(ctx, pollTarget); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("failed command should remain visible and retryable: %v", err)
+	}
+	waitForRuns(7)
+	if cursor, err := data.PreviewPollCursor(ctx, "github", "example/service"); err != nil || cursor != nil {
+		t.Fatal("a failed scan advanced the cursor", err)
+	}
+	if err := a.scanPreviewTarget(ctx, pollTarget); err != nil {
+		t.Fatalf("corrective unlink did not unblock polling: %v", err)
+	}
+	waitForRuns(7)
+	if cursor, err := data.PreviewPollCursor(ctx, "github", "example/service"); err != nil || cursor == nil {
+		t.Fatal("recovered scan did not advance the cursor", err)
+	}
+	history, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundSuperseded := false
+	for _, item := range history {
+		if item.State == "superseded" && strings.Contains(item.Message, "newer preview comment") && len(item.RevisionIDs) == 0 {
+			foundSuperseded = true
+		}
+	}
+	if !foundSuperseded {
+		t.Fatal("older failed command was not recorded as superseded", history)
+	}
+	uiClosed.Store(false)
 	// A UI comment can be the primary trigger too. The same PR number gets
 	// its own instance ID while linking the existing service PR as a source.
 	uiTarget := &previewPollTarget{connectionID: "github", repository: "example/ui", workflowTemplates: []core.WorkflowPreviewTemplate{template}}

@@ -146,6 +146,8 @@ type Store interface {
 	UpdateWorkflowPreviewTriggerURL(context.Context, string, string) error
 	UpdateWorkflowPreviewTriggerComment(context.Context, string, string) error
 	UpdateWorkflowPreviewTriggerLinks(context.Context, string, map[string]int) error
+	SaveWorkflowPreviewSources(context.Context, core.WorkflowResource, core.WorkflowPreviewTrigger) error
+	LatestWorkflowPreviewDeployComment(context.Context, string) (string, error)
 	PendingWorkflowPreviewReports(context.Context, string) ([]string, error)
 	CloseWorkflowPreviewTrigger(context.Context, string, time.Time) error
 	ReserveWorkflowPreviewComment(context.Context, string, string) (bool, error)

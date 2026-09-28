@@ -458,6 +458,11 @@ func (a *API) createWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Reques
 	item := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), ResourceID: resource.ID, GitHubAppID: input.GitHubAppID,
 		Repository: input.Repository, PullRequestNumber: input.PullRequestNumber, Command: input.Command, PreviewURL: input.PreviewURL,
 		AutoDeploy: input.AutoDeploy, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour, CreatedAt: time.Now().UTC()}
+	item.SourceDefaults, err = workflowPreviewDefaults(resource.Document)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
 	if err := a.store.CreateWorkflowPreviewTrigger(r.Context(), item); err != nil {
 		a.internal(w, err)
 		return

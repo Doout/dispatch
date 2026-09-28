@@ -11,13 +11,13 @@ import (
 )
 
 func (s *SQLStore) CreateWorkflowPreviewTrigger(ctx context.Context, item core.WorkflowPreviewTrigger) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour)
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour, jsonText(item.SourceDefaults))
 	return err
 }
 
 func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.WorkflowPreviewTrigger, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,report_comment_id,linked_pull_requests,template_id,created_at,closed_at,template_source,auto_deploy,max_auto_runs_per_hour FROM workflow_preview_triggers ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,report_comment_id,linked_pull_requests,template_id,created_at,closed_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults FROM workflow_preview_triggers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -28,8 +28,8 @@ func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.Work
 		var created string
 		var closed sql.NullString
 		var templateID sql.NullString
-		var linked, templateSource string
-		if err := rows.Scan(&item.ID, &item.ResourceID, &item.GitHubAppID, &item.Repository, &item.PullRequestNumber, &item.Command, &item.PreviewURL, &item.ReportCommentID, &linked, &templateID, &created, &closed, &templateSource, &item.AutoDeploy, &item.MaxAutoRunsPerHour); err != nil {
+		var linked, templateSource, defaults string
+		if err := rows.Scan(&item.ID, &item.ResourceID, &item.GitHubAppID, &item.Repository, &item.PullRequestNumber, &item.Command, &item.PreviewURL, &item.ReportCommentID, &linked, &templateID, &created, &closed, &templateSource, &item.AutoDeploy, &item.MaxAutoRunsPerHour, &defaults); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(templateSource), &item.TemplateSource); err != nil {
@@ -37,6 +37,9 @@ func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.Work
 		}
 		item.TemplateID = templateID.String
 		if err := json.Unmarshal([]byte(linked), &item.LinkedPullRequests); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(defaults), &item.SourceDefaults); err != nil {
 			return nil, err
 		}
 		item.CreatedAt = parseTime(created)
@@ -58,6 +61,38 @@ func (s *SQLStore) UpdateWorkflowPreviewTrigger(ctx context.Context, item core.W
 func (s *SQLStore) UpdateWorkflowPreviewTriggerLinks(ctx context.Context, id string, links map[string]int) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET linked_pull_requests=? WHERE id=? AND closed_at IS NULL`), jsonText(links), id)
 	return changed(result, err)
+}
+
+// SaveWorkflowPreviewSources updates the pinned definition and its link state
+// together, so a retry cannot lose the source's original reference.
+func (s *SQLStore) SaveWorkflowPreviewSources(ctx context.Context, resource core.WorkflowResource, trigger core.WorkflowPreviewTrigger) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET linked_pull_requests=?,source_defaults=? WHERE id=? AND resource_id=? AND closed_at IS NULL`), jsonText(trigger.LinkedPullRequests), jsonText(trigger.SourceDefaults), trigger.ID, resource.ID)
+	if err := changed(result, err); err != nil {
+		return err
+	}
+	result, err = tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET document=?,spec_digest=?,updated_at=? WHERE id=? AND temporary=TRUE AND active=TRUE`), resource.Document, resource.SpecDigest, stamp(resource.UpdatedAt), resource.ID)
+	if err := changed(result, err); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLStore) LatestWorkflowPreviewDeployComment(ctx context.Context, triggerID string) (string, error) {
+	var id string
+	// GitHub comment IDs are positive decimal numbers. Length then lexical
+	// order compares them without database-specific integer casts.
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT c.comment_id FROM workflow_preview_comments c JOIN workflow_revisions r ON r.id=c.revision_id
+		WHERE c.trigger_id=? AND r.trigger_name LIKE 'pull request comment %'
+		ORDER BY length(c.comment_id) DESC,c.comment_id DESC LIMIT 1`), triggerID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 func (s *SQLStore) UpdateWorkflowPreviewTriggerURL(ctx context.Context, id, previewURL string) error {
