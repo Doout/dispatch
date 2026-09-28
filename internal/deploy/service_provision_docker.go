@@ -149,7 +149,7 @@ func (e DockerExecutor) Provision(ctx context.Context, req core.ServiceProvision
 			return nil, errors.New("Docker returned an invalid container status")
 		}
 		if state.Status == "exited" || state.Status == "dead" || state.Health != nil && state.Health.Status == "unhealthy" {
-			return nil, errors.New("service container failed its readiness check; inspect its logs on the Docker server")
+			return nil, errors.New("service container failed its readiness check; check the image and settings on the Docker server. Its data volume was retained")
 		}
 		if state.Status == "running" && state.Health != nil && state.Health.Status == "healthy" {
 			ready = true

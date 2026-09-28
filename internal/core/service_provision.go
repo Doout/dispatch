@@ -30,6 +30,7 @@ type ServiceProvisionTarget struct {
 	ServerID     string `json:"serverId"`
 	ResourceName string `json:"resourceName"`
 	Namespace    string `json:"namespace,omitempty"`
+	Network      string `json:"network,omitempty"`
 }
 
 type ServiceProvisionRequest struct {

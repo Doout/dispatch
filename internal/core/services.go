@@ -105,6 +105,7 @@ type ServiceConsumer struct {
 	RedeploymentRequired bool   `json:"redeploymentRequired"`
 }
 type ServiceRuntimeBinding struct {
+	DockerNetwork   string
 	SensitiveValues []string
 	Binding         ServiceBinding
 	Values          map[string]string

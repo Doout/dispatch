@@ -26,7 +26,7 @@ spec:
 
 Dispatch starts `postgres:17-bookworm`, generates a password, creates a labeled persistent volume, and waits for the container's health check. The Service name becomes the database name, and the database user is `dispatch`. Add optional inputs named `database` or `username` to change these per request. The image, `network`, and `storageMountPath` can be configured under `docker`.
 
-The default network is `dispatch-services`. The database publishes no host port; connect applications to this Docker network. The saved host is the unique container name, with port 5432 and `sslmode=disable`. Docker currently requires a local enrolled deployment server. Builder servers run builds and cannot host these services. Each container gets 512 MiB memory and 0.5 CPU.
+The default network is `dispatch-services`. The database publishes no host port; Dispatch automatically joins bound Dockerfile containers and the named Compose services to this network. Existing application networks are preserved. The saved host is the unique container name, with port 5432 and `sslmode=disable`. Docker currently requires a local enrolled deployment server. Builder servers run builds and cannot host these services. Each container gets 512 MiB memory and 0.5 CPU.
 
 The image must support the official PostgreSQL initialization variables. Dispatch sets `PGDATA` explicitly to `/var/lib/postgresql/data/pgdata`; the default volume mounts at `/var/lib/postgresql/data`. See the [official image documentation](https://hub.docker.com/_/postgres) before changing the image or storage layout.
 

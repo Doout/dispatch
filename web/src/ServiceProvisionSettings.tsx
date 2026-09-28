@@ -18,7 +18,7 @@ export function ServiceProvisionSettings({ docker, helm, overview, serviceType, 
    <details className="service-advanced"><summary>Docker settings</summary>
     <label>Image<input placeholder="postgres:17-bookworm" value={docker.image ?? ""} onChange={e => onDocker({ ...docker, image: e.target.value })} /></label>
     <label>Network<input placeholder="dispatch-services" value={docker.network ?? ""} onChange={e => onDocker({ ...docker, network: e.target.value })} /></label>
-    <p className="service-help">Applications connect through this network. The database has no published host port. Defaults are 512 MiB memory and 0.5 CPU.</p>
+    <p className="service-help">Dispatch connects bound Docker applications to this network. The database has no published host port. Defaults are 512 MiB memory and 0.5 CPU.</p>
    </details>
   </> : <>
    <label>Namespace<input placeholder="Server default namespace" value={helm?.namespace ?? ""} onChange={e => onHelm({ ...helm!, namespace: e.target.value })} /></label>

@@ -217,6 +217,7 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 			return err
 		}
 		_ = e.command(ctx, nil, io.Discard, "docker", "rm", "-f", name)
+		networks := dockerServiceNetworks(app.ServiceRuntime)
 		args := []string{"run", "-d", "--name", name, "--label", "dispatch.app=" + app.ID, "--label", "dispatch.deployment=" + deployment.ID}
 		if app.ContainerPort > 0 {
 			args = append(args, "-p", fmt.Sprintf("%d:%d", app.ContainerPort, app.ContainerPort))
@@ -224,9 +225,26 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if serviceEnv != "" {
 			args = append(args, "--env-file", serviceEnv)
 		}
+		if len(networks) > 0 {
+			args = append(args, "--network", networks[0])
+		}
 		args = append(args, image)
+		if len(networks) > 1 {
+			// Attach all bound networks before starting the application's process.
+			args = append([]string{"create"}, args[2:]...)
+		}
 		if err := e.command(ctx, nil, io.Discard, "docker", args...); err != nil {
 			return fmt.Errorf("start container: %w", err)
+		}
+		if len(networks) > 1 {
+			for _, network := range networks[1:] {
+				if err := e.command(ctx, nil, io.Discard, "docker", "network", "connect", network, name); err != nil {
+					return errors.New("cannot attach an application service network")
+				}
+			}
+			if err := e.command(ctx, nil, io.Discard, "docker", "start", name); err != nil {
+				return fmt.Errorf("start container: %w", err)
+			}
 		}
 	}
 	if err := progress(core.DeploymentChecking, "Docker reports the application running"); err != nil {

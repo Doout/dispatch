@@ -63,7 +63,13 @@ func TestBuiltinDockerServiceProvisionEndToEnd(t *testing.T) {
 	}
 	network := "dispatch-test-" + strings.ToLower(ulid.Make().String())
 	var name string
+	var app core.App
 	t.Cleanup(func() {
+		if app.ID != "" {
+			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = (deploy.DockerExecutor{}).Cleanup(cleanup, app, server, func(core.DeploymentState, string) error { return nil })
+		}
 		if name != "" {
 			exec.Command("docker", "rm", "-f", "-v", name).Run()
 			exec.Command("docker", "volume", "rm", name+"-data").Run()
@@ -102,14 +108,49 @@ func TestBuiltinDockerServiceProvisionEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A second container connects over TCP with the actual saved credentials.
-	// Keep credentials out of process arguments and test output.
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--network", network, "-e", "PGHOST", "-e", "PGUSER", "-e", "PGPASSWORD", "-e", "PGDATABASE", deploy.DefaultServiceImage, "psql", "-tAc", "SELECT 1")
-	cmd.Env = append(os.Environ(), "PGHOST="+fields["host"], "PGUSER="+fields["username"], "PGPASSWORD="+fields["password"], "PGDATABASE="+fields["database"])
-	output, err := cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(output)) != "1" {
-		t.Fatal("consumer container failed to connect using saved service fields")
+	// Deploy a bound application. Its network and credentials must be supplied
+	// by Dispatch, without a network setting in the application definition.
+	app = core.App{ID: "provision-consumer-" + strings.ToLower(ulid.Make().String()), ProjectID: projects[0].ID, ServerID: server.ID, Name: "provision-consumer", BuildType: core.BuildTypeCompose, CreatedAt: time.Now().UTC(), ComposeContent: "services:\n  consumer:\n    image: " + deploy.DefaultServiceImage + "\n    command: [sh, -c, 'psql \"$$DATABASE_URL\" -tAc \"SELECT 1\" > /tmp/connected; sleep 300']\n"}
+	if err := a.store.CreateApp(ctx, app); err != nil {
+		t.Fatal(err)
 	}
+	binding := []core.ServiceBinding{{Alias: "db", ServiceRef: item.ID, Compose: map[string]map[string]string{"consumer": {"DATABASE_URL": "connectionUrl"}}}}
+	serviceRequestTest(t, a, "PUT", "/api/v1/apps/"+app.ID+"/service-bindings", binding, 200)
+	runner := deploy.NewService(a.store, deploy.DockerExecutor{})
+	runner.ConfigureServices(a.eventConfig.Vault, nil)
+	deployed, err := runner.Start(ctx, app.ID, "inline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for !deployed.State.Terminal() {
+		select {
+		case <-ctx.Done():
+			_ = runner.Cancel(context.Background(), deployed.ID)
+			t.Fatal("application deployment did not finish")
+		case <-time.After(100 * time.Millisecond):
+		}
+		deployed, err = a.store.GetDeployment(ctx, deployed.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if deployed.State != core.DeploymentSucceeded {
+		t.Fatalf("bound application deployment failed: %s", deployed.Message)
+	}
+	consumer := "dispatch-" + app.ID + "-consumer-1"
+	connected := false
+	for attempt := 0; attempt < 30; attempt++ {
+		output, err := exec.CommandContext(ctx, "docker", "exec", consumer, "cat", "/tmp/connected").CombinedOutput()
+		if err == nil && strings.TrimSpace(string(output)) == "1" {
+			connected = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !connected {
+		t.Fatal("bound application failed to connect with automatically attached service network and credentials")
+	}
+	serviceRequestTest(t, a, "PUT", "/api/v1/apps/"+app.ID+"/service-bindings", []core.ServiceBinding{}, 200)
 	response := serviceRequestTest(t, a, "GET", "/api/v1/services", nil, 200)
 	if strings.Contains(string(response), fields["password"]) {
 		t.Fatal("service response exposed credentials")

@@ -317,6 +317,10 @@ func (a *API) serviceProvisionTarget(ctx context.Context, spec workflow.ServiceT
 	var target core.ServiceProvisionTarget
 	if spec.Provision.Docker != nil {
 		target.Provider, target.ServerID = "docker", spec.Provision.Docker.ServerRef
+		target.Network = spec.Provision.Docker.Network
+		if target.Network == "" {
+			target.Network = deploy.DefaultServiceNetwork
+		}
 	}
 	if spec.Provision.Helm != nil {
 		target.Provider, target.ServerID = "helm", spec.Provision.Helm.ServerRef
