@@ -1617,6 +1617,7 @@ function EventsPage({
   const eventResource = overview.workflowResources?.find(item => item.id === eventRun?.resourceId);
   return <>
     <EventsListPage
+      accessVersion={JSON.stringify([overview.identity, overview.projectPermissions])}
       section={section}
       onSectionChange={onSectionChange}
       onConfigure={onConfigure}

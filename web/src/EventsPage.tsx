@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { ArrowClockwise, Lightning } from "@phosphor-icons/react";
 import {
   api,
@@ -52,7 +52,9 @@ export function EventsListPage({
   canConfigure,
   onEditHooks,
   onOpenRun,
+  accessVersion = "",
 }: {
+  accessVersion?: string;
   section: EventSection;
   onSectionChange: (section: EventSection) => void;
   onConfigure: () => void;
@@ -67,7 +69,11 @@ export function EventsListPage({
   const [transport, setTransport] = useState("");
   const [retry, setRetry] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const feedVersion = useRef(0);
   useEffect(() => {
+    feedVersion.current++;
+    setLoadingMore(false);
+    setRules(undefined);
     let alive = true,
       pending = false;
     setPage(undefined);
@@ -112,16 +118,19 @@ export function EventsListPage({
       void refresh();
     }, 30_000);
     return () => {
+      feedVersion.current++;
       alive = false;
       window.clearInterval(timer);
     };
-  }, [transport, retry]);
+  }, [transport, retry, accessVersion]);
   async function more() {
     if (!page?.next || loadingMore) return;
+    const generation = feedVersion.current;
     setLoadingMore(true);
     setActivityError("");
     try {
       const result = await api.eventActivity(transport, page.next);
+      if (generation !== feedVersion.current) return;
       setPage((old) =>
         old
           ? {
@@ -137,9 +146,10 @@ export function EventsListPage({
           : result,
       );
     } catch (cause) {
-      setActivityError((cause as Error).message);
+      if (generation === feedVersion.current)
+        setActivityError((cause as Error).message);
     } finally {
-      setLoadingMore(false);
+      if (generation === feedVersion.current) setLoadingMore(false);
     }
   }
   return (

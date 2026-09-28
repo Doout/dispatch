@@ -120,3 +120,36 @@ it("shows load failures without claiming zero rules or events, then retries", as
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByText("Agent previews")).toBeTruthy();
 });
+it("discards an older page response after the delivery filter changes", async () => {
+  vi.spyOn(api, "eventRules").mockResolvedValue([rule]);
+  let finish: (page: import("./api").EventActivityPage) => void = () =>
+    undefined;
+  vi.spyOn(api, "eventActivity")
+    .mockResolvedValueOnce({ items: [event], total: 2, next: "cursor" })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValueOnce({ items: [event], total: 1 });
+  page("activity");
+  await screen.findByRole("button", { name: "Load more" });
+  fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+  fireEvent.change(screen.getByLabelText("Delivery"), {
+    target: { value: "poll" },
+  });
+  await screen.findByRole("button", { name: "View run run-1" });
+  await import("@testing-library/react").then(({ act }) =>
+    act(async () => {
+      finish({
+        items: [
+          { ...event, id: "stale", name: "Wrong filter", transport: "webhook" },
+        ],
+        total: 2,
+      });
+    }),
+  );
+  expect(screen.queryByText("Wrong filter")).toBeNull();
+  expect(screen.queryByText("Webhook")).toBeNull();
+});
