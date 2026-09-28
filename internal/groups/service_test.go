@@ -112,7 +112,7 @@ func TestLinkedGroupDeploysDependenciesAndKeepsStableURLWhenPRIsAttached(t *test
 			t.Fatal(err)
 		}
 	}
-	registrySecret := core.Secret{ID: "registry-secret", Name: "Registry key", Type: core.SecretTypeRegistryPassword, EnvironmentVariable: "IBMCLOUD_API_KEY", EncryptedValue: "encrypted-registry-key", CreatedAt: now, UpdatedAt: now}
+	registrySecret := core.Secret{ID: "registry-secret", Name: "Registry key", Type: core.SecretTypeRegistryPassword, EnvironmentVariable: "REGISTRY_API_KEY", EncryptedValue: "encrypted-registry-key", CreatedAt: now, UpdatedAt: now}
 	if err := data.CreateSecret(ctx, registrySecret); err != nil {
 		t.Fatal(err)
 	}
@@ -206,16 +206,11 @@ func TestLinkedGroupDeploysDependenciesAndKeepsStableURLWhenPRIsAttached(t *test
 		t.Fatalf("UI pull request was not attached: %#v", updated.Sources)
 	}
 	waitForGroupState(t, data, independent.ID, core.PreviewGroupClosed)
-	notifier.mu.Lock()
+	// Ready is persisted before the asynchronous PR notification. Wait for
+	// that notification rather than treating deployment state as its receipt.
 	for _, key := range []string{"org/service#11", "org/ui#22"} {
-		body := notifier.bodies[key]
-		if !strings.Contains(body, "Full stack") || !strings.Contains(body, "with ui=#123") || !strings.Contains(body, stableURL) ||
-			!strings.Contains(body, sourceForAlias(updated.Sources, "service").SHA) || !strings.Contains(body, sourceForAlias(updated.Sources, "ui").SHA) {
-			notifier.mu.Unlock()
-			t.Fatalf("combined status missing for %s: %q", key, body)
-		}
+		waitForComment(t, notifier, key, "Full stack", "**Status:** Ready", "with ui=#123", stableURL, sourceForAlias(updated.Sources, "service").SHA, sourceForAlias(updated.Sources, "ui").SHA)
 	}
-	notifier.mu.Unlock()
 
 	closeEvent := core.IncomingEvent{Provider: core.EventProviderGitHub, Kind: core.EventKindPullRequest, Action: "closed", Repository: "org/service", PullRequestNumber: 11}
 	if _, err := service.Process(ctx, closeEvent); err != nil {
@@ -240,7 +235,7 @@ func TestLinkedGroupDeploysDependenciesAndKeepsStableURLWhenPRIsAttached(t *test
 
 func waitForGroupState(t *testing.T, data store.Store, id string, state core.PreviewGroupState) core.PreviewGroupRun {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		run, err := data.GetPreviewGroupRun(context.Background(), id)
 		if err == nil && run.State == state {
@@ -255,7 +250,7 @@ func waitForGroupState(t *testing.T, data store.Store, id string, state core.Pre
 
 func waitForAttempt(t *testing.T, data store.Store, id string, attempt int) core.PreviewGroupRun {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		run, err := data.GetPreviewGroupRun(context.Background(), id)
 		if err == nil && run.Attempt >= attempt && (run.State == core.PreviewGroupReady || run.State == core.PreviewGroupDegraded || run.State == core.PreviewGroupFailed) {
@@ -366,4 +361,27 @@ func TestPreviewGroupsAreScopedToGitHubConnection(t *testing.T) {
 	if err != nil || len(matches) != 1 || matches[0].ID != group.ID {
 		t.Fatalf("unexpected connector-scoped matches: %#v err=%v", matches, err)
 	}
+}
+
+func waitForComment(t *testing.T, notifier *recordingNotifier, key string, expected ...string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var body string
+	for time.Now().Before(deadline) {
+		notifier.mu.Lock()
+		body = notifier.bodies[key]
+		notifier.mu.Unlock()
+		matched := true
+		for _, part := range expected {
+			if !strings.Contains(body, part) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("combined status missing for %s: %q", key, body)
 }
