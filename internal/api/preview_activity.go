@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/events"
@@ -63,7 +65,7 @@ func (a *API) previewDeliveryActivity(ctx context.Context, target *previewPollTa
 				item.Kind = "preview_test"
 			}
 			if deliveryErr != nil {
-				item.Message = deliveryErr.Error()
+				item.Message = previewCommandError(event, deliveryErr).Error()
 			}
 			joined = errors.Join(joined, a.store.SaveEventActivity(ctx, previewDeliveryKey(event, rule.ID), item))
 		}
@@ -194,6 +196,7 @@ func (a *API) consumePolledComment(ctx context.Context, target *previewPollTarge
 		return err
 	}
 	defer func() {
+		result = previewCommandError(event, result)
 		state := "processed"
 		if result != nil {
 			state = "failed"
@@ -246,7 +249,8 @@ func (a *API) previewLegacyLinks(ctx context.Context, target *previewPollTarget,
 	return nil
 }
 
-func (a *API) consumeGitHubPreviewEvent(ctx context.Context, event core.IncomingEvent, groupService *groups.Service, eventService *events.Service) (core.EventResult, error) {
+func (a *API) consumeGitHubPreviewEvent(ctx context.Context, event core.IncomingEvent, groupService *groups.Service, eventService *events.Service) (result core.EventResult, resultErr error) {
+	defer func() { resultErr = previewCommandError(event, resultErr) }()
 	if err := a.processWorkflowPreviewWebhook(ctx, event); err != nil {
 		return core.EventResult{}, err
 	}
@@ -257,7 +261,7 @@ func (a *API) consumeGitHubPreviewEvent(ctx context.Context, event core.Incoming
 	if err != nil {
 		return core.EventResult{}, err
 	}
-	result, err := eventService.Process(ctx, event)
+	result, err = eventService.Process(ctx, event)
 	if err != nil {
 		return result, err
 	}
@@ -327,4 +331,31 @@ func (a *API) consumePolledClosure(ctx context.Context, target *previewPollTarge
 		}
 	}
 	return nil
+}
+
+// Validation errors may quote user input. Keep it out of the activity feed and poll errors.
+type redactedPreviewError struct {
+	cause   error
+	message string
+}
+
+func (e *redactedPreviewError) Error() string { return e.message }
+func (e *redactedPreviewError) Unwrap() error { return e.cause }
+func previewCommandError(event core.IncomingEvent, err error) error {
+	if err == nil || event.Arguments == "" {
+		return err
+	}
+	message := err.Error()
+	parts := strings.FieldsFunc(event.Arguments, func(r rune) bool { return unicode.IsSpace(r) || r == ',' || r == '=' })
+	parts = append(parts, strings.FieldsFunc(event.Arguments, func(r rune) bool { return unicode.IsSpace(r) || r == ',' })...)
+	parts = append(parts, event.Arguments)
+	slices.SortFunc(parts, func(a, b string) int { return len(b) - len(a) })
+	for _, part := range parts {
+		if len(part) < 3 || part == "with" || part == "test" {
+			continue
+		}
+		message = strings.ReplaceAll(message, strconv.Quote(part), "[argument omitted]")
+		message = strings.ReplaceAll(message, part, "[argument omitted]")
+	}
+	return &redactedPreviewError{cause: err, message: message}
 }

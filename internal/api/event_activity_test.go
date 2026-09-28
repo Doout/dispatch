@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/events"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -89,5 +90,36 @@ func TestEventsIncludePollingTemplatesAndScopeHistoryBeforePagination(t *testing
 	get("/api/v1/events/activity?transport=invalid", true, 400)
 	for _, path := range []string{"/api/v1/events/activity", "/api/v1/events/rules"} {
 		get(path, false, 401)
+	}
+}
+
+func TestPreviewActivityDoesNotStoreCommandArguments(t *testing.T) {
+	a := serviceTestAPI(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	projects, _ := a.store.ListProjects(ctx)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(a.store.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", CreatedAt: now, UpdatedAt: now}))
+	must(a.store.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: projects[0].ID, GitHubAppID: "github", Name: "Configuration", CreatedAt: now, UpdatedAt: now}))
+	resource := core.WorkflowResource{ID: "preview", ConfigSourceID: "source", Kind: "Application", Name: "Preview", Path: "preview.yaml", Document: "apiVersion: dispatch/v1alpha1\nkind: Application\nmetadata: {name: preview}\nspec:\n  sources:\n    ui: {repository: team/ui, branch: main}\n", Active: true, Temporary: true, CreatedAt: now, UpdatedAt: now}
+	must(a.store.CreateWorkflowResource(ctx, resource))
+	trigger := core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: resource.ID, GitHubAppID: "github", Repository: "team/ui", PullRequestNumber: 17, Command: "/preview", CreatedAt: now}
+	must(a.store.CreateWorkflowPreviewTrigger(ctx, trigger))
+	target := &previewPollTarget{connectionID: "github", repository: "team/ui", transport: "poll", workflowTriggers: []core.WorkflowPreviewTrigger{trigger}}
+	event := core.IncomingEvent{ProviderConnectionID: "github", Kind: core.EventKindPullRequestComment, Repository: "team/ui", Command: "/preview", Arguments: "with ui=private-value", TrustedActor: true, PullRequestNumber: 17, SourceCommentID: "10", DeliveryID: "comment:github:team/ui:10"}
+	err := a.consumePolledComment(ctx, target, event, events.GitHubResolver{}, a.groups, a.events)
+	if err == nil || strings.Contains(err.Error(), "private-value") {
+		t.Fatalf("unsafe command error: %v", err)
+	}
+	items, err := a.store.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{projects[0].ID}})
+	must(err)
+	raw, _ := json.Marshal(items)
+	if len(items) != 1 || items[0].State != "failed" || strings.Contains(string(raw), "private-value") || strings.Contains(string(raw), "with ui=") {
+		t.Fatalf("command arguments entered activity: %s", raw)
 	}
 }
