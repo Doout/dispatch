@@ -71,6 +71,22 @@ afterEach(() => {
 });
 
 describe("applications overview", () => {
+  it("shows expired previews without offering activation or old deployment success", () => {
+    const configured: Overview = {
+      ...overview,
+      projectPermissions: { "project-1": ["project.view", "project.configure", "deployment.run"] },
+      configSources: [{ id: "slots", projectId: "project-1", name: "Slots", repository: "Example/devops", branch: "main", path: "deployment", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      workflowResources: [{ id: "preview", configSourceId: "slots", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "expired-preview", path: "temporary/preview.yaml", document: "kind: Application", specDigest: "digest", configSha: "abc", temporary: true, active: false, state: "expired", previewTTL: "1d", previewExpiresAt: "2026-01-02T00:00:00Z", sourceCount: 1, jobCount: 1, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+      workflowRevisions: [{ id: "run", resourceId: "preview", configSha: "abc", specDigest: "digest", state: "succeeded", trigger: "pull request comment 1", sources: {}, outputs: {}, createdAt: "2026-01-01T00:00:00Z" }],
+    };
+    render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
+    const row = within(screen.getByRole("row", { name: /expired-preview/ }));
+    expect(row.getByText("expired")).toBeTruthy();
+    expect(row.getByText("Post /preview to redeploy")).toBeTruthy();
+    expect(row.queryByText("succeeded")).toBeNull();
+    expect(row.queryByRole("button", { name: "Edit expired-preview preview" })).toBeNull();
+  });
+
   it("lists temporary PR previews outside their credential source and opens the saved comment settings", async () => {
     const user = userEvent.setup();
     const configured: Overview = {

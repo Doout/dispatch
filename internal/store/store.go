@@ -147,6 +147,11 @@ type Store interface {
 	UpdateWorkflowPreviewTriggerComment(context.Context, string, string) error
 	UpdateWorkflowPreviewTriggerLinks(context.Context, string, map[string]int) error
 	SaveWorkflowPreviewSources(context.Context, core.WorkflowResource, core.WorkflowPreviewTrigger) error
+	WorkflowPreviewLifetimeCommentHandled(context.Context, string, string) (bool, error)
+	MarkWorkflowPreviewLifetimeReported(context.Context, core.WorkflowPreviewTrigger, string) error
+	SaveWorkflowPreviewLifetime(context.Context, core.WorkflowPreviewTrigger, core.WorkflowPreviewTrigger, string, time.Time) (bool, error)
+	ClaimWorkflowPreviewExpiry(context.Context, string, time.Time, time.Time) (bool, error)
+	FinishWorkflowPreviewExpiry(context.Context, string, time.Time, string, time.Time) error
 	LatestWorkflowPreviewDeployComment(context.Context, string) (string, error)
 	PendingWorkflowPreviewReports(context.Context, string) ([]string, error)
 	CloseWorkflowPreviewTrigger(context.Context, string, time.Time) error

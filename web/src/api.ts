@@ -378,6 +378,8 @@ export type ConfigSource = {
   updatedAt: string;
 };
 export type WorkflowResource = {
+  previewTTL?: string;
+  previewExpiresAt?: string;
   id: string;
   configSourceId: string;
   apiVersion: string;
@@ -409,6 +411,7 @@ export type WorkflowPreviewTemplateGitSource = {
   lastError?: string;
 };
 export type WorkflowPreviewTemplate = {
+  ttl?: string;
   watchRepositories?: string[];
   gitSource?: WorkflowPreviewTemplateGitSource;
   id: string;
@@ -426,6 +429,8 @@ export type WorkflowPreviewTemplate = {
   updatedAt: string;
 };
 export type WorkflowPreviewTrigger = {
+  ttl?: string;
+  expiresAt?: string;
   templateSource?: WorkflowPreviewTemplateGitSource;
   id: string;
   templateId?: string;
@@ -442,7 +447,7 @@ export type WorkflowPreviewTrigger = {
   createdAt: string;
   closedAt?: string;
 };
-export type WorkflowPreviewTriggerInput = Pick<WorkflowPreviewTrigger, "githubAppId" | "repository" | "pullRequestNumber" | "command" | "autoDeploy" | "maxAutoRunsPerHour" | "previewUrl">;
+export type WorkflowPreviewTriggerInput = Pick<WorkflowPreviewTrigger, "githubAppId" | "repository" | "pullRequestNumber" | "command" | "autoDeploy" | "maxAutoRunsPerHour" | "previewUrl" | "ttl">;
 export type WorkflowSourceRevision = {
   alias: string;
   repository: string;

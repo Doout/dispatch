@@ -576,6 +576,9 @@ func (s *Service) Activate(ctx context.Context, id string) (core.WorkflowResourc
 	if err != nil {
 		return resource, core.WorkflowRevision{}, err
 	}
+	if resource.Temporary && (resource.State == "expired" || resource.State == "expiring") {
+		return resource, core.WorkflowRevision{}, errors.New("preview lifetime ended; post a new preview comment to redeploy after cleanup finishes")
+	}
 	if resource.Temporary && resource.State == "removed" {
 		return resource, core.WorkflowRevision{}, errors.New("deleted PR preview cannot be activated")
 	}

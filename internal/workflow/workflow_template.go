@@ -128,6 +128,7 @@ type WorkflowTemplateTriggers struct {
 	PullRequestComment *PullRequestCommentTrigger `json:"pullRequestComment,omitempty" yaml:"pullRequestComment,omitempty"`
 }
 type PullRequestCommentTrigger struct {
+	TTL                string   `json:"ttl" yaml:"ttl"`
 	Sources            []string `json:"sources" yaml:"sources"`
 	Command            string   `json:"command" yaml:"command"`
 	AutoDeploy         bool     `json:"autoDeploy,omitempty" yaml:"autoDeploy,omitempty"`
@@ -170,5 +171,9 @@ func ReadWorkflowTemplateTrigger(contents []byte) (*PullRequestCommentTrigger, m
 	if trigger.Command == "" {
 		trigger.Command = "/preview"
 	}
+	if _, err := ParsePreviewTTL(trigger.TTL); err != nil {
+		return nil, nil, err
+	}
+	trigger.TTL = NormalizePreviewTTL(trigger.TTL)
 	return trigger, header.Spec.Sources, nil
 }

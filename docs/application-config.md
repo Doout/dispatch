@@ -422,10 +422,21 @@ spec:
       command: /preview
       autoDeploy: false
       maxAutoRunsPerHour: 2
+      ttl: 0
   # jobs, deployments, and stages use the Application schema
 ```
 
 The template uses the Application `spec` schema for sources, jobs, deployments, and stages. `spec.triggers.pullRequestComment` declares the comment command and the source aliases whose PR comments can create instances. For a service/UI workflow, use `sources: [service, ui]`; other sources remain dependencies and can still accept explicit linked-PR overrides. The GitHub App and repository access connection are selected in Dispatch. `WorkflowTemplate` itself does not imply a PR trigger.
+
+Preview lifetime defaults to `ttl: 0` (no time limit). Set `ttl: 1d` or `ttl: 24h` to shut down after one day. The timer starts when a manual deployment comment is accepted and renews on each new deployment comment. Automatic commit updates and test runs do not extend it. Template edits affect future instances.
+
+- `/preview ttl 1d` sets this instance’s deadline to one day from now without rebuilding.
+- `/preview extend 1d` adds one day to its existing deadline without rebuilding. Set a finite lifetime before extending an unlimited preview.
+- `/preview ttl 0` removes the deadline.
+
+Dispatch checks deadlines every 30 seconds, independently of GitHub availability. Expiry cancels queued/running work and removes the preview’s Helm releases, retaining its definition and run history. Cleanup failures remain visible and retry. After cleanup, a new `/preview` redeploys the same instance and renews its configured lifetime. An extension changes the current deadline; it does not change the duration used by a later deployment. Duplicate deliveries do not apply an extension twice.
+
+PR closure also removes the Helm deployments once the primary PR and all linked PRs are closed. An open linked PR keeps the preview alive until it closes or the lifetime expires.
 
 Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` is set. Automatic updates are limited to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. A new `/preview` comment always starts a run, regardless of the limit. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
 

@@ -270,6 +270,7 @@ func (a *API) enrichWorkflowPreviewPullRequests(ctx context.Context, resources [
 		if !ok {
 			continue
 		}
+		resource.PreviewTTL, resource.PreviewExpiresAt = trigger.TTL, trigger.ExpiresAt
 		base := githubHosts[trigger.GitHubAppID]
 		if base == "" {
 			continue
@@ -369,13 +370,14 @@ func temporaryPreviewCollides(document workflowservice.Document, existing []core
 }
 
 type workflowPreviewTriggerRequest struct {
-	GitHubAppID        string `json:"githubAppId"`
-	Repository         string `json:"repository"`
-	PullRequestNumber  int    `json:"pullRequestNumber"`
-	Command            string `json:"command"`
-	AutoDeploy         bool   `json:"autoDeploy"`
-	MaxAutoRunsPerHour int    `json:"maxAutoRunsPerHour"`
-	PreviewURL         string `json:"previewUrl"`
+	TTL                *string `json:"ttl"`
+	GitHubAppID        string  `json:"githubAppId"`
+	Repository         string  `json:"repository"`
+	PullRequestNumber  int     `json:"pullRequestNumber"`
+	Command            string  `json:"command"`
+	AutoDeploy         bool    `json:"autoDeploy"`
+	MaxAutoRunsPerHour int     `json:"maxAutoRunsPerHour"`
+	PreviewURL         string  `json:"previewUrl"`
 }
 
 func validWorkflowPreviewURL(value string) bool {
@@ -394,6 +396,14 @@ func (a *API) validateWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Requ
 	if err := validatePreviewAutoPolicy(&input.MaxAutoRunsPerHour); err != nil {
 		problem(w, http.StatusBadRequest, "Preview update policy invalid", err.Error())
 		return false
+	}
+	if input.TTL != nil {
+		value := workflowservice.NormalizePreviewTTL(*input.TTL)
+		if _, err := workflowservice.ParsePreviewTTL(value); err != nil {
+			problem(w, http.StatusBadRequest, "Preview lifetime invalid", err.Error())
+			return false
+		}
+		input.TTL = &value
 	}
 	command, arguments := events.ParseCommand(input.Command)
 	if input.GitHubAppID == "" || input.Repository == "" || input.PullRequestNumber < 1 || command != input.Command || arguments != "" || input.PreviewURL != "" && !validWorkflowPreviewURL(input.PreviewURL) {
@@ -424,6 +434,8 @@ func (a *API) validateWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Requ
 }
 
 func (a *API) createWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Request) {
+	a.temporaryPreviewMu.Lock()
+	defer a.temporaryPreviewMu.Unlock()
 	resource, err := a.store.GetWorkflowResource(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		a.notFoundOrInternal(w, err, "Temporary workflow resource")
@@ -458,6 +470,14 @@ func (a *API) createWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Reques
 	item := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), ResourceID: resource.ID, GitHubAppID: input.GitHubAppID,
 		Repository: input.Repository, PullRequestNumber: input.PullRequestNumber, Command: input.Command, PreviewURL: input.PreviewURL,
 		AutoDeploy: input.AutoDeploy, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour, CreatedAt: time.Now().UTC()}
+	item.TTL = "0"
+	if input.TTL != nil {
+		item.TTL = *input.TTL
+	}
+	if err := renewWorkflowPreviewLifetime(&item, time.Now().UTC()); err != nil {
+		a.internal(w, err)
+		return
+	}
 	item.SourceDefaults, err = workflowPreviewDefaults(resource.Document)
 	if err != nil {
 		a.internal(w, err)
@@ -480,6 +500,8 @@ func (a *API) listWorkflowPreviewTriggers(w http.ResponseWriter, r *http.Request
 }
 
 func (a *API) updateWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Request) {
+	a.temporaryPreviewMu.Lock()
+	defer a.temporaryPreviewMu.Unlock()
 	var input workflowPreviewTriggerRequest
 	if !decode(w, r, &input) {
 		return
@@ -517,6 +539,13 @@ func (a *API) updateWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Reques
 		trigger.GitHubAppID, trigger.Repository, trigger.PullRequestNumber = input.GitHubAppID, input.Repository, input.PullRequestNumber
 		trigger.Command, trigger.PreviewURL = input.Command, input.PreviewURL
 		trigger.AutoDeploy, trigger.MaxAutoRunsPerHour = input.AutoDeploy, input.MaxAutoRunsPerHour
+		if input.TTL != nil && *input.TTL != trigger.TTL {
+			trigger.TTL = *input.TTL
+			if err := renewWorkflowPreviewLifetime(&trigger, time.Now().UTC()); err != nil {
+				a.internal(w, err)
+				return
+			}
+		}
 		if err := a.store.UpdateWorkflowPreviewTrigger(r.Context(), trigger); err != nil {
 			a.notFoundOrInternal(w, err, "Preview trigger")
 			return

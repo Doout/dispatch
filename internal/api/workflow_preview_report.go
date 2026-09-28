@@ -332,6 +332,8 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 	body.WriteString("\n### Preview commands\n\nPost a new comment on this PR:\n\n")
 	fmt.Fprintf(&body, "- `%s`: run again with the latest commits from this PR and its linked PRs.\n", command)
 	fmt.Fprintf(&body, "- `%s test`: run on-demand checks against the deployed preview, when configured. This does not rebuild or redeploy it.\n", command)
+	fmt.Fprintf(&body, "- `%s ttl 1d`: shut down after one day from now; `%s ttl 0` removes the time limit.\n", command, command)
+	fmt.Fprintf(&body, "- `%s extend 1d`: add one day to the current shutdown deadline without rebuilding.\n", command)
 	if trigger.AutoDeploy {
 		limit := trigger.MaxAutoRunsPerHour
 		if limit <= 0 {
@@ -378,6 +380,10 @@ func workflowPreviewReportForTrigger(revision core.WorkflowRevision, resource co
 		}
 	}
 	body := workflowPreviewReportBody(revision, resource, stages, previewURL, githubURL, links...)
+	if resource.State == "expired" || resource.State == "expiring" {
+		body = strings.Replace(body, "**Status:** Ready", "**Status:** "+resource.State+" (preview lifetime ended)", 1)
+	}
+	body += "\n**Lifetime:** " + workflowPreviewLifetimeText(trigger) + "\n"
 	body += workflowPreviewCommandHelp(revision, trigger)
 	if source := trigger.TemplateSource; source != nil && source.CommitSHA != "" {
 		fileURL := strings.TrimRight(githubURL, "/") + "/" + source.Repository + "/blob/" + url.PathEscape(source.CommitSHA)

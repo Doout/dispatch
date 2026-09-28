@@ -5,6 +5,7 @@ export function isPreviewCheckRun(revision: WorkflowRevision): boolean {
 }
 
 export function workflowResourceStatus(resource: WorkflowResource, runState?: string): string {
+  if (resource.state === "expired" || resource.state === "expiring") return resource.state;
   if (resource.state === "invalid") return "invalid";
   if (!resource.active) return resource.state === "paused" ? "paused" : "pending_activation";
   return runState || resource.state;

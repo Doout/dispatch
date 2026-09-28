@@ -52,14 +52,14 @@ func (a *API) PollPreviewsOnce(ctx context.Context) error {
 	joined := a.syncWorkflowPreviewTemplates(ctx)
 	targets, err := a.previewPollTargets(ctx)
 	if err != nil {
-		return err
+		return errors.Join(joined, err)
 	}
 	for _, target := range targets {
 		if err := a.pollPreviewTarget(ctx, target); err != nil {
 			joined = errors.Join(joined, fmt.Errorf("%s: %w", target.repository, err))
 		}
 	}
-	return errors.Join(joined, a.reconcileWorkflowFeedback(ctx))
+	return errors.Join(joined, a.reportPendingWorkflowPreviewLifetimes(ctx), a.reconcileWorkflowFeedback(ctx))
 }
 
 func (a *API) previewPollTargets(ctx context.Context) ([]*previewPollTarget, error) {
@@ -509,6 +509,9 @@ func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.
 			return err
 		}
 	}
+	if resource.State == "expiring" {
+		return nil
+	}
 	if _, err := a.workflows.Deactivate(ctx, resource.ID); err != nil {
 		return err
 	}
@@ -520,6 +523,9 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 	defer a.temporaryPreviewMu.Unlock()
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
 		return a.processWorkflowPreviewTestComment(ctx, target, event)
+	}
+	if fields := strings.Fields(event.Arguments); len(fields) > 0 && (fields[0] == "ttl" || fields[0] == "extend") {
+		return a.processWorkflowPreviewLifetimeComment(ctx, target, event)
 	}
 	for _, candidate := range target.workflowTemplates {
 		template, err := a.store.GetWorkflowPreviewTemplate(ctx, candidate.ID)
@@ -594,13 +600,24 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		trigger := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), TemplateID: template.ID, TemplateSource: template.GitSource, ResourceID: resource.ID,
 			GitHubAppID: template.GitHubAppID, Repository: target.repository, PullRequestNumber: event.PullRequestNumber,
 			Command: template.Command, PreviewURL: previewURL, AutoDeploy: template.AutoDeploy,
-			MaxAutoRunsPerHour: template.MaxAutoRunsPerHour, SourceDefaults: defaults, CreatedAt: time.Now().UTC()}
+			MaxAutoRunsPerHour: template.MaxAutoRunsPerHour, TTL: template.TTL, SourceDefaults: defaults, CreatedAt: time.Now().UTC()}
 		if err := a.store.CreateWorkflowPreviewTrigger(ctx, trigger); err != nil {
 			resource.Active, resource.State, resource.UpdatedAt = false, "removed", time.Now().UTC()
 			_ = a.store.UpdateWorkflowResource(ctx, resource)
 			return err
 		}
 		target.workflowTriggers = append(target.workflowTriggers, trigger)
+	}
+	freshTriggers, err := a.store.ListWorkflowPreviewTriggers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, fresh := range freshTriggers {
+		for index, cached := range target.workflowTriggers {
+			if cached.ID == fresh.ID {
+				target.workflowTriggers[index] = fresh
+			}
+		}
 	}
 	for index, trigger := range target.workflowTriggers {
 		if trigger.Command != event.Command || trigger.PullRequestNumber != event.PullRequestNumber {
@@ -610,7 +627,10 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if err != nil {
 			return err
 		}
-		if !resource.Active || !resource.Temporary {
+		if resource.State == "expired" && trigger.LifetimeStartCommentID == event.SourceCommentID {
+			continue
+		}
+		if (!resource.Active && resource.State != "expired") || !resource.Temporary || trigger.ClosedAt != nil {
 			continue
 		}
 		if revisionID, err := a.store.WorkflowPreviewCommentRevision(ctx, trigger.ID, event.SourceCommentID); err != nil {
@@ -690,6 +710,13 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 				}
 			}
 			continue
+		}
+		if updatedTrigger.LifetimeStartCommentID != event.SourceCommentID {
+			if err := renewWorkflowPreviewLifetime(&updatedTrigger, time.Now().UTC()); err != nil {
+				_ = a.store.ReleaseWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID)
+				return err
+			}
+			updatedTrigger.LifetimeStartCommentID = event.SourceCommentID
 		}
 		if err := a.store.SaveWorkflowPreviewSources(ctx, pinned, updatedTrigger); err != nil {
 			_ = a.store.ReleaseWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID)
