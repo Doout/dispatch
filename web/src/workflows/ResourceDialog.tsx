@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, CheckCircle, Copy, FileCode, RocketLaunch, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
 import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun, WorkflowRevision } from "../api";
 import { StageProgress } from "./StageProgress";
+import { StageTests, configuredStageTests } from "./StageTests";
 import { relative } from "../presentation";
 import { useDialogFocus } from "../useDialogFocus";
 import { canManageProject } from "../permissions";
@@ -20,6 +21,8 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [liveRevision,setLiveRevision]=useState<WorkflowRevision>();
+  const [previewCommand, setPreviewCommand] = useState<string>();
+  const [commandError, setCommandError] = useState("");
   const revision = liveRevision?.id===revisionID ? liveRevision : revisions.find((item) => item.id === revisionID);
   const source = (overview.configSources ?? []).find((item) => item.id === resource.configSourceId);
   const canConfigure = Boolean(source && canManageProject(overview, source.projectId, "project.configure"));
@@ -27,6 +30,20 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const canApprove = Boolean(source && canManageProject(overview, source.projectId, "stage.approve"));
   const selectedJob = jobs.find((job) => job.id === selectedJobID) ?? jobs[0];
   const resourceStatus = workflowResourceStatus(resource, revisions.find((item) => !isPreviewCheckRun(item))?.state);
+
+  useEffect(() => {
+    let active = true;
+    setPreviewCommand(undefined);
+    setCommandError("");
+    if (resource.temporary) {
+      void api.workflowPreviewTriggers().then(triggers => {
+        if (active) setPreviewCommand(triggers.find(trigger => trigger.resourceId === resource.id && !trigger.closedAt)?.command);
+      }).catch(cause => {
+        if (active) setCommandError(`Could not load the preview test command: ${(cause as Error).message}`);
+      });
+    }
+    return () => { active = false; };
+  }, [resource.id, resource.temporary]);
 
   useEffect(() => {
     let active = true;
@@ -103,6 +120,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
       <div className="dialog-body workflow-resource-body">
         <div className="workflow-resource-toolbar"><span className={`status-label ${resourceStatus}`}><i />{workflowResourceStatusLabel(resourceStatus)}</span>{(canRun || canConfigure) && <div>{canRun && resource.active && resource.kind === "Application" && <button className="quiet-button" disabled={busy} onClick={() => void action("run")}><RocketLaunch size={15} />Run</button>}{canConfigure && <button className="quiet-button" disabled={busy} onClick={() => void action(resource.active ? "pause" : "activate")}>{resource.active ? "Pause" : "Activate"}</button>}</div>}</div>
         {error && <p className="form-error" role="alert">{error}</p>}
+        {commandError && <p className="form-error" role="alert">{commandError}</p>}
         {resource.lastEvaluation && <details className="workflow-evaluation"><summary><CheckCircle size={16} weight="fill" /><strong>No deployment changes</strong><time dateTime={resource.lastEvaluation.checkedAt} title={new Date(resource.lastEvaluation.checkedAt).toLocaleString()}>Checked {relative(resource.lastEvaluation.checkedAt)}</time></summary><p>Rendered resources match the last deployments. No new run was needed.</p><ul aria-label="Latest checked sources">{Object.entries(resource.lastEvaluation.sources).map(([alias, input]) => <li key={alias}><span>{alias}</span><code title={input.commitSha}>{input.commitSha.slice(0, 12)}</code></li>)}</ul></details>}
         <div className="workflow-resource-columns">
           <section><div className="workflow-section-heading"><h3>Configuration</h3><span>{resource.apiVersion}</span></div>{resource.kind === "Application" && <div className="workflow-managed-guide"><strong>Add another application</strong><span>Add another YAML file under <code>{source?.path || "the watched path"}</code>. The next sync adds it as a separate row pending activation.</span></div>}<pre className="workflow-document">{resource.document}</pre></section>
@@ -112,7 +130,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}
               {jobs.length > 0 && <div className="workflow-run-list workflow-job-list"><h4>Jobs</h4>{jobs.map((job) => <button type="button" key={job.id} className={job.id === selectedJob?.id ? "active" : ""} aria-pressed={job.id === selectedJob?.id} aria-label={`${job.jobName}, ${job.state}`} onClick={() => setSelectedJobID(job.id)}><span className={`status-label ${job.state}`}><i />{job.state}</span><strong>{job.jobName}</strong>{job.reusedFromId && <small>Reused</small>}</button>)}</div>}
               {selectedJob && <section className="workflow-job-output" aria-label={`${selectedJob.jobName} job output`}><header><div><TerminalWindow size={15} /><strong>{selectedJob.jobName}</strong><span>{selectedJob.state}</span></div><button type="button" aria-label={`Copy ${selectedJob.jobName} output`} title={copiedJobID === selectedJob.id ? "Copied" : "Copy output"} disabled={!selectedJob.log && !selectedJob.error} onClick={() => void copyJobLog(selectedJob)}>{copiedJobID === selectedJob.id ? <Check size={15} /> : <Copy size={15} />}</button></header>{selectedJob.error && <p>{selectedJob.error}</p>}<pre tabIndex={0}>{selectedJob.log || selectedJob.error || "No output was captured."}</pre></section>}
-              {stages.length > 0 && <div className="workflow-run-list"><h4>Stages</h4>{stages.map((stage) => <div className="workflow-stage-row" key={stage.id}><span className={`status-label ${stage.state}`}><i />{stage.state.replaceAll("_", " ")}</span><strong>{stage.stageName}</strong><small>{stage.targetRef}</small>{canApprove && stage.state === "awaiting_approval" && <button className="quiet-button" disabled={busy} onClick={() => void approve(stage)}>Approve</button>}<button className="quiet-button" aria-expanded={Boolean(expandedStages[stage.id])} onClick={() => setExpandedStages(current => ({ ...current, [stage.id]: !current[stage.id] }))}>{expandedStages[stage.id] ? "Hide progress" : "View progress & logs"}</button>{stage.error && !expandedStages[stage.id] && <p className="form-error workflow-stage-progress" role="alert">{stage.error}</p>}{expandedStages[stage.id] && <StageProgress stage={stage} onOpenManifests={id => { onClose(); onOpenDeploymentManifests(id); }} />}{stage.deploymentIds?.map((deploymentID) => { const deployment = overview.deployments.find((item) => item.id === deploymentID); const result = stage.deploymentResults?.find(item => item.deploymentId === deploymentID); return <button className="workflow-manifest-link" key={deploymentID} title={result?.reason} onClick={() => { onClose(); onOpenDeploymentManifests(deploymentID); }}><FileCode size={14} /><span>{deployment?.app?.name ?? "Managed deployment"}</span><strong>{result?.outcome === "unchanged" ? "Unchanged · Manifests" : "Manifests"}</strong></button>; })}</div>)}</div>}
+              {stages.length > 0 && <div className="workflow-run-list"><h4>Stages</h4>{stages.map((stage) => <div className="workflow-stage-row" key={stage.id}><span className={`status-label ${stage.state}`}><i />{stage.state.replaceAll("_", " ")}</span><strong>{stage.stageName}</strong><small>{stage.targetRef}</small>{canApprove && stage.state === "awaiting_approval" && <button className="quiet-button" disabled={busy} onClick={() => void approve(stage)}>Approve</button>}<button className="quiet-button" aria-expanded={Boolean(expandedStages[stage.id])} onClick={() => setExpandedStages(current => ({ ...current, [stage.id]: !current[stage.id] }))}>{expandedStages[stage.id] ? "Hide progress" : "View progress & logs"}</button>{stage.error && !expandedStages[stage.id] && <p className="form-error workflow-stage-progress" role="alert">{stage.error}</p>}<StageTests stage={stage} definitions={configuredStageTests(resource, revision, stage.stageName)} definitionMatches={resource.specDigest === revision.specDigest} command={previewCommand} />{expandedStages[stage.id] && <StageProgress stage={stage} onOpenManifests={id => { onClose(); onOpenDeploymentManifests(id); }} />}{stage.deploymentIds?.map((deploymentID) => { const deployment = overview.deployments.find((item) => item.id === deploymentID); const result = stage.deploymentResults?.find(item => item.deploymentId === deploymentID); return <button className="workflow-manifest-link" key={deploymentID} title={result?.reason} onClick={() => { onClose(); onOpenDeploymentManifests(deploymentID); }}><FileCode size={14} /><span>{deployment?.app?.name ?? "Managed deployment"}</span><strong>{result?.outcome === "unchanged" ? "Unchanged · Manifests" : "Manifests"}</strong></button>; })}</div>)}</div>}
             </>}
           </section>
         </div>

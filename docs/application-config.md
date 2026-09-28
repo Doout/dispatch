@@ -445,7 +445,7 @@ stages:
         pipelineRef: preview-health
         with:
           url: "{{ stage.url }}"
-      qa:
+      e2e:
         pipelineRef: preview-qa
         when: onDemand
         with:
@@ -466,6 +466,14 @@ spec:
     health:
       run: curl --fail --silent --show-error "{{ inputs.url }}/health"
 ```
+
+The run dialog shows a **Tests** section within each stage. Automatic readiness checks and on-demand E2E checks have separate status rows. Open a test's logs to inspect its Pipeline jobs as individual steps. For example, a Pipeline can define `api-readiness` and `page-availability` jobs, or E2E jobs for different user journeys. The Pipeline decides how those jobs run.
+
+An on-demand row stays marked **On demand** until a PR comment starts it. The dialog shows the configured command, including a custom command such as `/ship test`. Posting `/preview test` runs all `when: onDemand` checks on ready stages. It uses the deployed preview and starts no image builds or Helm deployments. The commenter must have the same trusted PR association required for `/preview`.
+
+Adding checks to a reusable template affects new preview instances. Update an existing preview's saved Application definition to add the same checks there. A stage without checks says that health and test checks are not configured; successful Helm deployment alone is not a test result. Older runs retain their recorded test links; if their definition has changed, the UI does not attribute newly configured checks to those runs.
+
+Register the real E2E Pipeline before adding its check. Its jobs should execute the project's test suite against the preview URL. A health response or a command that always succeeds does not replace E2E testing.
 
 | Variable | Value |
 | --- | --- |

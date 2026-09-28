@@ -2433,3 +2433,17 @@ code { font-family: var(--mono); }
 @media (max-width:680px) { .events-page .section-toolbar { flex-wrap:wrap; } .events-toolbar-actions { width:100%; justify-content:space-between; } }
 
 .events-page .status-label.rejected { color:var(--red); background:var(--red-soft); }
+
+.workflow-stage-tests { grid-column: 1 / -1; min-width: 0; width: 100%; padding: 12px 0 0; border-top: 1px solid var(--rule); }
+.workflow-stage-tests > h5 { margin: 0 0 8px; font-size: 12px; }
+.workflow-stage-tests p { margin: 8px 0; font-size: 12px; line-height: 1.5; }
+.workflow-test-step + .workflow-test-step { margin-top: 8px; }
+.workflow-test-summary { display: grid; grid-template-columns: 105px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; }
+.workflow-test-summary > div { display: grid; min-width: 0; gap: 3px; }
+.workflow-test-summary strong, .workflow-test-summary small { overflow-wrap: anywhere; }
+.workflow-test-summary small { color: var(--muted); font-size: 11px; }
+.workflow-test-summary .status-label { font-size: 10px; }
+.workflow-test-logs { margin: 8px 0 12px; }
+.workflow-test-logs .workflow-job-output + .workflow-job-output { margin-top: 8px; }
+.workflow-test-command code { white-space: nowrap; }
+@media (max-width: 600px) { .workflow-test-summary { grid-template-columns: 90px minmax(0, 1fr); } .workflow-test-summary > button { grid-column: 2; justify-self: start; } }
