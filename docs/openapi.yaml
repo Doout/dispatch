@@ -1550,6 +1550,46 @@ paths:
         "201": { description: Value created. Plain values are returned; encrypted secret contents are omitted. }
         "400": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /secrets/usage:
+    get:
+      operationId: listSecretUsage
+      description: >-
+        Owner-only reference metadata for all saved values. Each item contains secretId,
+        consumers, archived consumers, and warnings for unreadable YAML. Counts describe
+        configured consumers, not executions. Secret contents are never resolved.
+      responses:
+        "200": { $ref: "#/components/responses/JSONList" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /secrets/{secretId}/usage/deployments:
+    parameters:
+      - name: secretId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listSecretConsumerDeployments
+      description: >-
+        Owner-only history for applications associated with the value's current or
+        archived references. This is not an audit of value reads in each past run.
+        Returns up to 50 deployment summaries without snapshots, credentials, or outputs.
+      parameters:
+        - name: before
+          in: query
+          description: The next cursor from the previous response.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Related deployment history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Deployment" } }
+                  next: { type: string }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /secrets/{secretId}:
     parameters:
       - name: secretId

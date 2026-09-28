@@ -8,8 +8,10 @@ func (a *API) connectionsRoutes(r chi.Router) {
 	r.Route("/secrets", func(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Get("/", a.listSecrets)
+		r.Get("/usage", a.listSecretUsage)
 		r.Post("/", a.createSecret)
 		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/usage/deployments", a.secretUsageDeployments)
 			r.Put("/", a.updateSecret)
 			r.Delete("/", a.deleteSecret)
 		})

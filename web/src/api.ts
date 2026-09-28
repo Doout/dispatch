@@ -683,6 +683,20 @@ export type Secret = {
   createdAt: string;
   updatedAt: string;
 };
+export type SecretConsumer = {
+  id: string;
+  kind: string;
+  name: string;
+  state?: string;
+  references: string[];
+  applications: { id: string; name: string; target: string; archived: boolean }[];
+};
+export type SecretUsage = {
+  secretId: string;
+  consumers: SecretConsumer[];
+  archived: SecretConsumer[];
+  warnings: string[];
+};
 export type SecretStore = {
   id: string;
   name: string;
@@ -1324,6 +1338,9 @@ export const api = {
     ),
   deleteEventTrigger: (id: string) =>
     request<void>(`/api/v1/event-triggers/${id}`, { method: "DELETE" }),
+  secretUsage: () => request<SecretUsage[]>("/api/v1/secrets/usage"),
+  secretUsageDeployments: (id: string, before = "") =>
+    request<{ items: Deployment[]; next?: string }>(`/api/v1/secrets/${encodeURIComponent(id)}/usage/deployments${before ? `?before=${encodeURIComponent(before)}` : ""}`),
   createSecret: (body: {
     name: string;
     type: SecretType;
