@@ -208,7 +208,7 @@ func TestBuiltinProvisionErrorsDoNotExposeProviderCredentials(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "secret-credential") {
 		t.Fatal("Docker error was not redacted")
 	}
-	helm := HelmExecutor{newClient: func(core.Server, string, string) (helmClient, error) { return failingProvisionHelmClient{}, nil }}
+	helm := HelmExecutor{newClient: func(core.Server, string, string) (helmClient, error) { return &failingProvisionHelmClient{}, nil }}
 	_, err = helm.Provision(context.Background(), provisionRequest(), core.HelmServiceProvision{}, core.Server{Runtime: "kubernetes", Kubernetes: &core.KubernetesServerConfig{KubeconfigPath: "/unused"}})
 	if err == nil || strings.Contains(err.Error(), "secret-credential") {
 		t.Fatal("Helm error was not redacted")
