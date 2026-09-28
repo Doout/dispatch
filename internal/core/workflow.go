@@ -30,6 +30,8 @@ type ConfigSource struct {
 }
 
 type WorkflowResource struct {
+	PreviewTTL          string               `json:"previewTTL,omitempty"`
+	PreviewExpiresAt    *time.Time           `json:"previewExpiresAt,omitempty"`
 	LastEvaluation      *WorkflowEquivalence `json:"lastEvaluation,omitempty"`
 	PreviewPullRequests []HelmPullRequest    `json:"previewPullRequests,omitempty"`
 	ServiceIDs          []string             `json:"-"`
@@ -56,22 +58,27 @@ type WorkflowResource struct {
 
 // WorkflowPreviewTrigger binds an inline workflow to one pull request command.
 type WorkflowPreviewTrigger struct {
-	TemplateSource     *WorkflowPreviewTemplateGitSource       `json:"templateSource,omitempty"`
-	LinkedPullRequests map[string]int                          `json:"linkedPullRequests,omitempty"`
-	SourceDefaults     map[string]WorkflowPreviewSourceDefault `json:"sourceDefaults,omitempty"`
-	ID                 string                                  `json:"id"`
-	TemplateID         string                                  `json:"templateId,omitempty"`
-	ResourceID         string                                  `json:"resourceId"`
-	GitHubAppID        string                                  `json:"githubAppId"`
-	Repository         string                                  `json:"repository"`
-	PullRequestNumber  int                                     `json:"pullRequestNumber"`
-	Command            string                                  `json:"command"`
-	AutoDeploy         bool                                    `json:"autoDeploy"`
-	MaxAutoRunsPerHour int                                     `json:"maxAutoRunsPerHour"`
-	PreviewURL         string                                  `json:"previewUrl,omitempty"`
-	ReportCommentID    string                                  `json:"reportCommentId,omitempty"`
-	CreatedAt          time.Time                               `json:"createdAt"`
-	ClosedAt           *time.Time                              `json:"closedAt,omitempty"`
+	LifetimeStartCommentID string                                  `json:"-"`
+	LifetimeReportPending  bool                                    `json:"-"`
+	TTL                    string                                  `json:"ttl"`
+	ExpiresAt              *time.Time                              `json:"expiresAt,omitempty"`
+	CleanupLeaseUntil      *time.Time                              `json:"-"`
+	TemplateSource         *WorkflowPreviewTemplateGitSource       `json:"templateSource,omitempty"`
+	LinkedPullRequests     map[string]int                          `json:"linkedPullRequests,omitempty"`
+	SourceDefaults         map[string]WorkflowPreviewSourceDefault `json:"sourceDefaults,omitempty"`
+	ID                     string                                  `json:"id"`
+	TemplateID             string                                  `json:"templateId,omitempty"`
+	ResourceID             string                                  `json:"resourceId"`
+	GitHubAppID            string                                  `json:"githubAppId"`
+	Repository             string                                  `json:"repository"`
+	PullRequestNumber      int                                     `json:"pullRequestNumber"`
+	Command                string                                  `json:"command"`
+	AutoDeploy             bool                                    `json:"autoDeploy"`
+	MaxAutoRunsPerHour     int                                     `json:"maxAutoRunsPerHour"`
+	PreviewURL             string                                  `json:"previewUrl,omitempty"`
+	ReportCommentID        string                                  `json:"reportCommentId,omitempty"`
+	CreatedAt              time.Time                               `json:"createdAt"`
+	ClosedAt               *time.Time                              `json:"closedAt,omitempty"`
 }
 
 // WorkflowPreviewSourceDefault retains the configured reference before a PR
@@ -94,6 +101,7 @@ type WorkflowPreviewTemplateGitSource struct {
 }
 
 type WorkflowPreviewTemplate struct {
+	TTL                string                            `json:"ttl"`
 	WatchRepositories  []string                          `json:"watchRepositories,omitempty"`
 	GitSource          *WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
 	ID                 string                            `json:"id"`

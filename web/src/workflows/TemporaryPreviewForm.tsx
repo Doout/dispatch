@@ -12,6 +12,7 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
   const [repository, setRepository] = useState("");
   const [pullRequestNumber, setPullRequestNumber] = useState(0);
   const [command, setCommand] = useState("/preview");
+  const [ttl, setTTL] = useState("0");
   const [autoDeploy, setAutoDeploy] = useState(false);
   const [maxAutoRunsPerHour, setMaxAutoRunsPerHour] = useState(2);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -36,6 +37,7 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
         setRepository(current.repository);
         setPullRequestNumber(current.pullRequestNumber);
         setCommand(current.command);
+        setTTL(current.ttl ?? "0");
         setAutoDeploy(current.autoDeploy ?? false);
         setMaxAutoRunsPerHour(current.maxAutoRunsPerHour || 2);
         setPreviewUrl(current.previewUrl ?? "");
@@ -63,7 +65,7 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
     setBusy(true);
     setError("");
     try {
-      const body: WorkflowPreviewTriggerInput = { githubAppId, repository: repository.trim(), pullRequestNumber, command: command.trim(), autoDeploy, maxAutoRunsPerHour, previewUrl: previewUrl.trim() };
+      const body: WorkflowPreviewTriggerInput = { githubAppId, repository: repository.trim(), pullRequestNumber, command: command.trim(), ttl: ttl.trim(), autoDeploy, maxAutoRunsPerHour, previewUrl: previewUrl.trim() };
       let current = resource ?? created;
       if (current) current = await api.updateTemporaryWorkflowResource(current.id, document);
       else {
@@ -93,6 +95,8 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
     <label><span>Comment command</span><input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="/preview" required spellCheck={false} /><small>Post this command on the PR to start a deployment. Add <code>with ui=#123</code> to link a UI PR.</small></label>
     <label className="wide temporary-preview-template-active"><input type="checkbox" checked={autoDeploy} onChange={(event) => setAutoDeploy(event.target.checked)} /><span>Automatically deploy new PR commits</span></label>
     {autoDeploy && <label><span>Automatic runs per hour</span><input type="number" min={1} max={12} value={maxAutoRunsPerHour} onChange={(event) => setMaxAutoRunsPerHour(Number(event.target.value))} required /><small>Per preview. Comment commands bypass this limit. Newer commits cancel older queued or running work.</small></label>}
+    <label><span>Preview lifetime</span><input value={ttl} onChange={(event) => setTTL(event.target.value)} required placeholder="0" spellCheck={false} /><small>0 means no time limit. Changing this value restarts the timer from now. Use <code>{command} extend 1d</code> to add time without redeploying.</small></label>
+    {trigger?.expiresAt && <p className="wide temporary-preview-intro">Scheduled shutdown: <time dateTime={trigger.expiresAt}>{new Date(trigger.expiresAt).toLocaleString()}</time>.</p>}
     <label className="wide"><span>Preview URL</span><input type="url" value={previewUrl} onChange={(event) => setPreviewUrl(event.target.value)} placeholder="https://dev.example.com/app/preview/42" required spellCheck={false} /><small>The GitHub App reports this URL and the deployed commits after a successful run.</small></label>
     {trigger?.linkedPullRequests && Object.keys(trigger.linkedPullRequests).length > 0 && <p className="wide temporary-preview-links">Linked PRs: {Object.entries(trigger.linkedPullRequests).map(([alias, number]) => `${alias} #${number}`).join(", ")}</p>}
     {loading && <p className="wide" role="status">Loading comment trigger…</p>}

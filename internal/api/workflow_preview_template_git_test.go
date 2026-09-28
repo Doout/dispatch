@@ -353,6 +353,9 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 	uiClosed.Store(true)
 	pollTarget := &previewPollTarget{connectionID: "github", repository: "example/service", commands: map[string]bool{"/preview": true}, activePRs: map[int]bool{42: true}, workflowTriggers: target.workflowTriggers}
 	pollTarget.workflowTriggers[0].PreviewURL = "" // This test verifies polling, not notification delivery.
+	if err := data.UpdateWorkflowPreviewTriggerURL(ctx, pollTarget.workflowTriggers[0].ID, ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.scanPreviewTarget(ctx, pollTarget); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("failed command should remain visible and retryable: %v", err)
 	}

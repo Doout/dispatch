@@ -11,13 +11,16 @@ import (
 )
 
 func (s *SQLStore) CreateWorkflowPreviewTrigger(ctx context.Context, item core.WorkflowPreviewTrigger) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour, jsonText(item.SourceDefaults))
+	if item.TTL == "" {
+		item.TTL = "0"
+	}
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour, jsonText(item.SourceDefaults), item.TTL, nullTime(item.ExpiresAt), nullTime(item.CleanupLeaseUntil))
 	return err
 }
 
 func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.WorkflowPreviewTrigger, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,report_comment_id,linked_pull_requests,template_id,created_at,closed_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults FROM workflow_preview_triggers ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,report_comment_id,linked_pull_requests,template_id,created_at,closed_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,lifetime_report_pending,lifetime_start_comment_id FROM workflow_preview_triggers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -26,10 +29,10 @@ func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.Work
 	for rows.Next() {
 		var item core.WorkflowPreviewTrigger
 		var created string
-		var closed sql.NullString
+		var closed, expires, lease sql.NullString
 		var templateID sql.NullString
 		var linked, templateSource, defaults string
-		if err := rows.Scan(&item.ID, &item.ResourceID, &item.GitHubAppID, &item.Repository, &item.PullRequestNumber, &item.Command, &item.PreviewURL, &item.ReportCommentID, &linked, &templateID, &created, &closed, &templateSource, &item.AutoDeploy, &item.MaxAutoRunsPerHour, &defaults); err != nil {
+		if err := rows.Scan(&item.ID, &item.ResourceID, &item.GitHubAppID, &item.Repository, &item.PullRequestNumber, &item.Command, &item.PreviewURL, &item.ReportCommentID, &linked, &templateID, &created, &closed, &templateSource, &item.AutoDeploy, &item.MaxAutoRunsPerHour, &defaults, &item.TTL, &expires, &lease, &item.LifetimeReportPending, &item.LifetimeStartCommentID); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(templateSource), &item.TemplateSource); err != nil {
@@ -44,16 +47,17 @@ func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.Work
 		}
 		item.CreatedAt = parseTime(created)
 		item.ClosedAt = parseNullTime(closed)
+		item.ExpiresAt, item.CleanupLeaseUntil = parseNullTime(expires), parseNullTime(lease)
 		items = append(items, item)
 	}
 	return items, rows.Err()
 }
 
 func (s *SQLStore) UpdateWorkflowPreviewTrigger(ctx context.Context, item core.WorkflowPreviewTrigger) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET github_app_id=?,repository=?,pull_request_number=?,command=?,preview_url=?,auto_deploy=?,max_auto_runs_per_hour=?,
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET github_app_id=?,repository=?,pull_request_number=?,command=?,preview_url=?,auto_deploy=?,max_auto_runs_per_hour=?,ttl=?,expires_at=?,lifetime_report_pending=TRUE,
 		report_comment_id=CASE WHEN github_app_id=? AND repository=? AND pull_request_number=? THEN report_comment_id ELSE '' END,
 		linked_pull_requests=CASE WHEN github_app_id=? AND repository=? AND pull_request_number=? THEN linked_pull_requests ELSE '{}' END
-		WHERE id=? AND closed_at IS NULL`), item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, item.AutoDeploy, item.MaxAutoRunsPerHour,
+		WHERE id=? AND closed_at IS NULL AND EXISTS (SELECT 1 FROM workflow_resources r WHERE r.id=workflow_preview_triggers.resource_id AND r.active=TRUE AND r.state NOT IN ('expiring','expired','removed'))`), item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, item.AutoDeploy, item.MaxAutoRunsPerHour, item.TTL, nullTime(item.ExpiresAt),
 		item.GitHubAppID, item.Repository, item.PullRequestNumber, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.ID)
 	return changed(result, err)
 }
@@ -71,11 +75,11 @@ func (s *SQLStore) SaveWorkflowPreviewSources(ctx context.Context, resource core
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET linked_pull_requests=?,source_defaults=? WHERE id=? AND resource_id=? AND closed_at IS NULL`), jsonText(trigger.LinkedPullRequests), jsonText(trigger.SourceDefaults), trigger.ID, resource.ID)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET linked_pull_requests=?,source_defaults=?,ttl=?,expires_at=?,lifetime_start_comment_id=? WHERE id=? AND resource_id=? AND closed_at IS NULL`), jsonText(trigger.LinkedPullRequests), jsonText(trigger.SourceDefaults), trigger.TTL, nullTime(trigger.ExpiresAt), trigger.LifetimeStartCommentID, trigger.ID, resource.ID)
 	if err := changed(result, err); err != nil {
 		return err
 	}
-	result, err = tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET document=?,spec_digest=?,updated_at=? WHERE id=? AND temporary=TRUE AND active=TRUE`), resource.Document, resource.SpecDigest, stamp(resource.UpdatedAt), resource.ID)
+	result, err = tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET document=?,spec_digest=?,updated_at=?,active=TRUE,state='ready',last_error='' WHERE id=? AND temporary=TRUE AND ((active=TRUE AND state NOT IN ('expiring','removed')) OR state='expired')`), resource.Document, resource.SpecDigest, stamp(resource.UpdatedAt), resource.ID)
 	if err := changed(result, err); err != nil {
 		return err
 	}
@@ -86,8 +90,8 @@ func (s *SQLStore) LatestWorkflowPreviewDeployComment(ctx context.Context, trigg
 	var id string
 	// GitHub comment IDs are positive decimal numbers. Length then lexical
 	// order compares them without database-specific integer casts.
-	err := s.db.QueryRowContext(ctx, s.q(`SELECT c.comment_id FROM workflow_preview_comments c JOIN workflow_revisions r ON r.id=c.revision_id
-		WHERE c.trigger_id=? AND r.trigger_name LIKE 'pull request comment %'
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT c.comment_id FROM workflow_preview_comments c LEFT JOIN workflow_revisions r ON r.id=c.revision_id
+		WHERE c.trigger_id=? AND (r.trigger_name LIKE 'pull request comment %' OR c.lifetime_handled_at IS NOT NULL)
 		ORDER BY length(c.comment_id) DESC,c.comment_id DESC LIMIT 1`), triggerID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -164,7 +168,7 @@ func (s *SQLStore) WorkflowPreviewTestComment(ctx context.Context, revisionID st
 }
 
 func (s *SQLStore) ReleaseWorkflowPreviewComment(ctx context.Context, triggerID, commentID string) error {
-	_, err := s.db.ExecContext(ctx, s.q(`DELETE FROM workflow_preview_comments WHERE trigger_id=? AND comment_id=? AND revision_id IS NULL`), triggerID, commentID)
+	_, err := s.db.ExecContext(ctx, s.q(`DELETE FROM workflow_preview_comments WHERE trigger_id=? AND comment_id=? AND revision_id IS NULL AND lifetime_handled_at IS NULL`), triggerID, commentID)
 	return err
 }
 

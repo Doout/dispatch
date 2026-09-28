@@ -2034,6 +2034,7 @@ paths:
                 repository: { type: string }
                 pullRequestNumber: { type: integer, minimum: 1 }
                 command: { type: string, default: /preview }
+                ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
                 autoDeploy: { type: boolean, default: false }
                 maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2 }
                 previewUrl: { type: string, format: uri, description: HTTPS URL to post when the workflow succeeds. }
@@ -2115,6 +2116,7 @@ paths:
                 name: { type: string }
                 repository: { type: string, description: "Fallback owner/repository when YAML does not declare spec.triggers.pullRequestComment.sources" }
                 command: { type: string, example: /preview, description: "Fallback command when YAML does not declare its trigger" }
+                ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
                 autoDeploy: { type: boolean, default: false, description: "Deploy new PR heads automatically; WorkflowTemplate YAML overrides this field." }
                 maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2, description: "Rolling per-preview limit for automatic starts; comment commands bypass it." }
                 previewUrl: { type: string, description: "HTTPS URL containing {{ instance.id }}" }
@@ -2151,6 +2153,7 @@ paths:
                 name: { type: string }
                 repository: { type: string }
                 command: { type: string }
+                ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
                 autoDeploy: { type: boolean, default: false }
                 maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2 }
                 previewUrl: { type: string }
@@ -2208,6 +2211,7 @@ paths:
                 repository: { type: string }
                 pullRequestNumber: { type: integer, minimum: 1 }
                 command: { type: string, default: /preview }
+                ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
                 autoDeploy: { type: boolean, default: false }
                 maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2 }
                 previewUrl: { type: string, format: uri }

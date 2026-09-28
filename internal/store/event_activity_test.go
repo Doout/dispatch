@@ -178,7 +178,8 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 	must(data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", CreatedAt: now, UpdatedAt: now}))
 	must(data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", GitHubAppID: "github", Name: "Source", CreatedAt: now, UpdatedAt: now}))
 	must(data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "workflow", ConfigSourceID: "source", Name: "Preview", Kind: "Application", Temporary: true, CreatedAt: now, UpdatedAt: now}))
-	must(data.CreateWorkflowPreviewTemplate(ctx, core.WorkflowPreviewTemplate{ID: "template", ConfigSourceID: "source", GitHubAppID: "github", Name: "Template", Repository: "team/ui", Command: "/preview", CreatedAt: now, UpdatedAt: now}))
+	_, err = data.db.ExecContext(ctx, `INSERT INTO workflow_preview_templates(id,config_source_id,github_app_id,name,repository,command,preview_url,document,active,created_at,updated_at) VALUES('template','source','github','Template','team/ui','/preview','','',TRUE,?,?)`, stamp(now), stamp(now))
+	must(err)
 	for _, templateID := range []string{"", "template"} {
 		number := 17
 		if templateID != "" {
@@ -200,7 +201,7 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 	must(data.Migrate(ctx))
 	triggers, err := data.ListWorkflowPreviewTriggers(ctx)
 	must(err)
-	if len(triggers) != 2 || len(triggers[0].SourceDefaults) != 0 || len(triggers[1].SourceDefaults) != 0 {
+	if len(triggers) != 2 || len(triggers[0].SourceDefaults) != 0 || len(triggers[1].SourceDefaults) != 0 || triggers[0].TTL != "0" || triggers[0].ExpiresAt != nil || triggers[1].TTL != "0" || triggers[1].ExpiresAt != nil {
 		t.Fatal("upgrade did not preserve legacy preview triggers", triggers)
 	}
 	for _, templateID := range []string{"", "template"} {

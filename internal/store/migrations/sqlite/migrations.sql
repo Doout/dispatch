@@ -1176,3 +1176,12 @@ CREATE TABLE workflow_feedback_leases (
 
 -- dispatch:migration 065_preview_source_defaults
 ALTER TABLE workflow_preview_triggers ADD COLUMN source_defaults TEXT NOT NULL DEFAULT '{}';
+
+-- dispatch:migration 066_preview_lifetime
+ALTER TABLE workflow_preview_templates ADD COLUMN ttl TEXT NOT NULL DEFAULT '0';
+ALTER TABLE workflow_preview_triggers ADD COLUMN ttl TEXT NOT NULL DEFAULT '0';
+ALTER TABLE workflow_preview_triggers ADD COLUMN expires_at TEXT;
+ALTER TABLE workflow_preview_triggers ADD COLUMN cleanup_lease_until TEXT;
+ALTER TABLE workflow_preview_comments ADD COLUMN lifetime_handled_at TEXT;
+ALTER TABLE workflow_preview_triggers ADD COLUMN lifetime_report_pending BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE workflow_preview_triggers ADD COLUMN lifetime_start_comment_id TEXT NOT NULL DEFAULT '';

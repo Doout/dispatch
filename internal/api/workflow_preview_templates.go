@@ -17,6 +17,7 @@ import (
 )
 
 type workflowPreviewTemplateRequest struct {
+	TTL                string                                 `json:"ttl"`
 	GitSource          *core.WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
 	ConfigSourceID     string                                 `json:"configSourceId"`
 	GitHubAppID        string                                 `json:"githubAppId"`
@@ -99,7 +100,7 @@ func (a *API) validateWorkflowPreviewTemplate(w http.ResponseWriter, r *http.Req
 		ConfigSourceID: strings.TrimSpace(input.ConfigSourceID), GitHubAppID: strings.TrimSpace(input.GitHubAppID),
 		Name: strings.TrimSpace(input.Name), Repository: events.NormalizeRepository(input.Repository),
 		Command: strings.TrimSpace(input.Command), PreviewURL: strings.TrimSpace(input.PreviewURL),
-		Document: input.Document, Active: input.Active, AutoDeploy: input.AutoDeploy, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour,
+		TTL: workflowservice.NormalizePreviewTTL(input.TTL), Document: input.Document, Active: input.Active, AutoDeploy: input.AutoDeploy, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour,
 	}
 	if item.Command == "" {
 		item.Command = "/preview"
@@ -208,7 +209,7 @@ func applyPreviewTemplateTrigger(item *core.WorkflowPreviewTemplate) error {
 	item.WatchRepositories = nil
 	if trigger != nil {
 		item.Command = trigger.Command
-		item.AutoDeploy, item.MaxAutoRunsPerHour = trigger.AutoDeploy, trigger.MaxAutoRunsPerHour
+		item.AutoDeploy, item.MaxAutoRunsPerHour, item.TTL = trigger.AutoDeploy, trigger.MaxAutoRunsPerHour, trigger.TTL
 		for _, alias := range trigger.Sources {
 			repository := events.NormalizeRepository(sources[alias].Repository)
 			if !slices.Contains(item.WatchRepositories, repository) {
@@ -217,6 +218,10 @@ func applyPreviewTemplateTrigger(item *core.WorkflowPreviewTemplate) error {
 		}
 		item.Repository = item.WatchRepositories[0]
 	}
+	if _, err := workflowservice.ParsePreviewTTL(item.TTL); err != nil {
+		return err
+	}
+	item.TTL = workflowservice.NormalizePreviewTTL(item.TTL)
 	command, arguments := events.ParseCommand(item.Command)
 	if command != item.Command || command == "" || arguments != "" {
 		return errors.New("provide one comment command such as /preview")
