@@ -145,3 +145,64 @@ func TestPollCheckJournalsFailuresAndRecoveryWithoutUnchangedNoise(t *testing.T)
 		t.Fatalf("latest check: %+v %v", checks, err)
 	}
 }
+
+func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "upgrade.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+	steps := migrationSteps(t, "sqlite")
+	if err := data.applyMigrations(ctx, steps[:len(steps)-1]); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now}))
+	must(data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", CreatedAt: now, UpdatedAt: now}))
+	must(data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", GitHubAppID: "github", Name: "Source", CreatedAt: now, UpdatedAt: now}))
+	must(data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "workflow", ConfigSourceID: "source", Name: "Preview", Kind: "Application", Temporary: true, CreatedAt: now, UpdatedAt: now}))
+	must(data.CreateWorkflowPreviewTemplate(ctx, core.WorkflowPreviewTemplate{ID: "template", ConfigSourceID: "source", GitHubAppID: "github", Name: "Template", Repository: "team/ui", Command: "/preview", CreatedAt: now, UpdatedAt: now}))
+	for _, templateID := range []string{"", "template"} {
+		number := 17
+		if templateID != "" {
+			number = 18
+		}
+		triggerID := "trigger" + templateID
+		revisionID := "revision" + templateID
+		must(data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: triggerID, TemplateID: templateID, ResourceID: "workflow", GitHubAppID: "github", Repository: "team/ui", PullRequestNumber: number, Command: "/preview", CreatedAt: now}))
+		must(data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: revisionID, ResourceID: "workflow", State: "succeeded", Trigger: "pull request comment " + triggerID, CreatedAt: now}))
+		reserved, err := data.ReserveWorkflowPreviewComment(ctx, triggerID, triggerID)
+		must(err)
+		if !reserved {
+			t.Fatal("comment reservation failed")
+		}
+		must(data.CompleteWorkflowPreviewComment(ctx, triggerID, triggerID, revisionID))
+	}
+	must(data.Migrate(ctx))
+	for _, templateID := range []string{"", "template"} {
+		triggerID := "trigger" + templateID
+		ruleID := "preview:" + triggerID
+		if templateID != "" {
+			ruleID = "template:" + templateID
+		}
+		key := "delivery:github:team/ui:comment:github:team/ui:" + triggerID + ":" + ruleID
+		must(data.SaveEventActivity(ctx, key, core.EventActivity{ID: ulid.Make().String(), ProjectID: "project", RuleID: ruleID, Transport: "poll", State: "running", CreatedAt: now}))
+	}
+	items, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}})
+	must(err)
+	if len(items) != 2 {
+		t.Fatalf("a retry duplicated imported comments: %+v", items)
+	}
+	for _, item := range items {
+		if item.Transport != "history" || item.State != "processed" || len(item.RevisionIDs) != 1 || item.ResourceID != "workflow" {
+			t.Fatalf("imported identity or run links changed: %+v", item)
+		}
+	}
+}
