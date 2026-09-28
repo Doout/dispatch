@@ -28,6 +28,7 @@ type Service struct {
 	TemplateName      string                  `json:"templateName,omitempty"`
 	TemplateConfigSHA string                  `json:"templateConfigSha,omitempty"`
 	ProvisionRunID    string                  `json:"provisionRunId,omitempty"`
+	ProvisionTarget   *ServiceProvisionTarget `json:"provisionTarget,omitempty"`
 	Fields            map[string]ServiceField `json:"fields"`
 	ProbeHost         string                  `json:"probeHost,omitempty"`
 	ProbePort         int                     `json:"probePort,omitempty"`
@@ -40,17 +41,18 @@ type Service struct {
 // Provision runs keep status and a redacted log. Input values and raw output
 // credentials are never persisted in this record.
 type ServiceProvisionRun struct {
-	ID          string     `json:"id"`
-	TemplateID  string     `json:"templateId"`
-	ProjectID   string     `json:"projectId"`
-	ServiceName string     `json:"serviceName"`
-	ServiceID   string     `json:"serviceId,omitempty"`
-	State       string     `json:"state"`
-	Phase       string     `json:"phase,omitempty"`
-	Error       string     `json:"error,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	StartedAt   *time.Time `json:"startedAt,omitempty"`
-	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
+	ID          string                  `json:"id"`
+	TemplateID  string                  `json:"templateId"`
+	ProjectID   string                  `json:"projectId"`
+	ServiceName string                  `json:"serviceName"`
+	ServiceID   string                  `json:"serviceId,omitempty"`
+	Target      *ServiceProvisionTarget `json:"target,omitempty"`
+	State       string                  `json:"state"`
+	Phase       string                  `json:"phase,omitempty"`
+	Error       string                  `json:"error,omitempty"`
+	CreatedAt   time.Time               `json:"createdAt"`
+	StartedAt   *time.Time              `json:"startedAt,omitempty"`
+	FinishedAt  *time.Time              `json:"finishedAt,omitempty"`
 }
 
 type ServiceField struct {

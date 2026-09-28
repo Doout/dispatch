@@ -63,16 +63,41 @@ type ServiceTemplateDocument struct {
 	Spec     ServiceTemplateSpec `json:"spec" yaml:"spec"`
 }
 
-// A ServiceTemplate describes a connection contract, not a provider. Its
-// provision job can call Docker, SQL, or a cloud API and returns the same
-// service fields to application bindings.
+// A ServiceTemplate returns the same connection fields from built-in
+// Docker or Helm provisioning, or from an optional script.
 type ServiceTemplateSpec struct {
 	Description string                               `json:"description,omitempty" yaml:"description,omitempty"`
 	ServiceType string                               `json:"serviceType" yaml:"serviceType"`
 	Inputs      map[string]ServiceTemplateInputSpec  `json:"inputs,omitempty" yaml:"inputs,omitempty"`
 	Sources     map[string]SourceSpec                `json:"sources,omitempty" yaml:"sources,omitempty"`
-	Provision   JobSpec                              `json:"provision" yaml:"provision"`
+	Provision   ServiceProvisionSpec                 `json:"provision" yaml:"provision"`
 	Outputs     map[string]ServiceTemplateOutputSpec `json:"outputs" yaml:"outputs"`
+}
+
+type ServiceProvisionSpec struct {
+	JobSpec `yaml:",inline"`
+	Docker  *core.DockerServiceProvision `json:"docker,omitempty" yaml:"docker,omitempty"`
+	Helm    *core.HelmServiceProvision   `json:"helm,omitempty" yaml:"helm,omitempty"`
+}
+
+func (p ServiceProvisionSpec) MarshalYAML() (any, error) {
+	if p.Docker != nil || p.Helm != nil {
+		return struct {
+			Docker *core.DockerServiceProvision `yaml:"docker,omitempty"`
+			Helm   *core.HelmServiceProvision   `yaml:"helm,omitempty"`
+		}{Docker: p.Docker, Helm: p.Helm}, nil
+	}
+	return p.JobSpec, nil
+}
+
+func (p ServiceProvisionSpec) Provider() string {
+	if p.Docker != nil {
+		return "docker"
+	}
+	if p.Helm != nil {
+		return "helm"
+	}
+	return "script"
 }
 
 type ServiceTemplateInputSpec struct {
@@ -301,6 +326,9 @@ func applyPipelineDefaults(spec *PipelineSpec) {
 
 func applyServiceTemplateDefaults(spec *ServiceTemplateSpec) {
 	applySourceDefaults(spec.Sources)
+	if (spec.Provision.Docker != nil || spec.Provision.Helm != nil) && spec.ServiceType == "postgresql" && spec.Outputs == nil {
+		spec.Outputs = map[string]ServiceTemplateOutputSpec{"connectionUrl": {Sensitive: true}}
+	}
 	if spec.Provision.Outputs == nil {
 		for name := range spec.Outputs {
 			spec.Provision.Outputs = append(spec.Provision.Outputs, name)
@@ -363,7 +391,11 @@ func validateServiceTemplate(document ServiceTemplateDocument) error {
 	if err := validateSources(spec.Sources); err != nil {
 		return err
 	}
-	if err := validateJobs("spec.provision", map[string]JobSpec{"job": spec.Provision}, spec.Sources, inputs, true); err != nil {
+	if spec.Provision.Docker != nil || spec.Provision.Helm != nil {
+		if err := validateBuiltinProvision(spec); err != nil {
+			return err
+		}
+	} else if err := validateJobs("spec.provision", map[string]JobSpec{"job": spec.Provision.JobSpec}, spec.Sources, inputs, true); err != nil {
 		return err
 	}
 	for _, match := range templatePattern.FindAllStringSubmatch(spec.Provision.Run, -1) {

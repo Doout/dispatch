@@ -48,7 +48,17 @@ func BuildTopology(path string, contents []byte) (Topology, error) {
 		return pipelineTopology(*document.Pipeline), nil
 	}
 	if document.ServiceTemplate != nil {
-		return pipelineTopology(PipelineSpec{Sources: document.ServiceTemplate.Sources, Jobs: map[string]JobSpec{"provision": document.ServiceTemplate.Provision}}), nil
+		if p := document.ServiceTemplate.Provision; p.Docker != nil || p.Helm != nil {
+			provider, server := "Docker", ""
+			if p.Docker != nil {
+				server = p.Docker.ServerRef
+			}
+			if p.Helm != nil {
+				provider, server = "Helm", p.Helm.ServerRef
+			}
+			return Topology{Columns: []TopologyColumn{{ID: "provision", Label: "Provisioner"}}, Nodes: []TopologyNode{{ID: "provision", Column: "provision", Kind: "deployment", Label: provider, Detail: server}}, Edges: []TopologyEdge{}}, nil
+		}
+		return pipelineTopology(PipelineSpec{Sources: document.ServiceTemplate.Sources, Jobs: map[string]JobSpec{"provision": document.ServiceTemplate.Provision.JobSpec}}), nil
 	}
 	return Topology{}, fmt.Errorf("%s has no workflow specification", path)
 }

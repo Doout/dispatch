@@ -54,7 +54,7 @@ func (a *API) getServiceTemplate(w http.ResponseWriter, r *http.Request) {
 	if revision > 0 {
 		managedBy = "dispatch"
 	}
-	writeJSON(w, 200, serviceTemplateView{ID: resource.ID, Name: resource.Name, ProjectID: project, Description: spec.Description, ServiceType: spec.ServiceType, Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: resource.ConfigSHA, ManagedBy: managedBy, Revision: revision, ConfigSourceID: resource.ConfigSourceID, Document: resource.Document})
+	writeJSON(w, 200, serviceTemplateView{ID: resource.ID, Name: resource.Name, ProjectID: project, Description: spec.Description, ServiceType: spec.ServiceType, Provider: spec.Provision.Provider(), Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: resource.ConfigSHA, ManagedBy: managedBy, Revision: revision, ConfigSourceID: resource.ConfigSourceID, Document: resource.Document})
 }
 
 type serviceTemplateRequest struct {
@@ -76,6 +76,10 @@ func (a *API) serviceTemplateInput(w http.ResponseWriter, r *http.Request, input
 	}
 	if len(docs) != 1 || docs[0].ServiceTemplate == nil {
 		problem(w, 400, "Invalid template", "Provide exactly one ServiceTemplate document.")
+		return false
+	}
+	if _, err := a.serviceProvisionTarget(r.Context(), *docs[0].ServiceTemplate); err != nil {
+		problem(w, 400, "Invalid provisioner target", err.Error())
 		return false
 	}
 	if input.ConfigSourceID != "" {
