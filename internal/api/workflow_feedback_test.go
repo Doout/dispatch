@@ -33,6 +33,7 @@ type feedbackFixture struct {
 	reviewFailure bool
 	crashWindow   bool
 	spoof         bool
+	dismissed     bool
 }
 
 func newFeedbackFixture(t *testing.T) *feedbackFixture {
@@ -72,8 +73,12 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 			if r.Method == http.MethodGet {
 				if f.spoof {
 					fmt.Fprintf(w, `[{"id":99,"commit_id":%q,"state":"APPROVED","body":%q,"user":{"login":"member","type":"User"}}]`, strings.Repeat("a", 40), "<!-- dispatch-preview-review:"+f.revision.ID+" -->")
-				} else if f.crashWindow {
-					fmt.Fprintf(w, `[{"id":99,"commit_id":%q,"state":"APPROVED","body":%q,"user":{"login":"dispatch-test[bot]","type":"Bot"}}]`, strings.Repeat("a", 40), "<!-- dispatch-preview-review:"+f.revision.ID+" -->")
+				} else if f.crashWindow || f.dismissed {
+					state := "APPROVED"
+					if f.dismissed {
+						state = "DISMISSED"
+					}
+					fmt.Fprintf(w, `[{"id":99,"commit_id":%q,"state":%q,"body":%q,"user":{"login":"dispatch-test[bot]","type":"Bot"}}]`, strings.Repeat("a", 40), state, "<!-- dispatch-preview-review:"+f.revision.ID+" -->")
 				} else {
 					fmt.Fprint(w, `[]`)
 				}
@@ -443,5 +448,64 @@ func TestWorkflowFeedbackRejectsSpoofedReviewMarker(t *testing.T) {
 	}
 	if len(f.reviews) != 2 {
 		t.Fatal("a user-authored marker impersonated the App review")
+	}
+}
+
+func TestWorkflowFeedbackDoesNotRequestChangesAfterControllerRecovery(t *testing.T) {
+	f := newFeedbackFixture(t)
+	ctx := context.Background()
+	if err := f.a.reportWorkflowFeedback(ctx, "qa-preview"); err != nil {
+		t.Fatal(err)
+	}
+	f.revision.State = "failed"
+	f.revision.Error = core.WorkflowInterruptedMessage
+	if err := f.a.store.UpdateWorkflowRevision(ctx, f.revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.reconcileWorkflowFeedback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews) != 0 {
+		t.Fatal("controller recovery requested changes on a PR")
+	}
+	for _, status := range f.statuses[2:] {
+		if status["state"] != "error" {
+			t.Fatalf("interrupted QA reported a verdict: %+v", status)
+		}
+	}
+	stored, err := f.a.store.GetWorkflowRevision(ctx, f.revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range stored.Feedback.Targets {
+		if target.Review != "skipped" || target.SkipReason == "" {
+			t.Fatal("interruption reason is missing")
+		}
+	}
+	if !strings.Contains(workflowPreviewTestReport(stored, nil, "https://preview.example.test"), "checks interrupted") {
+		t.Fatal("interrupted check was reported as a test failure")
+	}
+}
+
+func TestWorkflowFeedbackDoesNotRecreateDismissedReviewOnRetry(t *testing.T) {
+	f := newFeedbackFixture(t)
+	ctx := context.Background()
+	f.dismissed = true
+	f.revision.State = "succeeded"
+	if err := f.a.store.UpdateWorkflowRevision(ctx, f.revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.reportWorkflowFeedback(ctx, "qa-preview"); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := f.a.store.GetWorkflowRevision(ctx, f.revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Feedback.Targets[0].Review != "dismissed" || stored.Feedback.Targets[0].ReviewID != 99 {
+		t.Fatal("dismissal was not preserved")
+	}
+	if len(f.reviews) != 1 || strings.Contains(f.reviews[0]["path"], "/service/") {
+		t.Fatal("retry replaced a dismissed review")
 	}
 }

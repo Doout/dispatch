@@ -97,6 +97,10 @@ func (a *API) reportWorkflowFeedback(ctx context.Context, resourceID string) err
 			case "cancelled":
 				state = "error"
 			}
+			interrupted := revision.State == "failed" && revision.Error == core.WorkflowInterruptedMessage
+			if interrupted {
+				state = "error"
+			}
 			// Reviews require every linked PR to still match the tested source set.
 			reviewSkip := ""
 			var reviewLookupError error
@@ -104,7 +108,7 @@ func (a *API) reportWorkflowFeedback(ctx context.Context, resourceID string) err
 			if revision.State == "succeeded" && feedback.ReviewOnSuccess == "approve" {
 				reviewEvent = "APPROVE"
 			}
-			if revision.State == "failed" && feedback.ReviewOnFailure == "requestChanges" {
+			if revision.State == "failed" && !interrupted && feedback.ReviewOnFailure == "requestChanges" {
 				reviewEvent = "REQUEST_CHANGES"
 			}
 			if reviewEvent != "" {
@@ -154,6 +158,11 @@ func (a *API) reportWorkflowFeedback(ctx context.Context, resourceID string) err
 					failures = append(failures, reviewLookupError)
 					continue
 				}
+				if interrupted {
+					target.Review = "skipped"
+					target.SkipReason = "QA was interrupted by a controller restart. Run the checks again for a review decision."
+					continue
+				}
 				if reviewEvent == "" {
 					target.Review = "disabled"
 					continue
@@ -166,6 +175,15 @@ func (a *API) reportWorkflowFeedback(ctx context.Context, resourceID string) err
 				marker := "<!-- dispatch-preview-review:" + revision.ID + " -->"
 				body := fmt.Sprintf("Preview QA %s for commit `%s`.\n\n[Tested preview](%s)", revision.State, target.CommitSHA, feedback.PreviewURL)
 				id, err := a.eventConfig.GitHubApps.SubmitPullRequestReview(ctx, target.GitHubAppID, target.Repository, target.Number, target.CommitSHA, reviewEvent, marker, body)
+				if errors.Is(err, githubapp.ErrReviewDismissed) {
+					target.ReviewID = id
+					target.Review = "dismissed"
+					target.SkipReason = err.Error()
+					if err := a.store.UpdateWorkflowFeedback(ctx, revision.ID, feedback); err != nil {
+						return err
+					}
+					continue
+				}
 				if errors.Is(err, githubapp.ErrReviewOutdated) {
 					target.Review = "skipped"
 					target.SkipReason = err.Error()
@@ -197,7 +215,7 @@ func (a *API) reportWorkflowFeedback(ctx context.Context, resourceID string) err
 }
 
 func (a *API) publishWorkflowFeedbackStatus(ctx context.Context, revision core.WorkflowRevision, target core.WorkflowFeedbackTarget, state string) error {
-	description := map[string]string{"pending": "Preview QA queued or running", "success": "Preview QA passed", "failure": "Preview QA failed", "error": "Preview QA cancelled or superseded"}[state]
+	description := map[string]string{"pending": "Preview QA queued or running", "success": "Preview QA passed", "failure": "Preview QA failed", "error": "Preview QA cancelled, interrupted, or superseded"}[state]
 	targetURL := strings.TrimRight(a.auth.PublicURL, "/") + "/events?run=" + revision.ID
 	if a.auth.PublicURL == "" {
 		targetURL = revision.Feedback.PreviewURL

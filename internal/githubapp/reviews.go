@@ -9,6 +9,7 @@ import (
 )
 
 var ErrReviewOutdated = errors.New("PR closed, draft, or updated since the tested deployment")
+var ErrReviewDismissed = errors.New("This QA review was dismissed. Post a new test command to request another decision")
 
 type PullRequestHead struct {
 	State string `json:"state"`
@@ -85,8 +86,13 @@ func (m *Manager) SubmitPullRequestReview(ctx context.Context, id, repository st
 			state = "CHANGES_REQUESTED"
 		}
 		for _, review := range reviews {
-			if connection.Slug != "" && review.User.Type == "Bot" && strings.EqualFold(review.User.Login, connection.Slug+"[bot]") && review.CommitID == sha && review.State == state && strings.Contains(review.Body, marker) {
-				return review.ID, nil
+			if connection.Slug != "" && review.User.Type == "Bot" && strings.EqualFold(review.User.Login, connection.Slug+"[bot]") && review.CommitID == sha && strings.Contains(review.Body, marker) {
+				if review.State == "DISMISSED" {
+					return review.ID, ErrReviewDismissed
+				}
+				if review.State == state {
+					return review.ID, nil
+				}
 			}
 		}
 		if len(reviews) < 100 {

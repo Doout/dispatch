@@ -489,7 +489,7 @@ Dispatch replaces `{{ instance.id }}` and creates an `Application` for each prev
 
 #### Commit statuses and PR reviews after QA
 
-`/preview test` reports a separate commit status on each tested primary and linked PR. It uses the commits from the deployed preview, including when the PR has newer commits. GitOps and chart repositories receive no QA status unless they are explicitly linked as PR sources. The default context is `Dispatch/preview-tests/<application-name>`. Queued or running checks report `pending`, completed checks report `success` or `failure`, and cancelled checks report `error`. Pipeline statuses use `Dispatch/pipeline/<pipeline-name>` so they do not overwrite deployment results.
+`/preview test` reports a separate commit status on each tested primary and linked PR. It uses the commits from the deployed preview, including when the PR has newer commits. GitOps and chart repositories receive no QA status unless they are explicitly linked as PR sources. The default context is `Dispatch/preview-tests/<application-name>`. Queued or running checks report `pending`, completed checks report `success` or `failure`, and cancelled or interrupted checks report `error`. Pipeline statuses use `Dispatch/pipeline/<pipeline-name>` so they do not overwrite deployment results.
 
 Reviews are disabled by default. Add this under `spec` in a WorkflowTemplate or a preview Application to enable them:
 
@@ -501,11 +501,11 @@ spec:
     reviewOnFailure: requestChanges
 ```
 
-For a concrete Application, replace the template expression with its instance name or ID. Omit either review setting, or set it to `none`, to disable that decision. A failed QA run can request changes; Dispatch leaves the PR open and never merges it. Only trusted PR commenters can start QA through the configured comment command.
+For a concrete Application, replace the template expression with its instance name or ID. Omit either review setting, or set it to `none`, to disable that decision. Interrupted runs issue no review. A failed QA run can request changes; Dispatch leaves the PR open and never merges it. Only trusted PR commenters can start QA through the configured comment command.
 
 Dispatch captures linked PR identities when the deployment is scheduled. Later changes to PR links do not redirect an earlier QA result. Before reviewing, every linked PR must be open, non-draft, and still point to its tested commit. Newer deployments and QA runs supersede older pending feedback. Older deployments created before PR identity capture need a new `/preview` deployment before reviews can be enabled. Results on older commits remain visible as commit statuses. Enable GitHub's dismissal of stale approvals in branch protection if approval must be invalidated whenever a new commit arrives.
 
-Statuses link to the QA run in Dispatch. **GitHub results** in run details shows each PR, tested commit, status, review decision, and reporting errors. Reporting retries after GitHub outages and controller restarts, independently of PR comment delivery. Successful reviews are recovered by their result marker and the App's bot identity to avoid duplicate reviews after a restart. A database lease prevents multiple controllers from reporting the same preview simultaneously.
+Statuses link to the QA run in Dispatch. **GitHub results** in run details shows each PR, tested commit, status, review decision, and reporting errors. Reporting retries after GitHub outages and controller restarts, independently of PR comment delivery. Successful reviews are recovered by their result marker and the App's bot identity to avoid duplicate reviews after a restart. Dismissed reviews are not recreated by a retry. A database lease prevents multiple controllers from reporting the same preview simultaneously.
 
 The GitHub App needs **Commit statuses: write** and **Pull requests: write** for the affected repositories. The manifest already requests both. **Connections > Verify** checks registration and installation grants. After changing App permissions, accept the installation update or reinstall it. Feedback reporting uses installation tokens and never falls back to a personal token.
 

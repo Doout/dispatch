@@ -120,6 +120,9 @@ type WorkflowPullRequest struct {
 	CommitSHA   string `json:"commitSha"`
 }
 
+// WorkflowInterruptedMessage identifies startup recovery, which is not a QA verdict.
+const WorkflowInterruptedMessage = "Controller restarted while this work was in progress. Inspect the existing deployment and external side effects, then explicitly retry the workflow. No work was replayed."
+
 type WorkflowReporting struct {
 	StatusContext   string `json:"statusContext,omitempty" yaml:"statusContext,omitempty"`
 	ReviewOnSuccess string `json:"reviewOnSuccess,omitempty" yaml:"reviewOnSuccess,omitempty"`

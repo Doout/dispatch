@@ -221,6 +221,8 @@ func workflowPreviewTestReport(revision core.WorkflowRevision, stages []core.Wor
 	status := "Passed"
 	if revision.State == "cancelled" {
 		status = "Cancelled"
+	} else if revision.State == "failed" && revision.Error == core.WorkflowInterruptedMessage {
+		status = "Interrupted"
 	} else if revision.State == "failed" {
 		status = "Failed"
 	}

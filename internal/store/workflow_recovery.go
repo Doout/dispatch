@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"github.com/doout/dispatch/internal/core"
 	"time"
 )
 
@@ -14,7 +15,7 @@ func (s *SQLStore) RecoverInterruptedWorkflows(ctx context.Context, before time.
 		return 0, err
 	}
 	defer tx.Rollback()
-	message := "Controller restarted while this work was in progress. Inspect the existing deployment and external side effects, then explicitly retry the workflow. No work was replayed."
+	message := core.WorkflowInterruptedMessage
 	var affected int64
 	for _, table := range []string{"workflow_job_results", "workflow_stage_runs", "workflow_revisions"} {
 		result, err := tx.ExecContext(ctx, s.q(`UPDATE `+table+` SET state='failed',error=?,finished_at=? WHERE state IN ('queued','running') AND created_at<?`), message, stamp(before), stamp(before))
