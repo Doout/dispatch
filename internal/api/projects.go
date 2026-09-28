@@ -101,6 +101,17 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	templates, err := a.store.ListSavedServiceTemplates(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	for _, template := range templates {
+		if template.ProjectID == id {
+			problem(w, http.StatusConflict, "Project in use", "Delete its saved service templates before deleting this project.")
+			return
+		}
+	}
 	if err := a.store.DeleteProject(r.Context(), id); err != nil {
 		a.notFoundOrInternal(w, err, "Project")
 		return

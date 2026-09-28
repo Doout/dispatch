@@ -25,6 +25,11 @@ type Store interface {
 	SaveDriftAction(context.Context, core.DriftAction) error
 	ListDriftActions(context.Context, string) ([]core.DriftAction, error)
 	CreateService(context.Context, core.Service) error
+	CreateSavedServiceTemplate(context.Context, core.SavedServiceTemplate) error
+	UpdateSavedServiceTemplate(context.Context, core.SavedServiceTemplate, int64) error
+	GetSavedServiceTemplate(context.Context, string) (core.SavedServiceTemplate, error)
+	ListSavedServiceTemplates(context.Context) ([]core.SavedServiceTemplate, error)
+	DeleteSavedServiceTemplate(context.Context, string, int64) error
 	CreateServiceProvisionRun(context.Context, core.ServiceProvisionRun) error
 	UpdateServiceProvisionRun(context.Context, core.ServiceProvisionRun) error
 	GetServiceProvisionRun(context.Context, string) (core.ServiceProvisionRun, error)

@@ -54,8 +54,16 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.With(a.directUserOnly).Put("/", a.updateService)
 		})
 	})
-	r.Get("/service-templates", a.listServiceTemplates)
-	r.With(a.directUserOnly).Post("/service-templates/{id}/runs", a.startServiceProvision)
+	r.Route("/service-templates", func(r chi.Router) {
+		r.Get("/", a.listServiceTemplates)
+		r.With(a.directUserOnly).Post("/", a.createServiceTemplate)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", a.getServiceTemplate)
+			r.With(a.directUserOnly).Put("/", a.updateServiceTemplate)
+			r.With(a.directUserOnly).Delete("/", a.deleteServiceTemplate)
+			r.With(a.directUserOnly).Post("/runs", a.startServiceProvision)
+		})
+	})
 	r.Get("/service-provision-runs", a.listServiceProvisionRuns)
 	r.Get("/service-provision-runs/{id}", a.getServiceProvisionRun)
 }

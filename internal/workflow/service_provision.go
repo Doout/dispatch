@@ -14,7 +14,7 @@ import (
 
 // ProvisionService executes a template without creating a workflow revision or
 // job result: those records otherwise retain plaintext job outputs.
-func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowResource, inputs map[string]string) (map[string]string, error) {
+func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowResource, projectID string, inputs map[string]string) (map[string]string, error) {
 	if !resource.Active || resource.Kind != KindServiceTemplate {
 		return nil, errors.New("service template is unavailable")
 	}
@@ -23,9 +23,12 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 		return nil, errors.New("stored service template is invalid")
 	}
 	spec := documents[0].ServiceTemplate
-	source, err := s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
-	if err != nil {
-		return nil, err
+	var source core.ConfigSource
+	if len(spec.Sources) > 0 {
+		source, err = s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
+		if err != nil || source.ProjectID != projectID {
+			return nil, errors.New("repository access for the template is unavailable")
+		}
 	}
 	snapshot := map[string]core.WorkflowSourceRevision{}
 	for alias, ref := range spec.Sources {
