@@ -2369,3 +2369,29 @@ code { font-family: var(--mono); }
 .workflow-stage-progress > p { margin: 8px 0; font-size: 12px; }
 .workflow-stage-progress h5 { margin: 12px 0 8px; }
 .workflow-stage-progress .workflow-job-output + .workflow-job-output { margin-top: 8px; }
+
+.service-tabs { margin-bottom: 22px; }
+.service-template-list { display: grid; gap: 12px; }
+.service-template-card, .service-template-empty { padding: 22px; border: 1px solid var(--rule); border-radius: 12px; background: var(--paper); }
+.service-template-card h2, .service-template-empty h2 { margin: 0 0 6px; font-size: 16px; }
+.service-template-card-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.service-template-card-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.service-template-origin { flex-shrink: 0; padding: 4px 8px; color: var(--muted-strong); background: var(--surface-subtle); border-radius: 4px; font-size: 11px; }
+.service-template-empty p { color: var(--muted); }
+.service-template-delete { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.service-form .service-template-basics, .service-form .service-template-definition { display: grid; gap: 20px; padding: 0; border: 0; }
+.service-template-basics .service-help { margin: -10px 0 0; }
+.service-template-section { display: grid; gap: 14px; padding-top: 20px; border-top: 1px solid var(--rule); }
+.service-template-section > .service-help { margin: -8px 0 0; }
+.service-template-section > button { justify-self: start; }
+.service-template-input { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(110px, 1fr) minmax(140px, 1fr) auto auto; align-items: end; gap: 12px; }
+.service-template-output { display: flex; align-items: center; gap: 16px; }
+.service-template-output > code, .service-template-output > label:first-child { flex: 1; min-width: 0; }
+.service-form .service-template-check { display: flex; align-items: center; gap: 7px; min-height: 38px; white-space: nowrap; }
+.service-template-check input { margin: 0; }
+.service-form .service-template-code { font-family: var(--mono, monospace); font-size: 12px; line-height: 1.6; min-height: 180px; }
+@media (max-width: 800px) {
+ .service-template-input { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-bottom: 16px; border-bottom: 1px solid var(--rule); }
+ .service-template-input > button { justify-self: start; }
+ .service-template-card-heading { flex-wrap: wrap; }
+}

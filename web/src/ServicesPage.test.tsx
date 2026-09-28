@@ -63,7 +63,7 @@ it("keeps manual PostgreSQL defaults behind advanced options", async () => {
  expect(save.mock.calls[0][1].fields.password.sensitive).toBe(true);
 });
 it("creates a service from a template using an existing PostgreSQL service", async () => {
- vi.spyOn(api, "serviceTemplates").mockResolvedValue([{ id: "template", name: "New database", projectId: "p", description: "Add a database to a cluster", serviceType: "postgresql", configSha: "abc123", outputs: { connectionUrl: { sensitive: true } }, inputs: { cluster: { type: "service", serviceType: "postgresql", required: true }, database: { type: "string", required: true } } }]);
+ vi.spyOn(api, "serviceTemplates").mockResolvedValue([{ managedBy: "gitops", id: "template", name: "New database", projectId: "p", description: "Add a database to a cluster", serviceType: "postgresql", configSha: "abc123", outputs: { connectionUrl: { sensitive: true } }, inputs: { cluster: { type: "service", serviceType: "postgresql", required: true }, database: { type: "string", required: true } } }]);
  vi.spyOn(api, "serviceProvisionRuns").mockResolvedValue([]);
  const start = vi.spyOn(api, "startServiceProvision").mockResolvedValue({ id: "run", templateId: "template", projectId: "p", serviceName: "new-db", state: "queued", createdAt: "2026-09-27T00:00:00Z" });
  render(<ServicesPage overview={overview} onChanged={async () => {}} />);

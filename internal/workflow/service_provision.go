@@ -23,9 +23,12 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 		return nil, errors.New("stored service template is invalid")
 	}
 	spec := documents[0].ServiceTemplate
-	source, err := s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
-	if err != nil {
-		return nil, err
+	var source core.ConfigSource
+	if len(spec.Sources) > 0 {
+		source, err = s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
+		if err != nil {
+			return nil, errors.New("repository access for the template is unavailable")
+		}
 	}
 	snapshot := map[string]core.WorkflowSourceRevision{}
 	for alias, ref := range spec.Sources {

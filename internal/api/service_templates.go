@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,14 +17,18 @@ import (
 )
 
 type serviceTemplateView struct {
-	ID          string                                        `json:"id"`
-	Name        string                                        `json:"name"`
-	ProjectID   string                                        `json:"projectId"`
-	Description string                                        `json:"description"`
-	ServiceType string                                        `json:"serviceType"`
-	Inputs      map[string]workflow.ServiceTemplateInputSpec  `json:"inputs"`
-	Outputs     map[string]workflow.ServiceTemplateOutputSpec `json:"outputs"`
-	ConfigSHA   string                                        `json:"configSha"`
+	ID             string                                        `json:"id"`
+	Name           string                                        `json:"name"`
+	ProjectID      string                                        `json:"projectId"`
+	Description    string                                        `json:"description"`
+	ServiceType    string                                        `json:"serviceType"`
+	Inputs         map[string]workflow.ServiceTemplateInputSpec  `json:"inputs"`
+	Outputs        map[string]workflow.ServiceTemplateOutputSpec `json:"outputs"`
+	ManagedBy      string                                        `json:"managedBy"`
+	Revision       int64                                         `json:"revision,omitempty"`
+	ConfigSourceID string                                        `json:"configSourceId,omitempty"`
+	Document       string                                        `json:"document,omitempty"`
+	ConfigSHA      string                                        `json:"configSha"`
 }
 
 func (a *API) listServiceTemplates(w http.ResponseWriter, r *http.Request) {
@@ -55,8 +60,30 @@ func (a *API) listServiceTemplates(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		spec := documents[0].ServiceTemplate
-		result = append(result, serviceTemplateView{ID: resource.ID, Name: resource.Name, ProjectID: source.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: resource.ConfigSHA})
+		result = append(result, serviceTemplateView{ID: resource.ID, Name: resource.Name, ProjectID: source.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: resource.ConfigSHA, ManagedBy: "gitops", ConfigSourceID: resource.ConfigSourceID})
 	}
+	saved, err := a.store.ListSavedServiceTemplates(r.Context())
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	for _, item := range saved {
+		if !visible[item.ProjectID] {
+			continue
+		}
+		documents, err := workflow.Parse("template.yaml", []byte(item.Document))
+		if err != nil || len(documents) != 1 || documents[0].ServiceTemplate == nil {
+			continue
+		}
+		spec := documents[0].ServiceTemplate
+		result = append(result, serviceTemplateView{ID: item.ID, Name: item.Name, ProjectID: item.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: item.Digest, ManagedBy: "dispatch", Revision: item.Revision, ConfigSourceID: item.ConfigSourceID})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name == result[j].Name {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].Name < result[j].Name
+	})
 	writeJSON(w, 200, result)
 }
 
@@ -67,24 +94,15 @@ type serviceProvisionRequest struct {
 }
 
 func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
-	resource, err := a.store.GetWorkflowResource(r.Context(), chi.URLParam(r, "id"))
+	resource, projectID, _, err := a.serviceTemplateResource(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		a.notFoundOrInternal(w, err, "Service template")
 		return
 	}
-	if !resource.Active || resource.Kind != workflow.KindServiceTemplate {
-		problem(w, 404, "Service template unavailable", "Choose an active service template.")
+	if !a.requireProject(w, r, core.PermissionProjectConfigure, projectID) {
 		return
 	}
-	config, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
-	if err != nil {
-		a.internal(w, err)
-		return
-	}
-	if !a.requireProject(w, r, core.PermissionProjectConfigure, config.ProjectID) {
-		return
-	}
-	if !a.requireProject(w, r, core.PermissionDeploymentRun, config.ProjectID) {
+	if !a.requireProject(w, r, core.PermissionDeploymentRun, projectID) {
 		return
 	}
 	if a.workflows == nil {
@@ -106,7 +124,7 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spec := documents[0].ServiceTemplate
-	services, err := a.store.ListServices(r.Context(), config.ProjectID)
+	services, err := a.store.ListServices(r.Context(), projectID)
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -117,7 +135,7 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	activeRuns, err := a.store.ListServiceProvisionRuns(r.Context(), config.ProjectID)
+	activeRuns, err := a.store.ListServiceProvisionRuns(r.Context(), projectID)
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -147,7 +165,7 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		}
 		if field.Type == "service" && value != "" {
 			item, err := a.store.GetService(r.Context(), value)
-			if err != nil || item.ProjectID != config.ProjectID || item.Type != field.ServiceType {
+			if err != nil || item.ProjectID != projectID || item.Type != field.ServiceType {
 				problem(w, 400, "Invalid service input", "Choose an available service in this project.")
 				return
 			}
@@ -160,9 +178,9 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		}
 		values[name] = value
 	}
-	run := core.ServiceProvisionRun{ID: ulid.Make().String(), TemplateID: resource.ID, ProjectID: config.ProjectID, ServiceName: input.Name, State: "queued", CreatedAt: time.Now().UTC()}
+	run := core.ServiceProvisionRun{ID: ulid.Make().String(), TemplateID: resource.ID, ProjectID: projectID, ServiceName: input.Name, State: "queued", CreatedAt: time.Now().UTC()}
 	if err := a.store.CreateServiceProvisionRun(r.Context(), run); err != nil {
-		activeRuns, lookupErr := a.store.ListServiceProvisionRuns(r.Context(), config.ProjectID)
+		activeRuns, lookupErr := a.store.ListServiceProvisionRuns(r.Context(), projectID)
 		if lookupErr == nil {
 			for _, active := range activeRuns {
 				if active.ServiceName == input.Name && (active.State == "queued" || active.State == "running") {

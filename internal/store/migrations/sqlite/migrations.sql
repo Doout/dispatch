@@ -1112,3 +1112,17 @@ CREATE TABLE service_provision_runs (
 );
 CREATE INDEX service_provision_runs_project ON service_provision_runs(project_id);
 CREATE UNIQUE INDEX service_provision_runs_active_name ON service_provision_runs(project_id,service_name) WHERE state IN ('queued','running');
+
+-- dispatch:migration 062_saved_service_templates
+CREATE TABLE saved_service_templates (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    config_source_id TEXT REFERENCES config_sources(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    document TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    revision BIGINT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id,name)
+);

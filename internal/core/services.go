@@ -2,6 +2,20 @@ package core
 
 import "time"
 
+// SavedServiceTemplate is authored in Dispatch. Repository templates remain
+// workflow resources owned by their configuration source.
+type SavedServiceTemplate struct {
+	ID             string    `json:"id"`
+	ProjectID      string    `json:"projectId"`
+	ConfigSourceID string    `json:"configSourceId,omitempty"`
+	Name           string    `json:"name"`
+	Document       string    `json:"document"`
+	Digest         string    `json:"digest"`
+	Revision       int64     `json:"revision"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
 // Service is a connection registration. Provisioning provenance records how
 // a resource was created without changing the interface applications consume.
 type Service struct {
