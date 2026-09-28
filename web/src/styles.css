@@ -2431,3 +2431,5 @@ code { font-family: var(--mono); }
 .event-table .event-error { color:var(--red); }
 .events-page .status-label.processed { color:var(--green); }
 @media (max-width:680px) { .events-page .section-toolbar { flex-wrap:wrap; } .events-toolbar-actions { width:100%; justify-content:space-between; } }
+
+.events-page .status-label.rejected { color:var(--red); background:var(--red-soft); }

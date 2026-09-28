@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -33,11 +34,11 @@ func (a *API) processWorkflowPreviewTestComment(ctx context.Context, target *pre
 			return a.workflowPreviewRunActivity(ctx, target, event, trigger, resource, revisionID)
 		}
 		if strings.TrimSpace(event.Arguments) != "test" {
-			return a.previewTestStartError(ctx, trigger, event.SourceCommentID, "Use `"+trigger.Command+" test` without extra arguments.")
+			return a.previewTestStartError(ctx, target, event, trigger, "Use `"+trigger.Command+" test` without extra arguments.")
 		}
 		revision, err := a.workflows.StartPreviewChecks(ctx, trigger.ResourceID, event.SourceCommentID)
 		if err != nil {
-			return a.previewTestStartError(ctx, trigger, event.SourceCommentID, err.Error())
+			return a.previewTestStartError(ctx, target, event, trigger, err.Error())
 		}
 		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
 		if err != nil {
@@ -61,13 +62,17 @@ func (a *API) processWorkflowPreviewTestComment(ctx context.Context, target *pre
 	return nil
 }
 
-func (a *API) previewTestStartError(ctx context.Context, trigger core.WorkflowPreviewTrigger, sourceCommentID, detail string) error {
+func (a *API) previewTestStartError(ctx context.Context, target *previewPollTarget, event core.IncomingEvent, trigger core.WorkflowPreviewTrigger, detail string) error {
+	sourceCommentID := event.SourceCommentID
 	commentID, err := a.postPreviewTestReply(ctx, trigger, "", "Preview checks could not start: "+detail)
 	if err != nil {
 		_ = a.store.ReleaseWorkflowPreviewComment(ctx, trigger.ID, sourceCommentID)
 		return err
 	}
-	return a.store.UpdateWorkflowPreviewTestComment(ctx, trigger.ID, sourceCommentID, commentID)
+	if err := a.store.UpdateWorkflowPreviewTestComment(ctx, trigger.ID, sourceCommentID, commentID); err != nil {
+		return err
+	}
+	return a.previewDeliveryActivity(ctx, target, event, "rejected", errors.New(detail))
 }
 
 func (a *API) postPreviewTestReply(ctx context.Context, trigger core.WorkflowPreviewTrigger, commentID, body string) (string, error) {
