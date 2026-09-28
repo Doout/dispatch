@@ -63,6 +63,33 @@ afterEach(() => {
 });
 
 describe("workflow resource run details", () => {
+  it("does not query owner-only preview settings for a project viewer", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    const triggers = vi.spyOn(api, "workflowPreviewTriggers");
+    const viewer = { ...overview, identity: { ...overview.identity!, systemRole: "member" as const } };
+    render(<WorkflowResourceDialog resource={{ ...resource, temporary: true }} overview={viewer} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    await waitFor(() => expect(api.workflowStages).toHaveBeenCalled());
+    expect(triggers).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows automatic health and comment-only E2E tests without opening stage logs", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([{ id: "stage", revisionId: "revision-1", stageName: "development", targetRef: "dev", state: "succeeded", approval: "automatic", createdAt: resource.createdAt, checkRuns: { health: "health-run" } }]);
+    vi.spyOn(api, "workflowRevision").mockResolvedValue({ id: "health-run", resourceId: "health-pipeline", configSha: "abc123", specDigest: "health", state: "succeeded", trigger: "checkout/development/health", sources: {}, createdAt: resource.createdAt });
+    vi.spyOn(api, "workflowPreviewTriggers").mockResolvedValue([{ id: "trigger", resourceId: resource.id, githubAppId: "app", repository: "example/service", pullRequestNumber: 42, command: "/ship", createdAt: resource.createdAt }]);
+    const start = vi.spyOn(api, "runWorkflowResource");
+    const preview = { ...resource, temporary: true, document: "spec:\n  stages:\n    - name: development\n      checks:\n        health: {pipelineRef: readiness}\n        e2e: {pipelineRef: full-e2e, when: onDemand}\n" };
+    render(<WorkflowResourceDialog resource={preview} overview={overview} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    expect(await screen.findByRole("region", { name: "development tests" })).not.toBeNull();
+    expect(await screen.findByText("/ship test")).not.toBeNull();
+    expect(screen.getByText("health")).not.toBeNull();
+    expect(screen.getByText("e2e")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "View health test logs" })).not.toBeNull();
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it("keeps the deployment healthy when an on-demand check fails", () => {
     vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
     vi.spyOn(api, "workflowStages").mockResolvedValue([]);
