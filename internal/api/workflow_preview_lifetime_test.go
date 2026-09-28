@@ -207,6 +207,10 @@ func TestPreviewLifetimeCommentsPersistAndDoNotRebuild(t *testing.T) {
 	if len(revisions) != 1 || revisions[0].State != "queued" {
 		t.Fatalf("lifetime command ran or cancelled builds: %+v", revisions)
 	}
+	event.SourceCommentID, event.Arguments = "9", "ttl invalid"
+	if err := a.processWorkflowPreviewComment(ctx, target, event, events.GitHubResolver{}); err != nil {
+		t.Fatal("newer valid command did not supersede an older invalid command", err)
+	}
 	for i, arguments := range []string{"ttl -1d", "ttl", "extend 0", "extend 1d", "ttl 1d extra"} {
 		event.SourceCommentID, event.Arguments = string(rune('a'+i)), arguments
 		if err := a.processWorkflowPreviewComment(ctx, target, event, events.GitHubResolver{}); err == nil {

@@ -109,6 +109,15 @@ func (a *API) processWorkflowPreviewLifetimeComment(ctx context.Context, target 
 		if handled {
 			return a.workflowPreviewActivity(ctx, target, event, previous, resource, "", "processed", workflowPreviewLifetimeText(previous))
 		}
+		latestID, err := a.store.LatestWorkflowPreviewDeployComment(ctx, previous.ID)
+		if err != nil {
+			return err
+		}
+		id, _ := strconv.ParseUint(event.SourceCommentID, 10, 64)
+		latest, _ := strconv.ParseUint(latestID, 10, 64)
+		if id > 0 && latest > id {
+			return a.workflowPreviewActivity(ctx, target, event, previous, resource, "", "superseded", "A newer preview comment replaced this command.")
+		}
 		if len(fields) != 2 {
 			return fmt.Errorf("use %s ttl 1d, %s ttl 0, or %s extend 1d", event.Command, event.Command, event.Command)
 		}
@@ -118,15 +127,6 @@ func (a *API) processWorkflowPreviewLifetimeComment(ctx context.Context, target 
 		}
 		if fields[0] == "extend" && duration == 0 {
 			return errors.New("provide a positive extension; use ttl 0 to remove the time limit")
-		}
-		latestID, err := a.store.LatestWorkflowPreviewDeployComment(ctx, previous.ID)
-		if err != nil {
-			return err
-		}
-		id, _ := strconv.ParseUint(event.SourceCommentID, 10, 64)
-		latest, _ := strconv.ParseUint(latestID, 10, 64)
-		if id > 0 && latest > id {
-			return a.workflowPreviewActivity(ctx, target, event, previous, resource, "", "superseded", "A newer preview comment replaced this command.")
 		}
 		now := time.Now().UTC()
 		next := previous
