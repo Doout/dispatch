@@ -198,6 +198,7 @@ func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) 
 		groupService, eventService = services.groups, services.events
 	}
 	checkedAt := time.Now().UTC()
+	var commentErrors error
 	cursor, err := a.store.PreviewPollCursor(ctx, target.connectionID, target.repository)
 	if err != nil {
 		return err
@@ -255,7 +256,9 @@ func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) 
 				continue
 			}
 			if err := a.consumePolledComment(ctx, target, event, resolver, groupService, eventService); err != nil {
-				return err
+				// Later comments can repair a failed command, such as unlinking
+				// a closed source PR. Keep failed deliveries retryable.
+				commentErrors = errors.Join(commentErrors, err)
 			}
 		}
 	}
@@ -297,6 +300,9 @@ func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) 
 		if err := a.reportPendingWorkflowPreviews(ctx, trigger); err != nil {
 			return fmt.Errorf("report preview %s: %w", trigger.ID, err)
 		}
+	}
+	if commentErrors != nil {
+		return commentErrors
 	}
 	return a.store.SavePreviewPollCursor(ctx, target.connectionID, target.repository, checkedAt)
 }
@@ -614,6 +620,18 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 				return err
 			}
 			continue
+		}
+		if commentID, err := strconv.ParseUint(event.SourceCommentID, 10, 64); err == nil && commentID > 0 {
+			latestID, err := a.store.LatestWorkflowPreviewDeployComment(ctx, trigger.ID)
+			if err != nil {
+				return err
+			}
+			if latest, err := strconv.ParseUint(latestID, 10, 64); err == nil && latest > commentID {
+				if err := a.workflowPreviewActivity(ctx, target, event, trigger, resource, "", "superseded", "A newer preview comment replaced this command."); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		documents, err := workflow.Parse(resource.Path, []byte(resource.Document))
 		if err != nil || len(documents) != 1 || documents[0].Spec == nil {

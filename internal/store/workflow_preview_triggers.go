@@ -82,6 +82,19 @@ func (s *SQLStore) SaveWorkflowPreviewSources(ctx context.Context, resource core
 	return tx.Commit()
 }
 
+func (s *SQLStore) LatestWorkflowPreviewDeployComment(ctx context.Context, triggerID string) (string, error) {
+	var id string
+	// GitHub comment IDs are positive decimal numbers. Length then lexical
+	// order compares them without database-specific integer casts.
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT c.comment_id FROM workflow_preview_comments c JOIN workflow_revisions r ON r.id=c.revision_id
+		WHERE c.trigger_id=? AND r.trigger_name LIKE 'pull request comment %'
+		ORDER BY length(c.comment_id) DESC,c.comment_id DESC LIMIT 1`), triggerID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 func (s *SQLStore) UpdateWorkflowPreviewTriggerURL(ctx context.Context, id, previewURL string) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET preview_url=? WHERE id=? AND closed_at IS NULL`), previewURL, id)
 	return changed(result, err)

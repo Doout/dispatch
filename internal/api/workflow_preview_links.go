@@ -121,7 +121,7 @@ func (a *API) prepareWorkflowPreviewLinks(ctx context.Context, resource core.Wor
 		if change.Remove && change.Number != 0 && change.Number != linkedNumber {
 			return resource, trigger, fmt.Errorf("%s is linked to PR #%d, not #%d", alias, linkedNumber, change.Number)
 		}
-		if linkedNumber == 0 {
+		if _, saved := defaults[alias]; linkedNumber == 0 && (!saved || source.Branch != "") {
 			defaults[alias] = core.WorkflowPreviewSourceDefault{Repository: source.Repository, Branch: source.Branch, Ref: source.Ref}
 		}
 		if _, ok := defaults[alias]; !ok && trigger.TemplateID != "" {

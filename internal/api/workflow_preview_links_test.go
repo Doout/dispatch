@@ -120,4 +120,12 @@ spec:
 	if _, _, err := a.prepareWorkflowPreviewLinks(context.Background(), resource, trigger, changes); err == nil {
 		t.Fatal("guessed a branch for a legacy one-off preview")
 	}
+	// Changing the primary PR can leave this source pinned to its old head.
+	// Linking it later must preserve the configured default captured earlier.
+	trigger.LinkedPullRequests = nil
+	trigger.SourceDefaults = map[string]core.WorkflowPreviewSourceDefault{"ui": {Repository: "example/ui", Branch: "develop"}}
+	_, relinked, err := a.prepareWorkflowPreviewLinks(context.Background(), resource, trigger, map[string]workflowPreviewLinkChange{"ui": {Number: 26}})
+	if err != nil || relinked.SourceDefaults["ui"].Branch != "develop" {
+		t.Fatalf("relink replaced the saved default with an old PR commit: %+v, %v", relinked, err)
+	}
 }
