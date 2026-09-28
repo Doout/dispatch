@@ -124,6 +124,13 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spec := documents[0].ServiceTemplate
+	if len(spec.Sources) > 0 {
+		source, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
+		if err != nil || source.ProjectID != projectID {
+			problem(w, 409, "Repository access unavailable", "Select a repository connection in this template's project.")
+			return
+		}
+	}
 	services, err := a.store.ListServices(r.Context(), projectID)
 	if err != nil {
 		a.internal(w, err)
@@ -212,7 +219,7 @@ func (a *API) executeServiceProvision(resource core.WorkflowResource, spec workf
 			a.logger.Error("Update service provision run", "run", run.ID, "error", err)
 		}
 	}
-	outputs, err := a.workflows.ProvisionService(ctx, resource, inputs)
+	outputs, err := a.workflows.ProvisionService(ctx, resource, run.ProjectID, inputs)
 	if err != nil {
 		fail(err.Error())
 		return

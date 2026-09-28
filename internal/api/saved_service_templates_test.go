@@ -123,7 +123,35 @@ func TestSavedServiceTemplateValidationAndRepositoryOwnership(t *testing.T) {
 	document := strings.Replace(savedTemplateDocument, "  provision:", "  sources:\n    code:\n      repository: example/provisioner\n  provision:", 1)
 	serviceRequestTest(t, a, "POST", "/api/v1/service-templates", serviceTemplateRequest{ProjectID: project, Document: document}, 400)
 	serviceRequestTest(t, a, "POST", "/api/v1/service-templates", serviceTemplateRequest{ProjectID: project, ConfigSourceID: "config-other-template-project", Document: document}, 400)
-	serviceRequestTest(t, a, "POST", "/api/v1/service-templates", serviceTemplateRequest{ProjectID: project, ConfigSourceID: "config-" + project, Document: document}, 201)
+	response := serviceRequestTest(t, a, "POST", "/api/v1/service-templates", serviceTemplateRequest{ProjectID: project, ConfigSourceID: "config-" + project, Document: document}, 201)
+	var saved core.SavedServiceTemplate
+	if err := json.Unmarshal(response, &saved); err != nil {
+		t.Fatal(err)
+	}
+	source, err := a.store.GetConfigSource(ctx, "config-"+project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.ProjectID = "other-template-project"
+	if err := a.store.UpdateConfigSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	serviceRequestTest(t, a, "POST", "/api/v1/service-templates/"+saved.ID+"/runs", serviceProvisionRequest{Name: "moved-connection", Inputs: map[string]string{"endpoint": "https://example.test", "token": "test-value"}}, 409)
+	resource, _, _, err := a.serviceTemplateResource(ctx, saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.workflows.ProvisionService(ctx, resource, project, nil); err == nil || err.Error() != "repository access for the template is unavailable" {
+		t.Fatalf("moved connection reached the provisioner: %v", err)
+	}
+	runs, err := a.store.ListServiceProvisionRuns(ctx, project)
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("created run for moved connection: %+v %v", runs, err)
+	}
+	source.ProjectID = project
+	if err := a.store.UpdateConfigSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.store.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "repository-template", ConfigSourceID: "config-" + project, Kind: "ServiceTemplate", Name: "gitops", Document: savedTemplateDocument, Active: true, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
