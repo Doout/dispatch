@@ -19,6 +19,7 @@ import (
 )
 
 type previewPollTarget struct {
+	transport         string
 	connectionID      string
 	repository        string
 	commands          map[string]bool
@@ -173,7 +174,7 @@ func (a *API) previewPollTargets(ctx context.Context) ([]*previewPollTarget, err
 	return targets, nil
 }
 
-func (a *API) pollPreviewTarget(ctx context.Context, target *previewPollTarget) error {
+func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) error {
 	reader := events.GitHubCommentReader{BaseURL: a.eventConfig.GitHubAPIURL, Token: a.eventConfig.GitHubToken}
 	resolver := events.GitHubResolver{BaseURL: reader.BaseURL, Token: reader.Token}
 	groupService, eventService := a.groups, a.events
@@ -253,29 +254,10 @@ func (a *API) pollPreviewTarget(ctx context.Context, target *previewPollTarget) 
 			if !revision.Open {
 				continue
 			}
-			if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
-				return err
-			}
-			if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
-				continue
-			}
-			seen, err := a.store.IncomingEventExists(ctx, event.Provider, event.DeliveryID)
-			if err != nil {
-				return err
-			}
-			if seen {
-				continue
-			}
-			if _, err := groupService.Process(ctx, event); err != nil {
-				return err
-			}
-			if _, err := eventService.Process(ctx, event); err != nil {
+			if err := a.consumePolledComment(ctx, target, event, resolver, groupService, eventService); err != nil {
 				return err
 			}
 		}
-	}
-	if err := a.store.SavePreviewPollCursor(ctx, target.connectionID, target.repository, checkedAt); err != nil {
-		return err
 	}
 	for number := range target.activePRs {
 		revision, err := resolver.ResolvePullRequest(ctx, target.repository, number)
@@ -304,25 +286,8 @@ func (a *API) pollPreviewTarget(ctx context.Context, target *previewPollTarget) 
 			return err
 		}
 		event.ProviderConnectionID = target.connectionID
-		if _, err := groupService.Process(ctx, event); err != nil {
+		if err := a.consumePolledClosure(ctx, target, event, resolver, groupService, eventService); err != nil {
 			return err
-		}
-		if _, err := eventService.Process(ctx, event); err != nil {
-			return err
-		}
-		for _, trigger := range target.workflowTriggers {
-			if trigger.PullRequestNumber == number {
-				linkedOpen, err := a.workflowPreviewLinkedPullRequestOpen(ctx, trigger, resolver)
-				if err != nil {
-					return err
-				}
-				if linkedOpen {
-					continue
-				}
-				if err := a.closeWorkflowPreview(ctx, trigger); err != nil {
-					return err
-				}
-			}
 		}
 	}
 	for _, trigger := range target.workflowTriggers {
@@ -333,13 +298,13 @@ func (a *API) pollPreviewTarget(ctx context.Context, target *previewPollTarget) 
 			return fmt.Errorf("report preview %s: %w", trigger.ID, err)
 		}
 	}
-	return nil
+	return a.store.SavePreviewPollCursor(ctx, target.connectionID, target.repository, checkedAt)
 }
 
 // updateWorkflowPreviewHead cancels obsolete work on every head change. Only
 // templates that opt in to automatic deploys schedule a replacement; manual
 // comment runs are never subject to the automatic hourly allowance.
-func (a *API) updateWorkflowPreviewHead(ctx context.Context, trigger core.WorkflowPreviewTrigger, repository, headSHA string, resolver events.GitHubResolver) error {
+func (a *API) updateWorkflowPreviewHead(ctx context.Context, trigger core.WorkflowPreviewTrigger, repository, headSHA string, resolver events.GitHubResolver, transport ...string) error {
 	a.temporaryPreviewMu.Lock()
 	defer a.temporaryPreviewMu.Unlock()
 	resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
@@ -399,10 +364,10 @@ func (a *API) updateWorkflowPreviewHead(ctx context.Context, trigger core.Workfl
 		}
 	}
 	if !trigger.AutoDeploy {
-		return nil
+		return a.previewHeadActivity(ctx, trigger, resource, refs, "skipped", "New commit detected. Automatic deployment is disabled.", "", transport)
 	}
 	if !previewAutoRunAllowed(revisions, trigger.MaxAutoRunsPerHour, time.Now()) {
-		return nil // Retry the newest head after the rolling window opens.
+		return a.previewHeadActivity(ctx, trigger, resource, refs, "deferred", "Automatic deployment is waiting for the hourly allowance.", "", transport)
 	}
 	pinned, err := pinWorkflowPreviewSources(resource, refs)
 	if err != nil {
@@ -413,8 +378,12 @@ func (a *API) updateWorkflowPreviewHead(ctx context.Context, trigger core.Workfl
 			return err
 		}
 	}
-	_, err = a.workflows.Start(ctx, resource.ID, "pull request update")
-	return err
+	revision, err := a.workflows.Start(ctx, resource.ID, "pull request update")
+	state, message := "processed", ""
+	if err != nil {
+		state, message = "failed", err.Error()
+	}
+	return errors.Join(err, a.previewHeadActivity(ctx, trigger, resource, refs, state, message, revision.ID, transport))
 }
 
 func previewAutoRunAllowed(revisions []core.WorkflowRevision, limit int, now time.Time) bool {
@@ -680,6 +649,15 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			return err
 		}
 		if !reserved {
+			revisionID, err := a.store.WorkflowPreviewCommentRevision(ctx, trigger.ID, event.SourceCommentID)
+			if err != nil {
+				return err
+			}
+			if revisionID != "" {
+				if err := a.workflowPreviewRunActivity(ctx, target, event, trigger, resource, revisionID); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if pinned.Document != resource.Document {
@@ -701,6 +679,10 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if err := a.store.CompleteWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID, revision.ID); err != nil {
 			return err
 		}
+		if err := a.workflowPreviewRunActivity(ctx, target, event, trigger, resource, revision.ID); err != nil {
+			return err
+		}
+
 	}
 	return nil
 }

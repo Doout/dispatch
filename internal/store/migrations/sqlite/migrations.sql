@@ -1126,3 +1126,39 @@ CREATE TABLE saved_service_templates (
     updated_at TEXT NOT NULL,
     UNIQUE(project_id,name)
 );
+
+-- dispatch:migration 063_event_activity
+CREATE TABLE event_activity (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ dedup_key TEXT NOT NULL,
+ rule_id TEXT NOT NULL,
+ transport TEXT NOT NULL,
+ is_check INTEGER NOT NULL DEFAULT 0,
+ state TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ payload TEXT NOT NULL,
+ resource_id TEXT NOT NULL DEFAULT '',
+ revision_ids TEXT NOT NULL DEFAULT '[]',
+ preview_url TEXT NOT NULL DEFAULT '',
+ UNIQUE(project_id,dedup_key)
+);
+CREATE INDEX event_activity_project_history ON event_activity(project_id,is_check,id);
+CREATE INDEX event_activity_project_transport ON event_activity(project_id,transport,is_check,id);
+INSERT INTO event_activity(id,project_id,dedup_key,rule_id,transport,state,created_at,payload)
+SELECT e.id,s.project_id,'workflow-event:' || e.id,'configuration:' || s.id,
+ CASE WHEN e.provider='poll' THEN 'poll' ELSE 'webhook' END,e.state,e.created_at,json_object('id',e.id,'projectId',s.project_id,'ruleId','configuration:' || s.id,'name',s.name,'transport',CASE WHEN e.provider='poll' THEN 'poll' ELSE 'webhook' END,'kind',e.kind,'repository',e.repository,'branch',e.branch,'commitSha',e.commit_sha,'state',e.state,'message',e.error,'createdAt',e.created_at)
+FROM workflow_events e JOIN config_sources s ON s.id=e.config_source_id;
+INSERT INTO event_activity(id,project_id,dedup_key,rule_id,transport,state,created_at,payload,resource_id,revision_ids,preview_url)
+SELECT r.id,s.project_id,'delivery:' || t.github_app_id || ':' || lower(t.repository) || ':comment:' || t.github_app_id || ':' || lower(t.repository) || ':' || c.comment_id || ':' || (CASE WHEN t.template_id IS NOT NULL THEN 'template:' || t.template_id ELSE 'preview:' || t.id END),CASE WHEN t.template_id IS NOT NULL THEN 'template:' || t.template_id ELSE 'preview:' || t.id END,'history','processed',r.created_at,json_object('id',r.id,'projectId',s.project_id,'ruleId',CASE WHEN t.template_id IS NOT NULL THEN 'template:' || t.template_id ELSE 'preview:' || t.id END,'name',COALESCE(q.name,w.name),'transport','history','kind',r.trigger_name,'repository',t.repository,'pullRequest',t.pull_request_number,'command',t.command,'state','processed','resourceId',w.id,'revisionIds',json_array(r.id),'previewUrl',t.preview_url,'createdAt',r.created_at),w.id,json_array(r.id),t.preview_url
+FROM workflow_preview_comments c JOIN workflow_revisions r ON r.id=c.revision_id
+ JOIN workflow_preview_triggers t ON t.id=c.trigger_id JOIN workflow_resources w ON w.id=t.resource_id
+ JOIN config_sources s ON s.id=w.config_source_id LEFT JOIN workflow_preview_templates q ON q.id=t.template_id;
+
+INSERT INTO event_activity(id,project_id,dedup_key,rule_id,transport,state,created_at,payload)
+SELECT p.id,a.project_id,'preview-environment:' || p.id,'trigger:' || p.trigger_id,'history',p.state,p.created_at,json_object('id',p.id,'projectId',a.project_id,'ruleId','trigger:' || p.trigger_id,'name',a.name,'transport','history','kind','preview_environment','repository',p.repository,'pullRequest',p.pull_request_number,'state',p.state,'previewUrl',p.url,'createdAt',p.created_at)
+FROM preview_environments p JOIN apps a ON a.id=p.template_app_id;
+INSERT INTO event_activity(id,project_id,dedup_key,rule_id,transport,state,created_at,payload)
+SELECT r.id || ':' || c.id,a.project_id,'preview-group:' || r.id || ':' || c.id,'group:' || r.group_id,'history',r.state,r.created_at,json_object('id',r.id || ':' || c.id,'projectId',a.project_id,'ruleId','group:' || r.group_id,'name',a.name,'transport','history','kind','preview_group_component','repository',x.repository,'pullRequest',x.pull_request,'state',r.state,'previewUrl',CASE WHEN c.entrypoint=TRUE THEN r.entrypoint_url ELSE '' END,'createdAt',r.created_at)
+FROM preview_group_runs r JOIN preview_group_components c ON c.group_id=r.group_id JOIN apps a ON a.id=c.app_id
+ JOIN preview_group_sources x ON x.run_id=r.id AND x.component_id=c.id;

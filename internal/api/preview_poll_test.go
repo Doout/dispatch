@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -160,6 +162,7 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var closed atomic.Bool
+	var failLookup atomic.Bool
 	var comments atomic.Int32
 	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -167,6 +170,10 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/issues/comments"):
 			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 501, "body": "/preview", "issue_url": "https://example.test/repos/acme/service/issues/17", "author_association": "MEMBER", "created_at": now.Format(time.RFC3339), "user": map[string]string{"login": "operator"}}})
 		case strings.HasSuffix(r.URL.Path, "/pulls/17"):
+			if failLookup.Load() {
+				http.Error(w, "unavailable", 503)
+				return
+			}
 			state := "open"
 			if closed.Load() {
 				state = "closed"
@@ -199,6 +206,53 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 	previews, err = data.ListPreviewEnvironments(ctx, "")
 	if err != nil || len(previews) != 1 || previews[0].ID == "" {
 		t.Fatalf("repeated poll created another preview: %v %#v", err, previews)
+	}
+
+	history, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}})
+	if err != nil || len(history) != 1 || history[0].Transport != "poll" || history[0].State != "processed" || history[0].PreviewURL == "" {
+		t.Fatalf("polled command not recorded once with preview URL: %+v %v", history, err)
+	}
+
+	// A signed webhook for the already-polled comment shares both execution and activity identity.
+	body := []byte(fmt.Sprintf(`{"action":"created","repository":{"full_name":"acme/service"},"issue":{"number":17,"pull_request":{}},"comment":{"id":501,"body":"/preview","author_association":"MEMBER","user":{"login":"operator"},"created_at":%q}}`, now.Format(time.RFC3339)))
+	sign := hmac.New(sha256.New, []byte("webhook-secret"))
+	_, _ = sign.Write(body)
+	request := httptest.NewRequest("POST", "/events/github", strings.NewReader(string(body)))
+	request.Header.Set("X-GitHub-Event", "issue_comment")
+	request.Header.Set("X-GitHub-Delivery", "webhook-duplicate")
+	request.Header.Set("X-Hub-Signature-256", fmt.Sprintf("sha256=%x", sign.Sum(nil)))
+	response := httptest.NewRecorder()
+	a.processGitHubWebhook(response, request, "webhook-secret", "", 0, a.groups, a.events)
+	if response.Code != 200 {
+		t.Fatalf("duplicate webhook: %d %s", response.Code, response.Body.String())
+	}
+	history, err = data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}})
+	if err != nil || len(history) != 1 || history[0].Transport != "poll" {
+		t.Fatalf("duplicate webhook changed delivery history: %+v %v", history, err)
+	}
+	cursor, err := data.PreviewPollCursor(ctx, "", "acme/service")
+	if err != nil || cursor == nil {
+		t.Fatal("successful scan did not advance its cursor")
+	}
+	failLookup.Store(true)
+	if err := a.PollPreviewsOnce(ctx); err == nil {
+		t.Fatal("failed PR lookup was swallowed")
+	}
+	failedCursor, err := data.PreviewPollCursor(ctx, "", "acme/service")
+	if err != nil || !failedCursor.Equal(*cursor) {
+		t.Fatal("failed scan advanced its cursor")
+	}
+	checks, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}, ChecksOnly: true})
+	if err != nil || len(checks) != 1 || checks[0].State != "failed" || checks[0].Message == "" {
+		t.Fatalf("failed poll not visible: %+v %v", checks, err)
+	}
+	failLookup.Store(false)
+	if err := a.PollPreviewsOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	history, err = data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}})
+	if err != nil || len(history) != 3 {
+		t.Fatalf("failure/recovery not recorded: %+v %v", history, err)
 	}
 	closed.Store(true)
 	deadline := time.Now().Add(4 * time.Second)

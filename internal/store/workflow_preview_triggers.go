@@ -132,3 +132,12 @@ func (s *SQLStore) ReleaseWorkflowPreviewComment(ctx context.Context, triggerID,
 	_, err := s.db.ExecContext(ctx, s.q(`DELETE FROM workflow_preview_comments WHERE trigger_id=? AND comment_id=? AND revision_id IS NULL`), triggerID, commentID)
 	return err
 }
+
+func (s *SQLStore) WorkflowPreviewCommentRevision(ctx context.Context, triggerID, commentID string) (string, error) {
+	var id sql.NullString
+	err := s.db.QueryRowContext(ctx, s.q("SELECT revision_id FROM workflow_preview_comments WHERE trigger_id=? AND comment_id=?"), triggerID, commentID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id.String, err
+}

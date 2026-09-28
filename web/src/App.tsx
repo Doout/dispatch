@@ -1,3 +1,5 @@
+import { WorkflowResourceDialog as EventWorkflowResourceDialog } from "./workflows/ResourceDialog";
+import { EventsListPage } from "./EventsPage";
 import { SecretUsageDialog, useSecretUsage, VariableUsageButton } from "./SecretUsage";
 import { releaseClient, type ReleasePreview } from "./deployments/releaseClient";
 import { OperationsPage } from "./OperationsPage";
@@ -1582,80 +1584,7 @@ function EventsPage({
   onChanged: () => Promise<void>;
 }) {
   const [hookTarget, setHookTarget] = useState<EventHookTarget | null>(null);
-  const rules = [
-    ...overview.previewGroups.map((group) => ({
-      id: `group-${group.id}`,
-      hookTarget: { type: "group", group } as EventHookTarget,
-      name: group.name,
-      repositories: group.components.map((component) => component.repository),
-      command: group.command,
-      targetLabel: `${group.components.length} component${group.components.length === 1 ? "" : "s"}`,
-      hooks: `${group.components.filter((component) => component.preDeployHook || component.postDeployHook).length} of ${group.components.length}`,
-      enabled: group.enabled,
-      editable: overview.identity?.systemRole === "owner",
-    })),
-    ...overview.eventTriggers.map((trigger) => {
-      const application = overview.apps.find(
-        (item) => item.id === trigger.appId,
-      );
-      return {
-        id: `trigger-${trigger.id}`,
-        hookTarget: { type: "trigger", trigger } as EventHookTarget,
-        name: application?.name ?? "Application event",
-        repositories: [trigger.repository],
-        command: trigger.command,
-        targetLabel: "Application",
-        hooks:
-          trigger.preDeployHook || trigger.postDeployHook
-            ? "Configured"
-            : "None",
-        enabled: trigger.enabled,
-        editable: Boolean(
-          application &&
-            canManageProject(
-              overview,
-              application.projectId,
-              "project.configure",
-            ),
-        ),
-      };
-    }),
-  ];
-  const canConfigureEvents = canManageAnyProject(
-    overview,
-    "project.configure",
-  );
-  const activity = [
-    ...overview.previewGroupRuns.map((run) => ({
-      id: `group-run-${run.id}`,
-      name:
-        run.group?.name ??
-        overview.previewGroups.find((group) => group.id === run.groupId)
-          ?.name ??
-        run.slug,
-      sources: run.sources.map((source) =>
-        source.pullRequest
-          ? `${source.repository} #${source.pullRequest}`
-          : `${source.repository} ${source.headRef}`,
-      ),
-      state: run.state,
-      url: run.entrypointUrl,
-      updatedAt: run.updatedAt,
-    })),
-    ...overview.previews.map((preview) => ({
-      id: `preview-${preview.id}`,
-      name:
-        overview.apps.find((application) => application.id === preview.appId)
-          ?.name ?? preview.repository,
-      sources: [`${preview.repository} #${preview.pullRequestNumber}`],
-      state: preview.state,
-      url: preview.url,
-      updatedAt: preview.updatedAt,
-    })),
-  ].sort(
-    (left, right) =>
-      new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
-  );
+  const [eventRun, setEventRun] = useState<import("./api").WorkflowRevision>();
 
   if (hookTarget)
     return (
@@ -1685,182 +1614,42 @@ function EventsPage({
         />
       </div>
     );
-
-  return (
-    <div className="page-layout events-page">
-      <PageHeader
-        view="events"
-        action={
-          section === "rules" && canConfigureEvents
-            ? { label: "Configure in applications", onClick: onConfigure }
-            : undefined
+  const eventResource = overview.workflowResources?.find(item => item.id === eventRun?.resourceId);
+  return <>
+    <EventsListPage
+      accessVersion={JSON.stringify([overview.identity, overview.projectPermissions])}
+      section={section}
+      onSectionChange={onSectionChange}
+      onConfigure={onConfigure}
+      canConfigure={canManageAnyProject(overview, "project.configure")}
+      onOpenRun={async id => {
+        const revision = await api.workflowRevision(id);
+        if (!overview.workflowResources?.some(item => item.id === revision.resourceId)) {
+          throw new Error("This workflow is no longer available.");
         }
-      />
-      <nav className="application-sections" aria-label="Event views">
-        <a
-          href={routePath({ view: "events" })}
-          aria-current={section === "rules" ? "page" : undefined}
-          className={section === "rules" ? "active" : ""}
-          onClick={(event) => {
-            if (!shouldHandleNavigation(event)) return;
-            event.preventDefault();
-            onSectionChange("rules");
-          }}
-        >
-          Rules <span>{rules.length}</span>
-        </a>
-        <a
-          href={routePath({ view: "events", eventSection: "activity" })}
-          aria-current={section === "activity" ? "page" : undefined}
-          className={section === "activity" ? "active" : ""}
-          onClick={(event) => {
-            if (!shouldHandleNavigation(event)) return;
-            event.preventDefault();
-            onSectionChange("activity");
-          }}
-        >
-          Activity <span>{activity.length}</span>
-        </a>
-      </nav>
-      {section === "rules" && (
-        <section className="event-section" aria-labelledby="event-rules-title">
-          <div className="section-toolbar">
-            <div>
-              <h2 id="event-rules-title">Pull request rules</h2>
-            </div>
-          </div>
-          {rules.length ? (
-            <div className="resource-table-wrap">
-              <table className="resource-table event-table">
-                <thead>
-                  <tr>
-                    <th>Rule</th>
-                    <th>Trigger</th>
-                    <th>Target</th>
-                    <th>Status</th>
-                    <th className="actions-head">
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rules.map((rule) => (
-                    <tr key={rule.id}>
-                      <td data-label="Rule">
-                        <strong>{rule.name}</strong>
-                        {rule.hooks !== "None" && (
-                          <small>{rule.hooks} hooks</small>
-                        )}
-                      </td>
-                      <td data-label="Trigger">
-                        <code>{rule.command}</code>
-                        <div className="event-sources">
-                          {rule.repositories.map((repository) => (
-                            <small key={repository}>{repository}</small>
-                          ))}
-                        </div>
-                      </td>
-                      <td data-label="Target">{rule.targetLabel}</td>
-                      <td data-label="Status">
-                        <StatusLabel
-                          state={rule.enabled ? "enabled" : "disabled"}
-                        />
-                      </td>
-                      <td className="row-actions">
-                        {rule.editable && <TableIconAction
-                          label={`Edit deployment hooks for ${rule.name}`}
-                          tooltip="Hooks"
-                          onClick={() => setHookTarget(rule.hookTarget)}
-                        >
-                          <Lightning size={16} />
-                        </TableIconAction>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <EmptyState
-              title="No event rules"
-              action={canConfigureEvents ? {
-                label: "Configure in applications",
-                onClick: onConfigure,
-              } : undefined}
-            />
-          )}
-        </section>
-      )}
-      {section === "activity" && (
-        <section
-          className="event-section"
-          aria-labelledby="event-activity-title"
-        >
-          <div className="section-toolbar">
-            <div>
-              <h2 id="event-activity-title">Preview activity</h2>
-            </div>
-          </div>
-          {activity.length ? (
-            <div className="resource-table-wrap">
-              <table className="resource-table event-table">
-                <thead>
-                  <tr>
-                    <th>Environment</th>
-                    <th>Source</th>
-                    <th>Status</th>
-                    <th>Updated</th>
-                    <th className="actions-head">
-                      <span className="sr-only">Preview URL</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activity.slice(0, 30).map((item) => (
-                    <tr key={item.id}>
-                      <td data-label="Environment">
-                        <strong>{item.name}</strong>
-                      </td>
-                      <td data-label="Source">
-                        <div className="event-sources">
-                          {item.sources.map((source) => (
-                            <code key={source}>{source}</code>
-                          ))}
-                        </div>
-                      </td>
-                      <td data-label="Status">
-                        <StatusLabel state={item.state} />
-                      </td>
-                      <td data-label="Updated">{relative(item.updatedAt)}</td>
-                      <td className="row-actions">
-                        {item.url && (
-                          <a
-                            className="table-action table-icon-action"
-                            data-tooltip="Open"
-                            aria-label={`Open preview for ${item.name}`}
-                            href={item.url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            <ArrowSquareOut size={16} />
-                          </a>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <EmptyState
-              title="No preview activity"
-              body="Preview environments will appear here after an event rule is triggered."
-            />
-          )}
-        </section>
-      )}
-    </div>
-  );
+        setEventRun(revision);
+      }}
+      onEditHooks={rule => {
+        if (rule.kind === "group") {
+          const group = overview.previewGroups.find(item => `group:${item.id}` === rule.id);
+          if (group) setHookTarget({ type: "group", group });
+        }
+        if (rule.kind === "trigger") {
+          const trigger = overview.eventTriggers.find(item => `trigger:${item.id}` === rule.id);
+          if (trigger) setHookTarget({ type: "trigger", trigger });
+        }
+      }}
+    />
+    {eventRun && eventResource && <EventWorkflowResourceDialog
+      key={eventRun.id}
+      resource={eventResource}
+      initialRevisionID={eventRun.id}
+      overview={{ ...overview, workflowRevisions: [eventRun, ...(overview.workflowRevisions ?? []).filter(item => item.id !== eventRun.id)] }}
+      onClose={() => setEventRun(undefined)}
+      onChanged={onChanged}
+      onOpenDeploymentManifests={id => { window.location.href = `/deployments/${encodeURIComponent(id)}/manifests`; }}
+    />}
+  </>;
 }
 
 function EventHookEditor({

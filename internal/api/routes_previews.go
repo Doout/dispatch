@@ -6,6 +6,8 @@ import (
 )
 
 func (a *API) previewsRoutes(r chi.Router) {
+	r.Get("/events/rules", a.listEventRules)
+	r.Get("/events/activity", a.listEventActivity)
 	r.Route("/event-triggers", func(r chi.Router) {
 		r.Get("/", a.listEventTriggers)
 		r.Route("/{id}", func(r chi.Router) {

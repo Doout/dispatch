@@ -71,6 +71,10 @@ func NewService(data store.Store, github *githubapp.Manager, secrets *secretvalu
 }
 
 func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource, error) {
+	return s.syncSource(ctx, id, nil)
+}
+
+func (s *Service) syncSource(ctx context.Context, id string, event *core.WorkflowEvent) (core.ConfigSource, error) {
 	unlock := s.lock("source:" + id)
 	defer unlock()
 	source, err := s.Store.GetConfigSource(ctx, id)
@@ -215,7 +219,11 @@ func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource,
 			}
 			snapshot, err := s.resolveResourceSources(ctx, source, resource)
 			if err == nil {
-				_, err = s.startIfChanged(ctx, resource, source, snapshot, "configuration sync")
+				var revision core.WorkflowRevision
+				revision, err = s.startIfChanged(ctx, resource, source, snapshot, "configuration sync")
+				if event != nil && revision.ID != "" {
+					event.RevisionIDs = append(event.RevisionIDs, revision.ID)
+				}
 			}
 			if err != nil {
 				resource.State, resource.LastError = "invalid", err.Error()
@@ -331,7 +339,7 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
 	_ = s.Store.UpdateWorkflowEvent(ctx, event)
 	source, err := s.Store.GetConfigSource(ctx, event.ConfigSourceID)
 	if err == nil && sameSource(event.Repository, event.Branch, source.Repository, source.Branch) {
-		_, err = s.SyncSource(ctx, source.ID)
+		_, err = s.syncSource(ctx, source.ID, &event)
 	}
 	if err == nil {
 		resources, listErr := s.Store.ListWorkflowResources(ctx, source.ID)
@@ -344,7 +352,11 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
 			if configChanged || resourceReferences(resource, event.Repository, event.Branch) {
 				snapshot, runErr := s.resolveResourceSources(ctx, source, resource)
 				if runErr == nil {
-					_, runErr = s.startIfChanged(ctx, resource, source, snapshot, "github push")
+					var revision core.WorkflowRevision
+					revision, runErr = s.startIfChanged(ctx, resource, source, snapshot, "github push")
+					if revision.ID != "" {
+						event.RevisionIDs = append(event.RevisionIDs, revision.ID)
+					}
 				}
 				if runErr != nil {
 					err = runErr
@@ -418,59 +430,90 @@ func (s *Service) PollOnce(ctx context.Context) error {
 		if !source.Active || source.SyncMode == core.ConfigSyncWebhook || !pollDue(source, now) {
 			continue
 		}
-		source.LastPolledAt, source.UpdatedAt = &now, now
-		if err := s.Store.UpdateConfigSource(ctx, source); err != nil {
+		joined = errors.Join(joined, s.pollSource(ctx, source, now))
+	}
+	return joined
+}
+
+func (s *Service) pollSource(ctx context.Context, source core.ConfigSource, now time.Time) (result error) {
+	defer func() {
+		item := core.EventActivity{ID: ulid.Make().String(), ProjectID: source.ProjectID, RuleID: "configuration:" + source.ID,
+			Name: source.Name, Transport: "poll", Kind: "repository_check", Repository: source.Repository, Branch: source.Branch,
+			CreatedAt: time.Now().UTC(), State: "processed", Check: true}
+		if result != nil {
+			item.State = "failed"
+			item.Message = result.Error()
+		}
+		result = errors.Join(result, s.Store.SavePollCheck(ctx, "check:"+item.RuleID, item))
+	}()
+	var joined error
+	source.LastPolledAt, source.UpdatedAt = &now, now
+	if err := s.Store.UpdateConfigSource(ctx, source); err != nil {
+		return err
+	}
+	head, err := s.repositoryHead(ctx, source, source.Repository, source.Branch)
+	if err != nil {
+		_, recordErr := s.sourceError(ctx, source, err)
+		return errors.Join(err, recordErr)
+	}
+	configChanged := head != source.LastSeenSHA || source.State == "degraded" || source.State == "invalid"
+	if configChanged {
+		event := core.WorkflowEvent{ID: ulid.Make().String(), ConfigSourceID: source.ID, Provider: "poll", DeliveryID: "poll-config:" + source.ID + ":" + ulid.Make().String(), Kind: "configuration_sync", Repository: source.Repository, Branch: source.Branch, CommitSHA: head, State: "running", CreatedAt: now}
+		if _, err := s.Store.CreateWorkflowEvent(ctx, event); err != nil {
+			return err
+		}
+		synced, syncErr := s.syncSource(ctx, source.ID, &event)
+		if syncErr == nil && synced.LastError != "" && !strings.HasPrefix(synced.LastError, "Polling is active.") {
+			syncErr = errors.New(synced.LastError)
+		}
+		event.State = "processed"
+		if syncErr != nil {
+			event.State, event.Error = "failed", syncErr.Error()
+		}
+		processed := time.Now().UTC()
+		event.ProcessedAt = &processed
+		if err := errors.Join(syncErr, s.Store.UpdateWorkflowEvent(ctx, event)); err != nil {
+			return err
+		}
+	}
+	resources, err := s.Store.ListWorkflowResources(ctx, source.ID)
+	if err != nil {
+		return err
+	}
+	for _, resource := range resources {
+		if !resource.Active || resource.Temporary || resource.State == "invalid" || resource.Kind != KindApplication {
+			continue
+		}
+		snapshot, err := s.resolveResourceSources(ctx, source, resource)
+		if err != nil {
 			joined = errors.Join(joined, err)
 			continue
 		}
-		head, err := s.repositoryHead(ctx, source, source.Repository, source.Branch)
-		if err != nil {
-			_, recordErr := s.sourceError(ctx, source, err)
-			joined = errors.Join(joined, recordErr)
+		if !s.snapshotChanged(ctx, resource, snapshot) {
 			continue
 		}
-		configChanged := head != source.LastSeenSHA || source.State == "degraded" || source.State == "invalid"
-		if configChanged {
-			if _, err := s.SyncSource(ctx, source.ID); err != nil {
-				joined = errors.Join(joined, err)
-				continue
-			}
-		}
-		resources, err := s.Store.ListWorkflowResources(ctx, source.ID)
-		if err != nil {
+		delivery := "poll:" + resource.ID + ":" + resource.SpecDigest + ":" + snapshotDigest(snapshot)
+		event := core.WorkflowEvent{ID: ulid.Make().String(), ConfigSourceID: source.ID, Provider: "poll", DeliveryID: delivery,
+			Kind: "branch_scan", Repository: source.Repository, Branch: source.Branch, CommitSHA: head, State: "running", CreatedAt: now}
+		inserted, err := s.Store.CreateWorkflowEvent(ctx, event)
+		if err != nil || !inserted {
 			joined = errors.Join(joined, err)
 			continue
 		}
-		for _, resource := range resources {
-			if !resource.Active || resource.Temporary || resource.State == "invalid" || resource.Kind != KindApplication {
-				continue
-			}
-			snapshot, err := s.resolveResourceSources(ctx, source, resource)
-			if err != nil {
-				joined = errors.Join(joined, err)
-				continue
-			}
-			if !s.snapshotChanged(ctx, resource, snapshot) {
-				continue
-			}
-			delivery := "poll:" + resource.ID + ":" + resource.SpecDigest + ":" + snapshotDigest(snapshot)
-			event := core.WorkflowEvent{ID: ulid.Make().String(), ConfigSourceID: source.ID, Provider: "poll", DeliveryID: delivery,
-				Kind: "branch_scan", Repository: source.Repository, Branch: source.Branch, CommitSHA: head, State: "running", CreatedAt: now}
-			inserted, err := s.Store.CreateWorkflowEvent(ctx, event)
-			if err != nil || !inserted {
-				joined = errors.Join(joined, err)
-				continue
-			}
-			if _, err := s.startIfChanged(ctx, resource, source, snapshot, "poll"); err != nil {
-				event.State, event.Error = "failed", err.Error()
-				joined = errors.Join(joined, err)
-			} else {
-				event.State = "processed"
-			}
-			processed := time.Now().UTC()
-			event.ProcessedAt = &processed
-			_ = s.Store.UpdateWorkflowEvent(ctx, event)
+		revision, err := s.startIfChanged(ctx, resource, source, snapshot, "poll")
+		event.ResourceID = resource.ID
+		if revision.ID != "" {
+			event.RevisionIDs = []string{revision.ID}
 		}
+		if err != nil {
+			event.State, event.Error = "failed", err.Error()
+			joined = errors.Join(joined, err)
+		} else {
+			event.State = "processed"
+		}
+		processed := time.Now().UTC()
+		event.ProcessedAt = &processed
+		joined = errors.Join(joined, s.Store.UpdateWorkflowEvent(ctx, event))
 	}
 	return joined
 }

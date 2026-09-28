@@ -78,7 +78,7 @@ spec:
 	must(data.CreateWorkflowStageRun(ctx, core.WorkflowStageRun{ID: "deployed-stage", RevisionID: "deployed", StageName: "development", State: "succeeded", CreatedAt: now}))
 	a := New(data, deploy.NewService(data, deploy.SimulationExecutor{}), false, AuthConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)), EventConfig{GitHubToken: "token"})
 	target := &previewPollTarget{connectionID: "github", repository: "example/service", workflowTriggers: []core.WorkflowPreviewTrigger{{ID: "trigger", ResourceID: "preview", GitHubAppID: "github", Repository: "example/service", PullRequestNumber: 42, Command: "/preview", PreviewURL: "https://preview.example.test/42"}}}
-	event := core.IncomingEvent{Command: "/preview", Arguments: "test", PullRequestNumber: 42, SourceCommentID: "17", TrustedActor: true}
+	event := core.IncomingEvent{Kind: core.EventKindPullRequestComment, ProviderConnectionID: "github", Repository: "example/service", Command: "/preview", Arguments: "test", PullRequestNumber: 42, SourceCommentID: "17", TrustedActor: true}
 	must(a.processWorkflowPreviewComment(ctx, target, event, events.GitHubResolver{}))
 	must(a.processWorkflowPreviewComment(ctx, target, event, events.GitHubResolver{}))
 	revisions, err := data.ListWorkflowRevisions(ctx, "preview", 0)
@@ -90,5 +90,29 @@ spec:
 	must(err)
 	if commentID != "101" {
 		t.Fatalf("test status comment was not saved: %q", commentID)
+	}
+
+	bad := event
+	bad.Arguments = "test private-value"
+	bad.SourceCommentID = "18"
+	must(a.consumePolledComment(ctx, target, bad, events.GitHubResolver{}, a.groups, a.events))
+	revisions, err = data.ListWorkflowRevisions(ctx, "preview", 0)
+	must(err)
+	if len(revisions) != 2 {
+		t.Fatal("a rejected command started another check run")
+	}
+	items, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}})
+	must(err)
+	found := false
+	for _, item := range items {
+		if item.State == "rejected" {
+			found = true
+			if item.Message == "" || strings.Contains(item.Message, "private-value") {
+				t.Fatalf("unsafe rejection detail: %+v", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("test rejection disappeared from activity: %+v", items)
 	}
 }
