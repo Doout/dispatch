@@ -46,6 +46,7 @@ it("creates a template from Add service without a repository connection", async 
  await user.click(screen.getByRole("button", { name: "Add service" }));
  await user.click(screen.getByRole("button", { name: "Create template" }));
  await user.type(screen.getByLabelText("Template name"), "new-database");
+ await user.selectOptions(screen.getByLabelText("Provisioner"), "script");
  await user.click(screen.getByRole("button", { name: "Add input" }));
  await user.clear(screen.getByLabelText("Input 1 name"));
  await user.type(screen.getByLabelText("Input 1 name"), "database");
@@ -131,4 +132,66 @@ it("shows repository templates without a save action", async () => {
  render(<ServiceTemplateEditor item={{ ...template, managedBy: "gitops" }} overview={overview} initialProject="" onBack={() => {}} onSaved={async () => {}} />);
  await screen.findByText(/Edit its YAML there/);
  expect(screen.queryByRole("button", { name: "Save template" })).toBeNull();
+});
+
+const servers: Overview["servers"] = [
+ { id: "docker", name: "Local Docker", address: "local", runtime: "docker", state: "ready", agentMode: "local", createdAt: "" },
+ { id: "cluster", name: "Development cluster", address: "https://cluster.example.test", runtime: "kubernetes", state: "ready", agentMode: "local", createdAt: "" },
+ { id: "builder", name: "Builder", address: "ssh://builder.example.test", runtime: "builder", state: "ready", agentMode: "local", createdAt: "" },
+];
+
+it("creates a PostgreSQL Docker template with only a name and server", async () => {
+ const save = vi.spyOn(api, "saveServiceTemplate").mockResolvedValue({ id: "template", revision: 1 });
+ render(<ServiceTemplateEditor overview={{ ...overview, servers }} initialProject="p" onBack={() => {}} onSaved={async () => {}} />);
+ const user = userEvent.setup();
+ expect(screen.queryByLabelText("Script")).toBeNull();
+ expect((screen.getByLabelText("Provisioner") as HTMLSelectElement).value).toBe("docker");
+ expect(screen.queryByRole("option", { name: "Builder" })).toBeNull();
+ await user.type(screen.getByLabelText("Template name"), "postgres-docker");
+ await user.selectOptions(screen.getByLabelText("Target server"), "docker");
+ await user.click(screen.getByRole("button", { name: "Save template" }));
+ await waitFor(() => expect(save).toHaveBeenCalledOnce());
+ const doc = parse(save.mock.calls[0][1].document);
+ expect(doc.spec.provision).toEqual({ docker: { serverRef: "docker" } });
+ expect(doc.spec.inputs).toEqual({});
+ expect(doc.spec.outputs).toEqual({ connectionUrl: { sensitive: true } });
+});
+
+it("creates a Helm template without scripts or provider code", async () => {
+ const save = vi.spyOn(api, "saveServiceTemplate").mockResolvedValue({ id: "template", revision: 1 });
+ render(<ServiceTemplateEditor overview={{ ...overview, servers }} initialProject="p" onBack={() => {}} onSaved={async () => {}} />);
+ const user = userEvent.setup();
+ await user.type(screen.getByLabelText("Template name"), "postgres-helm");
+ await user.selectOptions(screen.getByLabelText("Provisioner"), "helm");
+ await user.selectOptions(screen.getByLabelText("Target server"), "cluster");
+ await user.type(screen.getByLabelText("Namespace"), "databases");
+ expect(screen.queryByLabelText("Script")).toBeNull();
+ await user.click(screen.getByRole("button", { name: "Save template" }));
+ await waitFor(() => expect(save).toHaveBeenCalledOnce());
+ expect(parse(save.mock.calls[0][1].document).spec.provision).toEqual({ helm: { serverRef: "cluster", namespace: "databases" } });
+});
+
+it("edits a built-in template and preserves advanced YAML settings", async () => {
+ const doc = `apiVersion: dispatch/v1alpha1
+kind: ServiceTemplate
+metadata: {name: postgres-docker}
+spec:
+ serviceType: postgresql
+ provision:
+  docker:
+   serverRef: docker
+   network: application-network
+   storageMountPath: /var/lib/postgresql/data
+   environment: {TZ: UTC}
+`;
+ vi.spyOn(api, "serviceTemplate").mockResolvedValue({ ...template, document: doc });
+ const save = vi.spyOn(api, "saveServiceTemplate").mockResolvedValue({ id: "template", revision: 3 });
+ render(<ServiceTemplateEditor item={template} overview={{ ...overview, servers }} initialProject="p" onBack={() => {}} onSaved={async () => {}} />);
+ const user = userEvent.setup();
+ await user.type(await screen.findByLabelText("Description"), "Updated");
+ await user.click(screen.getByRole("button", { name: "Save template" }));
+ await waitFor(() => expect(save).toHaveBeenCalledOnce());
+ const value = parse(save.mock.calls[0][1].document);
+ expect(value.spec.provision.docker).toEqual({ serverRef: "docker", network: "application-network", storageMountPath: "/var/lib/postgresql/data", environment: { TZ: "UTC" } });
+ expect(value.spec.provision.run).toBeUndefined();
 });

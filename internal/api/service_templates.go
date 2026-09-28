@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/serviceconn"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workflow"
@@ -17,6 +18,7 @@ import (
 )
 
 type serviceTemplateView struct {
+	Provider       string                                        `json:"provider"`
 	ID             string                                        `json:"id"`
 	Name           string                                        `json:"name"`
 	ProjectID      string                                        `json:"projectId"`
@@ -60,7 +62,7 @@ func (a *API) listServiceTemplates(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		spec := documents[0].ServiceTemplate
-		result = append(result, serviceTemplateView{ID: resource.ID, Name: resource.Name, ProjectID: source.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: resource.ConfigSHA, ManagedBy: "gitops", ConfigSourceID: resource.ConfigSourceID})
+		result = append(result, serviceTemplateView{ID: resource.ID, Name: resource.Name, ProjectID: source.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Provider: spec.Provision.Provider(), Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: resource.ConfigSHA, ManagedBy: "gitops", ConfigSourceID: resource.ConfigSourceID})
 	}
 	saved, err := a.store.ListSavedServiceTemplates(r.Context())
 	if err != nil {
@@ -76,7 +78,7 @@ func (a *API) listServiceTemplates(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		spec := documents[0].ServiceTemplate
-		result = append(result, serviceTemplateView{ID: item.ID, Name: item.Name, ProjectID: item.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: item.Digest, ManagedBy: "dispatch", Revision: item.Revision, ConfigSourceID: item.ConfigSourceID})
+		result = append(result, serviceTemplateView{ID: item.ID, Name: item.Name, ProjectID: item.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Provider: spec.Provision.Provider(), Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: item.Digest, ManagedBy: "dispatch", Revision: item.Revision, ConfigSourceID: item.ConfigSourceID})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Name == result[j].Name {
@@ -130,6 +132,11 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 			problem(w, 409, "Repository access unavailable", "Select a repository connection in this template's project.")
 			return
 		}
+	}
+	target, err := a.serviceProvisionTarget(r.Context(), *spec)
+	if err != nil {
+		problem(w, 400, "Invalid provisioner target", err.Error())
+		return
 	}
 	services, err := a.store.ListServices(r.Context(), projectID)
 	if err != nil {
@@ -185,7 +192,10 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		}
 		values[name] = value
 	}
-	run := core.ServiceProvisionRun{ID: ulid.Make().String(), TemplateID: resource.ID, ProjectID: projectID, ServiceName: input.Name, State: "queued", CreatedAt: time.Now().UTC()}
+	run := core.ServiceProvisionRun{ID: ulid.Make().String(), TemplateID: resource.ID, ProjectID: projectID, ServiceName: input.Name, State: "queued", Target: target, CreatedAt: time.Now().UTC()}
+	if run.Target != nil {
+		run.Target.ResourceName = deploy.ServiceResourceName(run.ID)
+	}
 	if err := a.store.CreateServiceProvisionRun(r.Context(), run); err != nil {
 		activeRuns, lookupErr := a.store.ListServiceProvisionRuns(r.Context(), projectID)
 		if lookupErr == nil {
@@ -208,6 +218,9 @@ func (a *API) executeServiceProvision(resource core.WorkflowResource, spec workf
 	defer cancel()
 	now := time.Now().UTC()
 	run.State, run.Phase, run.StartedAt = "running", "Running provisioner", &now
+	if run.Target != nil {
+		run.Phase = "Installing service with " + run.Target.Provider + " and waiting for readiness"
+	}
 	if err := a.store.UpdateServiceProvisionRun(ctx, run); err != nil {
 		a.logger.Error("Update service provision run", "run", run.ID, "error", err)
 		return
@@ -219,7 +232,7 @@ func (a *API) executeServiceProvision(resource core.WorkflowResource, spec workf
 			a.logger.Error("Update service provision run", "run", run.ID, "error", err)
 		}
 	}
-	outputs, err := a.workflows.ProvisionService(ctx, resource, run.ProjectID, inputs)
+	outputs, err := a.workflows.ProvisionService(ctx, resource, run.ProjectID, inputs, run)
 	if err != nil {
 		fail(err.Error())
 		return
@@ -245,7 +258,7 @@ func (a *API) executeServiceProvision(resource core.WorkflowResource, spec workf
 	}
 	created := time.Now().UTC()
 	item := core.Service{ID: ulid.Make().String(), Revision: 1, CreatedAt: created, UpdatedAt: created,
-		TemplateID: resource.ID, TemplateName: resource.Name, TemplateConfigSHA: resource.ConfigSHA, ProvisionRunID: run.ID}
+		TemplateID: resource.ID, TemplateName: resource.Name, TemplateConfigSHA: resource.ConfigSHA, ProvisionRunID: run.ID, ProvisionTarget: run.Target}
 	// serviceInput does not read identity for value inputs. Its existing path
 	// validates connection fields and encrypts sensitive values.
 	item, err = a.serviceInput((&http.Request{}).WithContext(ctx), request, item)
@@ -298,4 +311,32 @@ func (a *API) getServiceProvisionRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, run)
+}
+
+func (a *API) serviceProvisionTarget(ctx context.Context, spec workflow.ServiceTemplateSpec) (*core.ServiceProvisionTarget, error) {
+	var target core.ServiceProvisionTarget
+	if spec.Provision.Docker != nil {
+		target.Provider, target.ServerID = "docker", spec.Provision.Docker.ServerRef
+		target.Network = spec.Provision.Docker.Network
+		if target.Network == "" {
+			target.Network = deploy.DefaultServiceNetwork
+		}
+	}
+	if spec.Provision.Helm != nil {
+		target.Provider, target.ServerID = "helm", spec.Provision.Helm.ServerRef
+	}
+	if target.Provider == "" {
+		return nil, nil
+	}
+	server, err := a.store.GetServer(ctx, target.ServerID)
+	if err != nil {
+		return nil, errors.New("choose an available deployment server")
+	}
+	if err := deploy.ValidateServiceTarget(server, target.Provider); err != nil {
+		return nil, err
+	}
+	if spec.Provision.Helm != nil {
+		target.Namespace = deploy.ServiceProvisionNamespace(*spec.Provision.Helm, server)
+	}
+	return &target, nil
 }

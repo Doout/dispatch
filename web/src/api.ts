@@ -1506,12 +1506,13 @@ export type AnalyticsCounts = { runs: number; succeeded: number; failed: number;
 export type AnalyticsDay = { date: string; deployments: AnalyticsCounts; workflows: AnalyticsCounts; jobs: AnalyticsCounts };
 export type AnalyticsSummary = { state: string; updatedAt?: string; days: number; daily: AnalyticsDay[]; totals: AnalyticsDay };
 export type ServiceField = { value?: string; sensitive: boolean; configured: boolean; secretRef?: string };
-export type ServiceTemplate = { id: string; name: string; projectId: string; description: string; serviceType: "postgresql" | "generic"; inputs: Record<string, { label?: string; description?: string; type?: "string" | "secret" | "service"; required?: boolean; serviceType?: "postgresql" }>; outputs: Record<string, { sensitive?: boolean }>; configSha: string; managedBy: "dispatch" | "gitops"; revision?: number; configSourceId?: string; document?: string };
-export type ServiceProvisionRun = { id: string; templateId: string; projectId: string; serviceName: string; serviceId?: string; state: "queued" | "running" | "succeeded" | "failed"; phase?: string; error?: string; createdAt: string; startedAt?: string; finishedAt?: string };
+export type ServiceTemplate = { id: string; name: string; projectId: string; description: string; serviceType: "postgresql" | "generic"; provider?: "docker" | "helm" | "script"; inputs: Record<string, { label?: string; description?: string; type?: "string" | "secret" | "service"; required?: boolean; serviceType?: "postgresql" }>; outputs: Record<string, { sensitive?: boolean }>; configSha: string; managedBy: "dispatch" | "gitops"; revision?: number; configSourceId?: string; document?: string };
+export type ServiceProvisionTarget = { provider: "docker" | "helm"; serverId: string; resourceName: string; network?: string; namespace?: string };
+export type ServiceProvisionRun = { target?: ServiceProvisionTarget; id: string; templateId: string; projectId: string; serviceName: string; serviceId?: string; state: "queued" | "running" | "succeeded" | "failed"; phase?: string; error?: string; createdAt: string; startedAt?: string; finishedAt?: string };
 export type ServiceCheck = { state: "succeeded" | "failed" | "untested"; message: string; location: string; checkedAt: string; durationMs: number };
 export type ServiceConnection = {
  id: string; projectId: string; name: string; description: string; type: "postgresql" | "generic";
- templateId?: string; templateName?: string; templateConfigSha?: string; provisionRunId?: string;
+ templateId?: string; templateName?: string; templateConfigSha?: string; provisionRunId?: string; provisionTarget?: ServiceProvisionTarget;
  fields: Record<string, ServiceField>; availableFields: string[]; revision: number;
  probeHost?: string; probePort?: number; check?: ServiceCheck;
  consumers: { appId: string; appName: string; alias: string; appliedRevision: number; redeploymentRequired: boolean }[];

@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -52,7 +53,11 @@ func (s *Service) resolveServices(ctx context.Context, d core.Deployment, app *c
 		if c.Service.Type == "postgresql" {
 			sensitive = append(sensitive, values["connectionUrl"])
 		}
-		app.ServiceRuntime = append(app.ServiceRuntime, core.ServiceRuntimeBinding{Binding: c.Binding, Values: values, SensitiveValues: sensitive})
+		network := ""
+		if c.Service.ProvisionTarget != nil && c.Service.ProvisionTarget.Provider == "docker" {
+			network = c.Service.ProvisionTarget.Network
+		}
+		app.ServiceRuntime = append(app.ServiceRuntime, core.ServiceRuntimeBinding{Binding: c.Binding, Values: values, SensitiveValues: sensitive, DockerNetwork: network})
 		applied = append(applied, core.AppliedServiceBinding{Alias: c.Binding.Alias, ServiceID: c.Service.ID, ServiceName: c.Service.Name, Revision: c.Service.Revision})
 	}
 	return applied, nil
@@ -111,18 +116,52 @@ func composeServiceOverride(workspace, composePath string, bindings []core.Servi
 	}
 	var doc struct {
 		Services map[string]any `yaml:"services"`
+		Networks map[string]any `yaml:"networks"`
 	}
 	if err = yaml.Unmarshal(original, &doc); err != nil {
 		return "", errors.New("cannot parse Compose service names")
 	}
-	services := map[string]map[string]map[string]string{}
+	services := map[string]map[string]any{}
+	networks := map[string]any{}
 	for _, b := range bindings {
 		for name, envs := range b.Binding.Compose {
 			if _, ok := doc.Services[name]; !ok {
 				return "", fmt.Errorf("Compose service %s does not exist", name)
 			}
 			if services[name] == nil {
-				services[name] = map[string]map[string]string{"environment": {}}
+				services[name] = map[string]any{"environment": map[string]string{}}
+			}
+			if b.DockerNetwork != "" {
+				originalService, _ := doc.Services[name].(map[string]any)
+				if mode, _ := originalService["network_mode"].(string); mode != "" {
+					return "", errors.New("Docker service bindings cannot attach a network to a Compose service with network_mode")
+				}
+				attached, _ := services[name]["networks"].(map[string]any)
+				if attached == nil {
+					attached = map[string]any{}
+					switch original := originalService["networks"].(type) {
+					case []any:
+						for _, network := range original {
+							if key, ok := network.(string); ok {
+								attached[key] = nil
+							}
+						}
+					case map[string]any:
+						for key, value := range original {
+							attached[key] = value
+						}
+					default:
+						attached["default"] = nil
+					}
+					services[name]["networks"] = attached
+				}
+				sum := sha256.Sum256([]byte(b.DockerNetwork))
+				alias := fmt.Sprintf("dispatch-service-%x", sum[:6])
+				if _, exists := doc.Networks[alias]; exists {
+					return "", errors.New("a Compose network name conflicts with a generated service binding")
+				}
+				attached[alias] = nil
+				networks[alias] = map[string]any{"external": true, "name": b.DockerNetwork}
 			}
 			for env, field := range envs {
 				value, ok := b.Values[field]
@@ -132,11 +171,15 @@ func composeServiceOverride(workspace, composePath string, bindings []core.Servi
 				if strings.ContainsRune(value, 0) {
 					return "", errors.New("environment values cannot contain NUL")
 				}
-				services[name]["environment"][env] = strings.ReplaceAll(value, "$", "$$")
+				services[name]["environment"].(map[string]string)[env] = strings.ReplaceAll(value, "$", "$$")
 			}
 		}
 	}
-	payload, err := yaml.Marshal(map[string]any{"services": services})
+	definition := map[string]any{"services": services}
+	if len(networks) > 0 {
+		definition["networks"] = networks
+	}
+	payload, err := yaml.Marshal(definition)
 	if err != nil {
 		return "", err
 	}
@@ -243,4 +286,19 @@ func (e HelmExecutor) serviceClient(server core.Server) (kubernetes.Interface, e
 		return e.newServiceClient(server)
 	}
 	return serviceKubeClient(server)
+}
+
+func dockerServiceNetworks(bindings []core.ServiceRuntimeBinding) []string {
+	unique := map[string]bool{}
+	for _, binding := range bindings {
+		if binding.DockerNetwork != "" {
+			unique[binding.DockerNetwork] = true
+		}
+	}
+	networks := make([]string, 0, len(unique))
+	for name := range unique {
+		networks = append(networks, name)
+	}
+	sort.Strings(networks)
+	return networks
 }

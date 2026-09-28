@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/deploy"
 	"github.com/oklog/ulid/v2"
 )
 
 // ProvisionService executes a template without creating a workflow revision or
 // job result: those records otherwise retain plaintext job outputs.
-func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowResource, projectID string, inputs map[string]string) (map[string]string, error) {
+func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowResource, projectID string, inputs map[string]string, runs ...core.ServiceProvisionRun) (map[string]string, error) {
 	if !resource.Active || resource.Kind != KindServiceTemplate {
 		return nil, errors.New("service template is unavailable")
 	}
@@ -23,6 +24,29 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 		return nil, errors.New("stored service template is invalid")
 	}
 	spec := documents[0].ServiceTemplate
+	if spec.Provision.Docker != nil || spec.Provision.Helm != nil {
+		run := core.ServiceProvisionRun{ID: ulid.Make().String(), TemplateID: resource.ID, ProjectID: projectID, ServiceName: resource.Name}
+		if len(runs) > 0 {
+			run = runs[0]
+		}
+		request := core.ServiceProvisionRequest{Run: run, ServiceType: spec.ServiceType, Inputs: inputs, Outputs: spec.Provision.Outputs, ConfigSHA: resource.ConfigSHA}
+		if d := spec.Provision.Docker; d != nil {
+			server, err := s.Store.GetServer(ctx, d.ServerRef)
+			if err != nil {
+				return nil, errors.New("Docker provisioner server is unavailable")
+			}
+			return (deploy.DockerExecutor{}).Provision(ctx, request, *d, server)
+		}
+		h := *spec.Provision.Helm
+		if run.Target != nil {
+			h.Namespace = run.Target.Namespace
+		}
+		server, err := s.Store.GetServer(ctx, h.ServerRef)
+		if err != nil {
+			return nil, errors.New("Helm provisioner server is unavailable")
+		}
+		return (deploy.HelmExecutor{}).Provision(ctx, request, h, server)
+	}
 	var source core.ConfigSource
 	if len(spec.Sources) > 0 {
 		source, err = s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
@@ -57,7 +81,7 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 		}
 		secrets[key] = value
 	}
-	outputs, _, err := runtime.runJobCommand(ctx, spec.Provision, secrets, func(string) {})
+	outputs, _, err := runtime.runJobCommand(ctx, spec.Provision.JobSpec, secrets, func(string) {})
 	if err != nil {
 		return nil, errors.New("provisioner failed; check the provider before retrying")
 	}

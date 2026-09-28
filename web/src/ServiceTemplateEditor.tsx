@@ -3,6 +3,7 @@ import { parse, stringify } from "yaml";
 import { ArrowLeft } from "@phosphor-icons/react";
 import { api, Overview, ServiceTemplate } from "./api";
 import { PageHeader } from "./PageHeader";
+import { ServiceProvisionSettings, DockerProvision, HelmProvision } from "./ServiceProvisionSettings";
 import { canManageProject } from "./permissions";
 
 type Input = ServiceTemplate["inputs"][string];
@@ -16,16 +17,17 @@ type Definition = {
   serviceType: "postgresql" | "generic";
   inputs?: Record<string, Input>;
   sources?: Record<string, unknown>;
-  provision: { run: string; builder?: string; outputs?: string[]; [key: string]: unknown };
+  provision: { docker?: DockerProvision; helm?: HelmProvision; run?: string; builder?: string; outputs?: string[]; [key: string]: unknown };
   outputs: Record<string, Output>;
  };
 };
-const initial: Definition = { apiVersion: "dispatch/v1alpha1", kind: "ServiceTemplate", metadata: { name: "" }, spec: { serviceType: "postgresql", inputs: {}, provision: { run: "" }, outputs: { connectionUrl: { sensitive: true } } } };
+const initial: Definition = { apiVersion: "dispatch/v1alpha1", kind: "ServiceTemplate", metadata: { name: "" }, spec: { serviceType: "postgresql", inputs: {}, provision: { docker: { serverRef: "" } }, outputs: { connectionUrl: { sensitive: true } } } };
 const pgOutputs = { host: {}, port: {}, database: {}, username: {}, password: { sensitive: true }, sslmode: {} };
 
 function readDefinition(text: string): Definition {
  const value = parse(text) as Definition;
- if (value?.apiVersion !== initial.apiVersion || value?.kind !== "ServiceTemplate" || typeof value?.metadata?.name !== "string" || !value.spec || !["postgresql", "generic"].includes(value.spec.serviceType) || typeof value.spec.provision?.run !== "string" || !value.spec.outputs || typeof value.spec.outputs !== "object" || Array.isArray(value.spec.outputs)) throw new Error("Provide a ServiceTemplate document with a name, service type, provisioner script, and outputs.");
+ if (value?.apiVersion !== initial.apiVersion || value?.kind !== "ServiceTemplate" || typeof value?.metadata?.name !== "string" || !value.spec || !["postgresql", "generic"].includes(value.spec.serviceType) || (!value.spec.provision || !value.spec.provision.docker && !value.spec.provision.helm && typeof value.spec.provision.run !== "string") || (value.spec.outputs && (typeof value.spec.outputs !== "object" || Array.isArray(value.spec.outputs)))) throw new Error("Provide a ServiceTemplate document with a name, service type, provisioner, and connection fields.");
+ value.spec.outputs ??= value.spec.serviceType === "postgresql" ? { connectionUrl: { sensitive: true } } : {};
  for (const map of [value.spec.inputs ?? {}, value.spec.outputs]) {
   if (Array.isArray(map) || typeof map !== "object" || Object.values(map).some(field => !field || typeof field !== "object" || Array.isArray(field))) throw new Error("Inputs and outputs must be named fields with an object for each field.");
  }
@@ -44,6 +46,7 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
  const [revision, setRevision] = useState(item?.revision);
  const [error, setError] = useState("");
  const [busy, setBusy] = useState(false);
+ const provider = definition.spec.provision.docker ? "docker" : definition.spec.provision.helm ? "helm" : "script";
  const readOnly = !!item && (item.managedBy === "gitops" || !canManageProject(overview, item.projectId, "project.configure"));
  useEffect(() => {
   if (!item) return;
@@ -92,7 +95,7 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
  if (loading) return <div className="page-layout services-page"><PageHeader view="services" title="Service template" action={{ label: "Back", tone: "quiet", icon: <ArrowLeft size={16} />, onClick: onBack }} /><p role="status">Loading template…</p></div>;
  return <div className="page-layout services-page editor-page">
   <PageHeader view="services" title={readOnly ? item.name : item ? "Edit service template" : "Create service template"} action={{ label: "Back", tone: "quiet", icon: <ArrowLeft size={16} />, onClick: onBack }} />
-  <p className="service-intro">{item?.managedBy === "gitops" ? "This template is managed in a repository. Edit its YAML there." : "Define the values a provisioner needs and the connection fields it returns."}</p>
+  <p className="service-intro">{item?.managedBy === "gitops" ? "This template is managed in a repository. Edit its YAML there." : "Choose how Dispatch creates the service and where it runs."}</p>
   <form className="service-form service-template-editor" onSubmit={e => void save(e)}>
    <fieldset disabled={readOnly || busy || loadFailed} className="service-template-basics">
     <label>Project<select disabled={!!item} value={projectId} onChange={e => { setProject(e.target.value); setSourceId(""); }}>{(readOnly ? overview.projects : allowed).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
@@ -103,10 +106,22 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
      <div className="service-form-grid"><label>Template name<input required pattern="[a-z0-9]([a-z0-9.\-]{0,61}[a-z0-9])?" maxLength={63} placeholder="postgres-database" value={definition.metadata.name} onChange={e => setDefinition(d => ({ ...d, metadata: { ...d.metadata, name: e.target.value } }))} /></label><label>Service type<select value={definition.spec.serviceType} onChange={e => {
       const serviceType = e.target.value as Definition["spec"]["serviceType"];
       const fields: Record<string, Output> = serviceType === "postgresql" ? { connectionUrl: { sensitive: true } } : { endpoint: {} };
-      spec({ serviceType, outputs: fields, provision: { ...definition.spec.provision, outputs: Object.keys(fields) } });
+      spec({ serviceType, outputs: fields, provision: serviceType === "generic" ? { run: "", outputs: Object.keys(fields) } : { ...definition.spec.provision, outputs: Object.keys(fields) } });
      }}><option value="postgresql">PostgreSQL</option><option value="generic">Generic</option></select></label></div>
      <label>Description<input placeholder="Create a database and return its connection details" value={definition.spec.description ?? ""} onChange={e => spec({ description: e.target.value })} /></label>
-     <section className="service-template-section"><h2>Inputs</h2><p className="service-help">People fill these in when they create a service. Scripts read them as DISPATCH_INPUT_NAME.</p>
+     <label>Provisioner<select aria-label="Provisioner" value={provider} onChange={e => {
+      const next = e.target.value;
+      spec({ provision: next === "docker" ? { docker: { serverRef: "" } } : next === "helm" ? { helm: { serverRef: "" } } : { run: "" } });
+     }}><option value="docker" disabled={definition.spec.serviceType === "generic" && provider !== "docker"}>Docker</option><option value="helm" disabled={definition.spec.serviceType === "generic" && provider !== "helm"}>Helm</option><option value="script">Custom script (advanced)</option></select></label>
+     {provider !== "script" && <ServiceProvisionSettings docker={definition.spec.provision.docker} helm={definition.spec.provision.helm} serviceType={definition.spec.serviceType} overview={overview}
+      onDocker={docker => spec({ provision: { ...definition.spec.provision, docker } })}
+      onHelm={helm => spec({ provision: { ...definition.spec.provision, helm } })} />}
+     {provider === "script" && <section className="service-template-section"><h2>Custom script</h2><p className="service-help">Write each output as name=value to "$DISPATCH_OUTPUT_FILE". Use secret references in YAML for provider credentials.</p>
+      <label>Script<textarea required className="service-template-code" rows={8} spellCheck={false} value={definition.spec.provision.run ?? ""} onChange={e => spec({ provision: { ...definition.spec.provision, run: e.target.value } })} placeholder={'# Create the resource, then return its connection\nprintf \'connectionUrl=%s\\n\' "$DATABASE_URL" > "$DISPATCH_OUTPUT_FILE"'} /></label>
+      <label className="service-template-check"><input type="checkbox" checked={definition.spec.provision.builder === "docker"} onChange={e => spec({ provision: { ...definition.spec.provision, builder: e.target.checked ? "docker" : undefined } })} />Use a Docker builder</label>
+     </section>}
+     <details className="service-advanced" open={provider === "script" ? true : undefined}><summary>Inputs and connection fields</summary>
+     <section className="service-template-section"><h2>Inputs</h2><p className="service-help">{provider === "script" ? "Scripts read these values as DISPATCH_INPUT_NAME environment variables." : "Optional values people fill in when creating a service. Add database or username to override the PostgreSQL defaults."}</p>
       {Object.entries(definition.spec.inputs ?? {}).map(([name, field], i) => <div className="service-template-input" key={i}>
        <label>Name<input required pattern="[a-z][a-z0-9\-]{0,62}" aria-label={`Input ${i + 1} name`} value={name} onChange={e => updateInput(i, e.target.value, field)} /></label>
        <label>Label<input aria-label={`Input ${i + 1} label`} value={field.label ?? ""} onChange={e => updateInput(i, name, { ...field, label: e.target.value })} /></label>
@@ -118,10 +133,6 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
        <button type="button" className="quiet-button" aria-label={`Remove input ${i + 1}`} onClick={() => inputs(Object.entries(definition.spec.inputs ?? {}).filter((_, index) => index !== i))}>Remove</button>
       </div>)}
       <button type="button" className="quiet-button" onClick={addInput}>Add input</button>
-     </section>
-     <section className="service-template-section"><h2>Provisioner</h2><p className="service-help">Write each output as name=value to "$DISPATCH_OUTPUT_FILE". Use secret references in YAML for provider credentials.</p>
-      <label>Script<textarea required className="service-template-code" rows={8} spellCheck={false} value={definition.spec.provision.run} onChange={e => spec({ provision: { ...definition.spec.provision, run: e.target.value } })} placeholder={'# Create the resource, then return its connection\nprintf \'connectionUrl=%s\\n\' "$DATABASE_URL" > "$DISPATCH_OUTPUT_FILE"'} /></label>
-      <label className="service-template-check"><input type="checkbox" checked={definition.spec.provision.builder === "docker"} onChange={e => spec({ provision: { ...definition.spec.provision, builder: e.target.checked ? "docker" : undefined } })} />Use a Docker builder</label>
      </section>
      <section className="service-template-section"><h2>Outputs</h2><p className="service-help">Dispatch saves these fields on the new service and hides sensitive values.</p>
       {definition.spec.serviceType === "postgresql" && <label>Connection format<select value={"connectionUrl" in definition.spec.outputs ? "url" : "fields"} onChange={e => outputs(Object.entries(e.target.value === "url" ? { connectionUrl: { sensitive: true } } : pgOutputs))}><option value="url">PostgreSQL connection URL</option><option value="fields">Individual connection fields</option></select></label>}
@@ -136,10 +147,11 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
       </div>)}
       {definition.spec.serviceType === "generic" && <button type="button" className="quiet-button" onClick={() => { let suffix = Object.keys(definition.spec.outputs).length + 1; while (`output${suffix}` in definition.spec.outputs) suffix++; outputs([...Object.entries(definition.spec.outputs), [`output${suffix}`, {}]]); }}>Add output</button>}
      </section>
+     </details>
     </>}
    </fieldset>
    <details className="service-advanced"><summary>Repository access{sourceId ? " · Configured" : ""}</summary>
-    <label>Repository connection<select disabled={readOnly || busy || loadFailed} value={sourceId} onChange={e => setSourceId(e.target.value)}><option value="">None needed for an inline script</option>{(overview.configSources ?? []).filter(s => s.projectId === projectId).map(s => <option key={s.id} value={s.id}>{s.name} · {s.repository}</option>)}</select></label>
+    <label>Repository connection<select disabled={readOnly || busy || loadFailed} value={sourceId} onChange={e => setSourceId(e.target.value)}><option value="">None needed for Docker, Helm or an inline script</option>{(overview.configSources ?? []).filter(s => s.projectId === projectId).map(s => <option key={s.id} value={s.id}>{s.name} · {s.repository}</option>)}</select></label>
     <p className="service-help">Select a connection when the YAML includes repository sources.</p>
    </details>
    {error && <p role="alert" className="error">{error}</p>}
