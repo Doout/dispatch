@@ -18,7 +18,8 @@ func TestCompletionWaitsForDeployingStatusPersistence(t *testing.T) {
 	data, template := previewFixture(t)
 	deployments := deploy.NewService(data, deploy.SimulationExecutor{Delay: time.Millisecond})
 	lifecycle := DeploymentLifecycle{Store: data, Deployments: deployments, PollEvery: time.Millisecond}
-	notifier := &recordingNotifier{}
+	readyRecorded := make(chan struct{}, 1)
+	notifier := &recordingNotifier{readyRecorded: readyRecorded}
 	service := New(data, nil, lifecycle, notifier)
 
 	result, err := service.Process(context.Background(), previewCommentEvent("delivery-fast"))
@@ -28,6 +29,12 @@ func TestCompletionWaitsForDeployingStatusPersistence(t *testing.T) {
 	preview := waitForPreviewState(t, data, result.Previews[0].ID, core.PreviewReady)
 	if preview.TemplateAppID != template.ID || preview.StatusCommentID != "status-1" {
 		t.Fatalf("unexpected completed preview: %#v", preview)
+	}
+	// The terminal state is saved before its notification runs.
+	select {
+	case <-readyRecorded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ready notification was not recorded")
 	}
 	states, commentIDs := notifier.snapshot()
 	if len(states) != 2 || states[0] != core.PreviewDeploying || states[1] != core.PreviewReady {
@@ -180,10 +187,11 @@ func TestCleanupAbandonsDeploymentMissingAfterRestart(t *testing.T) {
 }
 
 type recordingNotifier struct {
-	mu         sync.Mutex
-	states     []core.PreviewState
-	commentIDs []string
-	failAfter  int
+	mu            sync.Mutex
+	states        []core.PreviewState
+	commentIDs    []string
+	failAfter     int
+	readyRecorded chan struct{}
 }
 
 func (n *recordingNotifier) UpdatePreview(_ context.Context, notification Notification) (string, error) {
@@ -191,6 +199,12 @@ func (n *recordingNotifier) UpdatePreview(_ context.Context, notification Notifi
 	defer n.mu.Unlock()
 	n.states = append(n.states, notification.State)
 	n.commentIDs = append(n.commentIDs, notification.Preview.StatusCommentID)
+	if notification.State == core.PreviewReady && n.readyRecorded != nil {
+		select {
+		case n.readyRecorded <- struct{}{}:
+		default:
+		}
+	}
 	if n.failAfter > 0 && len(n.states) > n.failAfter {
 		return "", errors.New("temporary notification failure")
 	}
