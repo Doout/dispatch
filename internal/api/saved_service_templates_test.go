@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
-	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -117,7 +116,7 @@ func TestSavedServiceTemplateValidationAndRepositoryOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{project, "other-template-project"} {
-		if err := a.store.CreateConfigSource(ctx, core.ConfigSource{ID: "config-" + p, ProjectID: p, Name: "config", CredentialSecretID: "saved-template-credential", Repository: "example/templates", Branch: "main", Path: "deployment/" + p, Active: true, CreatedAt: now, UpdatedAt: now}); err != nil {
+		if err := a.store.CreateConfigSource(ctx, core.ConfigSource{ID: "config-" + p, ProjectID: p, Name: "config-" + p, CredentialSecretID: "saved-template-credential", Repository: "example/templates", Branch: "main", Path: "deployment/" + p, Active: true, CreatedAt: now, UpdatedAt: now}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -178,7 +177,6 @@ func TestSavedServiceTemplateProjectPermissions(t *testing.T) {
 	body.ProjectID = "inaccessible"
 	call(a.createServiceTemplate, "/", body, 403)
 	call(a.updateServiceTemplate, "/", body, 400)
-	grant.ScopeID = "inaccessible"
 	// Removing access hides both summaries and full YAML.
 	if err := a.store.DeleteRoleAssignment(ctx, grant.ID); err != nil {
 		t.Fatal(err)
@@ -188,7 +186,26 @@ func TestSavedServiceTemplateProjectPermissions(t *testing.T) {
 	if strings.Contains(string(list), item.ID) {
 		t.Fatal("template listed across project boundary")
 	}
-	if _, err := a.store.GetSavedServiceTemplate(ctx, item.ID); err == store.ErrNotFound {
+	if _, err := a.store.GetSavedServiceTemplate(ctx, item.ID); err != nil {
 		t.Fatal("denied delete removed template")
 	}
+}
+
+func TestProjectDeletionRequiresRemovingSavedTemplates(t *testing.T) {
+	a := serviceTestAPI(t)
+	ctx := context.Background()
+	if err := a.store.CreateProject(ctx, core.Project{ID: "template-project", Name: "Template project", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	response := serviceRequestTest(t, a, "POST", "/api/v1/service-templates", serviceTemplateRequest{ProjectID: "template-project", Document: savedTemplateDocument}, 201)
+	var item core.SavedServiceTemplate
+	if err := json.Unmarshal(response, &item); err != nil {
+		t.Fatal(err)
+	}
+	problem := serviceRequestTest(t, a, "DELETE", "/api/v1/projects/template-project", nil, 409)
+	if !strings.Contains(string(problem), "saved service templates") {
+		t.Fatalf("conflict: %s", problem)
+	}
+	serviceRequestTest(t, a, "DELETE", "/api/v1/service-templates/"+item.ID+"?revision=1", nil, 204)
+	serviceRequestTest(t, a, "DELETE", "/api/v1/projects/template-project", nil, 204)
 }
