@@ -553,6 +553,9 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if bound {
 			continue
 		}
+		if fields := strings.Fields(event.Arguments); len(fields) > 0 && strings.EqualFold(fields[0], "without") {
+			return fmt.Errorf("no preview exists for this PR; post %s before unlinking a source", event.Command)
+		}
 		if template.GitSource != nil && template.GitSource.LastError != "" {
 			return fmt.Errorf("template %s is waiting for GitHub sync: %s", template.Name, template.GitSource.LastError)
 		}
@@ -570,6 +573,10 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			return fmt.Errorf("allocate preview from template %s: %w", template.Name, err)
 		}
 		variables.ID = previewID
+		defaults, err := workflowPreviewDefaults(rendered)
+		if err != nil {
+			return err
+		}
 		previewURL, err := workflow.RenderTemplateText(template.PreviewURL, variables)
 		if err != nil {
 			return err
@@ -581,7 +588,7 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		trigger := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), TemplateID: template.ID, TemplateSource: template.GitSource, ResourceID: resource.ID,
 			GitHubAppID: template.GitHubAppID, Repository: target.repository, PullRequestNumber: event.PullRequestNumber,
 			Command: template.Command, PreviewURL: previewURL, AutoDeploy: template.AutoDeploy,
-			MaxAutoRunsPerHour: template.MaxAutoRunsPerHour, CreatedAt: time.Now().UTC()}
+			MaxAutoRunsPerHour: template.MaxAutoRunsPerHour, SourceDefaults: defaults, CreatedAt: time.Now().UTC()}
 		if err := a.store.CreateWorkflowPreviewTrigger(ctx, trigger); err != nil {
 			resource.Active, resource.State, resource.UpdatedAt = false, "removed", time.Now().UTC()
 			_ = a.store.UpdateWorkflowResource(ctx, resource)
@@ -600,6 +607,14 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if !resource.Active || !resource.Temporary {
 			continue
 		}
+		if revisionID, err := a.store.WorkflowPreviewCommentRevision(ctx, trigger.ID, event.SourceCommentID); err != nil {
+			return err
+		} else if revisionID != "" {
+			if err := a.workflowPreviewRunActivity(ctx, target, event, trigger, resource, revisionID); err != nil {
+				return err
+			}
+			continue
+		}
 		documents, err := workflow.Parse(resource.Path, []byte(resource.Document))
 		if err != nil || len(documents) != 1 || documents[0].Spec == nil {
 			return errors.New("temporary preview document is invalid")
@@ -608,13 +623,11 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if err != nil {
 			return err
 		}
-		links := map[string]int{}
-		for alias, number := range trigger.LinkedPullRequests {
-			links[alias] = number
+		prepared, updatedTrigger, err := a.prepareWorkflowPreviewLinks(ctx, resource, trigger, updates)
+		if err != nil {
+			return err
 		}
-		for alias, number := range updates {
-			links[alias] = number
-		}
+		links := updatedTrigger.LinkedPullRequests
 		refs := map[string]string{}
 		matched := false
 		for alias, source := range documents[0].Spec.Sources {
@@ -640,7 +653,7 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			}
 			refs[alias] = pr.HeadSHA
 		}
-		pinned, err := pinWorkflowPreviewSources(resource, refs)
+		pinned, err := pinWorkflowPreviewSources(prepared, refs)
 		if err != nil {
 			return err
 		}
@@ -660,17 +673,11 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			}
 			continue
 		}
-		if pinned.Document != resource.Document {
-			if err := a.store.UpdateWorkflowResource(ctx, pinned); err != nil {
-				_ = a.store.ReleaseWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID)
-				return err
-			}
-		}
-		if err := a.store.UpdateWorkflowPreviewTriggerLinks(ctx, trigger.ID, links); err != nil {
+		if err := a.store.SaveWorkflowPreviewSources(ctx, pinned, updatedTrigger); err != nil {
 			_ = a.store.ReleaseWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID)
 			return err
 		}
-		target.workflowTriggers[index].LinkedPullRequests = links
+		target.workflowTriggers[index] = updatedTrigger
 		revision, err := a.workflows.Start(ctx, resource.ID, "pull request comment "+event.SourceCommentID)
 		if err != nil {
 			_ = a.store.ReleaseWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID)

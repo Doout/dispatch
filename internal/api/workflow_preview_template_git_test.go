@@ -144,6 +144,10 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 			t.Fatalf("watching dependency comments: %s", target.repository)
 		}
 	}
+	missingTarget := &previewPollTarget{connectionID: "github", repository: template.Repository, workflowTemplates: []core.WorkflowPreviewTemplate{template}}
+	if err := a.processWorkflowPreviewComment(ctx, missingTarget, core.IncomingEvent{Command: "/preview", Arguments: "without ui", PullRequestNumber: 11}, events.GitHubResolver{}); err == nil {
+		t.Fatal("unlink created an instance before the preview existed")
+	}
 	ignored := &previewPollTarget{connectionID: "github", repository: "example/devops", workflowTemplates: []core.WorkflowPreviewTemplate{template}}
 	if err := a.processWorkflowPreviewComment(ctx, ignored, core.IncomingEvent{Command: "/preview", PullRequestNumber: 11}, events.GitHubResolver{}); err != nil {
 		t.Fatal(err)
@@ -221,6 +225,9 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 	if initialRuns[0].Sources["ui"].CommitSHA != strings.Repeat("d", 40) {
 		t.Fatal("linked UI PR was not pinned")
 	}
+	if target.workflowTriggers[0].SourceDefaults["ui"].Branch != "main" {
+		t.Fatal("template instance did not retain its UI default branch")
+	}
 	initialID := initialRuns[0].ID
 	// A bare command keeps the link and resolves the UI PR's latest head.
 	uiRevision.Store(2)
@@ -263,6 +270,72 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 	}
 	if recovered.Document != strings.ReplaceAll(validDocument, "name: preview-", "name: updated-") {
 		t.Fatal("PR overrides changed the reusable definition")
+	}
+	// Simulate an instance created before source-default capture. Unlinking
+	// must recover the template's branch, not keep the pinned UI PR commit.
+	legacyResource, err := data.GetWorkflowResource(ctx, resources[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.workflowTriggers[0].SourceDefaults = nil
+	if err := data.SaveWorkflowPreviewSources(ctx, legacyResource, target.workflowTriggers[0]); err != nil {
+		t.Fatal(err)
+	}
+	event.SourceCommentID, event.Arguments = "comment-4", "without ui=#85"
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	runs = waitForRuns(4)
+	unlinkedID, err := data.WorkflowPreviewCommentRevision(ctx, target.workflowTriggers[0].ID, event.SourceCommentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlinked, err := data.GetWorkflowRevision(ctx, unlinkedID)
+	if err != nil || unlinked.Sources["ui"].CommitSHA != strings.Repeat("b", 40) || unlinked.Sources["ui"].Branch != "main" {
+		t.Fatalf("unlink did not deploy the default UI branch: %+v, %v", unlinked.Sources, err)
+	}
+	for _, pr := range unlinked.PullRequests {
+		if pr.Repository == "example/ui" {
+			t.Fatal("unlinked UI PR remained a QA feedback target")
+		}
+	}
+	updatedTriggers, err = data.ListWorkflowPreviewTriggers(ctx)
+	if err != nil || updatedTriggers[0].LinkedPullRequests["ui"] != 0 || updatedTriggers[0].SourceDefaults["ui"].Branch != "main" {
+		t.Fatalf("unlink or recovered default was not persisted: %+v, %v", updatedTriggers, err)
+	}
+	// The same delivery does not redeploy. A new bare command stays on main.
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(4)
+	event.SourceCommentID, event.Arguments = "comment-5", ""
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(5)
+	bareID, err := data.WorkflowPreviewCommentRevision(ctx, target.workflowTriggers[0].ID, event.SourceCommentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, err := data.GetWorkflowRevision(ctx, bareID)
+	if err != nil || bare.Sources["ui"].CommitSHA != strings.Repeat("b", 40) {
+		t.Fatal("bare command reattached the unlinked UI PR", err)
+	}
+	event.SourceCommentID, event.Arguments = "comment-6", "with ui=#84"
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(6)
+	// An already processed conditional unlink cannot remove a newer link or
+	// fail its old PR-number guard when polling redelivers the comment.
+	event.SourceCommentID, event.Arguments = "comment-4", "without ui=#85"
+	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(6)
+	updatedTriggers, err = data.ListWorkflowPreviewTriggers(ctx)
+	if err != nil || updatedTriggers[0].LinkedPullRequests["ui"] != 84 {
+		t.Fatal("replayed unlink changed a newer PR link", err)
 	}
 	// A UI comment can be the primary trigger too. The same PR number gets
 	// its own instance ID while linking the existing service PR as a source.

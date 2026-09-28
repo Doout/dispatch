@@ -56,21 +56,30 @@ type WorkflowResource struct {
 
 // WorkflowPreviewTrigger binds an inline workflow to one pull request command.
 type WorkflowPreviewTrigger struct {
-	TemplateSource     *WorkflowPreviewTemplateGitSource `json:"templateSource,omitempty"`
-	LinkedPullRequests map[string]int                    `json:"linkedPullRequests,omitempty"`
-	ID                 string                            `json:"id"`
-	TemplateID         string                            `json:"templateId,omitempty"`
-	ResourceID         string                            `json:"resourceId"`
-	GitHubAppID        string                            `json:"githubAppId"`
-	Repository         string                            `json:"repository"`
-	PullRequestNumber  int                               `json:"pullRequestNumber"`
-	Command            string                            `json:"command"`
-	AutoDeploy         bool                              `json:"autoDeploy"`
-	MaxAutoRunsPerHour int                               `json:"maxAutoRunsPerHour"`
-	PreviewURL         string                            `json:"previewUrl,omitempty"`
-	ReportCommentID    string                            `json:"reportCommentId,omitempty"`
-	CreatedAt          time.Time                         `json:"createdAt"`
-	ClosedAt           *time.Time                        `json:"closedAt,omitempty"`
+	TemplateSource     *WorkflowPreviewTemplateGitSource       `json:"templateSource,omitempty"`
+	LinkedPullRequests map[string]int                          `json:"linkedPullRequests,omitempty"`
+	SourceDefaults     map[string]WorkflowPreviewSourceDefault `json:"sourceDefaults,omitempty"`
+	ID                 string                                  `json:"id"`
+	TemplateID         string                                  `json:"templateId,omitempty"`
+	ResourceID         string                                  `json:"resourceId"`
+	GitHubAppID        string                                  `json:"githubAppId"`
+	Repository         string                                  `json:"repository"`
+	PullRequestNumber  int                                     `json:"pullRequestNumber"`
+	Command            string                                  `json:"command"`
+	AutoDeploy         bool                                    `json:"autoDeploy"`
+	MaxAutoRunsPerHour int                                     `json:"maxAutoRunsPerHour"`
+	PreviewURL         string                                  `json:"previewUrl,omitempty"`
+	ReportCommentID    string                                  `json:"reportCommentId,omitempty"`
+	CreatedAt          time.Time                               `json:"createdAt"`
+	ClosedAt           *time.Time                              `json:"closedAt,omitempty"`
+}
+
+// WorkflowPreviewSourceDefault retains the configured reference before a PR
+// comment pins a source to a linked commit.
+type WorkflowPreviewSourceDefault struct {
+	Repository string `json:"repository"`
+	Branch     string `json:"branch,omitempty"`
+	Ref        string `json:"ref,omitempty"`
 }
 
 // WorkflowPreviewTemplate creates one temporary Application per PR when its

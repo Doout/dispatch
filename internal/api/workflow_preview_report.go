@@ -352,11 +352,13 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 		}
 	}
 	fmt.Fprintf(&body, "- `%s with %s=#<PR_NUMBER>`: link or replace a PR from `%s`.\n", command, example, revision.Sources[example].Repository)
+	fmt.Fprintf(&body, "- `%s without %s`: unlink that source's PR, restore its configured branch or ref, and redeploy.\n", command, example)
 	body.WriteString("\nReplace `<PR_NUMBER>` with the PR number from that source's repository. Saved links remain attached to later runs; repeat `with` for an alias to replace its link.\n")
-	body.WriteString("\n<details>\n<summary>All source overrides</summary>\n\n| Source | Repository | Command |\n| --- | --- | --- |\n")
+	body.WriteString("\n<details>\n<summary>All source overrides</summary>\n\n| Source | Repository | Link | Unlink |\n| --- | --- | --- | --- |\n")
 	for _, alias := range aliases {
-		fmt.Fprintf(&body, "| `%s` | `%s` | `%s with %s=#<PR_NUMBER>` |\n", alias, revision.Sources[alias].Repository, command, alias)
+		fmt.Fprintf(&body, "| `%s` | `%s` | `%s with %s=#<PR_NUMBER>` | `%s without %s` |\n", alias, revision.Sources[alias].Repository, command, alias, command, alias)
 	}
+	body.WriteString("\nUnlink several sources with commas. Optionally use `without alias=#123` to remove only that PR's link. The primary PR cannot be unlinked.\n")
 	if len(aliases) > 1 {
 		other := aliases[0]
 		if other == example {
