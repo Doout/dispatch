@@ -84,7 +84,11 @@ func (s *Service) StartPreviewChecks(ctx context.Context, resourceID, commentID 
 	}
 	revision := core.WorkflowRevision{ID: ulid.Make().String(), ResourceID: resourceID, ConfigSHA: deployed.ConfigSHA, SpecDigest: deployed.SpecDigest,
 		State: "queued", Trigger: "pull request test " + commentID, Sources: deployed.Sources, Outputs: deployed.Outputs,
-		CreatedAt: time.Now().UTC()}
+		CreatedAt: time.Now().UTC(), PullRequests: deployed.PullRequests}
+	revision.Feedback, err = s.previewFeedback(ctx, resource, deployed, documents[0])
+	if err != nil {
+		return core.WorkflowRevision{}, err
+	}
 	if err := s.Store.CreateWorkflowRevision(ctx, revision); err != nil {
 		return core.WorkflowRevision{}, err
 	}

@@ -146,80 +146,83 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 	}
 	a.previewReportMu.Lock()
 	defer a.previewReportMu.Unlock()
+	feedbackErr := a.reportWorkflowFeedback(ctx, trigger.ResourceID)
 	pending, err := a.store.PendingWorkflowPreviewReports(ctx, trigger.ID)
 	if err != nil {
-		return err
+		return errors.Join(feedbackErr, err)
 	}
 	if len(pending) == 0 {
-		return nil
+		return feedbackErr
 	}
 	connection, err := a.store.GetGitHubApp(ctx, trigger.GitHubAppID)
 	if err != nil {
-		return err
+		return errors.Join(feedbackErr, err)
 	}
 	resolver := events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
 		return a.eventConfig.GitHubApps.RepositoryToken(ctx, trigger.GitHubAppID, repository)
 	}}
 	pr, err := resolver.ResolvePullRequest(ctx, trigger.Repository, trigger.PullRequestNumber)
 	if err != nil {
-		return err
+		return errors.Join(feedbackErr, err)
 	}
 	if !pr.Open {
-		return nil
+		return feedbackErr
 	}
 	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: resolver.RepositoryTokenSource}
 	resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
 	if err != nil {
-		return err
+		return errors.Join(feedbackErr, err)
 	}
 	for _, revisionID := range pending {
 		revision, err := a.store.GetWorkflowRevision(ctx, revisionID)
 		if err != nil {
-			return err
+			return errors.Join(feedbackErr, err)
 		}
 		stages, err := a.store.ListWorkflowStageRuns(ctx, revision.ID)
 		if err != nil {
-			return err
+			return errors.Join(feedbackErr, err)
 		}
 		if strings.HasPrefix(revision.Trigger, "pull request test ") {
 			statusCommentID, err := a.store.WorkflowPreviewTestComment(ctx, revision.ID)
 			if err != nil {
-				return err
+				return errors.Join(feedbackErr, err)
 			}
 			body := workflowPreviewTestReport(revision, stages, trigger.PreviewURL)
 			commentID, err := postWorkflowPreviewComment(ctx, notifier, a.eventConfig.GitHubToken,
 				trigger.Repository, trigger.PullRequestNumber, statusCommentID, body)
 			if err != nil {
-				return err
+				return errors.Join(feedbackErr, err)
 			}
 			if err := a.store.UpdateWorkflowPreviewTestComment(ctx, trigger.ID, strings.TrimPrefix(revision.Trigger, "pull request test "), commentID); err != nil {
-				return err
+				return errors.Join(feedbackErr, err)
 			}
 			if err := a.store.SaveWorkflowPreviewReportComment(ctx, revision.ID, trigger.Repository, trigger.PullRequestNumber, commentID); err != nil {
-				return err
+				return errors.Join(feedbackErr, err)
 			}
 			continue
 		}
 		body := workflowPreviewReportForTrigger(revision, resource, stages, trigger.PreviewURL, connection.WebURL, trigger)
 		commentID, err := notifier.UpdateComment(ctx, trigger.Repository, trigger.PullRequestNumber, trigger.ReportCommentID, body)
 		if err != nil {
-			return err
+			return errors.Join(feedbackErr, err)
 		}
 		if err := a.store.UpdateWorkflowPreviewTriggerComment(ctx, trigger.ID, commentID); err != nil {
-			return err
+			return errors.Join(feedbackErr, err)
 		}
 		trigger.ReportCommentID = commentID
 		if err := a.store.SaveWorkflowPreviewReportComment(ctx, revision.ID, trigger.Repository, trigger.PullRequestNumber, commentID); err != nil {
-			return err
+			return errors.Join(feedbackErr, err)
 		}
 	}
-	return nil
+	return feedbackErr
 }
 
 func workflowPreviewTestReport(revision core.WorkflowRevision, stages []core.WorkflowStageRun, previewURL string) string {
 	status := "Passed"
 	if revision.State == "cancelled" {
 		status = "Cancelled"
+	} else if revision.State == "failed" && revision.Error == core.WorkflowInterruptedMessage {
+		status = "Interrupted"
 	} else if revision.State == "failed" {
 		status = "Failed"
 	}
@@ -241,6 +244,22 @@ func workflowPreviewTestReport(revision core.WorkflowRevision, stages []core.Wor
 	}
 	if len(stages) == 0 && revision.Error != "" {
 		fmt.Fprintf(&body, "\n%s\n", revision.Error)
+	}
+	if feedback := revision.Feedback; feedback != nil {
+		body.WriteString("\n| PR | Tested commit | Commit status | Review |\n| --- | --- | --- | --- |\n")
+		for _, target := range feedback.Targets {
+			review := target.Review
+			if review == "" {
+				review = "pending"
+			}
+			fmt.Fprintf(&body, "| %s #%d | `%s` | %s | %s |\n", target.Repository, target.Number, target.CommitSHA, target.Status, review)
+			if target.SkipReason != "" {
+				fmt.Fprintf(&body, "\n%s #%d: %s\n", target.Repository, target.Number, target.SkipReason)
+			}
+			if target.Error != "" {
+				fmt.Fprintf(&body, "\nGitHub reporting for %s #%d is pending. Open the run in Dispatch for the error.\n", target.Repository, target.Number)
+			}
+		}
 	}
 	body.WriteString("\nOpen the preview run in Dispatch for check logs.\n")
 	return body.String()

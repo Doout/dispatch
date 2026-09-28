@@ -510,6 +510,17 @@ func (m *Manager) RepositoryFiles(ctx context.Context, id, repository, revision,
 }
 
 func (m *Manager) SetCommitStatus(ctx context.Context, id, repository, revision, state, description, targetURL string) error {
+	return m.SetCommitStatusWithContext(ctx, id, repository, revision, state, "Dispatch/deployment", description, targetURL)
+}
+
+func (m *Manager) SetCommitStatusWithContext(ctx context.Context, id, repository, revision, state, statusContext, description, targetURL string) error {
+	if state != "pending" && state != "success" && state != "failure" && state != "error" {
+		return errors.New("invalid commit status state")
+	}
+	if statusContext == "" || len(statusContext) > 100 || len(description) > 140 {
+		return errors.New("invalid commit status context or description")
+	}
+
 	connection, err := m.Store.GetGitHubApp(ctx, id)
 	if err != nil {
 		return err
@@ -524,7 +535,7 @@ func (m *Manager) SetCommitStatus(ctx context.Context, id, repository, revision,
 	}
 	payload := map[string]string{
 		"state":       state,
-		"context":     "Dispatch/deployment",
+		"context":     statusContext,
 		"description": description,
 	}
 	if strings.TrimSpace(targetURL) != "" {
@@ -532,7 +543,7 @@ func (m *Manager) SetCommitStatus(ctx context.Context, id, repository, revision,
 	}
 	endpoint := fmt.Sprintf("%s/repos/%s/statuses/%s", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(revision))
 	if err := m.request(ctx, http.MethodPost, endpoint, token, payload, nil, connection.PrivateNetworkID); err != nil {
-		return fmt.Errorf("publish commit status: %w", err)
+		return fmt.Errorf("publish commit status: %w", feedbackPermissionError(err, "Commit statuses"))
 	}
 	return nil
 }
@@ -791,7 +802,7 @@ func (m *Manager) request(ctx context.Context, method, endpoint, token string, b
 		if message == "" {
 			message = response.Status
 		}
-		return fmt.Errorf("GitHub returned %s: %s", response.Status, message)
+		return &responseError{StatusCode: response.StatusCode, Status: response.Status, Message: message}
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		return nil
@@ -810,4 +821,13 @@ func State(connection core.GitHubAppConnection) string {
 		return "unverified"
 	}
 	return "ready"
+}
+
+type responseError struct {
+	StatusCode      int
+	Status, Message string
+}
+
+func (e *responseError) Error() string {
+	return fmt.Sprintf("GitHub returned %s: %s", e.Status, e.Message)
 }

@@ -450,7 +450,17 @@ export type WorkflowSourceRevision = {
   commitSha: string;
   path?: string;
 };
+export type WorkflowFeedback = {
+  statusContext: string;
+  deploymentId: string;
+  previewUrl?: string;
+  complete: boolean;
+  reviewOnSuccess?: string;
+  reviewOnFailure?: string;
+  targets: { githubAppId: string; repository: string; number: number; commitSha: string; url?: string; status?: string; review?: string; reviewId?: number; error?: string; skipReason?: string }[];
+};
 export type WorkflowRevision = {
+  feedback?: WorkflowFeedback;
   id: string;
   resourceId: string;
   configSha: string;

@@ -113,6 +113,7 @@ type ServiceTemplateOutputSpec struct {
 }
 
 type ApplicationSpec struct {
+	Reporting   *core.WorkflowReporting   `json:"reporting,omitempty" yaml:"reporting,omitempty"`
 	Sources     map[string]SourceSpec     `json:"sources" yaml:"sources"`
 	Jobs        map[string]JobSpec        `json:"jobs,omitempty" yaml:"jobs,omitempty"`
 	Deployments map[string]DeploymentSpec `json:"deployments,omitempty" yaml:"deployments,omitempty"`
@@ -441,6 +442,18 @@ func applyJobDefaults(jobs map[string]JobSpec) {
 }
 
 func validateApplication(document ApplicationDocument) error {
+	if document.Spec.Reporting != nil {
+		policy := document.Spec.Reporting
+		if policy.StatusContext != "" && (len(policy.StatusContext) > 100 || strings.ContainsAny(policy.StatusContext, "\r\n") || strings.TrimSpace(policy.StatusContext) != policy.StatusContext || strings.EqualFold(policy.StatusContext, "Dispatch/deployment")) {
+			return errors.New("spec.reporting.statusContext must be 1-100 characters and separate from Dispatch/deployment")
+		}
+		if policy.ReviewOnSuccess != "" && policy.ReviewOnSuccess != "none" && policy.ReviewOnSuccess != "approve" {
+			return errors.New("spec.reporting.reviewOnSuccess must be none or approve")
+		}
+		if policy.ReviewOnFailure != "" && policy.ReviewOnFailure != "none" && policy.ReviewOnFailure != "requestChanges" {
+			return errors.New("spec.reporting.reviewOnFailure must be none or requestChanges")
+		}
+	}
 	if err := validateHeader(document.TypeMeta, document.Metadata); err != nil {
 		return err
 	}

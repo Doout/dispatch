@@ -2447,3 +2447,12 @@ code { font-family: var(--mono); }
 .workflow-test-logs .workflow-job-output + .workflow-job-output { margin-top: 8px; }
 .workflow-test-command code { white-space: nowrap; }
 @media (max-width: 600px) { .workflow-test-summary { grid-template-columns: 90px minmax(0, 1fr); } .workflow-test-summary > button { grid-column: 2; justify-self: start; } }
+
+.workflow-feedback { padding: 18px; border-bottom: 1px solid var(--rule); }
+.workflow-feedback h4 { margin: 0 0 8px; font-size: 12px; }
+.workflow-feedback > p { margin: 0 0 12px; font-size: 12px; overflow-wrap: anywhere; }
+.workflow-feedback-target { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--rule); font-size: 12px; overflow-wrap: anywhere; }
+.workflow-feedback-target dl { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 0; }
+.workflow-feedback-target dt { color: var(--muted); }
+.workflow-feedback-target dd { margin: 4px 0 0; text-transform: capitalize; }
+.workflow-feedback-target p { margin: 0; }
