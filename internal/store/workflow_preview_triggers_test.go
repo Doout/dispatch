@@ -52,6 +52,9 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	if err != nil || len(items) != 1 || items[0].Command != "/ship" || !items[0].AutoDeploy || items[0].MaxAutoRunsPerHour != 3 || items[0].PreviewURL != trigger.PreviewURL || items[0].ReportCommentID != "12345" || items[0].LinkedPullRequests["ui"] != 84 {
 		t.Fatalf("editing the same PR lost comment state: %+v, %v", items, err)
 	}
+	if !items[0].LifetimeReportPending {
+		t.Fatal("preview settings edit did not schedule a report refresh")
+	}
 	if items[0].SourceDefaults["ui"].Branch != "develop" {
 		t.Fatal("source defaults did not survive persistence and editing")
 	}

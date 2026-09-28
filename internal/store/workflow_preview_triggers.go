@@ -54,7 +54,7 @@ func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.Work
 }
 
 func (s *SQLStore) UpdateWorkflowPreviewTrigger(ctx context.Context, item core.WorkflowPreviewTrigger) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET github_app_id=?,repository=?,pull_request_number=?,command=?,preview_url=?,auto_deploy=?,max_auto_runs_per_hour=?,ttl=?,expires_at=?,
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET github_app_id=?,repository=?,pull_request_number=?,command=?,preview_url=?,auto_deploy=?,max_auto_runs_per_hour=?,ttl=?,expires_at=?,lifetime_report_pending=TRUE,
 		report_comment_id=CASE WHEN github_app_id=? AND repository=? AND pull_request_number=? THEN report_comment_id ELSE '' END,
 		linked_pull_requests=CASE WHEN github_app_id=? AND repository=? AND pull_request_number=? THEN linked_pull_requests ELSE '{}' END
 		WHERE id=? AND closed_at IS NULL AND EXISTS (SELECT 1 FROM workflow_resources r WHERE r.id=workflow_preview_triggers.resource_id AND r.active=TRUE AND r.state NOT IN ('expiring','expired','removed'))`), item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, item.AutoDeploy, item.MaxAutoRunsPerHour, item.TTL, nullTime(item.ExpiresAt),
