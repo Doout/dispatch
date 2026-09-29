@@ -32,6 +32,7 @@ type RollbackPreview struct {
 	Target              string                       `json:"target,omitempty"`
 	Images              map[string]string            `json:"images,omitempty"`
 	Domain              string                       `json:"domain,omitempty"`
+	Ports               []string                     `json:"ports,omitempty"`
 	ContainerPort       int                          `json:"containerPort,omitempty"`
 	RuntimeDigest       string                       `json:"runtimeDigest,omitempty"`
 }
@@ -295,7 +296,7 @@ func (s *Service) PreviewRollback(ctx context.Context, id string) (RollbackPrevi
 				return nil
 			}
 			out.Available, out.Resources, out.Images = preview.Available, preview.Resources, preview.Images
-			out.Domain, out.ContainerPort = preview.Domain, preview.ContainerPort
+			out.Domain, out.ContainerPort, out.Ports = preview.Domain, preview.ContainerPort, preview.Ports
 			out.RuntimeDigest = preview.RuntimeDigest
 			out.ReviewDigest = rollbackReviewDigest(app, server, current.ID, preview.RuntimeDigest)
 			return nil

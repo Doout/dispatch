@@ -113,7 +113,7 @@ describe("release workbench", () => {
 
   it("shows Docker images, resources and retained routing inputs before restore", async () => {
     const image = "sha256:" + "a".repeat(64);
-    vi.mocked(releaseClient.rollbackPreview).mockResolvedValue({ available:true, message:"Volumes and external database data remain.", deploymentId:deployment.id, currentDeploymentId:"running-b", reviewDigest:"runtime-review", runtime:"dockerfile", target:"Local Docker", images:{application:image}, containerPort:8080, bindings:[], resources:[{kind:"Container",name:"dispatch-orders"}] });
+    vi.mocked(releaseClient.rollbackPreview).mockResolvedValue({ available:true, message:"Volumes and external database data remain.", deploymentId:deployment.id, currentDeploymentId:"running-b", reviewDigest:"runtime-review", runtime:"dockerfile", target:"Local Docker", images:{application:image}, containerPort:8080, ports:["worker: 9000 -> 80/tcp"], bindings:[], resources:[{kind:"Container",name:"dispatch-orders"}] });
     render(<ReleaseTools deployment={deployment} canDeploy canConfigure />);
     fireEvent.click(screen.getByRole("tab",{name:"Restore"}));
     fireEvent.click(screen.getByRole("button",{name:"Review restore"}));
@@ -121,6 +121,7 @@ describe("release workbench", () => {
     expect(screen.getByText("Local Docker")).toBeTruthy();
     expect(screen.getByText("dispatch-orders")).toBeTruthy();
     expect(screen.getByText("Published port: 8080")).toBeTruthy();
+    expect(screen.getByText("worker: 9000 -> 80/tcp")).toBeTruthy();
     expect((screen.getByRole("button",{name:"Restore this version"}) as HTMLButtonElement).disabled).toBe(true);
     expect(releaseClient.rollback).not.toHaveBeenCalled();
   });

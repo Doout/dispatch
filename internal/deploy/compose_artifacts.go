@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -400,4 +401,33 @@ func filterComposeProfiles(config map[string]any) {
 			delete(service, "profiles")
 		}
 	}
+}
+
+func composePublishedPorts(config map[string]any) []string {
+	result := []string{}
+	services, _ := config["services"].(map[string]any)
+	for _, name := range sortedComposeServices(services) {
+		service, _ := services[name].(map[string]any)
+		ports, _ := service["ports"].([]any)
+		for _, entry := range ports {
+			port, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			host, _ := port["host_ip"].(string)
+			published := fmt.Sprint(port["published"])
+			if port["published"] == nil || published == "" {
+				published = "automatic"
+			}
+			if host != "" {
+				published = "[" + host + "]:" + published
+			}
+			protocol, _ := port["protocol"].(string)
+			if protocol == "" {
+				protocol = "tcp"
+			}
+			result = append(result, fmt.Sprintf("%s: %s -> %v/%s", name, published, port["target"], protocol))
+		}
+	}
+	return result
 }

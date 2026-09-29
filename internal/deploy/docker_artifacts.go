@@ -152,7 +152,13 @@ func (e DockerExecutor) PreviewRuntimeRollback(ctx context.Context, d core.Deplo
 	if err != nil {
 		return RollbackPreview{}, err
 	}
-	return RollbackPreview{Available: true, Runtime: string(inputs.BuildType), Target: server.Name, Images: inputs.Images, Domain: inputs.Domain, ContainerPort: inputs.ContainerPort, Resources: resources, RuntimeDigest: version}, nil
+	port := inputs.ContainerPort
+	ports := []string{}
+	if inputs.BuildType == core.BuildTypeCompose {
+		port = 0
+		ports = composePublishedPorts(inputs.Compose)
+	}
+	return RollbackPreview{Ports: ports, Available: true, Runtime: string(inputs.BuildType), Target: server.Name, Images: inputs.Images, Domain: inputs.Domain, ContainerPort: port, Resources: resources, RuntimeDigest: version}, nil
 }
 
 func sortedImageServices(images map[string]string) []string {

@@ -306,3 +306,11 @@ func TestComposeProfilesAreCapturedAtDeployTime(t *testing.T) {
 		t.Fatal("retained services depend on future profile selection")
 	}
 }
+
+func TestComposeRollbackReviewUsesResolvedPublishedPorts(t *testing.T) {
+	config := map[string]any{"services": map[string]any{"api": map[string]any{"ports": []any{map[string]any{"host_ip": "127.0.0.1", "published": "8080", "target": float64(80), "protocol": "tcp"}, map[string]any{"target": float64(81)}}}}}
+	got := composePublishedPorts(config)
+	if len(got) != 2 || got[0] != "api: [127.0.0.1]:8080 -> 80/tcp" || got[1] != "api: automatic -> 81/tcp" {
+		t.Fatalf("incorrect retained ports: %v", got)
+	}
+}

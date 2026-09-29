@@ -10,7 +10,7 @@ export type ReleasePreview = {
   resources: { kind: string; name: string; namespace?: string }[];
   bindings: AppliedServiceBinding[]; comparison: DeploymentComparison;
 };
-export type RollbackPreview = { available: boolean; message: string; deploymentId: string; currentDeploymentId: string; reviewDigest: string; runtime?: string; target?: string; domain?: string; containerPort?: number; images?: Record<string,string>; helmRevision?: number; bindings: AppliedServiceBinding[]; resources: { kind: string; name: string; namespace?: string }[] };
+export type RollbackPreview = { available: boolean; message: string; deploymentId: string; currentDeploymentId: string; reviewDigest: string; runtime?: string; target?: string; domain?: string; containerPort?: number; ports?: string[]; images?: Record<string,string>; helmRevision?: number; bindings: AppliedServiceBinding[]; resources: { kind: string; name: string; namespace?: string }[] };
 export type Activity = { id: string; kind: string; state?: string; message: string; actor?: string; deploymentId?: string; revision?: string; createdAt: string };
 export type Diagnosis = {
   location: string; checkedAt: string; live: boolean; message: string;
