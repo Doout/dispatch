@@ -75,6 +75,11 @@ func TestRuntimeArtifactEncryptionAndValidation(t *testing.T) {
 	if err != nil || loaded.Bindings[0].Values["password"] != "private-runtime-value" {
 		t.Fatalf("retained inputs lost: %v", err)
 	}
+	moved := app
+	moved.ProjectID = "other-project"
+	if _, err = e.loadArtifact(context.Background(), source, moved, server); err == nil {
+		t.Fatal("retained credentials crossed a changed project boundary")
+	}
 	if err = e.saveArtifact(context.Background(), source, app, server, inputs); err == nil {
 		t.Fatal("immutable artifact overwritten")
 	}

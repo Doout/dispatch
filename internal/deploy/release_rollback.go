@@ -39,9 +39,9 @@ type RollbackPreview struct {
 
 func rollbackReviewDigest(app core.App, server core.Server, current, runtime string) string {
 	raw, _ := json.Marshal(struct {
-		Spec, Current, Runtime, Name string
-		Server                       core.Server
-	}{app.SpecDigest(), current, runtime, app.Name, server})
+		Spec, Current, Runtime, Name, Project string
+		Server                                core.Server
+	}{app.SpecDigest(), current, runtime, app.Name, app.ProjectID, server})
 	return fmt.Sprintf("%x", sha256.Sum256(raw))
 }
 

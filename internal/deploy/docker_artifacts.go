@@ -32,6 +32,7 @@ type runtimeFile struct {
 }
 
 type dockerArtifact struct {
+	ProjectID     string                       `json:"projectId"`
 	Version       int                          `json:"version"`
 	BuildType     core.BuildType               `json:"buildType"`
 	ContainerPort int                          `json:"containerPort"`
@@ -64,6 +65,7 @@ func (e DockerExecutor) captureDockerArtifact(ctx context.Context, _ core.Deploy
 }
 
 func (e DockerExecutor) saveArtifact(ctx context.Context, d core.Deployment, app core.App, server core.Server, inputs dockerArtifact) error {
+	inputs.ProjectID = app.ProjectID
 	raw, err := json.Marshal(inputs)
 	if err != nil || len(raw) > maxRuntimeArtifactBytes {
 		return errors.New("Runtime inputs exceed the retained artifact limit or cannot be encoded.")
@@ -99,6 +101,9 @@ func (e DockerExecutor) loadArtifact(ctx context.Context, d core.Deployment, app
 	defer clear(raw)
 	if len(raw) > maxRuntimeArtifactBytes || json.Unmarshal(raw, &inputs) != nil || inputs.Version != 1 || len(inputs.Images) == 0 {
 		return inputs, errors.New("The retained runtime inputs are invalid or use an unsupported version.")
+	}
+	if inputs.ProjectID != app.ProjectID {
+		return inputs, errors.New("The application's project changed. Retained runtime inputs cannot cross project boundaries.")
 	}
 	if inputs.BuildType == core.BuildTypeDockerfile && (len(inputs.Images) != 1 || !dockerImageID.MatchString(inputs.Images["application"])) {
 		return inputs, errors.New("The retained container image is invalid.")
