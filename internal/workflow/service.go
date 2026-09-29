@@ -456,7 +456,9 @@ func (s *Service) pollSource(ctx context.Context, source core.ConfigSource, now 
 		_, recordErr := s.sourceError(ctx, source, err)
 		return errors.Join(err, recordErr)
 	}
-	configChanged := head != source.LastSeenSHA || source.State == "degraded" || source.State == "invalid"
+	// A webhook setup warning does not make an unchanged polling source invalid.
+	// Retry configuration errors, but do not reimport on every healthy fallback scan.
+	configChanged := head != source.LastSeenSHA || source.State == "invalid" || source.State == "degraded" && !strings.HasPrefix(source.LastError, "Polling is active.")
 	if configChanged {
 		event := core.WorkflowEvent{ID: ulid.Make().String(), ConfigSourceID: source.ID, Provider: "poll", DeliveryID: "poll-config:" + source.ID + ":" + ulid.Make().String(), Kind: "configuration_sync", Repository: source.Repository, Branch: source.Branch, CommitSHA: head, State: "running", CreatedAt: now}
 		if _, err := s.Store.CreateWorkflowEvent(ctx, event); err != nil {

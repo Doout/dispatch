@@ -27,6 +27,12 @@ const transportName: Record<string, string> = {
   webhook: "Webhook",
   history: "Earlier activity",
 };
+const activityName: Record<string, string> = {
+  branch_scan: "Source changed",
+  configuration_sync: "Configuration synced",
+  poll_failed: "Polling failed",
+  poll_recovered: "Polling recovered",
+};
 function timeLabel(value: string) {
   return new Date(value).toLocaleString();
 }
@@ -429,7 +435,7 @@ function ActivityRow({
     <tr>
       <td data-label="Event">
         <strong>{item.name}</strong>
-        <small>{item.kind.replaceAll("_", " ")}</small>
+        <small>{activityName[item.kind] ?? item.kind.replaceAll("_", " ")}</small>
       </td>
       <td data-label="Source">
         <span>

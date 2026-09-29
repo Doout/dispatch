@@ -86,6 +86,16 @@ func testEventActivityContract(t *testing.T, dsn string) {
 			t.Fatal(err)
 		}
 	}
+	// Existing scan rows must be filtered before the page limit is applied.
+	for i := 0; i < 60; i++ {
+		item := first
+		item.ID = ulid.Make().String()
+		item.Kind = []string{"branch_scan", "repository_check", "preview_check"}[i%3]
+		item.State = "processed"
+		if err := data.SaveEventActivity(ctx, item.ID, item); err != nil {
+			t.Fatal(err)
+		}
+	}
 	firstPage, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"visible"}, Transport: "poll", Limit: 50})
 	if err != nil || len(firstPage) != 50 {
 		t.Fatalf("first page: %d %v", len(firstPage), err)
@@ -107,6 +117,104 @@ func testEventActivityContract(t *testing.T, dsn string) {
 	if err != nil || len(empty) != 0 {
 		t.Fatal("empty project scope exposed events")
 	}
+	for _, state := range []string{"processed", "failed"} {
+		item := first
+		item.ID, item.Kind, item.State = ulid.Make().String(), "branch_scan", state
+		if state == "processed" {
+			item.RevisionIDs = []string{"accepted-run"}
+		}
+		if err := data.SaveEventActivity(ctx, item.ID, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	search := core.EventActivitySearch{ProjectIDs: []string{"visible"}, Transport: "poll", Limit: 2}
+	items, err = data.SearchEventActivity(ctx, search)
+	if err != nil || len(items) != 2 || items[0].State != "failed" || len(items[1].RevisionIDs) != 1 {
+		t.Fatalf("meaningful scan activity missing: %+v %v", items, err)
+	}
+	count, err = data.CountEventActivity(ctx, search)
+	if err != nil || count != 58 {
+		t.Fatalf("meaningful scan count: %d %v", count, err)
+	}
+}
+
+func TestPolledWorkflowActivityWaitsForRunOrFailure(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "workflow-events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(data.Migrate(ctx))
+	now := time.Now().UTC()
+	must(data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now}))
+	must(data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", CreatedAt: now, UpdatedAt: now}))
+	must(data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", GitHubAppID: "github", Name: "Configuration", CreatedAt: now, UpdatedAt: now}))
+	event := core.WorkflowEvent{ID: ulid.Make().String(), ConfigSourceID: "source", Provider: "poll", DeliveryID: "scan", Kind: "branch_scan", State: "running", CreatedAt: now}
+	inserted, err := data.CreateWorkflowEvent(ctx, event)
+	must(err)
+	if !inserted {
+		t.Fatal("scan reservation was not stored")
+	}
+	assertHistory := func(want int) []core.EventActivity {
+		t.Helper()
+		search := core.EventActivitySearch{ProjectIDs: []string{"project"}}
+		items, err := data.SearchEventActivity(ctx, search)
+		must(err)
+		count, err := data.CountEventActivity(ctx, search)
+		must(err)
+		if len(items) != want || count != want {
+			t.Fatalf("activity: %+v count=%d, want %d", items, count, want)
+		}
+		return items
+	}
+	assertHistory(0)
+	event.State = "processed"
+	must(data.UpdateWorkflowEvent(ctx, event))
+	assertHistory(0)
+	inserted, err = data.CreateWorkflowEvent(ctx, event)
+	must(err)
+	if inserted {
+		t.Fatal("hiding a scan removed its delivery reservation")
+	}
+
+	event.ID, event.DeliveryID, event.State = ulid.Make().String(), "changed", "running"
+	_, err = data.CreateWorkflowEvent(ctx, event)
+	must(err)
+	event.State, event.ResourceID, event.RevisionIDs = "processed", "app", []string{"run"}
+	must(data.UpdateWorkflowEvent(ctx, event))
+	items := assertHistory(1)
+	if items[0].ResourceID != "app" || len(items[0].RevisionIDs) != 1 || items[0].RevisionIDs[0] != "run" {
+		t.Fatalf("accepted run links missing: %+v", items)
+	}
+
+	event.ID, event.DeliveryID, event.State = ulid.Make().String(), "failure", "running"
+	event.ResourceID, event.RevisionIDs = "", nil
+	_, err = data.CreateWorkflowEvent(ctx, event)
+	must(err)
+	event.State, event.Error = "failed", "Unable to schedule deployment"
+	must(data.UpdateWorkflowEvent(ctx, event))
+	items = assertHistory(2)
+	if items[0].State != "failed" || items[0].Message != event.Error {
+		t.Fatalf("failed scan was hidden: %+v", items)
+	}
+
+	// Configuration changes can update templates without starting an application.
+	event.ID, event.DeliveryID, event.Kind, event.State, event.Error = ulid.Make().String(), "config", "configuration_sync", "processed", ""
+	_, err = data.CreateWorkflowEvent(ctx, event)
+	must(err)
+	assertHistory(3)
+	// Webhook deliveries retain their own activity policy.
+	event.ID, event.DeliveryID, event.Kind, event.Provider = ulid.Make().String(), "webhook", "branch_scan", "github"
+	_, err = data.CreateWorkflowEvent(ctx, event)
+	must(err)
+	assertHistory(4)
 }
 
 func TestPollCheckJournalsFailuresAndRecoveryWithoutUnchangedNoise(t *testing.T) {
