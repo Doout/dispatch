@@ -97,7 +97,7 @@ describe("release workbench", () => {
 
   it("requires reviewed current release identity and confirmation before restore", async () => {
     const onDeployment = vi.fn();
-    vi.mocked(releaseClient.rollbackPreview).mockResolvedValue({ available: true, message: "Database migrations are not reverted.", deploymentId: deployment.id, currentDeploymentId: "running-b", helmRevision: 2, bindings: [], resources: [] });
+    vi.mocked(releaseClient.rollbackPreview).mockResolvedValue({ available: true, message: "Database migrations are not reverted.", deploymentId: deployment.id, currentDeploymentId: "running-b", reviewDigest: "review-a", helmRevision: 2, bindings: [], resources: [] });
     vi.mocked(releaseClient.rollback).mockResolvedValue({ ...deployment, id: "rollback-c", state: "queued" });
     render(<ReleaseTools deployment={deployment} canDeploy canConfigure onDeployment={onDeployment} />);
     fireEvent.click(screen.getByRole("tab", { name: "Restore" }));
@@ -107,8 +107,22 @@ describe("release workbench", () => {
     expect((restore as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(restore);
-    await waitFor(() => expect(releaseClient.rollback).toHaveBeenCalledWith("release-a", "running-b"));
+    await waitFor(() => expect(releaseClient.rollback).toHaveBeenCalledWith("release-a", "running-b", "review-a"));
     await waitFor(() => expect(onDeployment).toHaveBeenCalledWith(expect.objectContaining({ id: "rollback-c" })));
+  });
+
+  it("shows Docker images, resources and retained routing inputs before restore", async () => {
+    const image = "sha256:" + "a".repeat(64);
+    vi.mocked(releaseClient.rollbackPreview).mockResolvedValue({ available:true, message:"Volumes and external database data remain.", deploymentId:deployment.id, currentDeploymentId:"running-b", reviewDigest:"runtime-review", runtime:"dockerfile", target:"Local Docker", images:{application:image}, containerPort:8080, bindings:[], resources:[{kind:"Container",name:"dispatch-orders"}] });
+    render(<ReleaseTools deployment={deployment} canDeploy canConfigure />);
+    fireEvent.click(screen.getByRole("tab",{name:"Restore"}));
+    fireEvent.click(screen.getByRole("button",{name:"Review restore"}));
+    await screen.findByText(image);
+    expect(screen.getByText("Local Docker")).toBeTruthy();
+    expect(screen.getByText("dispatch-orders")).toBeTruthy();
+    expect(screen.getByText("Published port: 8080")).toBeTruthy();
+    expect((screen.getByRole("button",{name:"Restore this version"}) as HTMLButtonElement).disabled).toBe(true);
+    expect(releaseClient.rollback).not.toHaveBeenCalled();
   });
 
   it("requires confirmation to deploy the exact preview and clears a stale review", async () => {
@@ -130,7 +144,7 @@ describe("release workbench", () => {
   });
 
   it("clears restore confirmation when leaving the panel", async () => {
-    vi.mocked(releaseClient.rollbackPreview).mockResolvedValue({ available: true, message: "Ready", deploymentId: deployment.id, currentDeploymentId: "running-b", helmRevision: 2, bindings: [], resources: [] });
+    vi.mocked(releaseClient.rollbackPreview).mockResolvedValue({ available: true, message: "Ready", deploymentId: deployment.id, currentDeploymentId: "running-b", reviewDigest: "review-a", helmRevision: 2, bindings: [], resources: [] });
     render(<ReleaseTools deployment={deployment} canDeploy canConfigure />);
     fireEvent.click(screen.getByRole("tab", { name: "Restore" }));
     fireEvent.click(screen.getByRole("button", { name: "Review restore" }));

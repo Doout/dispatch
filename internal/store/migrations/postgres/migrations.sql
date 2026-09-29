@@ -1135,3 +1135,16 @@ ALTER TABLE workflow_preview_triggers ADD COLUMN cleanup_lease_until TEXT;
 ALTER TABLE workflow_preview_comments ADD COLUMN lifetime_handled_at TEXT;
 ALTER TABLE workflow_preview_triggers ADD COLUMN lifetime_report_pending BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE workflow_preview_triggers ADD COLUMN lifetime_start_comment_id TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 067_runtime_artifacts
+CREATE TABLE deployment_runtime_artifacts (
+ deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+ app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ server_id TEXT NOT NULL,
+ scope_id TEXT NOT NULL,
+ ciphertext TEXT NOT NULL
+);
+
+ALTER TABLE audit_events ADD COLUMN confirmed_action TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_events ADD COLUMN confirmed_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_events ADD COLUMN confirmed_version TEXT NOT NULL DEFAULT '';

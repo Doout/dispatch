@@ -3224,137 +3224,31 @@ function ResourceDialog({
   );
 }
 
-function DeleteDialog({
-  target,
-  overview,
-  onClose,
-  onDeleted,
-}: {
-  target: DeleteTarget;
-  overview: Overview;
-  onClose: () => void;
-  onDeleted: () => Promise<void>;
+function DeleteDialog({ target, onClose, onDeleted }: {
+  target: DeleteTarget; overview: Overview; onClose: () => void; onDeleted: () => Promise<void>;
 }) {
-  const dialogRef = useDialogFocus(onClose);
-  const [busy, setBusy] = useState(false);
+  const started = useRef(false);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
-  const dependencies =
-    target.kind === "application" || target.kind === "previewGroup"
-      ? 0
-      : target.kind === "secret"
-        ? overview.apps.filter(
-            (app) =>
-              app.sourceCredentialId === target.item.id ||
-              app.hookSecretIds?.includes(target.item.id),
-          ).length +
-          overview.eventTriggers.filter((trigger) =>
-            trigger.secretIds.includes(target.item.id),
-          ).length +
-          overview.previewGroups
-            .flatMap((group) => group.components)
-            .filter((component) =>
-              component.secretIds?.includes(target.item.id),
-            ).length
-        : overview.apps.filter((app) =>
-            target.kind === "server"
-              ? app.serverId === target.item.id
-              : app.projectId === target.item.id,
-          ).length;
-  const resource =
-    target.kind === "server"
-      ? "server"
-      : target.kind === "project"
-        ? "project"
-        : target.kind === "secret"
-          ? "secret"
-          : target.kind === "previewGroup"
-            ? "preview group"
-            : target.item.template
-              ? "template"
-              : "application";
-
   async function remove() {
-    setBusy(true);
-    setError("");
+    setBusy(true); setError("");
     try {
       if (target.kind === "server") await api.deleteServer(target.item.id);
-      else if (target.kind === "project")
-        await api.deleteProject(target.item.id);
+      else if (target.kind === "project") await api.deleteProject(target.item.id);
       else if (target.kind === "secret") await api.deleteSecret(target.item.id);
-      else if (target.kind === "previewGroup")
-        await api.deletePreviewGroup(target.item.id);
+      else if (target.kind === "previewGroup") await api.deletePreviewGroup(target.item.id);
       else await api.deleteApp(target.item.id);
       await onDeleted();
     } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setBusy(false);
-    }
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (!message) onClose(); else setError(message);
+    } finally { setBusy(false); }
   }
-
-  return (
-    <div
-      className="dialog-layer confirm-layer"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section
-        ref={dialogRef}
-        className="resource-dialog confirm-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="delete-dialog-title"
-        aria-describedby="delete-dialog-description"
-      >
-        <header>
-          <div>
-            <h2 id="delete-dialog-title">Delete {resource}</h2>
-            <p>
-              {target.kind === "application" && !target.item.template
-                ? "Dispatch removes deployed resources and history first."
-                : "You cannot undo this action."}
-            </p>
-          </div>
-          <button aria-label="Close dialog" onClick={onClose}>
-            <X size={19} weight="bold" />
-          </button>
-        </header>
-        <div className="dialog-body">
-          <p className="confirm-copy" id="delete-dialog-description">
-            Delete <strong>{target.item.name}</strong> from Dispatch?
-          </p>
-          {dependencies > 0 && (
-            <div className="dependency-warning" role="status">
-              <strong>Cannot delete this {resource}</strong>
-              <p>
-                {target.kind === "secret"
-                  ? `${dependencies} application source or event rule${dependencies === 1 ? " uses" : "s use"} it. Detach ${dependencies === 1 ? "that dependency" : "those dependencies"} first.`
-                  : `${dependencies} ${dependencies === 1 ? "application uses" : "applications use"} it. Remove ${dependencies === 1 ? "that application" : "those applications"} first.`}
-              </p>
-            </div>
-          )}
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="dialog-actions confirm-actions">
-            <button className="quiet-button" onClick={onClose}>
-              Cancel
-            </button>
-            <button
-              className="danger-button"
-              disabled={busy || dependencies > 0}
-              onClick={() => void remove()}
-            >
-              {busy ? "Deleting..." : `Delete ${resource}`}
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
+  useEffect(() => { if (!started.current) { started.current = true; void remove(); } }, []);
+  return <div className="dialog-layer confirm-layer"><section className="resource-dialog confirm-dialog" role="dialog" aria-modal="true" aria-label={`Delete ${target.item.name}`}>
+    <header><h2>Delete {target.item.name}</h2><button aria-label="Close dialog" disabled={busy} onClick={onClose}><X size={19} /></button></header>
+    <div className="dialog-body">{busy ? <p role="status">Reviewing or removing this resource...</p> : <><p role="alert" className="form-error">{error}</p><div className="dialog-actions"><button className="quiet-button" onClick={onClose}>Close</button><button className="danger-button" onClick={() => void remove()}>Review again</button></div></>}</div>
+  </section></div>;
 }
 
 function deploymentEvidenceID(id: string) {

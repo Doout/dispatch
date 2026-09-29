@@ -96,7 +96,7 @@ func (a *API) getDeploymentRelease(w http.ResponseWriter, r *http.Request) {
 			links = append(links, link)
 		}
 	}
-	message := "Select a successful retained Helm version and review its inputs before rollback. Database migrations and external effects are not reversed."
+	message := "Select a successful retained version and review its inputs before rollback. Database migrations and external effects are not reversed."
 	if d.State != core.DeploymentSucceeded {
 		message = "Only successful deployments can be selected as a rollback version."
 	}
@@ -185,12 +185,13 @@ func (a *API) rollbackDeploymentRelease(w http.ResponseWriter, r *http.Request) 
 		ConfirmDeploymentID         string `json:"confirmDeploymentId"`
 		ExpectedCurrentDeploymentID string `json:"expectedCurrentDeploymentId"`
 		ConfirmDatabaseNotReverted  bool   `json:"confirmDatabaseNotReverted"`
+		ExpectedReviewDigest        string `json:"expectedReviewDigest"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if input.ConfirmDeploymentID != id || input.ExpectedCurrentDeploymentID == "" || !input.ConfirmDatabaseNotReverted {
+	if input.ConfirmDeploymentID != id || input.ExpectedCurrentDeploymentID == "" || input.ExpectedReviewDigest == "" || !input.ConfirmDatabaseNotReverted {
 		problem(w, 422, "Review rollback first", "Confirm the selected deployment, current release, and that database migrations are not reverted.")
 		return
 	}
@@ -198,7 +199,7 @@ func (a *API) rollbackDeploymentRelease(w http.ResponseWriter, r *http.Request) 
 	if a.drift != nil {
 		capture = a.drift.Capture
 	}
-	d, err := a.deploy.StartRollback(r.Context(), id, input.ExpectedCurrentDeploymentID, currentIdentity(r.Context()).ID, capture)
+	d, err := a.deploy.StartRollback(r.Context(), id, input.ExpectedCurrentDeploymentID, input.ExpectedReviewDigest, currentIdentity(r.Context()).ID, capture)
 	if err != nil {
 		problem(w, 409, "Rollback stopped", err.Error())
 		return

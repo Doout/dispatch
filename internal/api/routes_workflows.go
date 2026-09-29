@@ -13,7 +13,7 @@ func (a *API) workflowsRoutes(r chi.Router) {
 			r.Use(a.configSourcePermission(core.PermissionProjectConfigure))
 			r.Put("/", a.updateConfigSource)
 			r.Post("/sync", a.syncConfigSource)
-			r.Delete("/", a.deleteConfigSource)
+			a.destructiveRoute(r, "DELETE", "/", "config-source", "delete", a.deleteConfigSource)
 		})
 	})
 	r.Route("/workflow", func(r chi.Router) {
@@ -37,7 +37,7 @@ func (a *API) workflowsRoutes(r chi.Router) {
 			r.Route("/{id}", func(r chi.Router) {
 				r.Put("/", a.updateWorkflowPreviewTemplate)
 				r.Post("/sync", a.syncWorkflowPreviewTemplate)
-				r.Delete("/", a.deleteWorkflowPreviewTemplate)
+				a.destructiveRoute(r, "DELETE", "/", "preview-template", "delete", a.deleteWorkflowPreviewTemplate)
 			})
 		})
 		r.Route("/temporary-resources", func(r chi.Router) {
@@ -46,7 +46,7 @@ func (a *API) workflowsRoutes(r chi.Router) {
 			r.Post("/import", a.importWorkflowPreviewDocument)
 			r.Route("/{id}", func(r chi.Router) {
 				r.Put("/", a.updateTemporaryWorkflowResource)
-				r.Delete("/", a.deleteTemporaryWorkflowResource)
+				a.destructiveRoute(r, "DELETE", "/", "temporary-workflow", "delete", a.deleteTemporaryWorkflowResource)
 				r.Post("/preview-trigger", a.createWorkflowPreviewTrigger)
 			})
 		})

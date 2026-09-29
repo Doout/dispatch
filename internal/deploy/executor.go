@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/store"
 )
 
 type Progress func(core.DeploymentState, string) error
@@ -117,7 +119,10 @@ func routeMessage(app core.App) string {
 type commandFunc func(context.Context, io.Reader, io.Writer, string, ...string) error
 
 type DockerExecutor struct {
-	run commandFunc
+	run               commandFunc
+	Artifacts         store.RuntimeArtifactStore
+	Vault             *secretcrypto.Vault
+	ArtifactDirectory string
 }
 
 var safeID = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
@@ -156,6 +161,14 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if err := e.gitCommand(ctx, app, "clone", "--depth", "1", "--branch", app.Branch, app.SourceRepo, workspace); err != nil {
 			return fmt.Errorf("fetch source: %w", err)
 		}
+		if deployment.CommitSHA != "" && deployment.CommitSHA != "HEAD" && deployment.CommitSHA != "inline" {
+			if err := e.gitCommand(ctx, app, "-C", workspace, "fetch", "--depth", "1", "origin", deployment.CommitSHA); err != nil {
+				return fmt.Errorf("fetch deployment revision: %w", err)
+			}
+			if err := e.gitCommand(ctx, app, "-C", workspace, "checkout", "--detach", deployment.CommitSHA); err != nil {
+				return fmt.Errorf("checkout deployment revision: %w", err)
+			}
+		}
 	}
 
 	name := dockerResourceName(app.ID)
@@ -177,6 +190,9 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		composeArgs := []string{"compose", "-p", name, "-f", composePath}
 		if override != "" {
 			composeArgs = append(composeArgs, "-f", override)
+		}
+		if e.Artifacts != nil && e.Vault != nil {
+			return e.deployRetainedCompose(ctx, deployment, app, server, workspace, composeArgs, progress)
 		}
 		if err := e.commandWithOutput(ctx, "docker", append(append([]string{}, composeArgs...), "config", "--quiet")...); err != nil {
 			return fmt.Errorf("validate compose: %w", err)
@@ -209,6 +225,16 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if err := e.command(ctx, nil, io.Discard, "docker", buildArgs...); err != nil {
 			return fmt.Errorf("docker build: %w", err)
 		}
+		if e.Artifacts != nil && e.Vault != nil {
+			artifact, err := e.captureDockerArtifact(ctx, deployment, app, server, image)
+			if err != nil {
+				return err
+			}
+			if err = e.saveArtifact(ctx, deployment, app, server, artifact); err != nil {
+				return err
+			}
+			image = artifact.Images["application"]
+		}
 		if err := progress(core.DeploymentStarting, "Starting candidate container on "+server.Name); err != nil {
 			return err
 		}
@@ -216,7 +242,13 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if err != nil {
 			return err
 		}
-		_ = e.command(ctx, nil, io.Discard, "docker", "rm", "-f", name)
+		if e.Artifacts != nil && e.Vault != nil {
+			if err := e.removeOwnedContainer(ctx, app); err != nil {
+				return err
+			}
+		} else {
+			_ = e.command(ctx, nil, io.Discard, "docker", "rm", "-f", name)
+		}
 		networks := dockerServiceNetworks(app.ServiceRuntime)
 		args := []string{"run", "-d", "--name", name, "--label", "dispatch.app=" + app.ID, "--label", "dispatch.deployment=" + deployment.ID}
 		if app.ContainerPort > 0 {
@@ -247,6 +279,11 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 			}
 		}
 	}
+	if app.BuildType == core.BuildTypeDockerfile && e.Artifacts != nil && e.Vault != nil {
+		if err := e.waitContainer(ctx, name); err != nil {
+			return err
+		}
+	}
 	if err := progress(core.DeploymentChecking, "Docker reports the application running"); err != nil {
 		return err
 	}
@@ -261,6 +298,9 @@ func (e DockerExecutor) Cleanup(ctx context.Context, app core.App, server core.S
 		return errors.New("live Docker cleanup currently requires a local enrolled server")
 	}
 	name := dockerResourceName(app.ID)
+	if e.Artifacts != nil && e.Vault != nil {
+		return e.cleanupOwnedDocker(ctx, app, server, progress)
+	}
 	if err := progress(core.DeploymentStarting, "Removing Docker resources for "+app.Name); err != nil {
 		return err
 	}

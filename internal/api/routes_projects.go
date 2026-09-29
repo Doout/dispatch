@@ -13,7 +13,7 @@ func (a *API) projectsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.projectPermission(core.PermissionProjectManage))
 				r.Put("/", a.updateProject)
-				r.Delete("/", a.deleteProject)
+				a.destructiveRoute(r, "DELETE", "/", "project", "delete", a.deleteProject)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(a.requireOperationsEnabled)

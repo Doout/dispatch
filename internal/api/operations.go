@@ -46,6 +46,8 @@ func (a *API) auditMutation(next http.Handler) http.Handler {
 			return
 		}
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		confirmed := &destructiveAudit{}
+		r = r.WithContext(context.WithValue(r.Context(), destructiveAuditKey{}, confirmed))
 		next.ServeHTTP(ww, r)
 		data, ok := a.store.(operationsStore)
 		if !ok {
@@ -61,8 +63,18 @@ func (a *API) auditMutation(next http.Handler) http.Handler {
 		}
 		id := chi.URLParam(r, "id")
 		e := core.AuditEvent{ID: ulid.Make().String(), ActorID: identity.ID, ActorName: identity.DisplayName, Action: r.Method + " " + route, ResourceID: id, Outcome: "succeeded", CreatedAt: time.Now().UTC()}
+		if confirmed.Review != nil {
+			e.ResourceID, e.ProjectID, e.AppID = confirmed.Review.ResourceID, confirmed.Review.ProjectID, confirmed.Review.AppID
+			e.ConfirmedAction, e.ConfirmedName, e.ConfirmedVersion = confirmed.Review.Action, confirmed.Review.Name, confirmed.Review.Version
+		}
 		if ww.Status() >= 400 {
 			e.Outcome = "rejected"
+		}
+		if ww.Status() >= 500 {
+			e.Outcome = "failed"
+		}
+		if confirmed.Outcome != "" {
+			e.Outcome = confirmed.Outcome
 		}
 		if actor, ok := currentImpersonator(r.Context()); ok {
 			e.ImpersonatorID = actor.ID

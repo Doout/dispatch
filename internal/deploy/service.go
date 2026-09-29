@@ -20,19 +20,25 @@ var (
 
 type Service struct {
 	// OnFinished queues follow-up observations after the terminal state is saved.
-	OnFinished     func(core.Deployment)
-	services       serviceconn.Resolver
-	store          store.Store
-	executor       Executor
-	mu             sync.Mutex
-	cancels        map[string]context.CancelFunc
-	appLocks       map[string]*sync.Mutex
-	helmComparison *SourceAuthExecutor
-	compareHelm    func(context.Context, core.App, core.Server, string, core.Deployment) (bool, error)
+	OnFinished      func(core.Deployment)
+	services        serviceconn.Resolver
+	store           store.Store
+	executor        Executor
+	runtimeRollback RuntimeRollbackExecutor
+	mu              sync.Mutex
+	cancels         map[string]context.CancelFunc
+	appLocks        map[string]*sync.Mutex
+	helmComparison  *SourceAuthExecutor
+	compareHelm     func(context.Context, core.App, core.Server, string, core.Deployment) (bool, error)
 }
 
 func NewService(data store.Store, executor Executor) *Service {
-	return &Service{store: data, executor: executor, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
+	runtimeRollback, _ := executor.(RuntimeRollbackExecutor)
+	return &Service{store: data, executor: executor, runtimeRollback: runtimeRollback, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
+}
+
+func (s *Service) ConfigureRuntimeRollback(executor RuntimeRollbackExecutor) {
+	s.runtimeRollback = executor
 }
 
 func (s *Service) Start(ctx context.Context, appID, commitSHA string) (core.Deployment, error) {
@@ -117,6 +123,12 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 }
 
 func (s *Service) Cleanup(ctx context.Context, appID string, progress Progress) error {
+	return s.CleanupReviewed(ctx, appID, nil, false, progress)
+}
+
+// CleanupReviewed keeps validation, runtime cleanup and optional deletion under
+// one application lock so a deployment cannot start between those steps.
+func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func() error, remove bool, progress Progress) error {
 	unlock := s.lockApp(appID)
 	defer unlock()
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
@@ -126,6 +138,11 @@ func (s *Service) Cleanup(ctx context.Context, appID string, progress Progress) 
 	if active != nil {
 		return ErrDeploymentActive
 	}
+	if review != nil {
+		if err := review(); err != nil {
+			return err
+		}
+	}
 	app, err := s.store.GetApp(ctx, appID)
 	if err != nil {
 		return err
@@ -134,14 +151,29 @@ func (s *Service) Cleanup(ctx context.Context, appID string, progress Progress) 
 	if err != nil {
 		return err
 	}
-	cleaner, ok := s.executor.(CleanupExecutor)
-	if !ok {
-		return ErrCleanupUnsupported
+	cleanup := true
+	if remove {
+		cleanup, err = s.store.AppHasDeployments(ctx, appID)
+		if err != nil {
+			return err
+		}
 	}
 	if progress == nil {
 		progress = func(core.DeploymentState, string) error { return nil }
 	}
-	return cleaner.Cleanup(ctx, app, server, progress)
+	if cleanup {
+		cleaner, ok := s.executor.(CleanupExecutor)
+		if !ok {
+			return ErrCleanupUnsupported
+		}
+		if err := cleaner.Cleanup(ctx, app, server, progress); err != nil {
+			return err
+		}
+	}
+	if remove {
+		return s.store.DeleteApp(ctx, appID)
+	}
+	return nil
 }
 
 func (s *Service) lockApp(appID string) func() {
@@ -256,4 +288,18 @@ func (s *Service) WithIdleApplication(ctx context.Context, appID string, fn func
 		return ErrDeploymentActive
 	}
 	return fn()
+}
+
+// Cleanup review uses the same live identity as restore where the runtime supports it.
+func (s *Service) CleanupRuntimeIdentity(ctx context.Context, app core.App, server core.Server) (string, error) {
+	if app.BuildType == core.BuildTypeHelm {
+		return "", nil
+	}
+	inspector, ok := s.runtimeRollback.(interface {
+		CurrentRuntimeIdentity(context.Context, core.App, core.Server) (string, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	return inspector.CurrentRuntimeIdentity(ctx, app, server)
 }

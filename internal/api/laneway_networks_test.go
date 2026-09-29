@@ -226,7 +226,7 @@ func TestLanewayNetworkAuthorizationAndInventory(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/private-networks/"+networks[0].ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/private-networks/"+networks[0].ID, nil))
 	if response.Code != http.StatusNoContent || !revoked {
 		t.Fatalf("Laneway revocation: %d %s revoked=%t", response.Code, response.Body.String(), revoked)
 	}

@@ -23,10 +23,10 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.appPermission(core.PermissionProjectConfigure))
 				r.Post("/drift/check", a.checkApplicationDrift)
-				r.Put("/service-bindings", a.updateAppServiceBindings)
-				r.Put("/helm-values", a.updateAppHelmValues)
-				r.Put("/hooks", a.updateAppHooks)
-				r.Delete("/", a.deleteApp)
+				r.With(a.idleAppMutation).Put("/service-bindings", a.updateAppServiceBindings)
+				r.With(a.idleAppMutation).Put("/helm-values", a.updateAppHelmValues)
+				r.With(a.idleAppMutation).Put("/hooks", a.updateAppHooks)
+				a.destructiveRoute(r, "DELETE", "/", "application", "delete", a.deleteApp)
 				r.Post("/event-triggers", a.createEventTrigger)
 				r.Put("/observations", a.updateApplicationObservations)
 				r.Post("/observations/check", a.checkApplicationObservations)
@@ -34,7 +34,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.appPermission(core.PermissionDeploymentRun))
 				r.Post("/reapply", a.reapplyApplication)
-				r.Post("/cleanup", a.cleanupApp)
+				a.destructiveRoute(r, "POST", "/cleanup", "application", "cleanup", a.cleanupApp)
 				r.Post("/deployments", a.startDeployment)
 				r.Post("/release-preview", a.previewApplicationRelease)
 			})
@@ -47,7 +47,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 		r.With(a.directUserOnly).Post("/", a.createService)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", a.getService)
-			r.Delete("/", a.deleteService)
+			a.destructiveRoute(r, "DELETE", "/", "service", "delete", a.deleteService)
 			r.Post("/verify", a.verifyService)
 			r.Get("/impact", a.serviceImpact)
 			r.Post("/redeploy", a.redeployServiceConsumers)
@@ -60,7 +60,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", a.getServiceTemplate)
 			r.With(a.directUserOnly).Put("/", a.updateServiceTemplate)
-			r.With(a.directUserOnly).Delete("/", a.deleteServiceTemplate)
+			a.destructiveRoute(r.With(a.directUserOnly), "DELETE", "/", "service-template", "delete", a.deleteServiceTemplate)
 			r.With(a.directUserOnly).Post("/runs", a.startServiceProvision)
 		})
 	})

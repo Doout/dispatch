@@ -543,7 +543,7 @@ func TestIBMCloudSecretStoreAndExternalReferenceAreWriteOnly(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/secret-stores/"+secretStore.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/secret-stores/"+secretStore.ID, nil))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("expected referenced store deletion to fail, got %d: %s", response.Code, response.Body.String())
 	}
@@ -777,7 +777,7 @@ func TestRelayServerAndProviderNeutralWebhookLifecycle(t *testing.T) {
 		t.Fatalf("unexpected webhook: %#v", webhook)
 	}
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/servers/"+server.ID+"/relay/webhooks/"+webhook.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/servers/"+server.ID+"/relay/webhooks/"+webhook.ID, nil))
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("delete relay webhook: %d %s", response.Code, response.Body.String())
 	}
@@ -866,6 +866,13 @@ func TestApplicationHooksStoreCredentialBindingsWithoutExposingValues(t *testing
 	if len(overview.Apps) == 0 {
 		t.Fatal("expected a demo application")
 	}
+	appForHooks := overview.Apps[0]
+	appForHooks.ID = "hook-configuration-test"
+	appForHooks.Name = "Hook configuration test"
+	if err := handler.(*API).store.CreateApp(context.Background(), appForHooks); err != nil {
+		t.Fatal(err)
+	}
+	overview.Apps[0] = appForHooks
 	body, _ := json.Marshal(map[string]any{"preDeployHook": "echo build", "secretIds": []string{secret.ID}})
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, tokenRequest(http.MethodPut, "/api/v1/apps/"+overview.Apps[0].ID+"/hooks", bytes.NewReader(body)))
@@ -884,7 +891,7 @@ func TestApplicationHooksStoreCredentialBindingsWithoutExposingValues(t *testing
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/secrets/"+secret.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/secrets/"+secret.ID, nil))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("delete bound hook secret: %d %s", response.Code, response.Body.String())
 	}
@@ -999,13 +1006,13 @@ func TestPreviewGroupCRUDAndApplicationDeletionConflict(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/secrets/"+secret.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/secrets/"+secret.ID, nil))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("expected grouped hook secret deletion conflict, got %d: %s", response.Code, response.Body.String())
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/apps/"+appIDs[0], nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/apps/"+appIDs[0], nil))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("expected grouped application deletion conflict, got %d: %s", response.Code, response.Body.String())
 	}
@@ -1019,7 +1026,7 @@ func TestPreviewGroupCRUDAndApplicationDeletionConflict(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/preview-groups/"+group.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/preview-groups/"+group.ID, nil))
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("delete preview group: %d %s", response.Code, response.Body.String())
 	}
@@ -1204,7 +1211,7 @@ func TestManagedLocalControllerCannotBeChangedOrDeleted(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/servers/"+server.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/servers/"+server.ID, nil))
 	if response.Code != http.StatusConflict || !bytes.Contains(response.Body.Bytes(), []byte("Managed server cannot be deleted")) {
 		t.Fatalf("expected managed local deletion to return 409, got %d: %s", response.Code, response.Body.String())
 	}
@@ -1461,7 +1468,7 @@ func TestUndeployedApplicationCanBeDeletedBeforeServerAndProject(t *testing.T) {
 	}
 	for _, target := range []string{"/api/v1/apps/" + app.ID, "/api/v1/servers/" + server.ID, "/api/v1/projects/" + project.ID} {
 		response = httptest.NewRecorder()
-		handler.ServeHTTP(response, tokenRequest(http.MethodDelete, target, nil))
+		handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, target, nil))
 		if response.Code != http.StatusNoContent {
 			t.Fatalf("expected %s deletion to return 204, got %d: %s", target, response.Code, response.Body.String())
 		}
@@ -1542,7 +1549,7 @@ func TestDeployedApplicationIsCleanedBeforeTransactionalDeletion(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := New(data, deploy.NewService(data, executor), false, AuthConfig{AdminToken: "secret"}, logger)
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/apps/"+app.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/apps/"+app.ID, nil))
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("expected application deletion to return 204, got %d: %s", response.Code, response.Body.String())
 	}
@@ -1597,7 +1604,7 @@ func TestApplicationDeleteRejectsActivePreviewBeforeCleanup(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := New(data, deploy.NewService(data, executor), false, AuthConfig{AdminToken: "secret"}, logger)
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/apps/"+app.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/apps/"+app.ID, nil))
 	if response.Code != http.StatusConflict || !bytes.Contains(response.Body.Bytes(), []byte("Close and clean every preview")) {
 		t.Fatalf("expected active preview conflict, got %d: %s", response.Code, response.Body.String())
 	}
@@ -1688,12 +1695,12 @@ func TestProjectAndServerCanBeEditedAndDeleted(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/servers/"+server.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/servers/"+server.ID, nil))
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("expected server deletion to return 204, got %d: %s", response.Code, response.Body.String())
 	}
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/projects/"+project.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/projects/"+project.ID, nil))
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("expected project deletion to return 204, got %d: %s", response.Code, response.Body.String())
 	}
@@ -1711,7 +1718,7 @@ func TestProjectAndServerDeleteRejectsReferencedResources(t *testing.T) {
 	}
 	for _, target := range []string{"/api/v1/projects/" + overview.Projects[0].ID, "/api/v1/servers/" + overview.Servers[0].ID} {
 		response = httptest.NewRecorder()
-		handler.ServeHTTP(response, tokenRequest(http.MethodDelete, target, nil))
+		handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, target, nil))
 		if response.Code != http.StatusConflict {
 			t.Fatalf("expected referenced resource deletion to return 409, got %d: %s", response.Code, response.Body.String())
 		}

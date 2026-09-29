@@ -1,3 +1,4 @@
+import { destructiveRequest } from "./api";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import {
   ArrowClockwise,
@@ -520,7 +521,7 @@ function PrivateNetworksSection({ networks, stores, githubApps, creating, editin
 	}
 
 	async function revoke(network: PrivateNetwork) {
- setBusyID(network.id);setError("");try { await request(`/api/v1/private-networks/${encodeURIComponent(network.id)}/revoke`,{method:"POST"});setCredentialAction(null);await onChanged(); }catch(cause){setError((cause as Error).message);}finally{setBusyID("");}
+ setBusyID(network.id);setError("");try { await destructiveRequest(`/api/v1/private-networks/${encodeURIComponent(network.id)}/revoke`,{method:"POST"});setCredentialAction(null);await onChanged(); }catch(cause){setError((cause as Error).message);}finally{setBusyID("");}
  }
  async function rotate(network: PrivateNetwork) {
 		setBusyID(network.id);

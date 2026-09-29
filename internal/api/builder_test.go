@@ -90,7 +90,7 @@ func TestDockerBuilderServerAndCredentialLifecycle(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, tokenRequest(http.MethodDelete, "/api/v1/secrets/"+secret.ID, nil))
+	handler.ServeHTTP(response, confirmedTokenRequest(t, handler, http.MethodDelete, "/api/v1/secrets/"+secret.ID, nil))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("in-use key was removed: %d %s", response.Code, response.Body.String())
 	}
