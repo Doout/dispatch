@@ -103,6 +103,17 @@ it("filters and pages deliveries and opens the selected run", async () => {
   await screen.findByRole("button", { name: "View run run-1" });
   expect(request).toHaveBeenCalledWith("poll");
 });
+it("describes detected source changes without calling them scans", async () => {
+  vi.spyOn(api, "eventRules").mockResolvedValue([rule]);
+  vi.spyOn(api, "eventActivity").mockResolvedValue({
+    items: [{ ...event, kind: "branch_scan" }],
+    total: 1,
+  });
+  page("activity");
+  expect(await screen.findByText("Source changed")).toBeTruthy();
+  expect(screen.queryByText("branch scan")).toBeNull();
+  expect(screen.getByRole("button", { name: "View run run-1" })).toBeTruthy();
+});
 it("shows load failures without claiming zero rules or events, then retries", async () => {
   vi.spyOn(api, "eventRules")
     .mockRejectedValueOnce(new Error("Access unavailable"))

@@ -51,7 +51,7 @@ func (s *SQLStore) SearchEventActivity(ctx context.Context, search core.EventAct
 	if search.ChecksOnly {
 		query += " AND is_check=TRUE"
 	} else if !search.IncludeChecks {
-		query += " AND is_check=FALSE"
+		query += " AND is_check=FALSE" + s.eventActivityHistoryFilter()
 	}
 	if search.Transport != "" {
 		query += " AND transport=?"
@@ -116,7 +116,7 @@ func (s *SQLStore) CountEventActivity(ctx context.Context, search core.EventActi
 		marks[i] = "?"
 		args = append(args, id)
 	}
-	query := "SELECT COUNT(*) FROM event_activity WHERE is_check=FALSE AND project_id IN (" + strings.Join(marks, ",") + ")"
+	query := "SELECT COUNT(*) FROM event_activity WHERE is_check=FALSE AND project_id IN (" + strings.Join(marks, ",") + ")" + s.eventActivityHistoryFilter()
 	if search.Transport != "" {
 		query += " AND transport=?"
 		args = append(args, search.Transport)
@@ -124,6 +124,16 @@ func (s *SQLStore) CountEventActivity(ctx context.Context, search core.EventActi
 	var count int
 	err := s.db.QueryRowContext(ctx, s.q(query), args...).Scan(&count)
 	return count, err
+}
+
+// Older controllers also recorded scans that did not start a run. Filter before
+// pagination so these records do not consume pages or inflate the activity count.
+func (s *SQLStore) eventActivityHistoryFilter() string {
+	kind := "json_extract(payload,'$.kind')"
+	if s.postgres {
+		kind = "payload::json->>'kind'"
+	}
+	return " AND (transport<>'poll' OR state='failed' OR revision_ids<>'[]' OR COALESCE(" + kind + ",'') NOT IN ('branch_scan','repository_check','preview_check'))"
 }
 
 func nonNilRevisionIDs(ids []string) []string {
