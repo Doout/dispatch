@@ -14,7 +14,57 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/store"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+func TestDefaultPodLogContainer(t *testing.T) {
+	tests := []struct {
+		name        string
+		containers  []any
+		init        []any
+		annotations map[string]string
+		want        string
+	}{
+		{
+			name:       "application before init container",
+			containers: []any{map[string]any{"name": "api"}, map[string]any{"name": "metrics"}},
+			init:       []any{map[string]any{"name": "setup"}},
+			want:       "api",
+		},
+		{
+			name:        "injected sidecar before application",
+			containers:  []any{map[string]any{"name": "mesh-proxy"}, map[string]any{"name": "api"}},
+			annotations: map[string]string{"sidecar.istio.io/status": `{"containers":["mesh-proxy"],"initContainers":["mesh-setup"]}`},
+			want:        "api",
+		},
+		{
+			name:        "explicit default takes priority",
+			containers:  []any{map[string]any{"name": "api"}, map[string]any{"name": "worker"}},
+			annotations: map[string]string{"kubectl.kubernetes.io/default-container": "worker"},
+			want:        "worker",
+		},
+		{
+			name:        "unknown default is ignored",
+			containers:  []any{map[string]any{"name": "api"}, map[string]any{"name": "metrics"}},
+			annotations: map[string]string{"kubectl.kubernetes.io/default-container": "removed"},
+			want:        "api",
+		},
+		{
+			name: "only init containers",
+			init: []any{map[string]any{"name": "setup"}},
+			want: "setup",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pod := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"containers": test.containers, "initContainers": test.init}}}
+			pod.SetAnnotations(test.annotations)
+			if got := defaultPodLogContainer(pod); got != test.want {
+				t.Fatalf("default container = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 
 func TestServerTopologyIncludesGeneratedWorkflowRelease(t *testing.T) {
 	ctx := context.Background()

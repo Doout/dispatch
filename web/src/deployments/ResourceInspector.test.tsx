@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
@@ -11,7 +11,7 @@ describe("resource inspector", () => {
     Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [] });
     Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect() });
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   it("shows live YAML, pod logs, and Kubernetes events without resizing the topology", async () => {
     vi.spyOn(api, "deploymentResource").mockResolvedValue({
@@ -49,5 +49,28 @@ describe("resource inspector", () => {
     expect(screen.getByText("2026-08-31T01:00:00Z server ready")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /^Events/ }));
     expect(screen.getByText("Started container api")).toBeTruthy();
+  });
+
+  it("opens application logs while keeping sidecar and init logs selectable", async () => {
+    vi.spyOn(api, "deploymentResource").mockResolvedValue({
+      manifest: { name: "api-pod", kind: "Pod", apiVersion: "v1", document: "kind: Pod\n" },
+      loggable: true,
+      defaultContainer: "api",
+      logs: [
+        { container: "mesh-setup", content: "setup complete" },
+        { container: "api", content: "server ready" },
+        { container: "mesh-proxy", content: "proxy ready" },
+      ],
+      events: [],
+    });
+
+    render(<ResourceInspector deploymentID="deployment-1" node={{ id: "pod:api", column: "pods", kind: "pod", label: "api-pod", state: "Running" }} onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "Logs" });
+    await userEvent.click(screen.getByRole("button", { name: "Logs" }));
+
+    expect(screen.getByText("server ready")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "api" }).getAttribute("aria-selected")).toBe("true");
+    await userEvent.click(screen.getByRole("tab", { name: "mesh-proxy" }));
+    expect(screen.getByText("proxy ready")).toBeTruthy();
   });
 });

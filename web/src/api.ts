@@ -597,6 +597,7 @@ export type DeploymentResourceEvent = {
 export type DeploymentResource = {
   manifest: DeploymentManifest;
   loggable: boolean;
+  defaultContainer?: string;
   logs: DeploymentResourceLog[];
   events: DeploymentResourceEvent[];
   warning?: string;
