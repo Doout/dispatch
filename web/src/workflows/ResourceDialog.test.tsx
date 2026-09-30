@@ -63,6 +63,25 @@ afterEach(() => {
 });
 
 describe("workflow resource run details", () => {
+  it("shows phase durations, reuse, and the slowest Docker step", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([
+      job({ state: "succeeded", startedAt: "2026-09-01T20:01:00Z", finishedAt: "2026-09-01T20:10:00Z", log: "#4 [build 1/2] RUN install\n#4 DONE 180.0s\n#5 [build 2/2] COPY src .\n#5 CACHED\n" }),
+      job({ id: "job-2", jobName: "build-ui", state: "succeeded", startedAt: "2026-09-01T20:01:00Z", finishedAt: "2026-09-01T20:01:00Z", reusedFromId: "prior-job" }),
+    ]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([{ id: "stage", revisionId: "revision-1", stageName: "development", targetRef: "dev", state: "succeeded", approval: "automatic", createdAt: resource.createdAt, startedAt: "2026-09-01T20:10:00Z", finishedAt: "2026-09-01T20:11:00Z" }]);
+    const timed = { ...overview, workflowRevisions: [{ ...overview.workflowRevisions![0], state: "succeeded", startedAt: "2026-09-01T20:01:00Z", finishedAt: "2026-09-01T20:11:00Z" }] } as Overview;
+    render(<WorkflowResourceDialog resource={resource} overview={timed} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    const timing = await screen.findByRole("region", { name: "Run timing" });
+    await waitFor(() => expect(timing.textContent).toContain("9m"));
+    expect(timing.textContent).toContain("10m");
+    expect(timing.textContent).toContain("1m");
+    expect(timing.textContent).toContain("1 of 2 job results reused");
+    expect(timing.textContent).toContain("1 Docker build steps cached");
+    await userEvent.click(screen.getByText("Slowest Docker steps · 1 cached"));
+    expect(screen.getByText("build 1/2 · RUN install")).not.toBeNull();
+    expect(screen.getByText("3m")).not.toBeNull();
+  });
+
   it("does not query owner-only preview settings for a project viewer", async () => {
     vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
     vi.spyOn(api, "workflowStages").mockResolvedValue([]);
