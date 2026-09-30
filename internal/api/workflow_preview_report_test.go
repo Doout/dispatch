@@ -67,10 +67,13 @@ func TestWorkflowPreviewCommandHelpUsesConfiguredSourcesAndCommand(t *testing.T)
 		if origin == "ui" {
 			other = "service"
 		}
-		for _, want := range []string{"### Preview commands", "`/try`", "/try with " + other + "=#<PR_NUMBER>", "/try with gitops=#<PR_NUMBER>", "<details>", "Saved links remain attached", ",gitops=#<PR_NUMBER>"} {
+		for _, want := range []string{"<details>\n<summary>Preview commands and options</summary>", "`/try`", "`/try live on`", "`/try live off`", "/try with " + other + "=#<PR_NUMBER>", "/try with gitops=#<PR_NUMBER>", "Saved links remain attached", ",gitops=#<PR_NUMBER>"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("missing %q: %s", want, body)
 			}
+		}
+		if strings.Count(body, "<details>") != 1 || strings.Contains(body, "<details open") || !strings.HasSuffix(strings.TrimSpace(body), "</details>") {
+			t.Fatalf("help is not one collapsed section: %s", body)
 		}
 		for _, unwanted := range []string{"with " + origin + "=", "/preview", "/try help", "/try delete", "/try status"} {
 			if strings.Contains(body, unwanted) {
@@ -79,8 +82,16 @@ func TestWorkflowPreviewCommandHelpUsesConfiguredSourcesAndCommand(t *testing.T)
 		}
 	}
 	body := workflowPreviewCommandHelp(core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"service": {Repository: "org/service"}}}, core.WorkflowPreviewTrigger{Repository: "org/service"})
-	if !strings.Contains(body, "`/preview`") || strings.Contains(body, "/preview with ") || strings.Contains(body, "<details>") {
+	if !strings.Contains(body, "`/preview`") || strings.Contains(body, "/preview with ") || !strings.Contains(body, "<details>") {
 		t.Fatalf("single-source help is misleading: %s", body)
+	}
+}
+
+func TestWorkflowPreviewCommandHelpShowsLiveMode(t *testing.T) {
+	trigger := core.WorkflowPreviewTrigger{Repository: "org/service", LiveReload: true}
+	body := workflowPreviewCommandHelp(core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"service": {Repository: "org/service"}}}, trigger)
+	if !strings.Contains(body, "Live reload is on") || strings.Contains(body, "New commits do not deploy automatically") {
+		t.Fatalf("wrong update policy in help: %s", body)
 	}
 }
 
@@ -88,7 +99,7 @@ func TestWorkflowPreviewReportHelpRetainsLinkedPRsAndTemplateCommit(t *testing.T
 	revision := core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"service": {Repository: "org/service"}, "ui": {Repository: "org/ui"}}}
 	trigger := core.WorkflowPreviewTrigger{Repository: "org/service", Command: "/preview", LinkedPullRequests: map[string]int{"ui": 84}, TemplateSource: &core.WorkflowPreviewTemplateGitSource{Repository: "org/devops", Path: "deployment/templates/app.yaml", CommitSHA: "abc123"}}
 	body := workflowPreviewReportForTrigger(revision, core.WorkflowResource{Name: "preview-42"}, nil, "https://preview.example.test", "https://github.example", trigger)
-	for _, want := range []string{"https://github.example/org/ui/pull/84", "[`org/devops/deployment/templates/app.yaml`](https://github.example/org/devops/blob/abc123/deployment/templates/app.yaml) at `abc123`", "### Preview commands", "/preview with ui=#<PR_NUMBER>", "/preview without ui"} {
+	for _, want := range []string{"https://github.example/org/ui/pull/84", "[`org/devops/deployment/templates/app.yaml`](https://github.example/org/devops/blob/abc123/deployment/templates/app.yaml) at `abc123`", "<summary>Preview commands and options</summary>", "/preview with ui=#<PR_NUMBER>", "/preview without ui"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("report omitted %q: %s", want, body)
 		}

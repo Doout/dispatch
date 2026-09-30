@@ -14,6 +14,7 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
   const [command, setCommand] = useState("/preview");
   const [ttl, setTTL] = useState("0");
   const [autoDeploy, setAutoDeploy] = useState(false);
+  const [liveReload, setLiveReload] = useState(false);
   const [maxAutoRunsPerHour, setMaxAutoRunsPerHour] = useState(2);
   const [previewUrl, setPreviewUrl] = useState("");
   const [configPath, setConfigPath] = useState("");
@@ -39,6 +40,7 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
         setCommand(current.command);
         setTTL(current.ttl ?? "0");
         setAutoDeploy(current.autoDeploy ?? false);
+        setLiveReload(current.liveReload ?? false);
         setMaxAutoRunsPerHour(current.maxAutoRunsPerHour || 2);
         setPreviewUrl(current.previewUrl ?? "");
       }
@@ -65,7 +67,7 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
     setBusy(true);
     setError("");
     try {
-      const body: WorkflowPreviewTriggerInput = { githubAppId, repository: repository.trim(), pullRequestNumber, command: command.trim(), ttl: ttl.trim(), autoDeploy, maxAutoRunsPerHour, previewUrl: previewUrl.trim() };
+      const body: WorkflowPreviewTriggerInput = { githubAppId, repository: repository.trim(), pullRequestNumber, command: command.trim(), ttl: ttl.trim(), autoDeploy, liveReload, maxAutoRunsPerHour, previewUrl: previewUrl.trim() };
       let current = resource ?? created;
       if (current) current = await api.updateTemporaryWorkflowResource(current.id, document);
       else {
@@ -93,8 +95,8 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
     <div className="wide temporary-preview-file-import"><label><span>YAML file path in PR branch</span><input value={configPath} onChange={(event) => setConfigPath(event.target.value)} placeholder=".dispatch/preview.yaml" spellCheck={false} /><small>Optional. Load one YAML or JSON file from the current head of this PR.</small></label><button type="button" className="quiet-button" disabled={busy || loading || loadingFile || !githubAppId || !repository.trim() || pullRequestNumber < 1 || !configPath.trim()} onClick={() => void loadYamlFromPR()}>{loadingFile ? "Loading…" : "Load YAML from PR"}</button>{loadedFile && <p role="status">Loaded {loadedFile}. Review and save this snapshot; later PR commits do not change it automatically.</p>}</div>
     <label className="wide"><span>Application YAML</span><textarea value={document} onChange={(event) => { setDocument(event.target.value); setLoadedFile(""); }} rows={20} spellCheck={false} required placeholder={"apiVersion: dispatch/v1alpha1\nkind: Application\nmetadata:\n  name: dev-preview-{{ instance.id }}\nspec:\n  # Add sources, jobs, deployments, and stages"} /><small>Define builds, Helm deployments, target, and release metadata here. Keep the Application name when editing an existing preview.</small></label>
     <label><span>Comment command</span><input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="/preview" required spellCheck={false} /><small>Post this command on the PR to start a deployment. Add <code>with ui=#123</code> to link a UI PR.</small></label>
-    <label className="wide temporary-preview-template-active"><input type="checkbox" checked={autoDeploy} onChange={(event) => setAutoDeploy(event.target.checked)} /><span>Automatically deploy new PR commits</span></label>
-    {autoDeploy && <label><span>Automatic runs per hour</span><input type="number" min={1} max={12} value={maxAutoRunsPerHour} onChange={(event) => setMaxAutoRunsPerHour(Number(event.target.value))} required /><small>Per preview. Comment commands bypass this limit. Newer commits cancel older queued or running work.</small></label>}
+    <label><span>Commit updates</span><select value={liveReload ? "live" : autoDeploy ? "limited" : "manual"} onChange={(event) => { const mode = event.target.value; setLiveReload(mode === "live"); if (mode === "manual") setAutoDeploy(false); if (mode === "limited") setAutoDeploy(true); }}><option value="manual">Only on comment</option><option value="limited">Automatic, limited per hour</option><option value="live">Live reload, every commit</option></select><small>Newer commits cancel older queued or running work. Use <code>{command} live on</code> or <code>{command} live off</code> on the PR to change this instance.</small></label>
+    {!liveReload && autoDeploy && <label><span>Automatic runs per hour</span><input type="number" min={1} max={12} value={maxAutoRunsPerHour} onChange={(event) => setMaxAutoRunsPerHour(Number(event.target.value))} required /><small>Per preview. Comment commands bypass this limit.</small></label>}
     <label><span>Preview lifetime</span><input value={ttl} onChange={(event) => setTTL(event.target.value)} required placeholder="0" spellCheck={false} /><small>0 means no time limit. Changing this value restarts the timer from now. Use <code>{command} extend 1d</code> to add time without redeploying.</small></label>
     {trigger?.expiresAt && <p className="wide temporary-preview-intro">Scheduled shutdown: <time dateTime={trigger.expiresAt}>{new Date(trigger.expiresAt).toLocaleString()}</time>.</p>}
     <label className="wide"><span>Preview URL</span><input type="url" value={previewUrl} onChange={(event) => setPreviewUrl(event.target.value)} placeholder="https://dev.example.com/app/preview/42" required spellCheck={false} /><small>The GitHub App reports this URL and the deployed commits after a successful run.</small></label>

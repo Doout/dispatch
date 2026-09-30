@@ -329,12 +329,15 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 	}
 	sort.Strings(aliases)
 	var body strings.Builder
-	body.WriteString("\n### Preview commands\n\nPost a new comment on this PR:\n\n")
+	body.WriteString("\n<details>\n<summary>Preview commands and options</summary>\n\nPost a new comment on this PR:\n\n")
 	fmt.Fprintf(&body, "- `%s`: run again with the latest commits from this PR and its linked PRs.\n", command)
 	fmt.Fprintf(&body, "- `%s test`: run on-demand checks against the deployed preview, when configured. This does not rebuild or redeploy it.\n", command)
 	fmt.Fprintf(&body, "- `%s ttl 1d`: shut down after one day from now; `%s ttl 0` removes the time limit.\n", command, command)
 	fmt.Fprintf(&body, "- `%s extend 1d`: add one day to the current shutdown deadline without rebuilding.\n", command)
-	if trigger.AutoDeploy {
+	fmt.Fprintf(&body, "- `%s live on`: deploy every new commit when detected. `%s live off` returns to this preview's configured update policy.\n", command, command)
+	if trigger.LiveReload {
+		body.WriteString("\nLive reload is on. Every detected new commit starts a deployment. A newer commit cancels queued or running work.\n")
+	} else if trigger.AutoDeploy {
 		limit := trigger.MaxAutoRunsPerHour
 		if limit <= 0 {
 			limit = 2
@@ -344,6 +347,7 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 		body.WriteString("\nNew commits do not deploy automatically. A newer commit cancels a queued or running preview.\n")
 	}
 	if len(aliases) == 0 {
+		body.WriteString("\n</details>\n")
 		return body.String()
 	}
 	example := aliases[0]
@@ -353,10 +357,11 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 			break
 		}
 	}
+	body.WriteString("\n")
 	fmt.Fprintf(&body, "- `%s with %s=#<PR_NUMBER>`: link or replace a PR from `%s`.\n", command, example, revision.Sources[example].Repository)
 	fmt.Fprintf(&body, "- `%s without %s`: unlink that source's PR, restore its configured branch or ref, and redeploy.\n", command, example)
 	body.WriteString("\nReplace `<PR_NUMBER>` with the PR number from that source's repository. Saved links remain attached to later runs; repeat `with` for an alias to replace its link.\n")
-	body.WriteString("\n<details>\n<summary>All source overrides</summary>\n\n| Source | Repository | Link | Unlink |\n| --- | --- | --- | --- |\n")
+	body.WriteString("\n| Source | Repository | Link | Unlink |\n| --- | --- | --- | --- |\n")
 	for _, alias := range aliases {
 		fmt.Fprintf(&body, "| `%s` | `%s` | `%s with %s=#<PR_NUMBER>` | `%s without %s` |\n", alias, revision.Sources[alias].Repository, command, alias, command, alias)
 	}
@@ -384,6 +389,13 @@ func workflowPreviewReportForTrigger(revision core.WorkflowRevision, resource co
 		body = strings.Replace(body, "**Status:** Ready", "**Status:** "+resource.State+" (preview lifetime ended)", 1)
 	}
 	body += "\n**Lifetime:** " + workflowPreviewLifetimeText(trigger) + "\n"
+	updateMode := "Manual"
+	if trigger.LiveReload {
+		updateMode = "Live reload"
+	} else if trigger.AutoDeploy {
+		updateMode = "Limited automatic"
+	}
+	body += "\n**Commit updates:** " + updateMode + "\n"
 	body += workflowPreviewCommandHelp(revision, trigger)
 	if source := trigger.TemplateSource; source != nil && source.CommitSHA != "" {
 		fileURL := strings.TrimRight(githubURL, "/") + "/" + source.Repository + "/blob/" + url.PathEscape(source.CommitSHA)

@@ -74,6 +74,8 @@ type WorkflowPreviewTrigger struct {
 	PullRequestNumber      int                                     `json:"pullRequestNumber"`
 	Command                string                                  `json:"command"`
 	AutoDeploy             bool                                    `json:"autoDeploy"`
+	LiveReload             bool                                    `json:"liveReload"`
+	LiveReloadCommentID    string                                  `json:"-"`
 	MaxAutoRunsPerHour     int                                     `json:"maxAutoRunsPerHour"`
 	PreviewURL             string                                  `json:"previewUrl,omitempty"`
 	ReportCommentID        string                                  `json:"reportCommentId,omitempty"`
@@ -111,6 +113,7 @@ type WorkflowPreviewTemplate struct {
 	Repository         string                            `json:"repository"`
 	Command            string                            `json:"command"`
 	AutoDeploy         bool                              `json:"autoDeploy"`
+	LiveReload         bool                              `json:"liveReload"`
 	MaxAutoRunsPerHour int                               `json:"maxAutoRunsPerHour"`
 	PreviewURL         string                            `json:"previewUrl"`
 	Document           string                            `json:"document"`

@@ -369,10 +369,10 @@ func (a *API) updateWorkflowPreviewHead(ctx context.Context, trigger core.Workfl
 			return err
 		}
 	}
-	if !trigger.AutoDeploy {
+	if !trigger.AutoDeploy && !trigger.LiveReload {
 		return a.previewHeadActivity(ctx, trigger, resource, refs, "skipped", "New commit detected. Automatic deployment is disabled.", "", transport)
 	}
-	if !previewAutoRunAllowed(revisions, trigger.MaxAutoRunsPerHour, time.Now()) {
+	if !trigger.LiveReload && !previewAutoRunAllowed(revisions, trigger.MaxAutoRunsPerHour, time.Now()) {
 		return a.previewHeadActivity(ctx, trigger, resource, refs, "deferred", "Automatic deployment is waiting for the hourly allowance.", "", transport)
 	}
 	pinned, err := pinWorkflowPreviewSources(resource, refs)
@@ -524,6 +524,9 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
 		return a.processWorkflowPreviewTestComment(ctx, target, event)
 	}
+	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "live" {
+		return a.processWorkflowPreviewLiveComment(ctx, target, event)
+	}
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && (fields[0] == "ttl" || fields[0] == "extend") {
 		return a.processWorkflowPreviewLifetimeComment(ctx, target, event)
 	}
@@ -599,7 +602,7 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		}
 		trigger := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), TemplateID: template.ID, TemplateSource: template.GitSource, ResourceID: resource.ID,
 			GitHubAppID: template.GitHubAppID, Repository: target.repository, PullRequestNumber: event.PullRequestNumber,
-			Command: template.Command, PreviewURL: previewURL, AutoDeploy: template.AutoDeploy,
+			Command: template.Command, PreviewURL: previewURL, AutoDeploy: template.AutoDeploy, LiveReload: template.LiveReload,
 			MaxAutoRunsPerHour: template.MaxAutoRunsPerHour, TTL: template.TTL, SourceDefaults: defaults, CreatedAt: time.Now().UTC()}
 		if err := a.store.CreateWorkflowPreviewTrigger(ctx, trigger); err != nil {
 			resource.Active, resource.State, resource.UpdatedAt = false, "removed", time.Now().UTC()
