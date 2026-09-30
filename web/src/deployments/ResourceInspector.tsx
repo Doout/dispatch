@@ -46,16 +46,15 @@ export function ResourceInspector({ deploymentID, node, onClose }: { deploymentI
         {error && <p className="resource-inspector-state error" role="alert">{error}</p>}
         {data?.warning && <p className="runtime-warning">{data.warning}</p>}
         {data && tab === "manifest" && <Suspense fallback={<p className="resource-inspector-state">Loading manifest...</p>}><StructuredDocumentViewer manifest={data.manifest} /></Suspense>}
-        {data && tab === "logs" && <ResourceLogs logs={data.logs} />}
+        {data && tab === "logs" && <ResourceLogs logs={data.logs} defaultContainer={data.defaultContainer} />}
         {data && tab === "events" && <ResourceEvents data={data} />}
       </div>
     </section>
   </div>;
 }
 
-function ResourceLogs({ logs }: { logs: DeploymentResourceLog[] }) {
-  const [container, setContainer] = useState(logs[0]?.container ?? "");
-  useEffect(() => { setContainer(logs[0]?.container ?? ""); }, [logs]);
+function ResourceLogs({ logs, defaultContainer }: { logs: DeploymentResourceLog[]; defaultContainer?: string }) {
+  const [container, setContainer] = useState(defaultContainer ?? logs[0]?.container ?? "");
   const selected = logs.find((item) => item.container === container) ?? logs[0];
   if (!selected) return <p className="resource-inspector-state">No containers found.</p>;
   return <section className="resource-log-view" aria-label="Container logs">
