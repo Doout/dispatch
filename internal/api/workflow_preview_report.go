@@ -201,18 +201,37 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 			}
 			continue
 		}
-		body := workflowPreviewReportForTrigger(revision, resource, stages, trigger.PreviewURL, connection.WebURL, trigger)
-		commentID, err := notifier.UpdateComment(ctx, trigger.Repository, trigger.PullRequestNumber, trigger.ReportCommentID, body)
+		commentID, err := a.store.WorkflowPreviewTestComment(ctx, revision.ID)
 		if err != nil {
 			return errors.Join(feedbackErr, err)
 		}
-		if err := a.store.UpdateWorkflowPreviewTriggerComment(ctx, trigger.ID, commentID); err != nil {
-			return errors.Join(feedbackErr, err)
+		if strings.HasPrefix(revision.Trigger, "pull request comment ") {
+			reply := fmt.Sprintf("<!-- dispatch-preview-run:%s -->\nPreview deployment %s. See the preview panel for details.\n", revision.ID, revision.State)
+			if revision.State == "succeeded" && resource.State != "removed" && resource.State != "expired" && resource.State != "expiring" {
+				reply += "\n[Open preview](" + trigger.PreviewURL + ")\n"
+			}
+			commentID, err = notifier.UpdateComment(ctx, trigger.Repository, trigger.PullRequestNumber, commentID, reply)
+			if err != nil {
+				return errors.Join(feedbackErr, err)
+			}
+			if err := a.store.UpdateWorkflowPreviewTestComment(ctx, trigger.ID, strings.TrimPrefix(revision.Trigger, "pull request comment "), commentID); err != nil {
+				return errors.Join(feedbackErr, err)
+			}
+		} else {
+			panels, err := a.store.ListWorkflowPreviewPanels(ctx)
+			if err != nil {
+				return errors.Join(feedbackErr, err)
+			}
+			for _, p := range panels {
+				if p.ResourceID == resource.ID && p.Repository == events.NormalizeRepository(trigger.Repository) && p.PullRequestNumber == trigger.PullRequestNumber {
+					commentID = p.CommentID
+				}
+			}
 		}
-		trigger.ReportCommentID = commentID
 		if err := a.store.SaveWorkflowPreviewReportComment(ctx, revision.ID, trigger.Repository, trigger.PullRequestNumber, commentID); err != nil {
 			return errors.Join(feedbackErr, err)
 		}
+
 	}
 	return feedbackErr
 }
@@ -268,7 +287,14 @@ func workflowPreviewTestReport(revision core.WorkflowRevision, stages []core.Wor
 func workflowPreviewReportBody(revision core.WorkflowRevision, resource core.WorkflowResource, stages []core.WorkflowStageRun, previewURL, githubURL string, links ...core.HelmPullRequest) string {
 	var body strings.Builder
 	fmt.Fprintf(&body, "<!-- dispatch-workflow-preview:%s -->\n### %s preview\n\n", revision.ID, resource.Name)
-	fmt.Fprintf(&body, "**Status:** Ready\n**URL:** [Open preview](%s)\n", previewURL)
+	status := "Ready"
+	if revision.State != "" && revision.State != "succeeded" {
+		status = revision.State
+	}
+	fmt.Fprintf(&body, "**Status:** %s\n", status)
+	if previewURL != "" {
+		fmt.Fprintf(&body, "**URL:** [Open preview](%s)\n", previewURL)
+	}
 	for _, stage := range stages {
 		if stage.TargetRef != "" {
 			fmt.Fprintf(&body, "**Target:** `%s`\n", stage.TargetRef)

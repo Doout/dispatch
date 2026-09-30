@@ -53,6 +53,7 @@ type githubEventServices struct {
 }
 
 type API struct {
+	previewPanelMu     sync.Mutex
 	backupMu           sync.Mutex
 	previewReportMu    sync.Mutex
 	temporaryPreviewMu sync.Mutex

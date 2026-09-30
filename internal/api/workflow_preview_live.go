@@ -17,7 +17,7 @@ func (a *API) processWorkflowPreviewLiveComment(ctx context.Context, target *pre
 	if len(fields) != 2 || (fields[1] != "on" && fields[1] != "off") {
 		return fmt.Errorf("use %s live on or %s live off", event.Command, event.Command)
 	}
-	if _, err := strconv.ParseUint(event.SourceCommentID, 10, 64); err != nil {
+	if _, err := strconv.ParseUint(event.SourceCommentID, 10, 64); err != nil && !event.ControlAction {
 		return fmt.Errorf("invalid GitHub comment ID: %w", err)
 	}
 	triggers, err := a.store.ListWorkflowPreviewTriggers(ctx)
@@ -41,10 +41,15 @@ func (a *API) processWorkflowPreviewLiveComment(ctx context.Context, target *pre
 		}
 		commentID, _ := strconv.ParseUint(event.SourceCommentID, 10, 64)
 		latestID, _ := strconv.ParseUint(latest, 10, 64)
-		if latestID > commentID {
+		if latestID > commentID && !event.ControlAction {
 			return a.workflowPreviewActivity(ctx, target, event, trigger, resource, "", "superseded", "A newer preview comment replaced this command.")
 		}
-		updated, err := a.store.UpdateWorkflowPreviewLiveReload(ctx, trigger.ID, event.SourceCommentID, fields[1] == "on")
+		updated := true
+		if event.ControlAction {
+			err = a.store.SetWorkflowPreviewLiveReload(ctx, trigger.ID, fields[1] == "on")
+		} else {
+			updated, err = a.store.UpdateWorkflowPreviewLiveReload(ctx, trigger.ID, event.SourceCommentID, fields[1] == "on")
+		}
 		if err != nil {
 			return err
 		}
@@ -57,9 +62,7 @@ func (a *API) processWorkflowPreviewLiveComment(ctx context.Context, target *pre
 				target.workflowTriggers[index] = trigger
 			}
 		}
-		if err := a.refreshWorkflowPreviewLifetimeReport(ctx, trigger.ID); err != nil && a.logger != nil {
-			a.logger.Warn("preview report pending", "error", err)
-		}
+
 		message := "Live reload enabled. New commits will start a deployment when detected."
 		if !trigger.LiveReload {
 			message = "Live reload disabled. The preview's configured commit update policy is active."

@@ -103,6 +103,7 @@ type WorkflowPreviewTemplateGitSource struct {
 }
 
 type WorkflowPreviewTemplate struct {
+	CommentOnOpen      bool                              `json:"commentOnOpen"`
 	TTL                string                            `json:"ttl"`
 	WatchRepositories  []string                          `json:"watchRepositories,omitempty"`
 	GitSource          *WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
@@ -232,4 +233,18 @@ type WorkflowEvent struct {
 	Error          string     `json:"error,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	ProcessedAt    *time.Time `json:"processedAt,omitempty"`
+}
+
+// WorkflowPreviewPanel is the single editable bot comment for a PR. ResourceID
+// binds mirrored panels to the same preview, including after unlink or removal.
+type WorkflowPreviewPanel struct {
+	ActionError       string
+	ID                string
+	TemplateID        string
+	GitHubAppID       string
+	Repository        string
+	PullRequestNumber int
+	ResourceID        string
+	CommentID         string
+	Body              string
 }

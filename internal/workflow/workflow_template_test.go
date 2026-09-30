@@ -178,3 +178,23 @@ func TestWorkflowTemplateStagePromotion(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowTemplateCommentOnOpenOptIn(t *testing.T) {
+	document := []byte(`apiVersion: dispatch/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: preview-{{ instance.id }}
+spec:
+  sources:
+    service: {repository: example/service, branch: main}
+  triggers:
+    pullRequestComment:
+      sources: [service]
+      command: /preview
+      commentOnOpen: true
+`)
+	trigger, _, err := ReadWorkflowTemplateTrigger(document)
+	if err != nil || trigger == nil || !trigger.CommentOnOpen {
+		t.Fatalf("commentOnOpen was not parsed: %+v %v", trigger, err)
+	}
+}
