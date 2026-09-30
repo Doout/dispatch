@@ -97,6 +97,8 @@ func (a *API) workflowPreviewActivity(ctx context.Context, target *previewPollTa
 	kind := "pull_request_comment"
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
 		kind = "preview_test"
+	} else if len(fields) > 0 && fields[0] == "live" {
+		kind = "preview_live_reload"
 	}
 	item := core.EventActivity{ID: ulid.Make().String(), ProjectID: source.ProjectID, RuleID: ruleID, Name: name, Transport: transport, Kind: kind, Repository: target.repository, PullRequest: event.PullRequestNumber, Command: event.Command, CommitSHA: event.HeadSHA, State: state, Message: message, ResourceID: resource.ID, PreviewURL: trigger.PreviewURL, CreatedAt: time.Now().UTC()}
 	if revisionID != "" {
@@ -213,7 +215,7 @@ func (a *API) consumePolledComment(ctx context.Context, target *previewPollTarge
 	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
 		return err
 	}
-	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
+	if fields := strings.Fields(event.Arguments); len(fields) > 0 && (fields[0] == "test" || fields[0] == "live") {
 		return nil
 	}
 	runs, err := groupService.Process(ctx, event)
@@ -261,7 +263,7 @@ func (a *API) consumeGitHubPreviewEvent(ctx context.Context, event core.Incoming
 	if err := a.processWorkflowPreviewWebhook(ctx, event); err != nil {
 		return core.EventResult{}, err
 	}
-	if fields := strings.Fields(event.Arguments); event.Kind == core.EventKindPullRequestComment && len(fields) > 0 && fields[0] == "test" {
+	if fields := strings.Fields(event.Arguments); event.Kind == core.EventKindPullRequestComment && len(fields) > 0 && (fields[0] == "test" || fields[0] == "live") {
 		return core.EventResult{Event: event}, nil
 	}
 	runs, err := groupService.Process(ctx, event)

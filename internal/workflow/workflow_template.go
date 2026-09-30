@@ -132,6 +132,7 @@ type PullRequestCommentTrigger struct {
 	Sources            []string `json:"sources" yaml:"sources"`
 	Command            string   `json:"command" yaml:"command"`
 	AutoDeploy         bool     `json:"autoDeploy,omitempty" yaml:"autoDeploy,omitempty"`
+	LiveReload         bool     `json:"liveReload,omitempty" yaml:"liveReload,omitempty"`
 	MaxAutoRunsPerHour int      `json:"maxAutoRunsPerHour,omitempty" yaml:"maxAutoRunsPerHour,omitempty"`
 }
 

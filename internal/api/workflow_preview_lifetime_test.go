@@ -87,6 +87,31 @@ func previewLifetimeFixture(t *testing.T, ttl string, deadline *time.Time) (*API
 	return a, data, executor, path
 }
 
+func TestPreviewLiveCommandsChangeModeWithoutDeploying(t *testing.T) {
+	ctx := context.Background()
+	a, data, _, _ := previewLifetimeFixture(t, "0", nil)
+	target := &previewPollTarget{connectionID: "github", repository: "example/service"}
+	event := core.IncomingEvent{Command: "/preview", Arguments: "live on", Repository: "example/service", PullRequestNumber: 42, SourceCommentID: "120", TrustedActor: true}
+	for _, step := range []struct {
+		id      string
+		args    string
+		enabled bool
+	}{{"120", "live on", true}, {"119", "live off", true}, {"121", "live off", false}, {"122", "live on", true}} {
+		event.SourceCommentID, event.Arguments = step.id, step.args
+		if err := a.processWorkflowPreviewComment(ctx, target, event, events.GitHubResolver{}); err != nil {
+			t.Fatal(err)
+		}
+		triggers, err := data.ListWorkflowPreviewTriggers(ctx)
+		if err != nil || len(triggers) != 1 || triggers[0].LiveReload != step.enabled {
+			t.Fatalf("command %s changed mode incorrectly: %+v, %v", step.args, triggers, err)
+		}
+		revisions, err := data.ListWorkflowRevisions(ctx, "resource", 0)
+		if err != nil || len(revisions) != 1 {
+			t.Fatalf("mode command started deployment: %+v, %v", revisions, err)
+		}
+	}
+}
+
 func TestPreviewExpiryCleansHelmHistoryAndRetriesWithoutGitHub(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()

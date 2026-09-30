@@ -143,6 +143,7 @@ type Store interface {
 	CreateWorkflowPreviewTrigger(context.Context, core.WorkflowPreviewTrigger) error
 	ListWorkflowPreviewTriggers(context.Context) ([]core.WorkflowPreviewTrigger, error)
 	UpdateWorkflowPreviewTrigger(context.Context, core.WorkflowPreviewTrigger) error
+	UpdateWorkflowPreviewLiveReload(context.Context, string, string, bool) (bool, error)
 	UpdateWorkflowPreviewTriggerURL(context.Context, string, string) error
 	UpdateWorkflowPreviewTriggerComment(context.Context, string, string) error
 	UpdateWorkflowPreviewTriggerLinks(context.Context, string, map[string]int) error

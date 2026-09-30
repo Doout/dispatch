@@ -99,6 +99,14 @@ func TestNewHeadCancelsStaleManualPreviewWithoutDeploying(t *testing.T) {
 	if err != nil || len(revisions) != 2 {
 		t.Fatalf("hourly cap did not defer the next automatic run: %+v, %v", revisions, err)
 	}
+	trigger.AutoDeploy, trigger.LiveReload = false, true
+	if err := a.updateWorkflowPreviewHead(ctx, trigger, "example/service", thirdSHA, events.GitHubResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	revisions, err = data.ListWorkflowRevisions(ctx, "preview", 0)
+	if err != nil || len(revisions) != 3 || revisions[0].Trigger != "pull request update" || revisions[0].Sources["service"].CommitSHA != thirdSHA {
+		t.Fatalf("live reload did not bypass disabled automatic deploys and the hourly cap: %+v, %v", revisions, err)
+	}
 	resource, err := data.GetWorkflowResource(ctx, "preview")
 	if err != nil {
 		t.Fatal(err)

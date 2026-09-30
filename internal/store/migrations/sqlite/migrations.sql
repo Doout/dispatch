@@ -1185,3 +1185,8 @@ ALTER TABLE workflow_preview_triggers ADD COLUMN cleanup_lease_until TEXT;
 ALTER TABLE workflow_preview_comments ADD COLUMN lifetime_handled_at TEXT;
 ALTER TABLE workflow_preview_triggers ADD COLUMN lifetime_report_pending BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE workflow_preview_triggers ADD COLUMN lifetime_start_comment_id TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 067_preview_live_reload
+ALTER TABLE workflow_preview_templates ADD COLUMN live_reload BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE workflow_preview_triggers ADD COLUMN live_reload BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE workflow_preview_triggers ADD COLUMN live_reload_comment_id TEXT NOT NULL DEFAULT '';

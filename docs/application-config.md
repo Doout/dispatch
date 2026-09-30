@@ -446,6 +446,7 @@ spec:
       sources: [service]
       command: /preview
       autoDeploy: false
+      liveReload: false
       maxAutoRunsPerHour: 2
       ttl: 0
   # jobs, deployments, and stages use the Application schema
@@ -463,7 +464,9 @@ Dispatch checks deadlines every 30 seconds, independently of GitHub availability
 
 PR closure also removes the Helm deployments once the primary PR and all linked PRs are closed. An open linked PR keeps the preview alive until it closes or the lifetime expires.
 
-Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` is set. Automatic updates are limited to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. A new `/preview` comment always starts a run, regardless of the limit. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
+Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` or `liveReload: true` is set. `autoDeploy` limits updates to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. `liveReload` deploys every detected new commit without that cap. A new `/preview` comment always starts a run. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
+
+Post `/preview live on` on an existing preview PR to enable live reload for that instance. Post `/preview live off` to return to its configured `autoDeploy` policy. These commands change the update mode without starting a deployment. GitHub webhook updates are handled immediately; polling detects changes on its next check. The deployment report keeps its URL and status visible and puts command options in a collapsed section.
 
 Post `/preview without ui` to remove the linked UI PR, restore its configured branch or ref, and redeploy the same preview. Other PR links remain attached. Use commas to unlink several sources, such as `/preview without ui,worker`. An optional PR number, `/preview without ui=#123`, checks that the saved link still points to that PR before removing it. The primary PR cannot be unlinked. Dispatch saves source defaults before pinning PR commits. Existing template instances recover missing defaults from their saved reusable template; for an older one-off preview without saved defaults, set the source's default branch in **Edit YAML & PR** before unlinking.
 
