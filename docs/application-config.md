@@ -449,6 +449,7 @@ spec:
       command: /preview
       autoDeploy: false
       liveReload: false
+      commentOnOpen: false
       maxAutoRunsPerHour: 2
       ttl: 0
   # jobs, deployments, and stages use the Application schema
@@ -465,6 +466,12 @@ Preview lifetime defaults to `ttl: 0` (no time limit). Set `ttl: 1d` or `ttl: 24
 Dispatch checks deadlines every 30 seconds, independently of GitHub availability. Expiry cancels queued/running work and removes the preview’s Helm releases, retaining its definition and run history. Cleanup failures remain visible and retry. After cleanup, a new `/preview` redeploys the same instance and renews its configured lifetime. An extension changes the current deadline; it does not change the duration used by a later deployment. Duplicate deliveries do not apply an extension twice.
 
 PR closure also removes the Helm deployments once the primary PR and all linked PRs are closed. An open linked PR keeps the preview alive until it closes or the lifetime expires.
+
+Set `commentOnOpen: true` under `spec.triggers.pullRequestComment` to post a preview panel on new PRs in the watched sources. It defaults to false. Opening a PR posts controls without deploying. Polling discovers new open PRs at repository level; signed webhooks handle `opened` and `reopened` events.
+
+The panel shows status and the preview URL, with deployment details and commands collapsed. Check **Deploy latest commits**, **Run configured checks**, or **Extend lifetime by one day** to request an action. Actions reset after acceptance. **Live reload** stays checked until disabled. The extension control appears only when the preview has a time limit. GitHub App Issues write and Pull requests read access are required. Dispatch verifies the current editor and repository write access before accepting checkbox edits. Existing slash commands still work.
+
+Linking a source PR creates a panel there with the same preview status, commits, and controls. Commands from either PR operate on the same preview. Unlinking marks the former PR panel as unlinked. Explicit deletion or closure of all linked PRs removes the preview from Applications after cleanup succeeds and updates its panels. Run history remains available. Lifetime expiry stops the deployment; a new preview command can redeploy it.
 
 Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` or `liveReload: true` is set. `autoDeploy` limits updates to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. `liveReload` deploys every detected new commit without that cap. A new `/preview` comment always starts a run. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
 

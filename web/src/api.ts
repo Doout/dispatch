@@ -411,6 +411,7 @@ export type WorkflowPreviewTemplateGitSource = {
   lastError?: string;
 };
 export type WorkflowPreviewTemplate = {
+  commentOnOpen?: boolean;
   ttl?: string;
   watchRepositories?: string[];
   gitSource?: WorkflowPreviewTemplateGitSource;

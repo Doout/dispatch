@@ -217,21 +217,7 @@ func (a *API) deleteTemporaryWorkflowResource(w http.ResponseWriter, r *http.Req
 		a.internal(w, err)
 		return
 	}
-	triggers, err := a.store.ListWorkflowPreviewTriggers(r.Context())
-	if err != nil {
-		a.internal(w, err)
-		return
-	}
-	for _, trigger := range triggers {
-		if trigger.ResourceID == resource.ID && trigger.ClosedAt == nil {
-			if err := a.store.CloseWorkflowPreviewTrigger(r.Context(), trigger.ID, time.Now().UTC()); err != nil {
-				a.internal(w, err)
-				return
-			}
-		}
-	}
-	resource.Active, resource.State, resource.UpdatedAt = false, "removed", time.Now().UTC()
-	if err := a.store.UpdateWorkflowResource(r.Context(), resource); err != nil {
+	if err := a.store.RemoveWorkflowPreviewResource(r.Context(), resource.ID, time.Now().UTC()); err != nil {
 		a.internal(w, err)
 		return
 	}

@@ -14,6 +14,12 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	ClaimWorkflowPreviewPanelLease(context.Context, string, time.Time) (bool, error)
+	ReleaseWorkflowPreviewPanelLease(context.Context, string) error
+	ListWorkflowPreviewPanels(context.Context) ([]core.WorkflowPreviewPanel, error)
+	SaveWorkflowPreviewPanel(context.Context, core.WorkflowPreviewPanel) error
+	RemoveWorkflowPreviewResource(context.Context, string, time.Time) error
+	SetWorkflowPreviewLiveReload(context.Context, string, bool) error
 	SaveEventActivity(context.Context, string, core.EventActivity) error
 	SavePollCheck(context.Context, string, core.EventActivity) error
 	CountEventActivity(context.Context, core.EventActivitySearch) (int, error)

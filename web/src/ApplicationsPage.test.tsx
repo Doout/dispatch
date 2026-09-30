@@ -180,8 +180,11 @@ describe("applications overview", () => {
     expect(screen.getByRole("heading", { name: "New PR preview template" })).toBeTruthy();
     await user.selectOptions(screen.getByLabelText(/^Start from a saved preview/), "preview");
     await vi.waitFor(() => expect((screen.getByLabelText(/^Application YAML template/) as HTMLTextAreaElement).value).toContain("dev-preview-{{ instance.id }}"));
+    const commentOnOpen = screen.getByRole("checkbox", { name: /^Post a preview panel when a PR opens/ }) as HTMLInputElement;
+    expect(commentOnOpen.checked).toBe(false);
+    await user.click(commentOnOpen);
     await user.click(screen.getByRole("button", { name: "Create template" }));
-    await vi.waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ configSourceId: "slots", githubAppId: "github-1", repository: "Example/service", command: "/preview", previewUrl: "https://dev.example.test/app/preview/{{ instance.id }}", active: true })));
+    await vi.waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ configSourceId: "slots", githubAppId: "github-1", repository: "Example/service", command: "/preview", commentOnOpen: true, previewUrl: "https://dev.example.test/app/preview/{{ instance.id }}", active: true })));
   });
 
   it("creates a GitHub template without copying YAML into Dispatch", async () => {

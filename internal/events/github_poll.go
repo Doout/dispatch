@@ -15,6 +15,8 @@ import (
 // GitHubComment is the part of a repository issue comment needed to recreate
 // an issue_comment delivery. Issue comments include pull request comments.
 type GitHubComment struct {
+	NodeID            string      `json:"node_id"`
+	UpdatedAt         time.Time   `json:"updated_at"`
 	ID                json.Number `json:"id"`
 	Body              string      `json:"body"`
 	IssueURL          string      `json:"issue_url"`

@@ -49,7 +49,7 @@ func (a *API) RunPreviewPoller(ctx context.Context) {
 // PollPreviewsOnce feeds polled comments and closures through the same event
 // services used by signed webhooks. The cursor advances only after a full scan.
 func (a *API) PollPreviewsOnce(ctx context.Context) error {
-	joined := a.syncWorkflowPreviewTemplates(ctx)
+	joined := errors.Join(a.syncWorkflowPreviewTemplates(ctx), a.reconcileRemovedWorkflowPreviews(ctx))
 	targets, err := a.previewPollTargets(ctx)
 	if err != nil {
 		return errors.Join(joined, err)
@@ -59,7 +59,12 @@ func (a *API) PollPreviewsOnce(ctx context.Context) error {
 			joined = errors.Join(joined, fmt.Errorf("%s: %w", target.repository, err))
 		}
 	}
-	return errors.Join(joined, a.reportPendingWorkflowPreviewLifetimes(ctx), a.reconcileWorkflowFeedback(ctx))
+	joined = errors.Join(joined, a.reconcileWorkflowFeedback(ctx))
+	panelErr := a.syncWorkflowPreviewPanels(ctx)
+	if panelErr == nil {
+		joined = errors.Join(joined, a.reportPendingWorkflowPreviewLifetimes(ctx))
+	}
+	return errors.Join(joined, panelErr)
 }
 
 func (a *API) previewPollTargets(ctx context.Context) ([]*previewPollTarget, error) {
@@ -150,10 +155,16 @@ func (a *API) previewPollTargets(ctx context.Context) ([]*previewPollTarget, err
 		if trigger.ClosedAt != nil {
 			continue
 		}
-		if target := get(trigger.GitHubAppID, trigger.Repository); target != nil {
-			target.commands[trigger.Command] = true
-			target.activePRs[trigger.PullRequestNumber] = true
-			target.workflowTriggers = append(target.workflowTriggers, trigger)
+		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+		if err != nil {
+			return nil, err
+		}
+		for repository, number := range previewTriggerLinks(trigger, resource) {
+			if target := get(trigger.GitHubAppID, repository); target != nil {
+				target.commands[trigger.Command] = true
+				target.activePRs[number] = true
+				target.workflowTriggers = append(target.workflowTriggers, trigger)
+			}
 		}
 	}
 	for _, template := range workflowTemplates {
@@ -197,6 +208,9 @@ func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) 
 		}
 		groupService, eventService = services.groups, services.events
 	}
+	if err := a.discoverWorkflowPreviewPanels(ctx, target, reader); err != nil {
+		return err
+	}
 	checkedAt := time.Now().UTC()
 	var commentErrors error
 	cursor, err := a.store.PreviewPollCursor(ctx, target.connectionID, target.repository)
@@ -216,6 +230,14 @@ func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) 
 			// GitHub's since filter uses updated_at. An older comment edited
 			// recently can still be a new command for a newly bound workflow.
 			if comment.CreatedAt.After(checkedAt) {
+				continue
+			}
+			handled, err := a.processWorkflowPreviewPanelEdit(ctx, target, reader, comment)
+			if err != nil {
+				commentErrors = errors.Join(commentErrors, err)
+				continue
+			}
+			if handled {
 				continue
 			}
 			command, _ := events.ParseCommand(comment.Body)
@@ -269,7 +291,11 @@ func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) 
 		}
 		if revision.Open {
 			for _, trigger := range target.workflowTriggers {
-				if trigger.PullRequestNumber == number {
+				resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+				if err != nil {
+					return err
+				}
+				if previewTriggerLinks(trigger, resource)[target.repository] == number {
 					if err := a.updateWorkflowPreviewHead(ctx, trigger, target.repository, revision.HeadSHA, resolver); err != nil {
 						return fmt.Errorf("update preview %s: %w", trigger.ID, err)
 					}
@@ -325,6 +351,17 @@ func (a *API) updateWorkflowPreviewHead(ctx context.Context, trigger core.Workfl
 		return errors.New("temporary preview document is invalid")
 	}
 	refs := map[string]string{}
+	if repository != events.NormalizeRepository(trigger.Repository) {
+		primary, err := resolver.ResolvePullRequest(ctx, trigger.Repository, trigger.PullRequestNumber)
+		if err != nil {
+			return err
+		}
+		for alias, source := range documents[0].Spec.Sources {
+			if events.NormalizeRepository(source.Repository) == events.NormalizeRepository(trigger.Repository) {
+				refs[alias] = primary.HeadSHA
+			}
+		}
+	}
 	for alias, source := range documents[0].Spec.Sources {
 		if events.NormalizeRepository(source.Repository) == repository {
 			refs[alias] = headSHA
@@ -461,7 +498,7 @@ func (a *API) closeWorkflowPreview(ctx context.Context, trigger core.WorkflowPre
 	if err := a.cleanupWorkflowPreviewResource(ctx, resource); err != nil {
 		return err
 	}
-	return a.store.CloseWorkflowPreviewTrigger(ctx, trigger.ID, time.Now().UTC())
+	return a.store.RemoveWorkflowPreviewResource(ctx, resource.ID, time.Now().UTC())
 }
 
 func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.WorkflowResource) error {
@@ -495,6 +532,9 @@ func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.
 	}
 	for appID := range appIDs {
 		app, err := a.store.GetApp(ctx, appID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -521,6 +561,12 @@ func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.
 func (a *API) processWorkflowPreviewComment(ctx context.Context, target *previewPollTarget, event core.IncomingEvent, resolver events.GitHubResolver) error {
 	a.temporaryPreviewMu.Lock()
 	defer a.temporaryPreviewMu.Unlock()
+	var err error
+	target, event, err = a.canonicalWorkflowPreviewTarget(ctx, target, event, resolver)
+	if err != nil {
+		return err
+	}
+
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
 		return a.processWorkflowPreviewTestComment(ctx, target, event)
 	}
@@ -633,7 +679,7 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if resource.State == "expired" && trigger.LifetimeStartCommentID == event.SourceCommentID {
 			continue
 		}
-		if (!resource.Active && resource.State != "expired") || !resource.Temporary || trigger.ClosedAt != nil {
+		if (!resource.Active && resource.State != "expired" && resource.State != "paused") || !resource.Temporary || trigger.ClosedAt != nil {
 			continue
 		}
 		if revisionID, err := a.store.WorkflowPreviewCommentRevision(ctx, trigger.ID, event.SourceCommentID); err != nil {

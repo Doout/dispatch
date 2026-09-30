@@ -92,7 +92,7 @@ func (s *SQLStore) SaveWorkflowPreviewSources(ctx context.Context, resource core
 	if err := changed(result, err); err != nil {
 		return err
 	}
-	result, err = tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET document=?,spec_digest=?,updated_at=?,active=TRUE,state='ready',last_error='' WHERE id=? AND temporary=TRUE AND ((active=TRUE AND state NOT IN ('expiring','removed')) OR state='expired')`), resource.Document, resource.SpecDigest, stamp(resource.UpdatedAt), resource.ID)
+	result, err = tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET document=?,spec_digest=?,updated_at=?,active=TRUE,state='ready',last_error='' WHERE id=? AND temporary=TRUE AND ((active=TRUE AND state NOT IN ('expiring','removed')) OR state IN ('expired','paused'))`), resource.Document, resource.SpecDigest, stamp(resource.UpdatedAt), resource.ID)
 	if err := changed(result, err); err != nil {
 		return err
 	}
@@ -125,8 +125,7 @@ func (s *SQLStore) UpdateWorkflowPreviewTriggerComment(ctx context.Context, id, 
 func (s *SQLStore) PendingWorkflowPreviewReports(ctx context.Context, triggerID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT r.id FROM workflow_revisions r
 		JOIN workflow_preview_triggers t ON t.resource_id=r.resource_id
-		WHERE t.id=? AND (r.state='succeeded' OR
-			(r.state IN ('failed','cancelled') AND r.trigger_name LIKE 'pull request test %')) AND
+		WHERE t.id=? AND r.state IN ('succeeded','failed','cancelled') AND
 		(r.trigger_name='pull request update' OR EXISTS (
 			SELECT 1 FROM workflow_preview_comments c WHERE c.trigger_id=t.id AND c.revision_id=r.id))
 		AND NOT EXISTS (SELECT 1 FROM workflow_preview_reports p WHERE p.revision_id=r.id

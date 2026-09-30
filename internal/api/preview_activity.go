@@ -158,6 +158,23 @@ func (a *API) processWorkflowPreviewWebhook(ctx context.Context, event core.Inco
 				return a.eventConfig.GitHubApps.RepositoryToken(ctx, target.connectionID, repository)
 			}
 		}
+		if event.Kind == core.EventKindPullRequestComment && event.Action == "edited" && target.connectionID != "" {
+			reader, _, _, _, err := a.previewPanelGitHub(ctx, target.connectionID, target.repository)
+			if err != nil {
+				return err
+			}
+			comment, err := reader.GetComment(ctx, target.repository, event.SourceCommentID)
+			if err != nil {
+				return err
+			}
+			handled, err := a.processWorkflowPreviewPanelEdit(ctx, target, reader, comment)
+			if err != nil {
+				return err
+			}
+			if handled {
+				return a.syncWorkflowPreviewPanels(ctx)
+			}
+		}
 		if event.Kind == core.EventKindPullRequestComment {
 			if !event.TrustedActor || !target.commands[event.Command] {
 				continue
@@ -170,15 +187,32 @@ func (a *API) processWorkflowPreviewWebhook(ctx context.Context, event core.Inco
 				continue
 			}
 			event.HeadSHA, event.HeadRef, event.BaseRef = pr.HeadSHA, pr.HeadRef, pr.BaseRef
-			return a.processWorkflowPreviewComment(ctx, target, event, resolver)
+			if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+				return err
+			}
+			return a.syncWorkflowPreviewPanels(ctx)
 		}
 		if event.Kind == core.EventKindPullRequest {
+			if event.Action == "opened" || event.Action == "reopened" {
+				for _, template := range target.workflowTemplates {
+					if template.CommentOnOpen {
+						if err := a.ensureAvailableWorkflowPreviewPanel(ctx, template, target.repository, event.PullRequestNumber); err != nil {
+							return err
+						}
+					}
+				}
+			}
+
 			for _, trigger := range target.workflowTriggers {
-				if trigger.PullRequestNumber != event.PullRequestNumber {
+				resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+				if err != nil {
+					return err
+				}
+				if previewTriggerLinks(trigger, resource)[target.repository] != event.PullRequestNumber {
 					continue
 				}
 				if event.Action == "closed" {
-					linkedOpen, err := a.workflowPreviewLinkedPullRequestOpen(ctx, trigger, resolver)
+					linkedOpen, err := a.workflowPreviewOpenAfterClosure(ctx, trigger, target.repository, resolver)
 					if err != nil {
 						return err
 					}
@@ -194,7 +228,7 @@ func (a *API) processWorkflowPreviewWebhook(ctx context.Context, event core.Inco
 					}
 				}
 			}
-			return nil
+			return a.syncWorkflowPreviewPanels(ctx)
 		}
 	}
 	return nil
@@ -326,10 +360,14 @@ func (a *API) consumePolledClosure(ctx context.Context, target *previewPollTarge
 		return err
 	}
 	for _, trigger := range target.workflowTriggers {
-		if trigger.PullRequestNumber != event.PullRequestNumber {
+		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+		if err != nil {
+			return err
+		}
+		if previewTriggerLinks(trigger, resource)[target.repository] != event.PullRequestNumber {
 			continue
 		}
-		linkedOpen, err := a.workflowPreviewLinkedPullRequestOpen(ctx, trigger, resolver)
+		linkedOpen, err := a.workflowPreviewOpenAfterClosure(ctx, trigger, target.repository, resolver)
 		if err != nil {
 			return err
 		}

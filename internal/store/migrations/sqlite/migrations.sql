@@ -1190,3 +1190,24 @@ ALTER TABLE workflow_preview_triggers ADD COLUMN lifetime_start_comment_id TEXT 
 ALTER TABLE workflow_preview_templates ADD COLUMN live_reload BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE workflow_preview_triggers ADD COLUMN live_reload BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE workflow_preview_triggers ADD COLUMN live_reload_comment_id TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 068_preview_panels
+ALTER TABLE workflow_preview_templates ADD COLUMN comment_on_open BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE workflow_preview_panels (
+ id TEXT PRIMARY KEY,
+ template_id TEXT NOT NULL DEFAULT '',
+ github_app_id TEXT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
+ repository TEXT NOT NULL,
+ pull_request_number INTEGER NOT NULL,
+ resource_id TEXT NOT NULL DEFAULT '',
+ comment_id TEXT NOT NULL DEFAULT '',
+ body TEXT NOT NULL DEFAULT '',
+ action_error TEXT NOT NULL DEFAULT '',
+ UNIQUE(github_app_id,repository,pull_request_number,template_id)
+);
+CREATE INDEX workflow_preview_panels_resource ON workflow_preview_panels(resource_id);
+CREATE TABLE workflow_preview_panel_leases (
+ id TEXT PRIMARY KEY,
+ holder TEXT NOT NULL,
+ lease_until TEXT NOT NULL
+);
