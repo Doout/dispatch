@@ -1616,6 +1616,12 @@ code { font-family: var(--mono); }
 .workflow-run-summary div { min-width: 0; }
 .workflow-run-summary dt { margin-bottom: 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .workflow-run-summary dd { margin: 0; overflow: hidden; color: #2d3944; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-run-timing { padding: 11px 13px; border-bottom: 1px solid var(--rule); }
+.workflow-run-timing h4 { margin: 0 0 9px; color: #53616d; font-size: 11px; text-transform: uppercase; letter-spacing: .045em; }
+.workflow-run-timing dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; margin: 0; }
+.workflow-run-timing dt { margin-bottom: 3px; color: var(--muted); font-size: 11px; }
+.workflow-run-timing dd { margin: 0; color: #2d3944; font: 650 12px var(--mono); }
+.workflow-run-timing p { margin: 9px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .workflow-resource-columns .workflow-source-warning { margin: 12px; }
 .workflow-run-list { display: grid; }
 .workflow-run-list h4 { margin: 0; padding: 11px 13px 8px; color: #53616d; font-size: 11px; text-transform: uppercase; letter-spacing: .045em; }
@@ -1637,6 +1643,13 @@ code { font-family: var(--mono); }
 .workflow-job-output > header button:hover:not(:disabled) { color: #fff; background: #243440; }
 .workflow-job-output > header button:disabled { opacity: .4; cursor: not-allowed; }
 .workflow-job-output > p { margin: 0; padding: 9px 13px; color: #f1c778; background: #27251e; border-bottom: 1px solid #4a412b; font: 11px/1.45 var(--mono); overflow-wrap: anywhere; }
+.workflow-build-steps { border-bottom: 1px solid #2b3944; font-size: 11px; }
+.workflow-build-steps summary { padding: 9px 13px; color: #b9cbd7; cursor: pointer; }
+.workflow-build-steps summary:hover { color: #fff; }
+.workflow-build-steps ol { display: grid; gap: 7px; margin: 0; padding: 0 13px 11px 31px; }
+.workflow-build-steps li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; color: #b9cbd7; }
+.workflow-build-steps li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-build-steps li strong { color: #e3ebf0; font: 600 11px var(--mono); }
 .workflow-job-output > pre { min-height: 190px; max-height: 34dvh; margin: 0; overflow: auto; padding: 13px; color: #d9e3e9; font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .workflow-run-list > .workflow-stage-row { grid-template-columns: 105px minmax(0, 1fr) auto auto; }
 .workflow-manifest-link { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 34px !important; padding: 0 9px !important; color: #335064; text-align: left; background: #f8fafb; border: 1px solid var(--rule); border-radius: 6px; }

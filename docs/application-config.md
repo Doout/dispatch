@@ -177,6 +177,8 @@ The job's shell and source checkout remain on the controller. Docker commands us
 
 Dispatch prefers the same available builder for a configuration and its source repositories across commits and preview instances. This keeps Docker layer caches warm. If that builder is full, Dispatch uses another available builder. Jobs on the controller use its existing Docker daemon and cache. Dispatch enables BuildKit and does not prune layer caches after jobs. Recreating a builder or pruning its cache removes those layers. Registry cache export and Dockerfile package cache mounts remain options for the build script; Dispatch does not add flags to arbitrary commands. Layers whose inputs change still rebuild.
 
+The run details show elapsed time, the job and stage phases, individual durations, and reused job results. For Docker BuildKit output, expand **Slowest Docker steps** under a job log to see its three longest recorded steps and the number of steps marked `CACHED`. These counts come from the saved build log, so they do not include package manager caches or builds that do not emit BuildKit progress lines.
+
 The fingerprint includes the job definition, declared source revisions, inputs, resolved secrets, and controller platform. Changing a secret invalidates the result. Separate configuration sources do not share results.
 
 If only the service repository changes, `build-ui` reuses its latest successful result. Dispatch runs the job when there is no prior result, a declared output is missing, or an input changed. Pipeline and `finally` jobs always run.
