@@ -1,3 +1,5 @@
+import { ApplicationRoutePanel } from "./ApplicationRoute";
+import { ServerRoutingSettings } from "./ServerRoutingSettings";
 import { DeploymentHealth } from "./DeploymentHealth";
 import { StorageInventory } from "./StorageInventory";
 import { WorkflowResourceDialog as EventWorkflowResourceDialog } from "./workflows/ResourceDialog";
@@ -1372,6 +1374,7 @@ export function DeploymentDetailsPage({
         </section>
       )}
       {section === "summary" && <DeploymentHealth health={deployment.health} />}
+      {overview && deployment.app && !deployment.app.template && <ApplicationRoutePanel appID={deployment.appId} canConfigure={canManageProject(overview, deployment.app.projectId, "project.configure")} />}
       {overview && deployment.app && !deployment.app.template && <RuntimeSyncDisclosure key={`sync:${deployment.appId}`} application={deployment.app} overview={overview} />}
       {overview && (section === "summary" || section === "history") && <ReleaseTools deployment={deployment} canDeploy={canManageProject(overview, deployment.app?.projectId ?? "", "deployment.run")} canConfigure={canManageProject(overview, deployment.app?.projectId ?? "", "project.configure")} onDeployment={run => onOpenDeployment?.(run.id)} onSelectDeployment={onOpenDeployment ?? onSelectDeployment} />}
       {section === "history" && <DeploymentHistory key={`history:${deployment.appId}`} deployment={deployment} onSelectDeployment={onSelectDeployment} />}
@@ -1827,6 +1830,7 @@ export function ServersPage({
   onTopology?: (server: Server) => void;
 }) {
   const [storageServer, setStorageServer] = useState<Server>();
+  const [routingServer, setRoutingServer] = useState<Server>();
   const targets = overview.servers.filter(
     (server) => server.runtime !== "relay" && server.runtime !== "builder",
   );
@@ -1842,6 +1846,7 @@ export function ServersPage({
   ).length;
   return (
     <div className="page-layout">
+      {routingServer && <ServerRoutingSettings server={routingServer} onClose={() => setRoutingServer(undefined)} onChanged={onChanged} />}
       {storageServer && <StorageInventory server={storageServer} canManage={canManage} onClose={() => setStorageServer(undefined)} />}
       <PageHeader
         view="servers"
@@ -1911,6 +1916,7 @@ export function ServersPage({
                     </td>
                     <td className="row-actions">
                       <div className="table-icon-actions">
+                        {canManage && server.runtime === "docker" && <TableIconAction label={`Configure routing on ${server.name}`} tooltip="Routing" onClick={() => setRoutingServer(server)}><ArrowSquareOut size={16} /></TableIconAction>}
                         <TableIconAction label={`View storage on ${server.name}`} tooltip="Storage" onClick={() => setStorageServer(server)}><HardDrives size={16} /></TableIconAction>
                         {onTopology && (
                           <TableIconAction

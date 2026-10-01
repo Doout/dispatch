@@ -66,8 +66,9 @@ func (s *Service) routeCompletion(ctx context.Context, app core.App, d core.Depl
 	if route.DeploymentID != d.ID {
 		return "Workload is ready; managed route was not promoted"
 	}
+	previous := route
 	route = routing.Probe{}.Check(ctx, route)
-	if err = data.SaveApplicationRoute(ctx, route); err != nil {
+	if err = data.SaveApplicationRouteObservation(ctx, previous, route); err != nil {
 		return "Workload is ready; public route evidence could not be saved"
 	}
 	if route.State == "active" {
@@ -94,7 +95,7 @@ func (s *Service) RunRouteReconciliation(ctx context.Context) {
 					continue
 				}
 				checked := routing.Probe{}.Check(ctx, route)
-				_ = data.SaveApplicationRoute(ctx, checked)
+				_ = data.SaveApplicationRouteObservation(ctx, route, checked)
 			}
 		}
 		select {

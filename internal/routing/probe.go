@@ -96,6 +96,11 @@ func (p Probe) Check(ctx context.Context, route core.ApplicationRoute) core.Appl
 		route.Message = "The proxy has not confirmed the active destination. Check the file provider reload and DNS target."
 		return route
 	}
+	if response.StatusCode >= 500 {
+		route.State = "degraded"
+		route.Message = "The proxy reached this route but its backend returned a server error. Inspect workload health and proxy connectivity."
+		return route
+	}
 	route.State = "active"
 	route.Message = "Public route and required certificate are verified."
 	return route

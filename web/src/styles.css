@@ -2496,3 +2496,18 @@ code { font-family: var(--mono); }
 .deployment-health p { color: #617082; font-size: 13px; }
 .deployment-health td { vertical-align: top; }
 .deployment-health td small { display: block; margin-top: 4px; color: #617082; overflow-wrap: anywhere; }
+
+.application-route { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--rule); border-radius: 8px; background: #fff; font-size: 12px; }
+.application-route header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.application-route h3, .application-route p { margin: 0; }
+.application-route dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0; }
+.application-route dt { color: var(--muted); margin-bottom: 4px; }
+.application-route dd { margin: 0; overflow-wrap: anywhere; }
+.application-route code { font-size: 11px; }
+.application-route button { justify-self: start; }
+.server-routing-dialog { width: min(640px, calc(100vw - 32px)); }
+.server-routing-dialog .dialog-body { display: grid; gap: 16px; }
+.server-routing-dialog .form-grid { display: grid; gap: 14px; }
+.server-routing-dialog label { display: grid; gap: 6px; }
+.server-routing-dialog .routing-checkbox { display: flex; align-items: flex-start; gap: 8px; }
+.server-routing-dialog .routing-checkbox input { width: auto; margin-top: 3px; }

@@ -196,6 +196,9 @@ func (p *FilePublisher) Prepare(ctx context.Context, plan core.ApplicationRoute)
 			if !sameOwner(current, plan) {
 				return fmt.Errorf("%w: remove the previous owned route before changing hostname or target", ErrConflict)
 			}
+			if current.DeploymentID != "" && (current.EntryPoint != plan.EntryPoint || current.RequireTLS != plan.RequireTLS || current.TLSResolver != plan.TLSResolver) {
+				return fmt.Errorf("%w: clean up the owned route before changing its listener or TLS policy", ErrConflict)
+			}
 			if current.RequestedDeploymentID == plan.RequestedDeploymentID {
 				result = current
 				return nil

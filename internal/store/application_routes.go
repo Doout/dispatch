@@ -15,6 +15,7 @@ var ErrRouteConflict = errors.New("hostname is already reserved or route ownersh
 type ApplicationRouteStore interface {
 	ReserveApplicationRoute(context.Context, core.ApplicationRoute) (core.ApplicationRoute, error)
 	SaveApplicationRoute(context.Context, core.ApplicationRoute) error
+	SaveApplicationRouteObservation(context.Context, core.ApplicationRoute, core.ApplicationRoute) error
 	GetApplicationRoute(context.Context, string) (core.ApplicationRoute, error)
 	ListApplicationRoutes(context.Context) ([]core.ApplicationRoute, error)
 	DeleteApplicationRoute(context.Context, string, string) error
@@ -34,6 +35,9 @@ func (s *SQLStore) ReserveApplicationRoute(ctx context.Context, plan core.Applic
 			return plan, ErrRouteConflict
 		}
 		if current.Hostname != plan.Hostname || current.ProjectID != plan.ProjectID || current.ServerID != plan.ServerID {
+			return plan, ErrRouteConflict
+		}
+		if current.DeploymentID != "" && (current.EntryPoint != plan.EntryPoint || current.RequireTLS != plan.RequireTLS || current.TLSResolver != plan.TLSResolver) {
 			return plan, ErrRouteConflict
 		}
 		if current.RequestedDeploymentID == plan.RequestedDeploymentID {
@@ -66,8 +70,31 @@ func (s *SQLStore) ReserveApplicationRoute(ctx context.Context, plan core.Applic
 }
 
 func (s *SQLStore) SaveApplicationRoute(ctx context.Context, route core.ApplicationRoute) error {
-	route.UpdatedAt = time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE application_routes SET record=? WHERE app_id=? AND project_id=? AND server_id=? AND hostname=? AND requested_deployment_id=?`), jsonText(route), route.AppID, route.ProjectID, route.ServerID, route.Hostname, route.RequestedDeploymentID)
+	current, err := s.GetApplicationRoute(ctx, route.AppID)
+	if err != nil {
+		return err
+	}
+	if current.RequestedDeploymentID != route.RequestedDeploymentID || current.ProjectID != route.ProjectID || current.ServerID != route.ServerID || current.Hostname != route.Hostname {
+		return ErrRouteConflict
+	}
+	if current.DeploymentID == current.RequestedDeploymentID && route.DeploymentID != route.RequestedDeploymentID {
+		return ErrRouteConflict
+	}
+	// Replayed runtime receipts must not erase a newer public verification.
+	if current.DeploymentID != "" && current.DeploymentID == route.DeploymentID && current.Destination == route.Destination && current.State == "active" {
+		return nil
+	}
+	return s.SaveApplicationRouteObservation(ctx, current, route)
+}
+
+// A public probe must not overwrite a route promotion or newer reservation
+// that completed while its DNS/TLS request was in flight.
+func (s *SQLStore) SaveApplicationRouteObservation(ctx context.Context, before, after core.ApplicationRoute) error {
+	if before.AppID != after.AppID || before.RequestedDeploymentID != after.RequestedDeploymentID || before.ProjectID != after.ProjectID || before.ServerID != after.ServerID || before.Hostname != after.Hostname {
+		return ErrRouteConflict
+	}
+	after.UpdatedAt = time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE application_routes SET record=? WHERE app_id=? AND requested_deployment_id=? AND record=?`), jsonText(after), before.AppID, before.RequestedDeploymentID, jsonText(before))
 	err = changed(result, err)
 	if errors.Is(err, ErrNotFound) {
 		return ErrRouteConflict
@@ -84,7 +111,8 @@ func (s *SQLStore) GetApplicationRoute(ctx context.Context, appID string) (core.
 	if err != nil {
 		return route, err
 	}
-	return route, json.Unmarshal([]byte(raw), &route)
+	err = json.Unmarshal([]byte(raw), &route)
+	return route, err
 }
 func (s *SQLStore) ListApplicationRoutes(ctx context.Context) ([]core.ApplicationRoute, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT record FROM application_routes ORDER BY hostname`)

@@ -39,7 +39,7 @@ func (a *API) checkApplicationRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	checked := routing.Probe{}.Check(r.Context(), route)
-	if err = data.SaveApplicationRoute(r.Context(), checked); err != nil {
+	if err = data.SaveApplicationRouteObservation(r.Context(), route, checked); err != nil {
 		problem(w, 409, "Route changed", "A deployment changed the route while its public endpoint was checked. Refresh and retry.")
 		return
 	}
