@@ -5,6 +5,7 @@ import (
 )
 
 func (a *API) connectionsRoutes(r chi.Router) {
+	a.infrastructureRoutes(r)
 	r.Route("/secrets", func(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Get("/", a.listSecrets)

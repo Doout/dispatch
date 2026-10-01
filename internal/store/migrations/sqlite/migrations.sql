@@ -1283,3 +1283,21 @@ CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE s
 -- dispatch:migration 073_deployment_health
 ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';
+-- dispatch:migration 075_infrastructure_providers
+CREATE TABLE infrastructure_providers (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL,
+ endpoint TEXT NOT NULL,
+ private_network_id TEXT REFERENCES private_networks(id),
+ credential_secret_id TEXT REFERENCES secrets(id),
+ enabled BOOLEAN NOT NULL DEFAULT FALSE,
+ capabilities TEXT NOT NULL,
+ manifest TEXT NOT NULL DEFAULT '',
+ manifest_digest TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL,
+ last_error TEXT NOT NULL DEFAULT '',
+ revision BIGINT NOT NULL,
+ last_verified_at TEXT,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);

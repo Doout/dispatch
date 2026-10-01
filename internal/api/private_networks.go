@@ -203,6 +203,19 @@ func (a *API) deletePrivateNetwork(w http.ResponseWriter, r *http.Request) {
 		a.notFoundOrInternal(w, err, "Private network")
 		return
 	}
+	if manager := a.infrastructureManager(); manager != nil {
+		providers, err := manager.Store.ListInfrastructureProviders(r.Context())
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		for _, item := range providers {
+			if item.PrivateNetworkID == id {
+				problem(w, 409, "Provider route in use", "The infrastructure provider retains this route for its resource history.")
+				return
+			}
+		}
+	}
 	stores, err := a.store.ListSecretStores(r.Context())
 	if err != nil {
 		a.internal(w, err)
