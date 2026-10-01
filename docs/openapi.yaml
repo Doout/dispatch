@@ -9,6 +9,103 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /service-templates/{id}/runs:
+    post:
+      operationId: provisionServiceTemplate
+      description: Requires a direct user with project.configure and deployment.run. Built-in requests capture encrypted configuration and generated credentials before mutation. Idempotency-Key replays the original accepted run; custom scripts remain manual after uncertain outcomes.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                inputs: { type: object, additionalProperties: { type: string, writeOnly: true } }
+      responses:
+        '202': { description: Accepted provision run, or a shared MutationReceipt when Idempotency-Key is supplied. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource:
+    get:
+      operationId: getServiceResource
+      description: Requires project.view. Ownership and recovery status survive template or connection-registration removal. Encrypted requests and outputs are never returned.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Owned resource lifecycle record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceResource' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/inspect:
+    post:
+      operationId: inspectServiceResource
+      description: Requires project.configure. Inspects the same owned resource and current target identity. Does not create a resource or run a script.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Verified ownership and readiness, or confirmed absence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceResourceInspection' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/{action}:
+    post:
+      operationId: recoverServiceResource
+      description: Requires project.configure and deployment.run. Reconcile recovers the original encrypted binding or converges its original cleanup. Retry may recreate a confirmed-absent built-in resource using the same accepted credentials and ownership. Active leases and mismatched ownership block recovery.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: action, required: true, schema: { type: string, enum: [reconcile, retry] } }
+      responses:
+        '202':
+          description: Original owned operation is being reconciled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceResource' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/delete-preview:
+    post:
+      operationId: previewServiceResourceDeletion
+      description: Requires project.configure. Reviews current resource identity, affected consumers, retained storage and external dependencies using the shared destructive confirmation contract.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Destructive review including version, confirmation name and any blocking consumers or storage. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/delete:
+    post:
+      operationId: deleteServiceResource
+      description: Requires project.configure and the current destructive confirmation. Deletes the owned workload and its unused connection registration, retaining storage, credentials and history. An identical Idempotency-Key replays the original operation even after confirmed deletion.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation:
+                  type: object
+                  required: [resourceId, action, expectedVersion, confirmName]
+                  properties:
+                    resourceId: { type: string }
+                    action: { type: string, const: delete }
+                    expectedVersion: { type: string }
+                    confirmName: { type: string }
+      responses:
+        '202': { description: Owned deletion accepted, or original mutation receipt replayed. }
+        '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/bootstrap:
     get:
       operationId: listTargetBootstraps
@@ -4498,6 +4595,36 @@ components:
         updatedAt:
           type: string
           format: date-time
+    ServiceResource:
+      type: object
+      required: [runId, projectId, serviceId, name, target, state, policy, revision, operationId]
+      properties:
+        runId: { type: string }
+        projectId: { type: string }
+        serviceId: { type: string }
+        name: { type: string }
+        target: { type: object, properties: { provider: {type: string}, serverId: {type: string}, resourceName: {type: string}, namespace: {type: string} } }
+        state: { type: string, enum: [accepted, provisioning, recovering, ready, unresolved, deleting, deleted] }
+        policy: { type: string, const: retain }
+        revision: { type: integer }
+        operationId: { type: string }
+        resourceId: { type: string }
+        message: { type: string }
+        dependencies: { type: array, items: { type: string } }
+        recoveryAfter: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ServiceResourceInspection:
+      type: object
+      required: [runId, projectId, serverId, provider, state, storageRetained]
+      properties:
+        runId: { type: string }
+        projectId: { type: string }
+        serverId: { type: string }
+        provider: { type: string, enum: [docker, helm] }
+        state: { type: string, enum: [ready, unready, absent] }
+        resourceId: { type: string }
+        storageRetained: { type: boolean }
     InfrastructureAcceptance:
       type: object
       required: [digest, confirmName]
@@ -4513,7 +4640,7 @@ components:
         id: { type: string }
         projectId: { type: string }
         action: { type: string }
-        operationKind: { type: string, enum: [deployment, infrastructure_operation] }
+        operationKind: { type: string, enum: [deployment, infrastructure_operation, service_provision, service_resource] }
         operationId: { type: string }
         operationUrl: { type: string }
         resourceId: { type: string }

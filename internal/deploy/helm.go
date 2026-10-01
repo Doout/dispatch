@@ -444,6 +444,10 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 		return err
 	}
 
+	if ctx.Value(serviceInstallOnlyKey{}) == true {
+		return errors.New("a service release appeared after inspection; inspect its ownership before recovery")
+	}
+
 	upgrade := action.NewUpgrade(c.configuration)
 	upgrade.ChartPathOptions = chartOptions
 	upgrade.SetRegistryClient(c.registry)

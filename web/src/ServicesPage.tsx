@@ -8,6 +8,7 @@ import { useDeploymentCatalog } from "./deployments/DeploymentCatalog";
 import { ServiceOperations } from "./ServiceOperations";
 import { ServiceTemplateForm } from "./ServiceTemplateForm";
 import { ServiceTemplateEditor } from "./ServiceTemplateEditor";
+import { ServiceResourcePanel } from "./ServiceResourcePanel";
 import { ServiceTemplateCatalog } from "./ServiceTemplateCatalog";
 
 type FieldRow = { name: string; value: string; sensitive: boolean; secretRef: string; source: "value" | "secret"; changed: boolean; saved: boolean };
@@ -67,7 +68,8 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
   {tab === "templates" ? <>
    {templatesError ? <div role="alert" className="error">{templatesError}<button className="quiet-button" onClick={() => void refreshTemplates()}>Retry</button></div> : templatesLoading ? <p role="status">Loading templates…</p> : <ServiceTemplateCatalog templates={templates.filter(t => !project || t.projectId === project)} overview={overview} onEdit={setTemplateEditing} onUse={setTemplate} onChanged={refreshTemplates} />}
   </> : <>
-  {runs.filter(run => (!project || run.projectId === project) && (run.state === "queued" || run.state === "running" || run.state === "failed")).slice(-5).reverse().map(run => <div key={run.id} className="service-provision-status" role="status"><strong>{run.serviceName} · {run.state === "failed" ? "Provisioning failed" : "Provisioning"}</strong><p>{run.error || run.phase || "Waiting for the provider to finish."}</p></div>)}
+  {runs.filter(run => (!project || run.projectId === project) && (run.state === "queued" || run.state === "running" || run.state === "failed")).slice(-5).reverse().map(run => <div key={run.id} className="service-provision-status" role="status"><strong>{run.serviceName} · {run.state === "failed" ? "Provisioning failed" : "Provisioning"}</strong><p>{run.error || run.phase || "Waiting for the provider to finish."}</p>{run.target && <ServiceResourcePanel runId={run.id} canManage={canManageProject(overview, run.projectId, "project.configure")} canRecover={canManageProject(overview, run.projectId, "deployment.run")} onChanged={onChanged} />}</div>)}
+  {runs.filter(run => run.target && run.state === "succeeded" && (!project || run.projectId === project) && !services.some(service => service.provisionRunId === run.id)).slice(-10).reverse().map(run => <details className="service-card" key={run.id}><summary className="service-card-summary">{run.serviceName} · Retained resource history</summary><ServiceResourcePanel runId={run.id} canManage={canManageProject(overview, run.projectId, "project.configure")} canRecover={canManageProject(overview, run.projectId, "deployment.run")} onChanged={onChanged} /></details>)}
   {!services.length && <p className="empty-state">No services registered{project ? " in this project" : " yet"}.</p>}
   <div className="service-list">{services.map(service => {
    const manage = canManageProject(overview, service.projectId, "project.configure");
@@ -84,6 +86,7 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
      <p className="service-help">Connection checks run from the Dispatch controller. Application access can differ.</p>
      <details className="service-card-section"><summary>Connection details</summary><dl className="service-fields">{Object.entries(service.fields).map(([name, f]) => <div key={name}><dt>{name}</dt><dd>{f.sensitive ? f.configured ? "Configured · hidden" : "Not configured" : f.value || "Not configured"}</dd></div>)}</dl></details>
      <details className="service-card-section" open={impactOpen} onToggle={e => { const open = e.currentTarget.open; setImpacts(current => open ? [...new Set([...current, service.id])] : current.filter(id => id !== service.id)); }}><summary>Application impact{service.consumers.length ? ` · ${service.consumers.length}` : ""}</summary>{impactOpen && <ServiceOperations onBindings={setApplication} service={service} overview={overview} onChanged={onChanged} />}</details>
+     {service.provisionRunId && service.provisionTarget && <ServiceResourcePanel runId={service.provisionRunId} canManage={manage} canRecover={canManageProject(overview, service.projectId, "deployment.run")} onChanged={onChanged} />}
      {manage && (removing === service.id ? <div className="service-actions"><p>Remove this registration? The external service remains unchanged.</p><button disabled={!!busy} className="danger-button" onClick={() => void act(service.id, "remove")}>Remove registration</button><button className="quiet-button" onClick={() => setRemoving(null)}>Cancel</button></div> : <button className="service-remove-trigger" onClick={() => setRemoving(service.id)}>Remove registration</button>)}
     </div>}
    </details>;

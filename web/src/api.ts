@@ -971,6 +971,10 @@ export const api = {
  saveServiceTemplate: (id: string | undefined, data: { projectId: string; document: string; configSourceId: string; revision?: number }) => request<{ id: string; revision: number }>(`/api/v1/service-templates${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(data) }),
  deleteServiceTemplate: (id: string, revision: number) => destructiveRequest<void>(`/api/v1/service-templates/${id}?revision=${revision}`, { method: "DELETE" }),
  startServiceProvision: (id: string, data: { name: string; description: string; inputs: Record<string,string> }) => request<ServiceProvisionRun>(`/api/v1/service-templates/${id}/runs`, { method: "POST", body: JSON.stringify(data) }),
+ serviceResource: (id: string) => request<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource`),
+ inspectServiceResource: (id: string) => request<ServiceResourceInspection>(`/api/v1/service-provision-runs/${id}/resource/inspect`, { method: "POST" }),
+ recoverServiceResource: (id: string, action: "reconcile" | "retry") => request<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource/${action}`, { method: "POST" }),
+ deleteServiceResource: (id: string) => destructiveRequest<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource/delete`, { method: "POST" }),
  serviceProvisionRun: (id: string) => request<ServiceProvisionRun>(`/api/v1/service-provision-runs/${id}`),
  serviceProvisionRuns: () => request<ServiceProvisionRun[]>("/api/v1/service-provision-runs"),
  saveService: (id: string | undefined, data: ServiceInput) => request<ServiceConnection>(`/api/v1/services${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(data) }),
@@ -1653,3 +1657,6 @@ export type DeploymentComparison = {
  fromId: string; toId: string; available: boolean; hidden: number; truncated: boolean; message: string;
  changes: { path: string; kind: "added" | "removed" | "changed"; before: unknown; after: unknown }[];
 };
+
+export type ServiceResource = { runId: string; projectId: string; serviceId: string; name: string; target: ServiceProvisionTarget; state: "accepted" | "provisioning" | "recovering" | "ready" | "unresolved" | "deleting" | "deleted"; resourceId?: string; policy: "retain"; revision: number; operationId: string; message?: string; dependencies?: string[]; recoveryAfter?: string; createdAt: string; updatedAt: string };
+export type ServiceResourceInspection = { runId: string; projectId: string; serverId: string; provider: string; resourceId?: string; state: "ready" | "unready" | "absent"; storageRetained: boolean };

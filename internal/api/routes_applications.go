@@ -72,5 +72,15 @@ func (a *API) applicationsRoutes(r chi.Router) {
 		})
 	})
 	r.Get("/service-provision-runs", a.listServiceProvisionRuns)
-	r.Get("/service-provision-runs/{id}", a.getServiceProvisionRun)
+	r.Route("/service-provision-runs/{id}", func(r chi.Router) {
+		r.Get("/", a.getServiceProvisionRun)
+		r.Get("/resource", a.getServiceResource)
+		r.Group(func(r chi.Router) {
+			r.Use(a.serviceResourcePermission(core.PermissionProjectConfigure))
+			r.Post("/resource/inspect", a.inspectServiceResource)
+			r.Post("/resource/{action:reconcile|retry}", a.recoverServiceResource)
+			r.Post("/resource/delete-preview", a.previewDestructiveAction("service-resource", "delete"))
+			r.Post("/resource/delete", a.deleteServiceResourceRequest)
+		})
+	})
 }

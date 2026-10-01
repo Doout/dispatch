@@ -34,6 +34,9 @@ type ServiceProvisionTarget struct {
 }
 
 type ServiceProvisionRequest struct {
+	OperationID string `json:"operationId,omitempty"`
+	// Password is generated before resource creation and retained only in encrypted requests.
+	Password    string `json:"password,omitempty"`
 	Run         ServiceProvisionRun
 	ServiceType string
 	Outputs     []string

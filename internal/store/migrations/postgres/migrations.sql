@@ -1399,3 +1399,60 @@ CREATE INDEX target_bootstraps_server ON target_bootstraps(server_id);
 
 ALTER TABLE infrastructure_reviews ADD COLUMN bootstrap_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE managed_servers ADD COLUMN bootstrap_id TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 083_service_resource_lifecycle
+CREATE TABLE service_resources (
+ run_id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ service_id TEXT NOT NULL UNIQUE,
+ server_id TEXT NOT NULL,
+ name TEXT NOT NULL,
+ state TEXT NOT NULL,
+ revision BIGINT NOT NULL,
+ operation_id TEXT NOT NULL,
+ lease_until TEXT NOT NULL,
+ lease_token TEXT NOT NULL DEFAULT '',
+ request_cipher TEXT NOT NULL,
+ outputs_cipher TEXT NOT NULL DEFAULT '',
+ payload TEXT NOT NULL
+);
+CREATE UNIQUE INDEX service_resources_owned_name ON service_resources(project_id,name) WHERE state<>'deleted';
+CREATE INDEX service_resources_target ON service_resources(server_id);
+CREATE TABLE service_resource_dependencies (
+ run_id TEXT NOT NULL REFERENCES service_resources(run_id),
+ service_id TEXT NOT NULL,
+ PRIMARY KEY(run_id,service_id)
+);
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect');
+
+CREATE FUNCTION protect_service_resource_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ PERFORM 1 FROM services WHERE id=NEW.service_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM service_resources WHERE service_id=NEW.service_id AND state IN ('deleting','deleted')) THEN
+  RAISE EXCEPTION 'service resource is being deleted';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+CREATE TRIGGER protect_service_resource_app_binding BEFORE INSERT OR UPDATE ON app_service_bindings FOR EACH ROW EXECUTE FUNCTION protect_service_resource_binding();
+CREATE TRIGGER protect_service_resource_workflow_binding BEFORE INSERT OR UPDATE ON workflow_service_references FOR EACH ROW EXECUTE FUNCTION protect_service_resource_binding();
+CREATE TRIGGER protect_service_resource_deployment_binding BEFORE INSERT OR UPDATE ON deployment_service_bindings FOR EACH ROW EXECUTE FUNCTION protect_service_resource_binding();
+CREATE FUNCTION protect_service_resource_dependency() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM service_resource_dependencies d JOIN service_resources r ON r.run_id=d.run_id WHERE d.service_id=OLD.id AND r.state<>'deleted') THEN
+  RAISE EXCEPTION 'service has a provisioned resource consumer';
+ END IF;
+ RETURN OLD;
+END;
+$$;
+CREATE TRIGGER protect_service_resource_dependency BEFORE DELETE ON services FOR EACH ROW EXECUTE FUNCTION protect_service_resource_dependency();
+CREATE FUNCTION protect_service_resource_target() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM service_resources WHERE server_id=OLD.id AND state<>'deleted') THEN
+  RAISE EXCEPTION 'server has an owned service resource';
+ END IF;
+ RETURN OLD;
+END;
+$$;
+CREATE TRIGGER protect_service_resource_target BEFORE DELETE ON servers FOR EACH ROW EXECUTE FUNCTION protect_service_resource_target();

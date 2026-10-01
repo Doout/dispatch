@@ -190,6 +190,9 @@ func (a *API) storageReviewTarget(ctx context.Context, kind, id string) (string,
 		return app.ServerID, err
 	case "server":
 		return id, nil
+	case "service-resource":
+		item, err := a.store.(store.ServiceResourceStore).GetServiceResource(ctx, id)
+		return item.Target.ServerID, err
 	case "service":
 		service, err := a.store.GetService(ctx, id)
 		if err != nil {
