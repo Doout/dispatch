@@ -78,7 +78,7 @@ func (f *panelGitHubFixture) serve(t *testing.T, w http.ResponseWriter, r *http.
 		if strings.Contains(path, "/ui/") {
 			sha = strings.Repeat("b", 40)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "head": map[string]string{"ref": "feature", "sha": sha}, "base": map[string]string{"ref": "main"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "head": map[string]any{"ref": "feature", "sha": sha, "repo": map[string]any{"id": 101, "full_name": repo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"id": 101, "full_name": repo}}})
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/issues/comments"):
 		parts := strings.Split(path, "/")
 		repo := parts[2] + "/" + parts[3]
@@ -183,6 +183,7 @@ func previewPanelFixture(t *testing.T) (*API, *panelGitHubFixture, core.Workflow
 		t.Fatal(err)
 	}
 	a.eventConfig.GitHubApps = manager
+	a.workflows.ResolvePreviewSource = a.resolvePreviewSource
 	document := `apiVersion: dispatch/v1alpha1
 kind: WorkflowTemplate
 metadata:

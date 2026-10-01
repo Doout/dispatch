@@ -12,6 +12,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflow"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -59,6 +60,10 @@ func (a *API) startDeployment(w http.ResponseWriter, r *http.Request) {
 		item, err = a.deploy.StartReviewed(r.Context(), chi.URLParam(r, "id"), strings.TrimSpace(input.CommitSHA), *input.Review)
 	} else {
 		item, err = a.deploy.Start(r.Context(), chi.URLParam(r, "id"), strings.TrimSpace(input.CommitSHA))
+	}
+	if errors.Is(err, workflow.ErrPreviewSourceTrust) {
+		problem(w, http.StatusForbidden, "Preview source trust denied", err.Error())
+		return
 	}
 	if errors.Is(err, store.ErrDeploymentReviewChanged) {
 		problem(w, 409, "Deployment inputs changed", "Application settings, service bindings, or service revisions changed after preview. Review the current inputs before deploying.")

@@ -31,10 +31,14 @@ type Store interface {
 }
 
 type SourceRevision struct {
-	HeadRef string
-	HeadSHA string
-	BaseRef string
-	Open    bool
+	RepositoryID     int64
+	Repository       string
+	HeadRepositoryID int64
+	HeadRepository   string
+	HeadRef          string
+	HeadSHA          string
+	BaseRef          string
+	Open             bool
 }
 
 type PullRequestResolver interface {

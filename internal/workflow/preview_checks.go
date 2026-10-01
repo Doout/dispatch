@@ -89,6 +89,15 @@ func (s *Service) StartPreviewChecks(ctx context.Context, resourceID, commentID 
 	if err != nil {
 		return core.WorkflowRevision{}, err
 	}
+	revision.SourceTrust, err = s.SourceTrust(ctx, resource, revision)
+	if err != nil {
+		now := time.Now().UTC()
+		revision.State, revision.Error, revision.FinishedAt = "failed", err.Error(), &now
+		if saveErr := s.Store.CreateWorkflowRevision(ctx, revision); saveErr != nil {
+			return revision, saveErr
+		}
+		return revision, err
+	}
 	if err := s.Store.CreateWorkflowRevision(ctx, revision); err != nil {
 		return core.WorkflowRevision{}, err
 	}
@@ -102,6 +111,10 @@ func (s *Service) runPreviewChecks(ctx context.Context, resource core.WorkflowRe
 	unlock := s.lock("resource:" + resource.ID)
 	defer unlock()
 	if ctx.Err() != nil {
+		return
+	}
+	if err := s.checkRevisionTrust(ctx, revision); err != nil {
+		s.finishPreviewChecks(ctx, &revision, err)
 		return
 	}
 	now := time.Now().UTC()

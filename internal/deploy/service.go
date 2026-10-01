@@ -19,6 +19,8 @@ var (
 )
 
 type Service struct {
+	// CheckExecution verifies preview provenance before accepting or dispatching work.
+	CheckExecution func(context.Context, core.App, string) error
 	// OnFinished queues follow-up observations after the terminal state is saved.
 	OnFinished     func(core.Deployment)
 	services       serviceconn.Resolver
@@ -79,6 +81,11 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 			commitSHA = "inline"
 		} else {
 			commitSHA = "HEAD"
+		}
+	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, commitSHA); err != nil {
+			return core.Deployment{}, err
 		}
 	}
 	now := time.Now().UTC()
@@ -162,6 +169,12 @@ func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.
 		delete(s.cancels, deployment.ID)
 		s.mu.Unlock()
 	}()
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, deployment.CommitSHA); err != nil {
+			s.fail(deployment, err)
+			return
+		}
+	}
 	server, err := s.store.GetServer(ctx, app.ServerID)
 	if err != nil {
 		s.fail(deployment, err)

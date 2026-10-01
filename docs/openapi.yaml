@@ -2115,6 +2115,7 @@ paths:
                 githubAppId: { type: string }
                 name: { type: string }
                 repository: { type: string, description: "Fallback owner/repository when YAML does not declare spec.triggers.pullRequestComment.sources" }
+                sourceTrustPolicy: { type: string, enum: [same_repository, approval_required], default: same_repository }
                 command: { type: string, example: /preview, description: "Fallback command when YAML does not declare its trigger" }
                 ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
                 commentOnOpen: { type: boolean, default: false, description: "Post controls on new watched PRs without deploying. WorkflowTemplate YAML overrides this field." }
@@ -2154,6 +2155,7 @@ paths:
                 githubAppId: { type: string }
                 name: { type: string }
                 repository: { type: string }
+                sourceTrustPolicy: { type: string, enum: [same_repository, approval_required], default: same_repository }
                 command: { type: string }
                 ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
                 commentOnOpen: { type: boolean, default: false, description: "Post controls on new watched PRs without deploying. WorkflowTemplate YAML overrides this field." }
@@ -2284,6 +2286,55 @@ paths:
         - { in: query, name: resourceId, schema: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/revisions/{revisionId}/source-trust:
+    parameters:
+      - { in: path, name: revisionId, required: true, schema: { type: string } }
+    get:
+      operationId: reviewPreviewSourceTrust
+      description: Requires project.view. Re-evaluates exact PR origins, commits, credential scope and environments without decrypting workload secrets. A denied decision is returned with allowed false.
+      responses:
+        "200":
+          description: Current source policy decision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreviewSourceTrustDecision" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /workflow/revisions/{revisionId}/source-trust/approvals:
+    parameters:
+      - { in: path, name: revisionId, required: true, schema: { type: string } }
+    post:
+      operationId: approvePreviewSourceTrust
+      description: Requires controller owner. Approves the current exact review digest until an explicit expiry no more than 24 hours away. Does not start execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmDigest, expiresAt]
+              properties:
+                confirmDigest: { type: string }
+                expiresAt: { type: string, format: date-time }
+      responses:
+        "201": { description: Scoped approval recorded. }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /workflow/revisions/{revisionId}/source-trust/approvals/{approvalId}:
+    parameters:
+      - { in: path, name: revisionId, required: true, schema: { type: string } }
+      - name: approvalId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: revokePreviewSourceTrust
+      description: Requires controller owner. Revokes an approval belonging to this preview resource.
+      responses:
+        "204": { description: Approval revoked. }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /workflow/revisions/{revisionId}/jobs:
     get:
       operationId: listWorkflowJobs
@@ -3082,6 +3133,32 @@ components:
       content:
         application/json:
           schema: { type: array, items: {} }
+    PreviewSourceTrustDecision:
+      type: object
+      required: [policy, digest, allowed, reason, sources, credentialScope, environments, checkedAt]
+      properties:
+        policy: { type: string, enum: [same_repository, approval_required] }
+        digest: { type: string }
+        allowed: { type: boolean }
+        reason: { type: string }
+        approvalId: { type: string }
+        checkedAt: { type: string, format: date-time }
+        credentialScope: { type: array, items: { type: string } }
+        environments: { type: array, items: { type: string } }
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              alias: { type: string }
+              repository: { type: string }
+              repositoryId: { type: integer, format: int64 }
+              headRepository: { type: string }
+              headRepositoryId: { type: integer, format: int64 }
+              fork: { type: boolean }
+              pullRequest: { type: integer }
+              commitSha: { type: string }
+              githubAppId: { type: string }
     Problem:
       description: RFC 9457-style problem response.
       content:

@@ -16,6 +16,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/events"
+	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -84,6 +85,9 @@ func previewLifetimeFixture(t *testing.T, ttl string, deadline *time.Time) (*API
 	}
 	executor := &lifetimeCleanupRecorder{previewCleanupRecorder: previewCleanupRecorder{cleaned: map[string]bool{}}}
 	a := New(data, deploy.NewService(data, executor), false, AuthConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a.workflows.ResolvePreviewSource = func(_ context.Context, _ string, repository string, _ int) (githubapp.PullRequestHead, error) {
+		return fixturePreviewSource(repository, strings.Repeat("a", 40)), nil
+	}
 	return a, data, executor, path
 }
 

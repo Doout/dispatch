@@ -93,6 +93,11 @@ func (r *jobRuntime) executeJobs(ctx context.Context, resource core.WorkflowReso
 }
 
 func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResource, name string, job JobSpec, pipeline bool) (map[string]string, error) {
+	if r.service != nil && r.service.Store != nil {
+		if err := r.service.checkRevisionTrust(ctx, r.revision); err != nil {
+			return nil, err
+		}
+	}
 	relevant := jobSourceAliases(job)
 	jobSources := make(map[string]core.WorkflowSourceRevision, len(relevant))
 	for _, alias := range relevant {
@@ -209,6 +214,9 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 			return nil, prelude, err
 		}
 		defer release()
+		if err := r.service.checkRevisionTrust(ctx, r.revision); err != nil {
+			return nil, prelude, err
+		}
 		builderEnv, cleanup, err := r.service.dockerBuilderEnvironment(ctx, builder)
 		if err != nil {
 			return nil, prelude, err
@@ -216,6 +224,9 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 		defer cleanup()
 		environment = append(environment, builderEnv...)
 		prelude += "Using Docker builder " + builder.Name + "\n"
+	}
+	if err := r.service.checkRevisionTrust(ctx, r.revision); err != nil {
+		return nil, prelude, err
 	}
 	var logs limitedBuffer
 	logs.limit = maxJobLogBytes

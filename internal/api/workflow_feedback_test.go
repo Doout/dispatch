@@ -110,7 +110,11 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 			if f.closed {
 				state = "closed"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "draft": f.draft, "head": map[string]string{"sha": sha, "ref": "feature"}, "base": map[string]string{"ref": "main"}})
+			repo := "example/service"
+			if strings.Contains(r.URL.Path, "/ui/") {
+				repo = "example/ui"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "draft": f.draft, "head": map[string]any{"sha": sha, "ref": "feature", "repo": map[string]any{"id": 101, "full_name": repo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"id": 101, "full_name": repo}}})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.NotFound(w, r)

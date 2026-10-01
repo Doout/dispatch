@@ -162,11 +162,19 @@ func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository strin
 	var payload struct {
 		State string `json:"state"`
 		Head  struct {
-			Ref string `json:"ref"`
+			Ref  string `json:"ref"`
+			Repo struct {
+				ID       int64  `json:"id"`
+				FullName string `json:"full_name"`
+			} `json:"repo"`
 			SHA string `json:"sha"`
 		} `json:"head"`
 		Base struct {
-			Ref string `json:"ref"`
+			Ref  string `json:"ref"`
+			Repo struct {
+				ID       int64  `json:"id"`
+				FullName string `json:"full_name"`
+			} `json:"repo"`
 		} `json:"base"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
@@ -175,7 +183,7 @@ func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository strin
 	if payload.Head.Ref == "" || payload.Head.SHA == "" {
 		return SourceRevision{}, errors.New("pull request source revision is incomplete")
 	}
-	return SourceRevision{HeadRef: payload.Head.Ref, HeadSHA: payload.Head.SHA, BaseRef: payload.Base.Ref, Open: payload.State == "open"}, nil
+	return SourceRevision{RepositoryID: payload.Base.Repo.ID, Repository: payload.Base.Repo.FullName, HeadRepositoryID: payload.Head.Repo.ID, HeadRepository: payload.Head.Repo.FullName, HeadRef: payload.Head.Ref, HeadSHA: payload.Head.SHA, BaseRef: payload.Base.Ref, Open: payload.State == "open"}, nil
 }
 
 func (r GitHubResolver) ResolveBranch(ctx context.Context, repository, branch string) (SourceRevision, error) {

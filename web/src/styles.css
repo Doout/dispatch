@@ -1622,6 +1622,16 @@ code { font-family: var(--mono); }
 .workflow-run-timing dt { margin-bottom: 3px; color: var(--muted); font-size: 11px; }
 .workflow-run-timing dd { margin: 0; color: #2d3944; font: 650 12px var(--mono); }
 .workflow-run-timing p { margin: 9px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.workflow-source-trust { display: grid; gap: 10px; min-width: 0; padding: 13px; border-bottom: 1px solid var(--rule); color: #34424d; font-size: 12px; line-height: 1.5; }
+.workflow-source-trust h4, .workflow-source-trust p { margin: 0; }
+.workflow-source-trust ul { display: grid; gap: 7px; margin: 0; padding-left: 18px; }
+.workflow-source-trust code { font-size: 11px; overflow-wrap: anywhere; }
+.workflow-source-trust details { display: grid; gap: 8px; }
+.workflow-source-trust details > p { margin-top: 9px; }
+.workflow-source-trust summary { cursor: pointer; font-weight: 600; }
+.workflow-source-trust > label { display: flex; align-items: flex-start; gap: 7px; }
+.workflow-source-trust input { flex: 0 0 auto; margin-top: 3px; }
+.workflow-source-trust > button { justify-self: start; }
 .workflow-resource-columns .workflow-source-warning { margin: 12px; }
 .workflow-run-list { display: grid; }
 .workflow-run-list h4 { margin: 0; padding: 11px 13px 8px; color: #53616d; font-size: 11px; text-transform: uppercase; letter-spacing: .045em; }

@@ -17,6 +17,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
   const [githubAppId, setGithubAppId] = useState(template?.githubAppId ?? apps[0]?.id ?? "");
   const [repository, setRepository] = useState(template?.repository ?? "");
   const [command, setCommand] = useState(template?.command ?? "/preview");
+  const [sourceTrustPolicy, setSourceTrustPolicy] = useState<"same_repository" | "approval_required">(template?.sourceTrustPolicy ?? "same_repository");
   const [ttl, setTTL] = useState(template?.ttl ?? "0");
   const [autoDeploy, setAutoDeploy] = useState(template?.autoDeploy ?? false);
   const [commentOnOpen, setCommentOnOpen] = useState(template?.commentOnOpen ?? false);
@@ -36,7 +37,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
       const config = parseYAML(document);
       if (config?.kind !== "WorkflowTemplate" || !config.spec?.triggers?.pullRequestComment) return undefined;
       const trigger = config.spec.triggers.pullRequestComment;
-      return { ttl: String(trigger.ttl ?? "0"), command: trigger.command || "/preview", autoDeploy: Boolean(trigger.autoDeploy), liveReload: Boolean(trigger.liveReload), commentOnOpen: Boolean(trigger.commentOnOpen), maxAutoRunsPerHour: Number(trigger.maxAutoRunsPerHour) || 2, repositories: Array.isArray(trigger.sources) ? trigger.sources.map((alias: string) => config.spec.sources?.[alias]?.repository || alias) as string[] : [] };
+      return { sourceTrustPolicy: trigger.sourceTrustPolicy || "same_repository", ttl: String(trigger.ttl ?? "0"), command: trigger.command || "/preview", autoDeploy: Boolean(trigger.autoDeploy), liveReload: Boolean(trigger.liveReload), commentOnOpen: Boolean(trigger.commentOnOpen), maxAutoRunsPerHour: Number(trigger.maxAutoRunsPerHour) || 2, repositories: Array.isArray(trigger.sources) ? trigger.sources.map((alias: string) => config.spec.sources?.[alias]?.repository || alias) as string[] : [] };
     } catch { return undefined; }
   }, [document]);
   const fileControlsTrigger = Boolean(yamlTrigger) || definitionSource === "github";
@@ -93,7 +94,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
     setBusy(true);
     setError("");
     try {
-      const body = { configSourceId: sourceId, githubAppId, name: name.trim(), repository: repository.trim(), command: command.trim(), ttl: ttl.trim(), autoDeploy, liveReload, commentOnOpen, maxAutoRunsPerHour, previewUrl: previewUrl.trim(), document, active, gitSource: definitionSource === "github" ? { repository: gitRepository.trim(), branch: gitBranch.trim(), path: gitPath.trim() } : undefined };
+      const body = { sourceTrustPolicy, configSourceId: sourceId, githubAppId, name: name.trim(), repository: repository.trim(), command: command.trim(), ttl: ttl.trim(), autoDeploy, liveReload, commentOnOpen, maxAutoRunsPerHour, previewUrl: previewUrl.trim(), document, active, gitSource: definitionSource === "github" ? { repository: gitRepository.trim(), branch: gitBranch.trim(), path: gitPath.trim() } : undefined };
       if (template) await api.updateWorkflowPreviewTemplate(template.id, body);
       else await api.createWorkflowPreviewTemplate(body);
       await onSaved();
@@ -118,6 +119,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
       <label><span>Commit updates</span><select value={liveReload ? "live" : autoDeploy ? "limited" : "manual"} onChange={(event) => { const mode = event.target.value; setLiveReload(mode === "live"); if (mode === "manual") setAutoDeploy(false); if (mode === "limited") setAutoDeploy(true); }}><option value="manual">Only on comment</option><option value="limited">Automatic, limited per hour</option><option value="live">Live reload, every commit</option></select><small>Newer commits cancel older queued or running work. PR comments can switch live reload for one instance.</small></label>
       {!liveReload && autoDeploy && <label><span>Automatic runs per hour</span><input type="number" min={1} max={12} value={maxAutoRunsPerHour} onChange={(event) => setMaxAutoRunsPerHour(Number(event.target.value))} required /><small>Per preview. Comment commands bypass this limit.</small></label>}
     </>}
+    {fileControlsTrigger ? <p className="wide temporary-preview-intro">Source policy: {(yamlTrigger?.sourceTrustPolicy ?? template?.sourceTrustPolicy) === "approval_required" ? "owner approval for every PR revision" : "same-repository PRs trusted; forks require owner approval"}. Set <code>sourceTrustPolicy</code> under <code>spec.triggers.pullRequestComment</code>. Policy changes apply to existing previews before their next execution.</p> : <label className="wide"><span>PR source trust</span><select value={sourceTrustPolicy} onChange={event => setSourceTrustPolicy(event.target.value as "same_repository" | "approval_required")}><option value="same_repository">Trust same-repository PRs; approve forks</option><option value="approval_required">Require owner approval for every PR revision</option></select><small>Approvals cover exact commits, credential scope and environments, with an expiry. A trusted commenter does not approve source code.</small></label>}
     {fileControlsTrigger ? <p className="wide temporary-preview-intro">Preview lifetime: {(yamlTrigger?.ttl ?? template?.ttl ?? "0") === "0" ? "no time limit" : yamlTrigger?.ttl ?? template?.ttl}. Set <code>ttl</code> under <code>spec.triggers.pullRequestComment</code> in YAML; <code>0</code> means unlimited. A manual deployment renews the timer; automatic updates and checks do not.</p> : <label><span>Default preview lifetime</span><input value={ttl} onChange={(event) => setTTL(event.target.value)} required placeholder="0" spellCheck={false} /><small>Use 0 for no time limit, or a duration such as 1d or 24h. PR comments can change an instance's lifetime.</small></label>}
     <label><span>Preview URL pattern</span><input type="text" inputMode="url" value={previewUrl} onChange={(event) => setPreviewUrl(event.target.value)} placeholder="https://dev.example.com/app/preview/{{ instance.id }}" required spellCheck={false} /><small>Use <code>{placeholder}</code> where the PR ID belongs.</small></label>
     <label className="wide"><span>Template definition</span><select value={definitionSource} onChange={(event) => setDefinitionSource(event.target.value)}><option value="saved">YAML saved in Dispatch</option><option value="github">GitHub repository (GitOps)</option></select><small>GitHub definitions are checked every 30 seconds. Valid changes apply to future preview instances.</small></label>

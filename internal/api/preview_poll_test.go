@@ -186,7 +186,7 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 			if closed.Load() {
 				state = "closed"
 			}
-			_, _ = fmt.Fprintf(w, `{"state":%q,"head":{"ref":"feature","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base":{"ref":"main"}}`, state)
+			_, _ = fmt.Fprintf(w, `{"state":%q,"head":{"ref":"feature","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"id":101,"full_name":"acme/service"}},"base":{"ref":"main","repo":{"id":101,"full_name":"acme/service"}}}`, state)
 		case strings.HasSuffix(r.URL.Path, "/issues/17/comments") && r.Method == http.MethodPost:
 			comments.Add(1)
 			_, _ = io.WriteString(w, `{"id":900}`)
