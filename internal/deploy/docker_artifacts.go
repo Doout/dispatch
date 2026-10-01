@@ -137,7 +137,7 @@ func (e DockerExecutor) loadArtifact(ctx context.Context, d core.Deployment, app
 }
 
 func localDockerServer(server core.Server) bool {
-	return server.Address == "local" || server.Address == "127.0.0.1" || server.Address == "localhost"
+	return server.AgentNodeID == "" && (server.Address == "local" || server.Address == "127.0.0.1" || server.Address == "localhost")
 }
 
 func (e DockerExecutor) PreviewRuntimeRollback(ctx context.Context, d core.Deployment, app core.App, server core.Server) (RollbackPreview, error) {

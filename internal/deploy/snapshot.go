@@ -38,6 +38,7 @@ func (e SnapshotExecutor) Deploy(ctx context.Context, deployment core.Deployment
 			return err
 		}
 	}
+	deployment.Snapshot = snapshot
 	return e.Next.Deploy(ctx, deployment, app, server, progress)
 }
 

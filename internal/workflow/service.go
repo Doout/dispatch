@@ -24,12 +24,13 @@ import (
 const defaultPollInterval = 5 * 60
 
 type Service struct {
-	Store        store.Store
-	GitHub       *githubapp.Manager
-	Secrets      *secretvalue.Resolver
-	Deployments  DeploymentRunner
-	Logger       *slog.Logger
-	Repositories *repositoryCache
+	RemoteDockerServices func(context.Context, core.ServiceProvisionRequest, core.DockerServiceProvision, core.Server) (map[string]string, error)
+	Store                store.Store
+	GitHub               *githubapp.Manager
+	Secrets              *secretvalue.Resolver
+	Deployments          DeploymentRunner
+	Logger               *slog.Logger
+	Repositories         *repositoryCache
 
 	mu           sync.Mutex
 	locks        map[string]*sync.Mutex

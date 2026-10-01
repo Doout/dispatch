@@ -27,6 +27,9 @@ func postgresProvisionURL(fields map[string]string) string {
 // Provision uses Docker's ordinary image, volume, network and health APIs.
 // No provider script or source repository is involved.
 func (e DockerExecutor) Provision(ctx context.Context, req core.ServiceProvisionRequest, spec core.DockerServiceProvision, server core.Server) (map[string]string, error) {
+	if server.AgentNodeID != "" {
+		return nil, errors.New("agent-bound services must execute through the remote runtime")
+	}
 	if err := ValidateServiceTarget(server, "docker"); err != nil {
 		return nil, err
 	}

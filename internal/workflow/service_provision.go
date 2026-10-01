@@ -35,6 +35,12 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 			if err != nil {
 				return nil, errors.New("Docker provisioner server is unavailable")
 			}
+			if server.AgentNodeID != "" {
+				if s.RemoteDockerServices == nil {
+					return nil, errors.New("remote service provisioning is unavailable")
+				}
+				return s.RemoteDockerServices(ctx, request, *d, server)
+			}
 			return (deploy.DockerExecutor{}).Provision(ctx, request, *d, server)
 		}
 		h := *spec.Provision.Helm

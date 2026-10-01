@@ -19,6 +19,8 @@ func (a *API) applicationsRoutes(r chi.Router) {
 				r.Get("/owner", a.getApplicationOwner)
 				r.Get("/observations", a.getApplicationObservations)
 				r.Get("/activity", a.applicationReleaseActivity)
+				r.Post("/runtime/{operation}", a.startApplicationRuntime)
+				r.Get("/runtime/jobs/{jobId}", a.getApplicationRuntime)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(a.appPermission(core.PermissionProjectConfigure))
@@ -34,6 +36,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.appPermission(core.PermissionDeploymentRun))
 				r.Post("/reapply", a.reapplyApplication)
+				r.Post("/runtime/jobs/{jobId}/acknowledge", a.acknowledgeApplicationRuntime)
 				a.destructiveRoute(r, "POST", "/cleanup", "application", "cleanup", a.cleanupApp)
 				r.Post("/deployments", a.startDeployment)
 				r.Post("/release-preview", a.previewApplicationRelease)

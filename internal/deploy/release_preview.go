@@ -32,11 +32,8 @@ type ReleaseValidation struct {
 	State   string `json:"state"`
 	Message string `json:"message"`
 }
-type ReleaseResource struct {
-	Kind      string `json:"kind"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace,omitempty"`
-}
+type ReleaseResource = core.ReleaseResource
+
 type ReleasePreview struct {
 	Review     core.DeploymentReview   `json:"review"`
 	Ready      bool                    `json:"ready"`

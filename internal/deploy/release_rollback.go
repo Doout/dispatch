@@ -19,23 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type RollbackPreview struct {
-	Available           bool                         `json:"available"`
-	Message             string                       `json:"message"`
-	DeploymentID        string                       `json:"deploymentId"`
-	CurrentDeploymentID string                       `json:"currentDeploymentId"`
-	HelmRevision        int                          `json:"helmRevision,omitempty"`
-	Bindings            []core.AppliedServiceBinding `json:"bindings"`
-	Resources           []ReleaseResource            `json:"resources"`
-	ReviewDigest        string                       `json:"reviewDigest"`
-	Runtime             string                       `json:"runtime,omitempty"`
-	Target              string                       `json:"target,omitempty"`
-	Images              map[string]string            `json:"images,omitempty"`
-	Domain              string                       `json:"domain,omitempty"`
-	Ports               []string                     `json:"ports,omitempty"`
-	ContainerPort       int                          `json:"containerPort,omitempty"`
-	RuntimeDigest       string                       `json:"runtimeDigest,omitempty"`
-}
+type RollbackPreview = core.RuntimeRollbackPreview
 
 func rollbackReviewDigest(app core.App, server core.Server, current, runtime string) string {
 	raw, _ := json.Marshal(struct {
@@ -330,6 +314,9 @@ func (s *Service) StartRollback(ctx context.Context, id, expectedCurrent, expect
 	}
 	unlock := s.lockApp(source.AppID)
 	defer unlock()
+	if err := s.checkRemoteMutation(ctx, source.AppID); err != nil {
+		return core.Deployment{}, err
+	}
 	active, err := s.store.ActiveDeploymentForApp(ctx, source.AppID)
 	if err != nil {
 		return core.Deployment{}, err
@@ -440,6 +427,7 @@ func (s *Service) runRollback(ctx context.Context, d core.Deployment, sourceID, 
 		}
 		now := time.Now().UTC()
 		d.StartedAt = &now
+		d.RuntimeReviewDigest = preview.RuntimeDigest
 		err = s.runtimeRollback.RollbackRuntime(ctx, d, source, app, server, func(state core.DeploymentState, message string) error { return s.transition(ctx, &d, state, message) })
 		if err != nil {
 			if errors.Is(ctx.Err(), context.Canceled) {

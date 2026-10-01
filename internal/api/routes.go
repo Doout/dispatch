@@ -58,4 +58,7 @@ func (a *API) publicRoutes(r chi.Router) {
 	r.Post("/edge/nodes/{id}/session", a.createEdgeSession)
 	r.Get("/edge/nodes/{id}/jobs/next", a.leaseEdgeJob)
 	r.Post("/edge/nodes/{id}/jobs/{jobId}/complete", a.completeEdgeJob)
+	r.Get("/edge/nodes/{id}/runtime/jobs/next", a.leaseRuntimeJob)
+	r.Post("/edge/nodes/{id}/runtime/jobs/{jobId}/heartbeat", a.renewRuntimeJob)
+	r.Post("/edge/nodes/{id}/runtime/jobs/{jobId}/complete", a.completeRuntimeJob)
 }

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/doout/dispatch/internal/agentruntime"
 )
 
 type status struct {
@@ -114,6 +116,17 @@ func runEdge(logger *slog.Logger, controllerURL, nodeID, token string) error {
 	if legacy && token == "" {
 		return errors.New("Legacy mode requires DISPATCH_EDGE_TOKEN")
 	}
+	var worker *agentruntime.Worker
+	if os.Getenv("DISPATCH_AGENT_RUNTIME") == "true" {
+		if legacy {
+			return errors.New("runtime mode requires key-bound enrollment")
+		}
+		worker, err = agentruntime.Open(env("DISPATCH_AGENT_RUNTIME_STATE", "/var/lib/dispatch-edge/runtime"), nodeID)
+		if err != nil {
+			return err
+		}
+		defer worker.Close()
+	}
 	var identity edgeIdentity
 	if !legacy {
 		identity, err = loadIdentity(env("DISPATCH_EDGE_IDENTITY_FILE", "/var/lib/dispatch-edge/identity.json"), controllerURL, nodeID)
@@ -151,6 +164,40 @@ func runEdge(logger *slog.Logger, controllerURL, nodeID, token string) error {
 				session = next
 			}
 			runtimeToken = session.Token
+		}
+		if worker != nil {
+			runtimeJob, runtimeErr := leaseRuntime(ctx, control, controllerURL, nodeID, runtimeToken)
+			if runtimeErr == nil && runtimeJob != nil {
+				runtimeErr = executeRuntime(ctx, control, controllerURL, nodeID, func(authCtx context.Context) (string, error) {
+					if session.Token == "" || time.Until(session.ExpiresAt) < time.Minute {
+						next, authErr := obtainSession(authCtx, control, identity, token)
+						if authErr != nil {
+							return "", authErr
+						}
+						session = next
+					}
+					return session.Token, nil
+				}, worker, *runtimeJob)
+				if runtimeErr == nil {
+					backoff = time.Second
+					continue
+				}
+			}
+			if runtimeErr != nil {
+				logger.Warn("runtime poll or execution lost its controller lease")
+				if errors.Is(runtimeErr, errEdgeUnauthorized) {
+					session = edgeSession{}
+				}
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(backoff):
+				}
+				if backoff < 15*time.Second {
+					backoff *= 2
+				}
+				continue
+			}
 		}
 		job, err := lease(ctx, control, controllerURL, nodeID, runtimeToken)
 		if err != nil {
