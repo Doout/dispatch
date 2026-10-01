@@ -12,6 +12,8 @@ import (
 
 const (
 	ProvisionService runtimecontract.Operation = "provision_service"
+	ServiceInspect   runtimecontract.Operation = "service_inspect"
+	ServiceDelete    runtimecontract.Operation = "service_delete"
 	APIVersion                                 = "dispatch.agent.runtime/v1"
 	MaxPayload                                 = 2 << 20
 	MaxResult                                  = 1 << 20
@@ -57,7 +59,8 @@ type LeasedJob struct {
 }
 
 type Result struct {
-	Route *core.ApplicationRoute `json:"route,omitempty"`
+	ServiceResource *core.ServiceResourceInspection `json:"serviceResource,omitempty"`
+	Route           *core.ApplicationRoute          `json:"route,omitempty"`
 
 	Health         *core.DeploymentHealth       `json:"health,omitempty"`
 	Storage        []core.StorageObservation    `json:"storage"`
@@ -120,7 +123,7 @@ func (r Request) Validate() error {
 		return errors.New("remote runtime supports Dockerfile and Compose workloads")
 	}
 	switch r.Operation {
-	case ProvisionService:
+	case ProvisionService, ServiceInspect, ServiceDelete:
 		if err := r.validateService(); err != nil {
 			return err
 		}

@@ -11,14 +11,37 @@ import (
 )
 
 func (s *SQLStore) CreateServiceProvisionRun(ctx context.Context, run core.ServiceProvisionRun) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO service_provision_runs(id,template_id,project_id,service_name,state,payload) VALUES(?,?,?,?,?,?)`),
-		run.ID, run.TemplateID, run.ProjectID, run.ServiceName, run.State, jsonText(run))
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO service_provision_runs(id,template_id,project_id,service_name,state,payload) VALUES(?,?,?,?,?,?)`), run.ID, run.TemplateID, run.ProjectID, run.ServiceName, run.State, jsonText(run))
+	if err != nil {
+		return err
+	}
+	if err = s.BindMutationAcceptance(ctx, tx.Tx, "service_provision", run.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) UpdateServiceProvisionRun(ctx context.Context, run core.ServiceProvisionRun) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE service_provision_runs SET state=?,payload=? WHERE id=?`), run.State, jsonText(run), run.ID)
-	return changed(result, err)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE service_provision_runs SET state=?,payload=? WHERE id=?`), run.State, jsonText(run), run.ID)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	if run.State == "failed" || run.State == "succeeded" {
+		if err = s.UpdateMutationOutcome(ctx, tx.Tx, "service_provision", run.ID, run.State); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) GetServiceProvisionRun(ctx context.Context, id string) (core.ServiceProvisionRun, error) {
@@ -92,6 +115,10 @@ func (s *SQLStore) RecoverInterruptedServiceProvisionRuns(ctx context.Context) e
 			continue
 		}
 		run.State, run.Error, run.FinishedAt = "failed", "Controller stopped before provisioning finished; check the provider before retrying.", &now
+		if _, e := s.GetServiceResource(ctx, run.ID); e == nil {
+			run.Phase = "Recovery required"
+			run.Error = "Controller stopped during an owned service operation. Inspect and reconcile this run; its original credentials are retained."
+		}
 		if err := s.UpdateServiceProvisionRun(ctx, run); err != nil {
 			return err
 		}

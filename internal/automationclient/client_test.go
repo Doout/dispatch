@@ -211,3 +211,46 @@ func TestJSONEvidencePreservesIntegerCursors(t *testing.T) {
 		t.Fatal("log continuation cursor lost precision", string(r.Data))
 	}
 }
+
+func TestSnapshotReviewIsExplicitAndRestoreKeepsSourceIdentity(t *testing.T) {
+	var calls atomic.Int32
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var input map[string]any
+		if json.NewDecoder(r.Body).Decode(&input) != nil || input["sourceSnapshotId"] != "snapshot-1" {
+			t.Error("restore lost snapshot identity")
+		}
+		io.WriteString(w, `{"id":"review-1"}`)
+	})
+	for _, input := range []string{
+		`{"name":"backup","diskSet":"all","consistency":"application-consistent","encryption":{"mode":"provider-managed"}}`,
+		`{"name":"backup","diskSet":"all","consistency":"crash-consistent","encryption":{"mode":"provider-managed"},"retainUntil":"tomorrow"}`,
+		`{"name":"backup","diskSet":"all","consistency":"crash-consistent","encryption":{"mode":"provider-managed"},"approve":true}`,
+	} {
+		if r := c.Call(context.Background(), "snapshot_review", Arguments{ServerID: "server-1", Input: json.RawMessage(input)}); r.OK || r.ExitCode() != 2 {
+			t.Fatal("unsupported capture reached provider", r)
+		}
+	}
+	if r := c.Call(context.Background(), "snapshot_accept", Arguments{Key: "snapshot-accept-key", Input: json.RawMessage(`{"digest":"digest","confirmName":"backup"}`)}); r.OK || calls.Load() != 0 {
+		t.Fatal("accepted missing review identity")
+	}
+	if r := c.Call(context.Background(), "provider_options", Arguments{ProjectID: "p-1", ProviderID: "provider-1", Input: json.RawMessage(`{"kind":"sizes","secretRefs":{"token":"owner-secret"}}`)}); r.OK || calls.Load() != 0 {
+		t.Fatal("client accepted owner-only credentials")
+	}
+	r := c.Call(context.Background(), "server_review", Arguments{Input: json.RawMessage(`{"projectId":"p-1","providerId":"provider-1","name":"isolated-clone","sourceSnapshotId":"snapshot-1","bootstrap":{"method":"cloud_init","platform":"linux-amd64","imageFamily":"existing-systemd","installRuntime":false}}`)})
+	if !r.OK || calls.Load() != 1 {
+		t.Fatal("restore review failed", r)
+	}
+}
+
+func TestMCPRejectsInvalidUTF8(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid protocol reached API") })
+	var out strings.Builder
+	input := "{\"jsonrpc\":\"2.0\",\"id\":\"\xff\",\"method\":\"ping\"}\n"
+	if err := c.ServeMCP(context.Background(), strings.NewReader(input), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"code":-32700`) {
+		t.Fatal("accepted invalid UTF8", out.String())
+	}
+}

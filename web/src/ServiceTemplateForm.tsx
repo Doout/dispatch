@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, Overview, ServiceProvisionRun, ServiceTemplate } from "./api";
+import { ServiceResourcePanel } from "./ServiceResourcePanel";
 import { PageHeader } from "./PageHeader";
 
 export function ServiceTemplateForm({ template, overview, onBack, onSaved }: { template: ServiceTemplate; overview: Overview; onBack: () => void; onSaved: () => Promise<void> }) {
@@ -33,6 +34,7 @@ export function ServiceTemplateForm({ template, overview, onBack, onSaved }: { t
    {entries.length > 0 && <fieldset><legend>Provisioning inputs</legend><div className="service-form-grid">{entries.map(([key, field]) => <label key={key}>{field.label || key}{field.type === "service" ? <select required={field.required} disabled={!!run} value={inputs[key] || ""} onChange={e => setInputs(old => ({ ...old, [key]: e.target.value }))}><option value="">Choose a service</option>{(overview.services ?? []).filter(service => service.projectId === template.projectId && service.type === field.serviceType).map(service => <option key={service.id} value={service.id}>{service.name}</option>)}</select> : <input required={field.required} disabled={!!run} type={field.type === "secret" ? "password" : "text"} autoComplete={field.type === "secret" ? "new-password" : "off"} value={inputs[key] || ""} onChange={e => setInputs(old => ({ ...old, [key]: e.target.value }))} />}{field.description && <small className="service-help">{field.description}</small>}</label>)}</div></fieldset>}
    <p>The template provisions the resource and saves its connection details as a Service. Credentials stay hidden after saving.</p>
    {run && <div className="service-provision-status" role="status"><strong>{run.state === "succeeded" ? "Service ready" : run.state === "failed" ? "Provisioning failed" : "Provisioning in progress"}</strong><p>{run.error || (run.state === "succeeded" ? "The service is available to applications in this project." : run.phase || "Waiting for the provider to finish.")}</p>{run.target && <p className="service-help">{run.target.provider === "docker" ? "Container" : "Helm release"}: <code>{run.target.resourceName}</code>{run.target.namespace ? ` · ${run.target.namespace}` : ""} · {overview.servers.find(server => server.id === run.target?.serverId)?.name ?? run.target.serverId}</p>}{run.state === "failed" && <p>Check the provider before trying again; it may already have created the resource.</p>}</div>}
+   {run?.target && <ServiceResourcePanel runId={run.id} canManage={true} canRecover={true} onChanged={onSaved} />}
    {error && <p role="alert" className="error">{error}</p>}
    {!run && <button className="primary-button" disabled={busy}>{busy ? "Starting…" : "Create service"}</button>}
   </form>

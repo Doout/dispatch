@@ -104,7 +104,19 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 		} else {
 			err = backend.Delete(ctx, server, *request.Storage)
 		}
+	case remoteruntime.ServiceInspect:
+		var inspected core.ServiceResourceInspection
+		inspected, err = e.executor.InspectServiceResource(ctx, request.Service.Request, server)
+		if err == nil {
+			result.ServiceResource = &inspected
+		}
+	case remoteruntime.ServiceDelete:
+		err = e.executor.DeleteServiceResource(ctx, request.Service.Request, server, request.Service.ExpectedResourceID)
 	case remoteruntime.ProvisionService:
+		if request.Service.Request.Password != "" {
+			result.ServiceOutputs, err = e.executor.Provision(ctx, request.Service.Request, request.Service.Docker, server)
+			break
+		}
 		name := deploy.ServiceResourceName(request.Service.Request.Run.ID)
 		var existing string
 		existing, err = e.command(ctx, "ps", "--all", "--filter", "name=^/"+name+"$", "--format", "{{.ID}}")

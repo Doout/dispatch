@@ -24,6 +24,7 @@ type helmDeploymentMetadata struct {
 	HealthPolicy   core.HealthPolicy   `json:"-"`
 	HealthPort     int                 `json:"-"`
 	HealthDomain   string              `json:"-"`
+	ProjectID      string              `json:"projectId,omitempty"`
 	AppID          string              `json:"appId"`
 	DeploymentID   string              `json:"deploymentId"`
 	ChartCommitSHA string              `json:"chartCommitSha,omitempty"`
@@ -42,12 +43,15 @@ func newHelmDeploymentMetadata(app core.App, deployment core.Deployment) helmDep
 		policy = app.HealthPolicy
 	}
 	policy, _ = core.NormalizeHealthPolicy(policy)
-	return helmDeploymentMetadata{HealthPolicy: policy, HealthPort: app.ContainerPort, HealthDomain: app.Domain, AppID: app.ID, DeploymentID: deployment.ID, ChartCommitSHA: deployment.CommitSHA,
+	return helmDeploymentMetadata{HealthPolicy: policy, HealthPort: app.ContainerPort, HealthDomain: app.Domain, ProjectID: app.ProjectID, AppID: app.ID, DeploymentID: deployment.ID, ChartCommitSHA: deployment.CommitSHA,
 		SourceRepo: repository, Provenance: app.HelmProvenance}
 }
 
 func (m helmDeploymentMetadata) labels() map[string]string {
 	labels := map[string]string{"dispatch.app/managed-by": "dispatch"}
+	if m.ProjectID != "" {
+		labels["dispatch.app/project-id"] = m.ProjectID
+	}
 	if m.AppID != "" {
 		labels["dispatch.app/app-id"] = m.AppID
 	}

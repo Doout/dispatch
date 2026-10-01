@@ -74,6 +74,21 @@ func (e DockerExecutor) Provision(ctx context.Context, req core.ServiceProvision
 	if err != nil {
 		return nil, err
 	}
+	if req.Password != "" {
+		current, err := e.InspectServiceResource(ctx, req, server)
+		if err != nil {
+			return nil, err
+		}
+		if current.State == "ready" {
+			return outputs, nil
+		}
+		if current.State != "absent" {
+			return nil, errors.New("owned service exists but is not ready; inspect it before recovery")
+		}
+		if err = e.checkServiceVolume(ctx, req); err != nil {
+			return nil, err
+		}
+	}
 	root, err := os.MkdirTemp("", "dispatch-service-")
 	if err != nil {
 		return nil, err
@@ -134,7 +149,14 @@ func (e DockerExecutor) Provision(ctx context.Context, req core.ServiceProvision
 		if !ready {
 			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			_ = e.command(cleanup, nil, io.Discard, "docker", "rm", "-f", name)
+			if req.Password != "" {
+				owned, err := e.InspectServiceResource(cleanup, req, server)
+				if err == nil && owned.ResourceID != "" {
+					_ = e.DeleteServiceResource(cleanup, req, server, owned.ResourceID)
+				}
+			} else {
+				_ = e.command(cleanup, nil, io.Discard, "docker", "rm", "-f", name)
+			}
 		}
 	}()
 	timer := time.NewTicker(time.Second)
