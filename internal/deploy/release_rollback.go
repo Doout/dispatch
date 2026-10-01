@@ -501,18 +501,53 @@ func (s *Service) runRollback(ctx context.Context, d core.Deployment, sourceID, 
 	if err = s.transition(ctx, &d, core.DeploymentStarting, "Restoring retained Helm release; hooks are disabled"); err != nil {
 		return
 	}
+	policy, err := core.NormalizeHealthPolicy(d.Health.Policy)
+	if err != nil {
+		s.fail(d, err)
+		return
+	}
+	d.Health.Policy = policy
+	for _, check := range policy.Checks {
+		if check.Kind != "tls" {
+			continue
+		}
+		preflight := policy
+		preflight.Checks = []core.HealthCheck{check}
+		result, checkErr := RunHealthPolicy(ctx, preflight, func(ctx context.Context, c core.HealthCheck) HealthObservation {
+			if c.Kind == "container" {
+				return HealthObservation{Passed: true}
+			}
+			return probeCertificate(ctx, app.Domain, c.Port)
+		})
+		if checkErr != nil {
+			result.Policy = policy
+			_ = reportDeploymentHealth(ctx, d, result)
+			s.fail(d, checkErr)
+			return
+		}
+	}
 	rollback := action.NewRollback(prepared.client.configuration)
 	rollback.Version = prepared.release.Version
 	rollback.DisableHooks = true
 	rollback.Wait = true
 	rollback.WaitForJobs = true
-	rollback.Timeout = helmOperationTimeout
+	rollback.Timeout = time.Duration(policy.TimeoutSeconds) * time.Second
 	if err = rollback.Run(prepared.source.Snapshot.Release); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			s.finish(&d, core.DeploymentCancelled, "Rollback cancelled; inspect release status before retrying")
 		} else {
 			s.fail(d, errors.New("Helm rollback failed. Inspect workload readiness and Helm history before retrying; original retained credentials were preserved."))
 		}
+		return
+	}
+	result, healthErr := RunHealthPolicy(ctx, policy, func(context.Context, core.HealthCheck) HealthObservation { return HealthObservation{Passed: true} })
+	if healthErr != nil {
+		_ = reportDeploymentHealth(ctx, d, result)
+		s.fail(d, healthErr)
+		return
+	}
+	if err = reportDeploymentHealth(ctx, d, result); err != nil {
+		s.fail(d, errors.New("cannot persist rollback health evidence"))
 		return
 	}
 	if capture != nil {

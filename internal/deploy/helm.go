@@ -141,6 +141,8 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 			return err
 		}
 	}
+	ctx, cancelHealth := context.WithTimeout(ctx, time.Duration(policy.TimeoutSeconds)*time.Second)
+	defer cancelHealth()
 	// Certificate checks precede chart mutation. Application HTTP/TCP checks
 	// become native readiness probes in the saved Helm manifest.
 	for _, check := range policy.Checks {
@@ -160,8 +162,17 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 			}
 		}
 	}
+	nativeStarted := time.Now().UTC()
 	if err := client.UpgradeInstall(ctx, release, app, deployment, values); err != nil {
-		result := core.DeploymentHealth{Policy: policy, State: "failed", Checks: []core.HealthCheckResult{{Check: policy.Checks[0], State: "failed", Message: "Native Helm readiness failed; inspect workload events. Raw chart output is not retained as health evidence."}}}
+		nativeFinished := time.Now().UTC()
+		result := core.DeploymentHealth{Policy: policy, State: "failed", StartedAt: &nativeStarted, FinishedAt: &nativeFinished, Checks: []core.HealthCheckResult{}}
+		for _, check := range policy.Checks {
+			state, message := "unavailable", fmt.Sprintf("Native readiness did not complete within the %d second limit; configured failure threshold is %d. Inspect workload events.", policy.TimeoutSeconds, policy.FailureThreshold)
+			if check.Kind == "tls" {
+				state, message = "passed", "Certificate preflight passed before chart application."
+			}
+			result.Checks = append(result.Checks, core.HealthCheckResult{Check: check, State: state, Message: message})
+		}
 		if ctx.Err() != nil {
 			result.State = "cancelled"
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -417,6 +428,7 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 		install.CreateNamespace = true
 		install.Atomic = true
 		install.Wait = true
+		install.WaitForJobs = true
 		install.Timeout = time.Duration(metadata.HealthPolicy.TimeoutSeconds) * time.Second
 		install.Description = metadata.description()
 		install.PostRenderer = metadata
@@ -439,6 +451,7 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	upgrade.ResetValues = true
 	upgrade.Atomic = true
 	upgrade.Wait = true
+	upgrade.WaitForJobs = true
 	upgrade.Timeout = time.Duration(metadata.HealthPolicy.TimeoutSeconds) * time.Second
 	upgrade.MaxHistory = c.settings.MaxHistory
 	upgrade.Description = metadata.description()
