@@ -1233,6 +1233,18 @@ CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE s
 -- dispatch:migration 073_deployment_health
 ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';
+
+-- dispatch:migration 074_application_routes
+ALTER TABLE servers ADD COLUMN routing_config TEXT NOT NULL DEFAULT 'null';
+CREATE TABLE application_routes (
+ app_id TEXT PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ server_id TEXT NOT NULL REFERENCES servers(id),
+ hostname TEXT NOT NULL UNIQUE,
+ requested_deployment_id TEXT NOT NULL,
+ record TEXT NOT NULL
+);
+
 -- dispatch:migration 075_infrastructure_providers
 CREATE TABLE infrastructure_providers (
  id TEXT PRIMARY KEY,
@@ -1346,7 +1358,6 @@ CREATE TABLE infrastructure_assignments(project_id TEXT NOT NULL REFERENCES proj
 ALTER TABLE servers ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN credential_id TEXT NOT NULL DEFAULT '';
-
 -- dispatch:migration 078_public_mutation_receipts
 CREATE TABLE public_mutation_receipts (
  id TEXT PRIMARY KEY,

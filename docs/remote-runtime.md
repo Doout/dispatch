@@ -27,6 +27,10 @@ Docker access automatically. Runtime work can occupy a node for up to thirty
 minutes; use a dedicated node when proxy request latency matters. Routine runtime
 operations use outbound HTTPS and require no inbound management port or SSH.
 
+For public application hostnames, configure the target-local provider with
+`DISPATCH_AGENT_ROUTING_DIRECTORY` and follow [managed application routing](application-routing.md).
+Route publication runs inside the same checked deployment receipt.
+
 ## Operations and evidence
 
 The controller and agent negotiate `dispatch.agent.runtime/v1` and an operation
@@ -38,6 +42,18 @@ host shell endpoint. Built-in PostgreSQL ServiceTemplates use the same queue,
 with project, template, target and provision-run ownership checked before lease
 and completion. Generated connection values remain encrypted until the controller
 saves the service connection. Other remote service provisioners are rejected.
+
+Storage inventory and reviewed volume deletion use target-scoped typed jobs.
+They support retained storage even after the original application is removed.
+Ownership and policy are checked at submission, lease and completion; the worker
+re-inspects identity and consumers before removal. Existing storage permission
+and destructive-review requirements still apply. See [storage](storage.md).
+
+The worker encrypts and fsyncs final health evidence in its running operation
+receipt before the readiness gate returns. A candidate cannot be promoted if
+that write fails. Completed and interrupted receipts return the captured health
+evidence, including when subsequent route publication fails; the controller
+saves it against the accepted deployment or rollback policy.
 
 `GET /api/v1/servers/{id}/capabilities` describes the configured runtime driver.
 The node's `runtimeVersion` and `runtimeCapabilities` details describe its last
