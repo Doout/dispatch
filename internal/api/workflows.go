@@ -359,6 +359,10 @@ func (a *API) listWorkflowStages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) approveWorkflowStage(w http.ResponseWriter, r *http.Request) {
+	if currentIdentity(r.Context()).Kind == core.PrincipalServiceAccount {
+		problem(w, 403, "Human approval required", "Automation credentials cannot approve a human approval gate.")
+		return
+	}
 	item, err := a.workflows.ApproveStage(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		a.workflowProblem(w, err)

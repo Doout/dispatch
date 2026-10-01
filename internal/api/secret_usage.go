@@ -243,6 +243,15 @@ func (a *API) secretUsageIndex(ctx context.Context) ([]secretUsage, error) {
 	for _, source := range sources {
 		add(source.CredentialSecretID, false, secretConsumer{ID: source.ID, Kind: "configuration", Name: source.Name, State: source.State}, false, "Configuration repository checkout")
 	}
+	if manager := a.infrastructureManager(); manager != nil {
+		providers, err := manager.Store.ListInfrastructureProviders(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range providers {
+			add(item.CredentialSecretID, false, secretConsumer{ID: item.ID, Kind: "infrastructure_provider", Name: item.Name, State: item.State}, false, "Provider authentication")
+		}
+	}
 	for _, server := range servers {
 		if server.Builder != nil {
 			add(server.Builder.SSHSecretID, false, secretConsumer{ID: server.ID, Kind: "builder", Name: server.Name, State: server.State}, false, "Builder SSH authentication")

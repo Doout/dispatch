@@ -574,12 +574,12 @@ func (s *SQLStore) CreateServer(ctx context.Context, server core.Server) error {
 	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO servers(
         id,name,address,runtime,state,agent_mode,kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,
         openshift_service_account,openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,
-        relay_access_token,relay_pending_events,relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,routing_config,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), server.ID, server.Name, server.Address, server.Runtime, server.State, server.AgentMode,
+        relay_access_token,relay_pending_events,relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,project_id,routing_config,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), server.ID, server.Name, server.Address, server.Runtime, server.State, server.AgentMode,
 		kubernetes.KubeconfigPath, kubernetes.Context, kubernetes.Namespace, kubernetes.KubeconfigData,
 		kubernetes.CertificateAuthorityData, openShiftServiceAccount(kubernetes), openShiftServiceAccountNamespace(kubernetes),
 		openShiftTokenSecret(kubernetes), openShiftConnectedAt(kubernetes), relay.EncryptedAccessToken, relay.PendingEvents,
-		nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, string(builder), server.AgentNodeID, jsonText(server.Routing), stamp(server.CreatedAt))
+		nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, string(builder), server.AgentNodeID, server.ProjectID, jsonText(server.Routing), stamp(server.CreatedAt))
 	return err
 }
 
@@ -593,11 +593,11 @@ func (s *SQLStore) UpdateServer(ctx context.Context, server core.Server) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE servers SET name=?,address=?,runtime=?,state=?,agent_mode=?,
         kubeconfig_path=?,kube_context=?,kube_namespace=?,kubeconfig_data=?,kube_ca_data=?,openshift_service_account=?,
         openshift_service_account_namespace=?,openshift_token_secret=?,openshift_connected_at=?,relay_access_token=?,relay_pending_events=?,
-		relay_oldest_pending_at=?,relay_last_connected_at=?,relay_last_error=?,builder_config=?,agent_node_id=?,routing_config=? WHERE id=?`), server.Name, server.Address, server.Runtime,
+		relay_oldest_pending_at=?,relay_last_connected_at=?,relay_last_error=?,builder_config=?,agent_node_id=?,routing_config=? WHERE id=? AND project_id=?`), server.Name, server.Address, server.Runtime,
 		server.State, server.AgentMode, kubernetes.KubeconfigPath, kubernetes.Context, kubernetes.Namespace,
 		kubernetes.KubeconfigData, kubernetes.CertificateAuthorityData, openShiftServiceAccount(kubernetes),
 		openShiftServiceAccountNamespace(kubernetes), openShiftTokenSecret(kubernetes), openShiftConnectedAt(kubernetes),
-		relay.EncryptedAccessToken, relay.PendingEvents, nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, string(builder), server.AgentNodeID, jsonText(server.Routing), server.ID)
+		relay.EncryptedAccessToken, relay.PendingEvents, nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, string(builder), server.AgentNodeID, jsonText(server.Routing), server.ID, server.ProjectID)
 	return changed(result, err)
 }
 
@@ -619,7 +619,7 @@ func (s *SQLStore) ListServers(ctx context.Context) ([]core.Server, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,address,runtime,state,agent_mode,
         kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,openshift_service_account,
         openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,relay_access_token,relay_pending_events,
-		relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,routing_config,created_at FROM servers ORDER BY name`)
+		relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,project_id,routing_config,created_at FROM servers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -639,7 +639,7 @@ func (s *SQLStore) GetServer(ctx context.Context, id string) (core.Server, error
 	item, err := scanServer(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,address,runtime,state,agent_mode,
         kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,openshift_service_account,
         openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,relay_access_token,relay_pending_events,
-		relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,routing_config,created_at FROM servers WHERE id=?`), id))
+		relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,project_id,routing_config,created_at FROM servers WHERE id=?`), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -699,7 +699,7 @@ func scanServer(row scanner) (core.Server, error) {
 	err := row.Scan(&item.ID, &item.Name, &item.Address, &item.Runtime, &item.State, &item.AgentMode,
 		&kubernetes.KubeconfigPath, &kubernetes.Context, &kubernetes.Namespace, &kubernetes.KubeconfigData,
 		&kubernetes.CertificateAuthorityData, &serviceAccount, &serviceAccountNamespace, &tokenSecret, &connected,
-		&relay.EncryptedAccessToken, &relay.PendingEvents, &relayOldest, &relayConnected, &relay.LastError, &builder, &item.AgentNodeID, &routing, &created)
+		&relay.EncryptedAccessToken, &relay.PendingEvents, &relayOldest, &relayConnected, &relay.LastError, &builder, &item.AgentNodeID, &item.ProjectID, &routing, &created)
 	if err != nil {
 		return item, err
 	}
