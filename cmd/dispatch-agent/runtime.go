@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/doout/dispatch/internal/agentruntime"
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/remoteruntime"
 )
 
@@ -65,7 +65,13 @@ func leaseRuntime(ctx context.Context, client *http.Client, controller, node, to
 	return job, nil
 }
 
-func executeRuntime(ctx context.Context, client *http.Client, controller, node string, token func(context.Context) (string, error), worker *agentruntime.Worker, job remoteruntime.LeasedJob) error {
+var runtimeHeartbeatInterval = 10 * time.Second
+
+type runtimeWorker interface {
+	Run(context.Context, remoteruntime.LeasedJob, deploy.Progress) remoteruntime.Result
+}
+
+func executeRuntime(ctx context.Context, client *http.Client, controller, node string, token func(context.Context) (string, error), worker runtimeWorker, job remoteruntime.LeasedJob) error {
 	execution, cancel := context.WithDeadline(ctx, job.ExpiresAt)
 	defer cancel()
 	if job.CancelRequested {
@@ -85,7 +91,7 @@ func executeRuntime(ctx context.Context, client *http.Client, controller, node s
 			return execution.Err()
 		})
 	}()
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(runtimeHeartbeatInterval)
 	defer ticker.Stop()
 	var connectionErr error
 	stopped := execution.Done()
