@@ -145,6 +145,43 @@ history may still reference them. This controller cleanup does not uninstall Hel
 releases or delete runtime resources. Audit events and analytics archives have
 independent retention and are not pruned by this action.
 
+### Runtime artifacts
+
+The same project policy also stores `imageDays`, `stoppedRevisionDays` and
+`keepRollbackRevisions`. An age of zero preserves that artifact kind indefinitely.
+A zero rollback count uses the default of five; an explicit count must be at least
+two. Saving history edits preserves these runtime limits, and saving runtime limits
+preserves history settings. Cleanup is always explicit.
+
+Choose **Preview runtime cleanup** to inspect owned images and stopped revisions.
+The saved review lists exact resource identities, target and application names,
+and readable protection reasons. Active releases, current and retained rollback
+revisions, shared images, and workflow or baseline references stay protected.
+Runtime cleanup never deletes volumes, networks or backup artifacts.
+
+The existing retention preview and apply endpoints accept `scope: "runtime"`.
+Preview requires `expectedPolicy` and returns `runtime` with a durable review ID,
+digest, policy, expiry, candidate items and per-item results. Each review contains
+at most 50 deletion candidates. Apply requires the same `expectedPolicy`,
+`runtimeReviewId`, `runtimeReviewDigest` and `confirm` equal to the project ID.
+The operator must confirm the displayed consequences before removal. Removing a
+stopped container can discard its writable container layer, even though mounted
+volumes remain retained.
+
+The controller rechecks the policy, ownership and current references before
+mutation. A stale planned review must be replaced. Once cleanup is accepted,
+a partial or blocked receipt can be retried after its original review expiry,
+subject to the same policy and fresh runtime checks. Retry stays within the
+original candidate list. Confirmed absence counts as completed removal; failed
+items keep their diagnostics and can be retried after resolving the cause.
+
+Save the receipt ID to resume after a disconnect. Use **Reopen a cleanup receipt**
+or `GET /api/v1/projects/{id}/retention/runtime-reviews/{reviewId}` to inspect it.
+The UI keeps older-policy receipts readable and requires a fresh preview before
+further deletion under a changed policy. A successful cleanup receipt records
+what was removed or already absent; it does not imply application data was backed
+up or restored.
+
 ## Interrupted work
 
 The controller renews leases for executions it owns, including long image builds
