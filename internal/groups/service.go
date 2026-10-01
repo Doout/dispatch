@@ -541,7 +541,7 @@ func (s *Service) deployComponent(ctx context.Context, run core.PreviewGroupRun,
 	}
 	for _, linked := range run.Sources {
 		if linked.PullRequest > 0 {
-			app.HelmProvenance.PullRequests = append(app.HelmProvenance.PullRequests, core.HelmPullRequest{Repository: linked.Repository, Number: linked.PullRequest,
+			app.HelmProvenance.PullRequests = append(app.HelmProvenance.PullRequests, core.HelmPullRequest{Repository: linked.Repository, Number: linked.PullRequest, GitHubAppID: group.GitHubAppID, CommitSHA: linked.SHA,
 				URL: githubURL + "/" + linked.Repository + "/pull/" + strconv.Itoa(linked.PullRequest)})
 		}
 	}

@@ -53,6 +53,11 @@ func (s *Service) prepareRollback(ctx context.Context, id string) (rollbackPrepa
 	if err != nil {
 		return out, errors.New("The application is unavailable.")
 	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, d.CommitSHA); err != nil {
+			return out, err
+		}
+	}
 	if d.State != core.DeploymentSucceeded {
 		return out, errors.New("Select a successful deployment to roll back to.")
 	}

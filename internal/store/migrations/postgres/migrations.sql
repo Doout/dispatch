@@ -1185,6 +1185,20 @@ CREATE TABLE storage_resources (
 CREATE INDEX storage_resources_server ON storage_resources(server_id);
 ALTER TABLE audit_events ADD COLUMN confirmed_policy TEXT NOT NULL DEFAULT '';
 
+-- dispatch:migration 071_preview_source_trust
+ALTER TABLE workflow_preview_triggers ADD COLUMN source_trust_policy TEXT NOT NULL DEFAULT 'same_repository';
+ALTER TABLE workflow_revisions ADD COLUMN source_trust TEXT NOT NULL DEFAULT 'null';
+ALTER TABLE workflow_preview_templates ADD COLUMN source_trust_policy TEXT NOT NULL DEFAULT 'same_repository';
+CREATE TABLE preview_source_trust_approvals (
+    id TEXT PRIMARY KEY,
+    resource_id TEXT NOT NULL REFERENCES workflow_resources(id),
+    digest TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    revoked_at TEXT
+);
+CREATE INDEX preview_source_trust_approval_lookup ON preview_source_trust_approvals(resource_id,digest);
 -- dispatch:migration 072_remote_runtime
 ALTER TABLE servers ADD COLUMN agent_node_id TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX servers_agent_node ON servers(agent_node_id) WHERE agent_node_id<>'';

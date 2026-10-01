@@ -85,6 +85,28 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// Recheck source authorization at the credential-release boundary. A queued
+	// job cannot outlive its preview approval or a moved pull request head.
+	if job.Request.Operation == runtimecontract.Deploy || job.Request.Operation == runtimecontract.Rollback || job.Request.Operation == runtimecontract.Start || job.Request.SourceDeploymentID != "" {
+		app, readErr := a.store.GetApp(r.Context(), job.Request.Application.ID)
+		commit := job.Request.Deployment.CommitSHA
+		if readErr == nil && job.Request.SourceDeploymentID != "" {
+			source, sourceErr := a.store.GetDeployment(r.Context(), job.Request.SourceDeploymentID)
+			if sourceErr != nil || source.AppID != app.ID {
+				readErr = errors.New("retained deployment ownership changed")
+			} else {
+				commit = source.CommitSHA
+			}
+		}
+		if readErr == nil && a.workflows != nil {
+			readErr = a.workflows.CheckDeploymentTrust(r.Context(), app, commit)
+		}
+		if readErr != nil {
+			_ = broker.Complete(r.Context(), node.ID, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: remoteruntime.Result{State: "failed", Code: runtimecontract.OwnershipConflict, Message: "Runtime source authorization changed before dispatch."}})
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
 	// Recheck enrollment immediately before releasing the encrypted job payload.
 	if _, _, valid := a.runtimeNode(w, r); !valid {
 		return

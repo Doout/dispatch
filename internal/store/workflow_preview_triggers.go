@@ -11,16 +11,28 @@ import (
 )
 
 func (s *SQLStore) CreateWorkflowPreviewTrigger(ctx context.Context, item core.WorkflowPreviewTrigger) error {
+	if item.SourceTrustPolicy == "" {
+		item.SourceTrustPolicy = "same_repository"
+	}
+	if item.TemplateID != "" {
+		template, err := s.GetWorkflowPreviewTemplate(ctx, item.TemplateID)
+		if err != nil {
+			return err
+		}
+		if template.SourceTrustPolicy != "" {
+			item.SourceTrustPolicy = template.SourceTrustPolicy
+		}
+	}
 	if item.TTL == "" {
 		item.TTL = "0"
 	}
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,live_reload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour, jsonText(item.SourceDefaults), item.TTL, nullTime(item.ExpiresAt), nullTime(item.CleanupLeaseUntil), item.LiveReload)
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,live_reload,source_trust_policy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour, jsonText(item.SourceDefaults), item.TTL, nullTime(item.ExpiresAt), nullTime(item.CleanupLeaseUntil), item.LiveReload, item.SourceTrustPolicy)
 	return err
 }
 
 func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.WorkflowPreviewTrigger, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,report_comment_id,linked_pull_requests,template_id,created_at,closed_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,lifetime_report_pending,lifetime_start_comment_id,live_reload,live_reload_comment_id FROM workflow_preview_triggers ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,report_comment_id,linked_pull_requests,template_id,created_at,closed_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,lifetime_report_pending,lifetime_start_comment_id,live_reload,live_reload_comment_id,source_trust_policy FROM workflow_preview_triggers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +44,7 @@ func (s *SQLStore) ListWorkflowPreviewTriggers(ctx context.Context) ([]core.Work
 		var closed, expires, lease sql.NullString
 		var templateID sql.NullString
 		var linked, templateSource, defaults string
-		if err := rows.Scan(&item.ID, &item.ResourceID, &item.GitHubAppID, &item.Repository, &item.PullRequestNumber, &item.Command, &item.PreviewURL, &item.ReportCommentID, &linked, &templateID, &created, &closed, &templateSource, &item.AutoDeploy, &item.MaxAutoRunsPerHour, &defaults, &item.TTL, &expires, &lease, &item.LifetimeReportPending, &item.LifetimeStartCommentID, &item.LiveReload, &item.LiveReloadCommentID); err != nil {
+		if err := rows.Scan(&item.ID, &item.ResourceID, &item.GitHubAppID, &item.Repository, &item.PullRequestNumber, &item.Command, &item.PreviewURL, &item.ReportCommentID, &linked, &templateID, &created, &closed, &templateSource, &item.AutoDeploy, &item.MaxAutoRunsPerHour, &defaults, &item.TTL, &expires, &lease, &item.LifetimeReportPending, &item.LifetimeStartCommentID, &item.LiveReload, &item.LiveReloadCommentID, &item.SourceTrustPolicy); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(templateSource), &item.TemplateSource); err != nil {

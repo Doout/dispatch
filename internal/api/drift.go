@@ -270,7 +270,18 @@ func (a *API) reapplyApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = a.deploy.WithIdleApplication(r.Context(), id, func() error {
-		_, err := a.drift.Reapply(r.Context(), id, input.DeploymentID, currentIdentity(r.Context()).ID)
+		app, err := a.store.GetApp(r.Context(), id)
+		if err != nil {
+			return err
+		}
+		deployment, err := a.store.GetDeployment(r.Context(), input.DeploymentID)
+		if err != nil {
+			return err
+		}
+		if err := a.workflows.CheckDeploymentTrust(r.Context(), app, deployment.CommitSHA); err != nil {
+			return err
+		}
+		_, err = a.drift.Reapply(r.Context(), id, input.DeploymentID, currentIdentity(r.Context()).ID)
 		return err
 	})
 	if errors.Is(err, deploy.ErrDeploymentActive) || errors.Is(err, observe.ErrBusy) {

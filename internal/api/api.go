@@ -150,6 +150,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	deployments.OnFinished = a.observations.DeploymentFinished
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	a.workflows.RemoteDockerServices = (deploy.RemoteExecutor{Local: deploy.DockerExecutor{}, Broker: a.runtimeBroker()}).Provision
+	a.workflows.ResolvePreviewSource = a.resolvePreviewSource
 	a.handler = a.routes()
 	return a
 }

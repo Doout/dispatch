@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/remoteruntime"
 )
@@ -17,6 +18,7 @@ import (
 func runtimeAPIFixture(t *testing.T) (*API, core.PrivateNetwork, edge.Session, core.App) {
 	t.Helper()
 	a := serviceTestAPI(t)
+	a.deploy = deploy.NewService(a.store, deploy.RemoteExecutor{Local: deploy.SimulationExecutor{}, Broker: a.runtimeBroker()})
 	ctx := context.Background()
 	var node core.PrivateNetwork
 	raw := serviceRequestTest(t, a, "POST", "/api/v1/private-networks", map[string]string{"name": "runtime", "driver": "dispatch_agent"}, 201)

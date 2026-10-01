@@ -417,6 +417,7 @@ export type WorkflowPreviewTemplateGitSource = {
   lastError?: string;
 };
 export type WorkflowPreviewTemplate = {
+  sourceTrustPolicy?: "same_repository" | "approval_required";
   commentOnOpen?: boolean;
   ttl?: string;
   watchRepositories?: string[];
@@ -473,7 +474,13 @@ export type WorkflowFeedback = {
   reviewOnFailure?: string;
   targets: { githubAppId: string; repository: string; number: number; commitSha: string; url?: string; status?: string; review?: string; reviewId?: number; error?: string; skipReason?: string }[];
 };
+export type PreviewSourceTrustDecision = {
+  policy: string; digest: string; allowed: boolean; reason: string;
+  sources: { alias: string; repository: string; repositoryId: number; headRepository: string; headRepositoryId: number; fork: boolean; pullRequest: number; commitSha: string; githubAppId: string }[];
+  credentialScope: string[]; environments: string[]; approvalId?: string; checkedAt: string;
+};
 export type WorkflowRevision = {
+  sourceTrust?: PreviewSourceTrustDecision;
   feedback?: WorkflowFeedback;
   id: string;
   resourceId: string;
@@ -935,6 +942,9 @@ export const api = {
   reconcileStorage: (serverId: string) => request<StorageResource[]>(`/api/v1/servers/${encodeURIComponent(serverId)}/storage/reconcile`, { method: "POST" }),
   storagePolicy: (id: string, revision: number, policy: "retain" | "destroy") => request<StorageResource>(`/api/v1/storage/${id}/policy`, { method: "PUT", body: JSON.stringify({ revision, policy }) }),
   deleteStorage: (id: string) => destructiveRequest<void>(`/api/v1/storage/${id}`, { method: "DELETE" }),
+ previewSourceTrust: (id: string) => request<PreviewSourceTrustDecision>(`/api/v1/workflow/revisions/${id}/source-trust`),
+ approvePreviewSourceTrust: (id: string, confirmDigest: string, expiresAt: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals`, { method: "POST", body: JSON.stringify({ confirmDigest, expiresAt }) }),
+ revokePreviewSourceTrust: (id: string, approvalId: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals/${approvalId}`, { method: "DELETE" }),
  workflowRevision: (id: string) => request<WorkflowRevision>(`/api/v1/workflow/revisions/${id}`),
  eventRules: () => request<EventRule[]>("/api/v1/events/rules"),
  eventActivity: (transport = "", before = "") => request<EventActivityPage>(`/api/v1/events/activity?${new URLSearchParams({transport,before})}`),

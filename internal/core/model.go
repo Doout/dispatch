@@ -163,9 +163,11 @@ type HelmProvenance struct {
 }
 
 type HelmPullRequest struct {
-	Repository string `json:"repository"`
-	Number     int    `json:"number"`
-	URL        string `json:"url,omitempty"`
+	GitHubAppID string `json:"githubAppId,omitempty"`
+	CommitSHA   string `json:"commitSha,omitempty"`
+	Repository  string `json:"repository"`
+	Number      int    `json:"number"`
+	URL         string `json:"url,omitempty"`
 }
 
 func (a App) SpecDigest() string {

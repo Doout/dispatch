@@ -12,6 +12,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/events"
+	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -49,6 +50,9 @@ func TestPreviewTemplateCreatesOneInstancePerPRAndReusesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := New(data, deploy.NewService(data, &previewCleanupRecorder{cleaned: map[string]bool{}}), false, AuthConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a.workflows.ResolvePreviewSource = func(_ context.Context, _ string, repository string, _ int) (githubapp.PullRequestHead, error) {
+		return fixturePreviewSource(repository, strings.Repeat("a", 40)), nil
+	}
 	target := &previewPollTarget{connectionID: "github", repository: events.NormalizeRepository(template.Repository), workflowTemplates: []core.WorkflowPreviewTemplate{template}}
 	event := core.IncomingEvent{Repository: target.repository, PullRequestNumber: 42, HeadSHA: strings.Repeat("a", 40), Command: "/preview", SourceCommentID: "comment-1", TrustedActor: true}
 	if err := a.processWorkflowPreviewComment(ctx, target, event, events.GitHubResolver{}); err != nil {

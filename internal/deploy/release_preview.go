@@ -53,6 +53,12 @@ func (s *Service) PreviewRelease(ctx context.Context, app core.App, server core.
 	add := func(name, state, message string) {
 		out.Checks = append(out.Checks, ReleaseValidation{name, state, message})
 	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, revision); err != nil {
+			add("Preview source trust", "failed", err.Error())
+			return out
+		}
+	}
 	bindings, err := s.store.GetAppServiceBindings(ctx, app.ID)
 	if err != nil {
 		add("Service credentials", "failed", "Service bindings could not be read.")

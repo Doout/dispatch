@@ -58,6 +58,7 @@ type WorkflowResource struct {
 
 // WorkflowPreviewTrigger binds an inline workflow to one pull request command.
 type WorkflowPreviewTrigger struct {
+	SourceTrustPolicy      string                                  `json:"sourceTrustPolicy"`
 	LifetimeStartCommentID string                                  `json:"-"`
 	LifetimeReportPending  bool                                    `json:"-"`
 	TTL                    string                                  `json:"ttl"`
@@ -103,6 +104,7 @@ type WorkflowPreviewTemplateGitSource struct {
 }
 
 type WorkflowPreviewTemplate struct {
+	SourceTrustPolicy  string                            `json:"sourceTrustPolicy"`
 	CommentOnOpen      bool                              `json:"commentOnOpen"`
 	TTL                string                            `json:"ttl"`
 	WatchRepositories  []string                          `json:"watchRepositories,omitempty"`
@@ -168,8 +170,9 @@ type WorkflowFeedback struct {
 }
 
 type WorkflowRevision struct {
-	PullRequests []WorkflowPullRequest `json:"pullRequests,omitempty"`
-	Feedback     *WorkflowFeedback     `json:"feedback,omitempty"`
+	SourceTrust  *PreviewSourceTrustDecision `json:"sourceTrust,omitempty"`
+	PullRequests []WorkflowPullRequest       `json:"pullRequests,omitempty"`
+	Feedback     *WorkflowFeedback           `json:"feedback,omitempty"`
 
 	ID         string                            `json:"id"`
 	ResourceID string                            `json:"resourceId"`
