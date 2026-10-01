@@ -62,7 +62,7 @@ func (a *API) auditMutation(next http.Handler) http.Handler {
 			return
 		}
 		id := chi.URLParam(r, "id")
-		e := core.AuditEvent{ID: ulid.Make().String(), ActorID: identity.ID, ActorName: identity.DisplayName, Action: r.Method + " " + route, ResourceID: id, Outcome: "succeeded", CreatedAt: time.Now().UTC()}
+		e := core.AuditEvent{ID: ulid.Make().String(), ActorID: identity.ID, ActorType: identity.Kind, CredentialID: identity.CredentialID, ActorName: identity.DisplayName, Action: r.Method + " " + route, ResourceID: id, Outcome: "succeeded", CreatedAt: time.Now().UTC()}
 		if confirmed.Review != nil {
 			e.ResourceID, e.ProjectID, e.AppID = confirmed.Review.ResourceID, confirmed.Review.ProjectID, confirmed.Review.AppID
 			e.ConfirmedPolicy = confirmed.Review.StoragePolicy

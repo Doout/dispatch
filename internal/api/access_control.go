@@ -48,17 +48,18 @@ func controllerPermissions() []core.Permission {
 		core.PermissionDeploymentCancel,
 		core.PermissionStageApprove,
 		core.PermissionInfrastructureManage,
+		core.PermissionInfrastructureInspect, core.PermissionInfrastructureCreate, core.PermissionInfrastructureModify, core.PermissionInfrastructureDelete, core.PermissionSnapshotCreate, core.PermissionSnapshotRestore,
 		core.PermissionSecretsManage,
 		core.PermissionConnectionsManage,
 	}
 }
 
 func controllerIdentity(username string) core.Identity {
-	return core.Identity{ID: "controller-owner", Username: username, DisplayName: username, SystemRole: core.UserRoleOwner, Permissions: controllerPermissions()}
+	return core.Identity{Kind: core.PrincipalUser, ID: "controller-owner", Username: username, DisplayName: username, SystemRole: core.UserRoleOwner, Permissions: controllerPermissions()}
 }
 
 func identityForUser(user core.User) core.Identity {
-	identity := core.Identity{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, SystemRole: user.SystemRole}
+	identity := core.Identity{Kind: core.PrincipalUser, ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, SystemRole: user.SystemRole}
 	if user.SystemRole == core.UserRoleOwner {
 		identity.Permissions = controllerPermissions()
 	}
@@ -159,6 +160,9 @@ func (a *API) canProject(ctx context.Context, permission core.Permission, projec
 	if identity.SystemRole == core.UserRoleOwner {
 		return true, nil
 	}
+	if identity.Kind == core.PrincipalServiceAccount {
+		return a.directProjectPermission(ctx, identity, permission, projectID)
+	}
 	assignments, err := a.effectiveAssignments(ctx, identity.ID)
 	if err != nil {
 		return false, err
@@ -168,7 +172,7 @@ func (a *API) canProject(ctx context.Context, permission core.Permission, projec
 			return true, nil
 		}
 	}
-	return false, nil
+	return a.directProjectPermission(ctx, identity, permission, projectID)
 }
 
 func (a *API) visibleProjectIDs(ctx context.Context) (map[string]bool, error) {
@@ -182,6 +186,20 @@ func (a *API) visibleProjectIDs(ctx context.Context) (map[string]bool, error) {
 		for _, project := range projects {
 			visible[project.ID] = true
 		}
+		return visible, nil
+	}
+	if grants, err := a.directProjectGrants(ctx, identity); err != nil {
+		return nil, err
+	} else {
+		for _, grant := range grants {
+			for _, p := range grant.Permissions {
+				if p == core.PermissionProjectView {
+					visible[grant.ProjectID] = true
+				}
+			}
+		}
+	}
+	if identity.Kind == core.PrincipalServiceAccount {
 		return visible, nil
 	}
 	assignments, err := a.effectiveAssignments(ctx, identity.ID)
@@ -237,6 +255,10 @@ func (a *API) ownerOnly(next http.Handler) http.Handler {
 
 func (a *API) directUserOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if currentIdentity(r.Context()).Kind == core.PrincipalServiceAccount {
+			problem(w, 403, "Human identity required", "This action cannot be performed by an automation identity.")
+			return
+		}
 		if _, impersonating := currentImpersonator(r.Context()); impersonating {
 			problem(w, http.StatusForbidden, "Unavailable while viewing as another user", "Return to your account before changing sign-in credentials.")
 			return
@@ -543,13 +565,20 @@ func (a *API) authMe(w http.ResponseWriter, r *http.Request) {
 	assignments := []core.RoleAssignment{}
 	if identity.SystemRole != core.UserRoleOwner {
 		var err error
-		assignments, err = a.effectiveAssignments(r.Context(), identity.ID)
+		if identity.Kind != core.PrincipalServiceAccount {
+			assignments, err = a.effectiveAssignments(r.Context(), identity.ID)
+		}
 		if err != nil {
 			a.internal(w, err)
 			return
 		}
 	}
-	result := map[string]any{"identity": identity, "assignments": assignments}
+	grants, err := a.directProjectGrants(r.Context(), identity)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	result := map[string]any{"identity": identity, "assignments": assignments, "grants": grants}
 	if impersonator, ok := currentImpersonator(r.Context()); ok {
 		result["impersonator"] = impersonator
 	}
@@ -994,7 +1023,10 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 		}
 		return overview, nil
 	}
-	assignments, err := a.effectiveAssignments(ctx, identity.ID)
+	assignments := []core.RoleAssignment{}
+	if identity.Kind != core.PrincipalServiceAccount {
+		assignments, err = a.effectiveAssignments(ctx, identity.ID)
+	}
 	if err != nil {
 		return overview, err
 	}
@@ -1016,6 +1048,21 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 			}
 			for _, permission := range role.Permissions {
 				projectPermissionSets[assignment.ScopeID][permission] = true
+			}
+		}
+	}
+	grants, err := a.directProjectGrants(ctx, identity)
+	if err != nil {
+		return overview, err
+	}
+	for _, grant := range grants {
+		if projectPermissionSets[grant.ProjectID] == nil {
+			projectPermissionSets[grant.ProjectID] = map[core.Permission]bool{}
+		}
+		for _, permission := range grant.Permissions {
+			projectPermissionSets[grant.ProjectID][permission] = true
+			if permission == core.PermissionProjectView {
+				projectIDs[grant.ProjectID] = true
 			}
 		}
 	}
