@@ -1234,6 +1234,20 @@ CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE s
 ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';
 
+-- dispatch:migration 078_public_mutation_receipts
+CREATE TABLE public_mutation_receipts (
+ id TEXT PRIMARY KEY,
+ caller_kind TEXT NOT NULL, caller_id TEXT NOT NULL, credential_id TEXT NOT NULL,
+ project_id TEXT NOT NULL, action TEXT NOT NULL, key_digest TEXT NOT NULL, request_digest TEXT NOT NULL,
+ operation_kind TEXT NOT NULL, operation_id TEXT NOT NULL, resource_id TEXT NOT NULL,
+ state TEXT NOT NULL, message TEXT NOT NULL, failure_status INTEGER NOT NULL,
+ claim_token TEXT NOT NULL, claim_until TEXT NOT NULL, retry_until TEXT NOT NULL,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(caller_kind,caller_id,project_id,action,key_digest)
+);
+CREATE INDEX public_mutation_operation ON public_mutation_receipts(operation_kind,operation_id);
+ALTER TABLE audit_events ADD COLUMN operation_id TEXT NOT NULL DEFAULT '';
+
 -- dispatch:migration 080_remote_storage
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect');
