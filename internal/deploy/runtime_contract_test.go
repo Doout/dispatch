@@ -26,9 +26,19 @@ func TestRuntimeConformance(t *testing.T) {
 				server := core.Server{ID: "local", Address: "local", Runtime: core.ServerRuntimeDocker}
 				var executor Executor = SimulationExecutor{Delay: time.Nanosecond}
 				if driver == "docker" {
-					executor = DockerExecutor{run: func(_ context.Context, _ io.Reader, _ io.Writer, name string, args ...string) error {
+					executor = DockerExecutor{run: func(_ context.Context, _ io.Reader, output io.Writer, name string, args ...string) error {
 						if name != "docker" {
 							t.Fatalf("unexpected command: %s", name)
+						}
+						if len(args) > 0 && args[0] == "ps" && resources > 0 {
+							_, _ = io.WriteString(output, "container")
+						}
+						if len(args) > 0 && args[0] == "inspect" {
+							if strings.Contains(strings.Join(args, " "), ".State.Running") {
+								_, _ = io.WriteString(output, `{"running":true,"health":"none"}`)
+							} else {
+								_, _ = io.WriteString(output, `{"service":"app","networks":{}}`)
+							}
 						}
 						for _, arg := range args {
 							if arg == "up" {
@@ -98,6 +108,9 @@ func TestDockerExecutesAcceptedCommitAfterBranchMoves(t *testing.T) {
 	executor := DockerExecutor{run: func(ctx context.Context, stdin io.Reader, output io.Writer, name string, args ...string) error {
 		if name == "git" {
 			return command(ctx, stdin, output, name, args...)
+		}
+		if len(args) > 0 && args[0] == "inspect" && strings.Contains(strings.Join(args, " "), ".State.Running") {
+			_, _ = io.WriteString(output, `{"running":true,"health":"none"}`)
 		}
 		if len(args) > 0 && args[0] == "build" {
 			workspace := args[len(args)-1]
