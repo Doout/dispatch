@@ -14,9 +14,10 @@ func (a *API) infrastructureManager() *provision.Manager {
 	if !ok {
 		return nil
 	}
-	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge}
+	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge, Vault: a.eventConfig.Vault}
 }
 func (a *API) infrastructureRoutes(r chi.Router) {
+	a.infrastructureLifecycleRoutes(r)
 	r.Route("/infrastructure/providers", func(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Get("/", a.listInfrastructureProviders)
@@ -33,7 +34,7 @@ func (a *API) infrastructureProblem(w http.ResponseWriter, err error) {
 		problem(w, 404, "Provider not found", "Choose an existing provider registration.")
 		return
 	}
-	if errors.Is(err, store.ErrProviderChanged) || errors.Is(err, provision.ErrDisabled) || errors.Is(err, provision.ErrIdentity) {
+	if errors.Is(err, store.ErrInfrastructureChanged) || errors.Is(err, store.ErrInfrastructureProtected) || errors.Is(err, store.ErrStorageProtected) || errors.Is(err, store.ErrProviderChanged) || errors.Is(err, provision.ErrDisabled) || errors.Is(err, provision.ErrIdentity) {
 		problem(w, 409, "Provider review required", err.Error())
 		return
 	}

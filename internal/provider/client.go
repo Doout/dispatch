@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+var ErrTransport = errors.New("provider communication is unavailable")
+
 type Client struct {
 	base  string
 	token string
@@ -57,6 +59,8 @@ func (c *Client) request(ctx context.Context, method, path, key string, input, o
 	}
 	if key != "" {
 		request.Header.Set("Idempotency-Key", key)
+		// Reconciliation owns mutation replay; do not let net/http replay a POST invisibly.
+		request.GetBody = nil
 	}
 	if c.token != "" {
 		request.Header.Set("Authorization", "Bearer "+c.token)
@@ -66,12 +70,15 @@ func (c *Client) request(ctx context.Context, method, path, key string, input, o
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("provider request failed; check connectivity and reconcile mutations before retrying")
+		return ErrTransport
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, MaxMessageBytes+1))
-	if err != nil || len(raw) > MaxMessageBytes {
-		return errors.New("provider response is unreadable or exceeds the size limit")
+	if err != nil {
+		return ErrTransport
+	}
+	if len(raw) > MaxMessageBytes {
+		return errors.New("provider response exceeds the size limit")
 	}
 	defer clear(raw)
 	contentType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
