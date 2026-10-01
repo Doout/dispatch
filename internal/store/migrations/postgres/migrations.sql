@@ -1264,6 +1264,91 @@ CREATE TABLE infrastructure_providers (
  updated_at TEXT NOT NULL
 );
 
+-- dispatch:migration 076_infrastructure_lifecycle
+CREATE TABLE infrastructure_reviews (
+ id TEXT PRIMARY KEY,
+ server_id TEXT NOT NULL UNIQUE,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ provider_id TEXT NOT NULL REFERENCES infrastructure_providers(id),
+ provider_revision BIGINT NOT NULL,
+ manifest_digest TEXT NOT NULL,
+ name TEXT NOT NULL,
+ input TEXT NOT NULL,
+ encrypted_request TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ state TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE TABLE managed_servers (
+ id TEXT PRIMARY KEY,
+ review_id TEXT NOT NULL UNIQUE REFERENCES infrastructure_reviews(id),
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ provider_id TEXT NOT NULL REFERENCES infrastructure_providers(id),
+ name TEXT NOT NULL,
+ node_id TEXT NOT NULL UNIQUE,
+ resource_id TEXT NOT NULL DEFAULT '',
+ address TEXT NOT NULL DEFAULT '',
+ allocation_state TEXT NOT NULL,
+ enrollment_state TEXT NOT NULL,
+ runtime_state TEXT NOT NULL,
+ revision BIGINT NOT NULL,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX managed_servers_provider_resource ON managed_servers(provider_id,resource_id) WHERE resource_id<>'';
+CREATE TABLE infrastructure_operations (
+ id TEXT PRIMARY KEY,
+ server_id TEXT NOT NULL REFERENCES managed_servers(id),
+ provider_id TEXT NOT NULL REFERENCES infrastructure_providers(id),
+ actor_id TEXT NOT NULL,
+ action TEXT NOT NULL,
+ state TEXT NOT NULL,
+ stage TEXT NOT NULL,
+ provider_operation_id TEXT NOT NULL DEFAULT '',
+ resource_id TEXT NOT NULL DEFAULT '',
+ error_code TEXT NOT NULL DEFAULT '',
+ message TEXT NOT NULL DEFAULT '',
+ attempts INTEGER NOT NULL DEFAULT 0,
+ cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+ expires_at TEXT NOT NULL,
+ next_attempt_at TEXT NOT NULL,
+ lease_token TEXT NOT NULL DEFAULT '',
+ lease_until TEXT NOT NULL,
+ request_digest TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE INDEX infrastructure_operations_poll ON infrastructure_operations(state,next_attempt_at,lease_until);
+CREATE UNIQUE INDEX infrastructure_operations_active_server ON infrastructure_operations(server_id) WHERE state IN ('pending','running','unknown','paused');
+
+-- Share locks on the immutable owner row exclude deletion admission while a
+-- concurrent app, service or runtime transaction is committing its target.
+CREATE FUNCTION managed_workload_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE target_id TEXT; owner_id TEXT; allocation TEXT; runtime_status TEXT;
+BEGIN
+ target_id := CASE WHEN TG_TABLE_NAME='services' THEN (to_jsonb(NEW)->>'payload')::jsonb #>> '{service,provisionTarget,serverId}' ELSE to_jsonb(NEW)->>'server_id' END;
+ SELECT project_id,allocation_state,runtime_state INTO owner_id,allocation,runtime_status FROM managed_servers WHERE id=target_id FOR SHARE;
+ IF FOUND AND (owner_id<>NEW.project_id OR allocation<>'allocated' OR runtime_status<>'ready') THEN RAISE EXCEPTION 'managed server is not an available project target'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER managed_app_admission BEFORE INSERT OR UPDATE OF server_id,project_id ON apps FOR EACH ROW EXECUTE FUNCTION managed_workload_admission();
+CREATE TRIGGER managed_runtime_admission BEFORE INSERT ON runtime_jobs FOR EACH ROW EXECUTE FUNCTION managed_workload_admission();
+CREATE TRIGGER managed_service_admission BEFORE INSERT OR UPDATE ON services FOR EACH ROW EXECUTE FUNCTION managed_workload_admission();
+CREATE FUNCTION managed_target_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE managed managed_servers%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  SELECT * INTO managed FROM managed_servers WHERE id=OLD.id FOR SHARE;
+  IF FOUND AND managed.allocation_state<>'deleted' THEN RAISE EXCEPTION 'delete the managed provider resource before its target'; END IF;
+  RETURN OLD;
+ END IF;
+ SELECT * INTO managed FROM managed_servers WHERE id=NEW.id FOR SHARE;
+ IF FOUND AND (managed.node_id<>NEW.agent_node_id OR managed.address<>NEW.address OR NEW.runtime<>'docker' OR (TG_OP='INSERT' AND (managed.allocation_state<>'allocated' OR managed.runtime_state<>'ready'))) THEN RAISE EXCEPTION 'managed target identity is immutable or not ready'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER managed_target_guard BEFORE INSERT OR UPDATE OR DELETE ON servers FOR EACH ROW EXECUTE FUNCTION managed_target_admission();
+
 -- dispatch:migration 077_automation_identities
 CREATE TABLE service_accounts (id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,description TEXT NOT NULL DEFAULT '',state TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE automation_credentials (id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES service_accounts(id),name TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,expires_at TEXT NOT NULL,created_at TEXT NOT NULL,revoked_at TEXT,last_used_at TEXT);
@@ -1273,10 +1358,27 @@ CREATE TABLE infrastructure_assignments(project_id TEXT NOT NULL REFERENCES proj
 ALTER TABLE servers ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN credential_id TEXT NOT NULL DEFAULT '';
+-- dispatch:migration 078_public_mutation_receipts
+CREATE TABLE public_mutation_receipts (
+ id TEXT PRIMARY KEY,
+ caller_kind TEXT NOT NULL, caller_id TEXT NOT NULL, credential_id TEXT NOT NULL,
+ project_id TEXT NOT NULL, action TEXT NOT NULL, key_digest TEXT NOT NULL, request_digest TEXT NOT NULL,
+ operation_kind TEXT NOT NULL, operation_id TEXT NOT NULL, resource_id TEXT NOT NULL,
+ state TEXT NOT NULL, message TEXT NOT NULL, failure_status INTEGER NOT NULL,
+ claim_token TEXT NOT NULL, claim_until TEXT NOT NULL, retry_until TEXT NOT NULL,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(caller_kind,caller_id,project_id,action,key_digest)
+);
+CREATE INDEX public_mutation_operation ON public_mutation_receipts(operation_kind,operation_id);
+ALTER TABLE audit_events ADD COLUMN operation_id TEXT NOT NULL DEFAULT '';
+
 -- dispatch:migration 079_infrastructure_quotas
 CREATE TABLE project_infrastructure_policies(project_id TEXT PRIMARY KEY REFERENCES projects(id),revision BIGINT NOT NULL,max_servers BIGINT NOT NULL CHECK(max_servers>=-1),max_temporary_environments BIGINT NOT NULL CHECK(max_temporary_environments>=-1),max_snapshots BIGINT NOT NULL CHECK(max_snapshots>=-1),max_temporary_lifetime_seconds BIGINT NOT NULL CHECK(max_temporary_lifetime_seconds>=0),providers TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE infrastructure_quota_reservations(server_id TEXT PRIMARY KEY,operation_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL REFERENCES projects(id),provider_id TEXT NOT NULL,region TEXT NOT NULL,size TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reserved','allocated','unknown','released')),resource_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE INDEX infrastructure_quota_project ON infrastructure_quota_reservations(project_id,state);
+INSERT INTO infrastructure_quota_reservations(server_id,operation_id,project_id,provider_id,region,size,state,resource_id,created_at,updated_at)
+SELECT m.id,COALESCE((SELECT o.id FROM infrastructure_operations o WHERE o.server_id=m.id AND o.action='create' ORDER BY o.created_at LIMIT 1),'legacy-'||m.id),m.project_id,m.provider_id,COALESCE(r.input::jsonb->>'region',''),COALESCE(r.input::jsonb->>'size',''),CASE WHEN m.allocation_state IN ('deleted','cancelled') THEN 'released' WHEN m.allocation_state='allocated' THEN 'allocated' WHEN m.allocation_state IN ('unknown','failed') THEN 'unknown' ELSE 'reserved' END,m.resource_id,m.created_at,m.updated_at FROM managed_servers m JOIN infrastructure_reviews r ON r.id=m.review_id;
+
 -- dispatch:migration 080_remote_storage
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect');

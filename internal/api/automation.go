@@ -260,12 +260,15 @@ func (a *API) saveInfrastructureAssignment(w http.ResponseWriter, r *http.Reques
 			_, err := ps.GetInfrastructureProvider(r.Context(), in.ResourceID)
 			valid = err == nil
 		}
+	case "ssh_key":
+		key, err := a.store.GetSecret(r.Context(), in.ResourceID)
+		valid = err == nil && key.Type == core.SecretTypeSSHPrivateKey && strings.TrimSpace(key.PublicValue) != ""
 	case "target":
 		target, err := a.store.GetServer(r.Context(), in.ResourceID)
 		valid = err == nil && (target.ProjectID == "" || target.ProjectID == in.ProjectID)
 	}
 	if !valid {
-		problem(w, 422, "Invalid assignment", "Choose an existing provider or a target that is unowned or owned by this project.")
+		problem(w, 422, "Invalid assignment", "Choose an existing provider, an SSH key with a public key, or a target that is unowned or owned by this project.")
 		return
 	}
 	in.UpdatedAt = time.Now().UTC()

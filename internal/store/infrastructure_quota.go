@@ -205,3 +205,18 @@ func (s *SQLStore) ApplyInfrastructureQuota(ctx context.Context, tx *sql.Tx, c c
 		return ErrQuotaReservationChanged
 	}
 }
+
+// InfrastructureQuotaAdmission is shared by API acceptance and the controller's
+// reconciler so terminal evidence and reservation accounting commit together.
+func (s *SQLStore) InfrastructureQuotaAdmission(ctx context.Context, tx *sql.Tx, in core.InfrastructureAcceptance) error {
+	var desired struct {
+		Region string `json:"region"`
+		Size   string `json:"size"`
+	}
+	if in.Action == "server.create" {
+		if err := json.Unmarshal(in.DesiredConfig, &desired); err != nil {
+			return ErrQuotaReservationChanged
+		}
+	}
+	return s.ApplyInfrastructureQuota(ctx, tx, core.InfrastructureQuotaChange{ProjectID: in.ProjectID, ProviderID: in.ProviderID, OperationID: in.OperationID, ServerID: in.ServerID, ResourceID: in.ResourceID, Action: in.Action, Region: desired.Region, Size: desired.Size}, time.Now().UTC())
+}

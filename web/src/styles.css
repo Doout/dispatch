@@ -2517,3 +2517,32 @@ code { font-family: var(--mono); }
 .server-routing-dialog label small { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.5; }
 .server-routing-dialog input:not([type="checkbox"]) { width: 100%; min-height: 42px; padding: 0 11px; color: #202a34; background: #fff; border: 1px solid var(--rule-strong); border-radius: var(--radius-control); }
 .server-routing-dialog .form-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 8px; }
+
+.infrastructure-quota > label,
+.infrastructure-quota .connection-form label:not(.quota-switch) {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.infrastructure-quota > label { max-width: 420px; margin: 18px 0; }
+.infrastructure-quota input:not([type="checkbox"]), .infrastructure-quota select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #c5cfdd;
+  border-radius: 8px;
+  background: #fff;
+  color: #263347;
+  font: inherit;
+}
+.infrastructure-quota input:disabled { background: #f2f5f9; }
+.infrastructure-quota small { color: #66758a; font-size: 12px; font-weight: 400; line-height: 1.5; }
+.infrastructure-quota fieldset { margin: 18px 0 0; padding: 16px; border: 1px solid #dbe2eb; border-radius: 8px; }
+.infrastructure-quota legend { padding: 0 5px; font-size: 13px; font-weight: 600; }
+.infrastructure-quota .quota-switch { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; margin: 8px 0; }
+.infrastructure-quota .quota-switch input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; padding: 0; margin: 0; flex: 0 0 16px; }
+.infrastructure-quota .connection-grid { margin-top: 14px; }
+.infrastructure-quota fieldset > p { font-size: 12px; color: #66758a; line-height: 1.5; margin-bottom: 0; }
+.infrastructure-quota .connection-row { overflow-wrap: anywhere; }

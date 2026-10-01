@@ -21,6 +21,7 @@ import (
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/installation"
+	"github.com/doout/dispatch/internal/provision"
 	"github.com/doout/dispatch/internal/remoteruntime"
 	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/secretvalue"
@@ -110,6 +111,8 @@ func run(logger *slog.Logger) error {
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go runtimeBroker.RunExpiration(shutdownCtx, logger)
+	infrastructure := &provision.Manager{Store: data, Secrets: secretResolver, Edge: edgeBroker, Vault: vault, Admission: data.InfrastructureQuotaAdmission}
+	go infrastructure.Run(shutdownCtx, logger)
 	var history analytics.Reader
 	if cfg.AnalyticsEnabled {
 		worker := analytics.New(data, cfg.AnalyticsDirectory, logger)

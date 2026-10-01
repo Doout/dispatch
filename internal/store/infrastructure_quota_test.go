@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -196,5 +197,66 @@ func testInfrastructureQuota(t *testing.T, dsn string) {
 	reservations, err = s.ListInfrastructureQuotaReservations(ctx, change.ProjectID)
 	if err != nil || len(reservations) != 4 {
 		t.Fatal("recovery evidence lost", reservations, err)
+	}
+}
+
+func TestInfrastructureQuotaMigrationCountsExistingAllocation(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "upgrade.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err = s.CreateProject(ctx, core.Project{ID: "existing-project", Name: "Existing", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	p := core.InfrastructureProvider{ID: "existing-provider", Name: "Provider", Endpoint: "https://provider.example", Enabled: true, Capabilities: []string{"server.create", "server.inspect"}, Manifest: json.RawMessage(`{}`), ManifestDigest: "manifest", State: "ready", Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if err = s.CreateInfrastructureProvider(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	review := core.InfrastructureReview{ID: "existing-review", ServerID: "existing-server", ProjectID: "existing-project", ProviderID: p.ID, ProviderRevision: p.Revision, ManifestDigest: p.ManifestDigest, Name: "Existing server", Input: json.RawMessage(`{"region":"eu-1","size":"small"}`), EncryptedRequest: "encrypted", Digest: "review-digest", State: "open", ExpiresAt: now.Add(time.Hour), CreatedAt: now}
+	if err = s.CreateInfrastructureReview(ctx, review); err != nil {
+		t.Fatal(err)
+	}
+	server, op, err := s.AcceptInfrastructureReview(ctx, review.ID, review.Digest, "existing-create", "owner", now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.AllocationState = "allocated"
+	server.ResourceID = "provider-machine"
+	server.Revision++
+	if err = s.UpdateManagedServer(ctx, server, server.Revision-1); err != nil {
+		t.Fatal(err)
+	}
+	// Reapply the quota migration to a database that already has owned machines.
+	for _, query := range []string{`DROP TABLE infrastructure_quota_reservations`, `DROP TABLE project_infrastructure_policies`, `DELETE FROM schema_migrations WHERE version='079_infrastructure_quotas'`} {
+		if _, err = s.db.ExecContext(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.ListInfrastructureQuotaReservations(ctx, server.ProjectID)
+	if err != nil || len(items) != 1 || items[0].OperationID != op.ID || items[0].State != "allocated" || items[0].ResourceID != server.ResourceID || items[0].Region != "eu-1" || items[0].Size != "small" {
+		t.Fatal("existing resource disappeared from accounting", items, err)
+	}
+	policy := core.InfrastructureQuotaPolicy{ProjectID: server.ProjectID, Revision: 1, MaxServers: 1, Providers: []core.InfrastructureProviderRule{{ProviderID: p.ID, AnyRegion: true, AnySize: true}}, UpdatedAt: now}
+	if err = s.SaveInfrastructureQuotaPolicy(ctx, policy, 0); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	err = s.ApplyInfrastructureQuota(ctx, tx.Tx, core.InfrastructureQuotaChange{ProjectID: server.ProjectID, ProviderID: p.ID, ServerID: "new-server", OperationID: "new-create", Region: "eu-1", Size: "small", Action: "server.create"}, now)
+	var violation *core.InfrastructureQuotaViolation
+	if !errors.As(err, &violation) || violation.Usage != 1 {
+		t.Fatal("upgrade allowed quota bypass", err)
 	}
 }

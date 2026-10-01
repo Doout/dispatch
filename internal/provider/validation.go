@@ -8,14 +8,15 @@ import (
 )
 
 const (
-	CapabilityCreate  = "server.create"
-	CapabilityInspect = "server.inspect"
-	CapabilityDelete  = "server.delete"
-	StatePending      = "pending"
-	StateRunning      = "running"
-	StateSucceeded    = "succeeded"
-	StateFailed       = "failed"
-	StateCancelled    = "cancelled"
+	CapabilityCreate    = "server.create"
+	CapabilityInspect   = "server.inspect"
+	CapabilityDelete    = "server.delete"
+	CapabilityOwnership = "server.ownership"
+	StatePending        = "pending"
+	StateRunning        = "running"
+	StateSucceeded      = "succeeded"
+	StateFailed         = "failed"
+	StateCancelled      = "cancelled"
 )
 
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"errors"
+	"github.com/doout/dispatch/internal/core"
 	"net/http"
 
 	"github.com/doout/dispatch/internal/provision"
@@ -14,9 +17,16 @@ func (a *API) infrastructureManager() *provision.Manager {
 	if !ok {
 		return nil
 	}
-	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge}
+	quota, ok := a.store.(interface {
+		InfrastructureQuotaAdmission(context.Context, *sql.Tx, core.InfrastructureAcceptance) error
+	})
+	if !ok {
+		return nil
+	}
+	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge, Vault: a.eventConfig.Vault, Admission: quota.InfrastructureQuotaAdmission, Authorize: a.authorizeInfrastructure}
 }
 func (a *API) infrastructureRoutes(r chi.Router) {
+	a.infrastructureLifecycleRoutes(r)
 	r.Route("/infrastructure/providers", func(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Get("/", a.listInfrastructureProviders)
@@ -29,6 +39,10 @@ func (a *API) infrastructureRoutes(r chi.Router) {
 	})
 }
 func (a *API) infrastructureProblem(w http.ResponseWriter, err error) {
+	if errors.Is(err, errInfrastructureDenied) {
+		problem(w, 403, "Infrastructure access denied", "The current project permission and provider assignment are required.")
+		return
+	}
 	if infrastructureQuotaProblem(w, err) {
 		return
 	}
@@ -36,7 +50,7 @@ func (a *API) infrastructureProblem(w http.ResponseWriter, err error) {
 		problem(w, 404, "Provider not found", "Choose an existing provider registration.")
 		return
 	}
-	if errors.Is(err, store.ErrProviderChanged) || errors.Is(err, provision.ErrDisabled) || errors.Is(err, provision.ErrIdentity) {
+	if errors.Is(err, store.ErrInfrastructureChanged) || errors.Is(err, store.ErrInfrastructureProtected) || errors.Is(err, store.ErrStorageProtected) || errors.Is(err, store.ErrProviderChanged) || errors.Is(err, provision.ErrDisabled) || errors.Is(err, provision.ErrIdentity) {
 		problem(w, 409, "Provider review required", err.Error())
 		return
 	}
@@ -146,4 +160,24 @@ func (a *API) providerCredentialUnused(w http.ResponseWriter, r *http.Request, i
 		}
 	}
 	return true
+}
+
+var errInfrastructureDenied = errors.New("project infrastructure permission denied")
+
+func (a *API) authorizeInfrastructure(ctx context.Context, project, provider, permission string) error {
+	allowed, err := a.canProject(ctx, core.Permission(permission), project)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return errInfrastructureDenied
+	}
+	assigned, err := a.assignedInfrastructure(ctx, project, "provider", provider)
+	if err != nil {
+		return err
+	}
+	if !assigned {
+		return errInfrastructureDenied
+	}
+	return nil
 }

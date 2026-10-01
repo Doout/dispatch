@@ -48,6 +48,112 @@ paths:
         '200': { description: Updated policy and revision }
         '409': { description: Policy changed since it was loaded }
         '422': { description: Invalid provider, allocation choices, limit or temporary-resource lifetime }
+  /apps/{id}/runtime/{operation}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: operation, required: true, schema: { type: string, enum: [inspect, logs, start, stop] } }
+    post:
+      summary: Queue a typed operation on an enrolled runtime target
+      description: Requires project.view; start and stop also require deployment.run. Deploy, rollback and destroy use the reviewed deployment and cleanup endpoints.
+      parameters:
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logLimit: { type: integer }
+      responses:
+        '202':
+          description: Durable job accepted or identical receipt replayed
+          headers:
+            Location: { schema: { type: string }, description: Project-scoped operation status URL }
+        '409': { description: Conflicting key, active mutation or unresolved previous outcome }
+        '422': { description: Unavailable runtime capability or invalid request }
+  /apps/{id}/runtime/jobs/{jobId}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: jobId, required: true, schema: { type: string } }
+    get:
+      summary: Inspect a runtime receipt and sanitized result
+      description: Requires project.view. Terminal unknown outcomes require inspection before another mutation.
+      responses:
+        '200': { description: Job status with optional terminal result; no encrypted request or credentials }
+        '404': { description: Job does not belong to this application }
+  /apps/{id}/runtime/jobs/{jobId}/acknowledge:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: jobId, required: true, schema: { type: string } }
+    post:
+      summary: Acknowledge an uncertain runtime mutation after inspection
+      description: Requires deployment.run. The old lease must have expired and the inspection must belong to the same current target and follow the uncertain outcome.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inspectionId, confirmName]
+              properties:
+                inspectionId: { type: string }
+                confirmName: { type: string }
+      responses:
+        '204': { description: Mutation unblocked; earlier uncertainty remains in the receipt }
+        '409': { description: Inspection, target generation or lease evidence is stale }
+  /edge/nodes/{id}/runtime/jobs/next:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      summary: Lease one durable runtime job using an enrolled node session
+      description: Only the current key-bound node session is accepted. A controller user token cannot lease node work. Payload responses are not cacheable.
+      parameters:
+        - { in: header, name: X-Dispatch-Runtime-Version, required: true, schema: { type: string, enum: [dispatch.agent.runtime/v1] } }
+        - { in: header, name: X-Dispatch-Runtime-Capabilities, required: true, schema: { type: string }, description: Comma-separated supported typed operations }
+      responses:
+        '200': { description: Typed request, ownership scope, request digest and lease token }
+        '204': { description: No supported work is available }
+        '401': { description: Current enrolled node session required }
+  /edge/nodes/{id}/runtime/jobs/{jobId}/heartbeat:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: jobId, required: true, schema: { type: string } }
+    post:
+      summary: Renew a node-owned runtime lease and receive cancellation state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leaseToken]
+              properties:
+                leaseToken: { type: string }
+                phase: { type: string }
+                message: { type: string }
+      responses:
+        '200': { description: cancelRequested and remaining lease duration }
+        '409': { description: Lease expired or scope changed; stop local execution }
+  /edge/nodes/{id}/runtime/jobs/{jobId}/complete:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: jobId, required: true, schema: { type: string } }
+    post:
+      summary: Record a durable result for the current node-owned lease
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leaseToken, result]
+              properties:
+                leaseToken: { type: string }
+                result: { type: object, description: Typed protocol result with ownership and health or route evidence }
+      responses:
+        '204': { description: Result persisted and queued credentials cleared }
+        '409': { description: Lease or resource ownership changed }
   /servers/{id}/routing:
     parameters:
       - name: id
@@ -2811,7 +2917,7 @@ paths:
               type: object
               required: [kind, resourceId]
               properties:
-                kind: { type: string, enum: [provider, target] }
+                kind: { type: string, enum: [provider, target, ssh_key] }
                 resourceId: { type: string }
       responses:
         '200': { description: Resource assigned }
@@ -2819,7 +2925,7 @@ paths:
   /infrastructure/assignments/{projectId}/{kind}/{resourceId}:
     parameters:
       - { in: path, name: projectId, required: true, schema: { type: string } }
-      - { in: path, name: kind, required: true, schema: { type: string, enum: [provider, target] } }
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [provider, target, ssh_key] } }
       - { in: path, name: resourceId, required: true, schema: { type: string } }
     delete:
       summary: Remove an explicit resource assignment (controller owner)

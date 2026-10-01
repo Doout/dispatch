@@ -22,6 +22,7 @@ func (a *API) runtimeBroker() *remoteruntime.Broker {
 }
 
 func (a *API) runtimeNode(w http.ResponseWriter, r *http.Request) (core.PrivateNetwork, *remoteruntime.Broker, bool) {
+	w.Header().Set("Cache-Control", "no-store")
 	node, ok := a.authenticateEdge(r)
 	if !ok {
 		problem(w, 401, "Authentication required", "The enrolled runtime session is invalid.")
@@ -58,6 +59,7 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		node.Details = map[string]string{}
 	}
 	node.Details["runtimeVersion"] = remoteruntime.APIVersion
+	node.Details["runtimeCheckedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 	advertised := strings.Split(r.Header.Get("X-Dispatch-Runtime-Capabilities"), ",")
 	if len(advertised) > 16 || len(r.Header.Get("X-Dispatch-Runtime-Capabilities")) > 512 {
 		problem(w, 422, "Invalid capabilities", "The capability list exceeds its limit.")

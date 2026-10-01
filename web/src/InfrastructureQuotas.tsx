@@ -50,7 +50,7 @@ export function InfrastructureQuotas({ overview, canManage }: { overview: Overvi
     finally { setBusy(false); }
   }
   if (!projects.length) return null;
-  return <section className="server-section" aria-labelledby="infrastructure-quotas-title">
+  return <section className="server-section infrastructure-quota" aria-labelledby="infrastructure-quotas-title">
     <div className="section-title"><div><h2 id="infrastructure-quotas-title">Project resource limits</h2><p>Count accepted allocations and unresolved operations before another server can be created.</p></div></div>
     <label>Resource policy project<select value={project} disabled={busy} onChange={event => setProject(event.target.value)}>{projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
     {error && <p role="alert" className="form-error">{error}</p>}
@@ -64,12 +64,12 @@ export function InfrastructureQuotas({ overview, canManage }: { overview: Overvi
           {providers.map(provider => {
             const rule = policy.providers.find(item => item.providerId === provider.id);
             return <div key={provider.id}>
-              <label><input type="checkbox" checked={!!rule} onChange={event => setPolicy({ ...policy, providers: event.target.checked ? [...policy.providers, { providerId: provider.id, regions: [], sizes: [], anyRegion: false, anySize: false }] : policy.providers.filter(item => item.providerId !== provider.id) })} />{provider.name}</label>
+              <label className="quota-switch"><input type="checkbox" checked={!!rule} onChange={event => setPolicy({ ...policy, providers: event.target.checked ? [...policy.providers, { providerId: provider.id, regions: [], sizes: [], anyRegion: false, anySize: false }] : policy.providers.filter(item => item.providerId !== provider.id) })} />{provider.name}</label>
               {rule && <div className="connection-grid">
                 <label>Allowed regions for {provider.name}<input value={rule.regions.join(",")} disabled={rule.anyRegion} onChange={event => changeRule(provider.id, { regions: list(event.target.value) })} placeholder="eu-1, us-1" /></label>
-                <label><input type="checkbox" checked={rule.anyRegion} onChange={event => changeRule(provider.id, { anyRegion: event.target.checked, regions: [] })} />Allow every region for {provider.name}</label>
+                <label className="quota-switch"><input type="checkbox" checked={rule.anyRegion} onChange={event => changeRule(provider.id, { anyRegion: event.target.checked, regions: [] })} />Allow every region for {provider.name}</label>
                 <label>Allowed sizes for {provider.name}<input value={rule.sizes.join(",")} disabled={rule.anySize} onChange={event => changeRule(provider.id, { sizes: list(event.target.value) })} placeholder="small, medium" /></label>
-                <label><input type="checkbox" checked={rule.anySize} onChange={event => changeRule(provider.id, { anySize: event.target.checked, sizes: [] })} />Allow every size for {provider.name}</label>
+                <label className="quota-switch"><input type="checkbox" checked={rule.anySize} onChange={event => changeRule(provider.id, { anySize: event.target.checked, sizes: [] })} />Allow every size for {provider.name}</label>
               </div>}
             </div>;
           })}

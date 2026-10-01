@@ -155,3 +155,14 @@ formats. Review must also reject provider-specific private identifiers and
 credential formats the scan does not recognize. Public examples use mock values.
 
 Controller registration, capability approval and credential rotation are documented in [Infrastructure providers](infrastructure-providers.md).
+
+### Ownership evidence
+
+Adapters used for managed server creation advertise `server.ownership` and
+accept `CreateServerRequest.labels`. They preserve every supplied Dispatch label
+on the resource returned by inspection: `dispatch.provider-registration`,
+`dispatch.project`, `dispatch.server`, and `dispatch.request`. These labels bind
+reconciliation and adoption to one reviewed intent; resource names or public IPs
+alone are insufficient. Deletion inspection must provide authoritative absence
+with HTTP 404. Controller lifecycle details are in
+[On-demand servers](on-demand-servers.md).
