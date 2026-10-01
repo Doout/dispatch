@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/provider"
 	"github.com/doout/dispatch/internal/store"
@@ -37,6 +38,10 @@ type Manager struct {
 	Edge    *edge.Broker
 	// HTTPClient is injectable for certificate-pinned tests and managed transport.
 	HTTPClient *http.Client
+	Vault      *secretcrypto.Vault
+	Authorize  func(context.Context, string, string, string) error
+	Admission  store.InfrastructureAdmission
+	Now        func() time.Time
 }
 type Registration struct {
 	Name               string   `json:"name"`

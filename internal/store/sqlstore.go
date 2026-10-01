@@ -1034,6 +1034,9 @@ func (s *SQLStore) CreateDeployment(ctx context.Context, deployment core.Deploym
 	if err = s.captureServiceBindings(ctx, tx, deployment); err != nil {
 		return err
 	}
+	if err := s.BindMutationAcceptance(ctx, tx.Tx, "deployment", deployment.ID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

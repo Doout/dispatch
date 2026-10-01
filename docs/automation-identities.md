@@ -55,7 +55,10 @@ also accepts `principalType: user` for explicit grants to human operators.
 
 A controller owner assigns resources with
 `PUT /api/v1/infrastructure/assignments/{projectId}` and a body containing
-`kind: provider` or `kind: target` plus `resourceId`. A project-owned target is
+`kind: provider`, `kind: target`, or `kind: ssh_key` plus `resourceId`.
+SSH key assignments allow only the stored public key to be included in a server
+create request. The private key stays in the secret store. Project callers cannot
+attach other global secret references to provider configuration. A project-owned target is
 available only to its owning project and cannot be reassigned through this API.
 Unowned, administrator-managed targets may be explicitly shared with projects.
 An operator needs a target assignment before creating an application on that target.
