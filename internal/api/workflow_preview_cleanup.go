@@ -13,6 +13,10 @@ import (
 
 // A generated preview is one workflow, even when it has several Helm releases.
 func (a *API) removeWorkflowPreviewForApp(ctx context.Context, id string) (bool, error) {
+	return a.removeWorkflowPreviewForAppReviewed(ctx, id, nil)
+}
+
+func (a *API) removeWorkflowPreviewForAppReviewed(ctx context.Context, id string, review func() error) (bool, error) {
 	app, err := a.store.GetApp(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return false, nil
@@ -36,6 +40,11 @@ func (a *API) removeWorkflowPreviewForApp(ctx context.Context, id string) (bool,
 	}
 	a.temporaryPreviewMu.Lock()
 	defer a.temporaryPreviewMu.Unlock()
+	if review != nil {
+		if err := review(); err != nil {
+			return true, err
+		}
+	}
 	if _, err := a.workflows.Deactivate(ctx, resource.ID); err != nil {
 		return true, err
 	}
@@ -92,6 +101,8 @@ func previewRemoved(resource core.WorkflowResource) bool { return resource.State
 
 func (a *API) previewCleanupProblem(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, errDestructiveReviewChanged):
+		problem(w, http.StatusConflict, "Resource changed", err.Error())
 	case errors.Is(err, deploy.ErrDeploymentActive):
 		problem(w, http.StatusConflict, "Deployment stopping", "The preview is paused. Wait for its deployment to stop, then retry cleanup.")
 	case errors.Is(err, deploy.ErrCleanupUnsupported):

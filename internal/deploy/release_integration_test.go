@@ -151,7 +151,7 @@ data:
 	if !review.Available {
 		t.Fatal("retained rollback unavailable: " + review.Message)
 	}
-	rolled, err := s.StartRollback(ctx, first.ID, second.ID, "test-operator", nil)
+	rolled, err := s.StartRollback(ctx, first.ID, second.ID, review.ReviewDigest, "test-operator", nil)
 	must(err)
 	rolled = wait(rolled)
 	if rolled.State != core.DeploymentSucceeded {
