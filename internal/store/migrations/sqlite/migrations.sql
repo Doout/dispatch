@@ -1225,6 +1225,16 @@ ALTER TABLE audit_events ADD COLUMN confirmed_action TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN confirmed_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN confirmed_version TEXT NOT NULL DEFAULT '';
 
+-- dispatch:migration 070_storage_ownership
+CREATE TABLE storage_resources (
+ id TEXT PRIMARY KEY,
+ server_id TEXT NOT NULL,
+ revision BIGINT NOT NULL,
+ payload TEXT NOT NULL
+);
+CREATE INDEX storage_resources_server ON storage_resources(server_id);
+ALTER TABLE audit_events ADD COLUMN confirmed_policy TEXT NOT NULL DEFAULT '';
+
 -- dispatch:migration 071_preview_source_trust
 ALTER TABLE workflow_preview_triggers ADD COLUMN source_trust_policy TEXT NOT NULL DEFAULT 'same_repository';
 ALTER TABLE workflow_revisions ADD COLUMN source_trust TEXT NOT NULL DEFAULT 'null';
@@ -1239,3 +1249,6 @@ CREATE TABLE preview_source_trust_approvals (
     revoked_at TEXT
 );
 CREATE INDEX preview_source_trust_approval_lookup ON preview_source_trust_approvals(resource_id,digest);
+-- dispatch:migration 073_deployment_health
+ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';

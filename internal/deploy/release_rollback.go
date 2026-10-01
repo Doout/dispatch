@@ -387,7 +387,8 @@ func (s *Service) StartRollback(ctx context.Context, id, expectedCurrent, expect
 	d := core.Deployment{
 		ID: ulid.Make().String(), AppID: source.AppID,
 		CommitSHA: source.CommitSHA, SpecDigest: source.SpecDigest, Snapshot: source.Snapshot,
-		State: core.DeploymentQueued, Message: "Historical rollback accepted", CreatedAt: now, LeaseUntil: &lease,
+		Health: core.DeploymentHealth{Policy: source.Health.Policy, State: "pending", Checks: []core.HealthCheckResult{}},
+		State:  core.DeploymentQueued, Message: "Historical rollback accepted", CreatedAt: now, LeaseUntil: &lease,
 		RollbackCurrentID: expectedCurrent,
 		Acceptance:        &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest()},
 		ExecutionAppName:  app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
@@ -416,6 +417,10 @@ func (s *Service) runRollback(ctx context.Context, d core.Deployment, sourceID, 
 		delete(s.cancels, d.ID)
 		s.mu.Unlock()
 	}()
+	ctx = WithHealthReporter(ctx, func(save context.Context, id string, result core.DeploymentHealth) error {
+		d.Health = result
+		return s.store.UpdateDeploymentHealth(save, id, result)
+	})
 	ctx, cancel := context.WithTimeout(ctx, helmOperationTimeout+time.Minute)
 	defer cancel()
 	source, err := s.store.GetDeployment(ctx, sourceID)

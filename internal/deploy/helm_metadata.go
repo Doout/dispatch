@@ -21,6 +21,9 @@ import (
 const helmProvenanceAnnotation = "dispatch.app/provenance"
 
 type helmDeploymentMetadata struct {
+	HealthPolicy   core.HealthPolicy   `json:"-"`
+	HealthPort     int                 `json:"-"`
+	HealthDomain   string              `json:"-"`
 	AppID          string              `json:"appId"`
 	DeploymentID   string              `json:"deploymentId"`
 	ChartCommitSHA string              `json:"chartCommitSha,omitempty"`
@@ -34,7 +37,12 @@ func newHelmDeploymentMetadata(app core.App, deployment core.Deployment) helmDep
 		parsed.User, parsed.RawQuery, parsed.Fragment = nil, "", ""
 		repository = parsed.String()
 	}
-	return helmDeploymentMetadata{AppID: app.ID, DeploymentID: deployment.ID, ChartCommitSHA: deployment.CommitSHA,
+	policy := deployment.Health.Policy
+	if policy.TimeoutSeconds == 0 {
+		policy = app.HealthPolicy
+	}
+	policy, _ = core.NormalizeHealthPolicy(policy)
+	return helmDeploymentMetadata{HealthPolicy: policy, HealthPort: app.ContainerPort, HealthDomain: app.Domain, AppID: app.ID, DeploymentID: deployment.ID, ChartCommitSHA: deployment.CommitSHA,
 		SourceRepo: repository, Provenance: app.HelmProvenance}
 }
 
@@ -70,6 +78,7 @@ func (m helmDeploymentMetadata) description() string { return "Dispatch provenan
 func (m helmDeploymentMetadata) Run(rendered *bytes.Buffer) (*bytes.Buffer, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(rendered.Bytes()))
 	var output bytes.Buffer
+	matched := map[string]bool{}
 	for {
 		var document map[string]any
 		err := decoder.Decode(&document)
@@ -101,6 +110,14 @@ func (m helmDeploymentMetadata) Run(rendered *bytes.Buffer) (*bytes.Buffer, erro
 			object["annotations"] = annotations
 		}
 		annotations[helmProvenanceAnnotation] = m.annotation()
+		protectHelmStorage(document, m.labels())
+		found, err := configureHelmHealth(document, m.HealthPolicy, m.HealthPort, m.HealthDomain)
+		if err != nil {
+			return nil, err
+		}
+		for key := range found {
+			matched[key] = true
+		}
 		if output.Len() > 0 {
 			output.WriteString("\n---\n")
 		}
@@ -109,6 +126,11 @@ func (m helmDeploymentMetadata) Run(rendered *bytes.Buffer) (*bytes.Buffer, erro
 			return nil, fmt.Errorf("encode Helm manifest: %w", err)
 		}
 		output.Write(raw)
+	}
+	for _, check := range m.HealthPolicy.Checks {
+		if (check.Kind == "http" || check.Kind == "tcp") && !matched[check.ID] {
+			return nil, fmt.Errorf("health check %s has no selected Helm workload container", check.ID)
+		}
 	}
 	return &output, nil
 }

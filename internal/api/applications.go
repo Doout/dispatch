@@ -43,6 +43,7 @@ func (a *API) listApps(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAppRequest struct {
+	HealthPolicy                                                                                                               core.HealthPolicy `json:"healthPolicy"`
 	ProjectID, ServerID, Name, SourceRepo, Branch, BuildType, ContextPath, DockerfilePath, ComposePath, ComposeContent, Domain string
 	SourceAuthType, SourceCredentialID                                                                                         string
 	HelmChart, HelmVersion, HelmRepository, HelmValues, HelmNamespace, HelmRelease                                             string
@@ -60,6 +61,17 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	var input createAppRequest
 	if !decode(w, r, &input) {
 		return
+	}
+	policy, err := core.NormalizeHealthPolicy(input.HealthPolicy)
+	if err != nil {
+		problem(w, 422, "Invalid health policy", err.Error())
+		return
+	}
+	for _, check := range policy.Checks {
+		if check.Scope != "workload" && input.Domain == "" {
+			problem(w, 422, "Route required", "Configure an application domain before requiring route or certificate readiness.")
+			return
+		}
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.SourceRepo = strings.TrimSpace(input.SourceRepo)
@@ -200,7 +212,7 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	item := core.App{ID: ulid.Make().String(), ProjectID: input.ProjectID, ServerID: input.ServerID, Name: input.Name,
 		SourceRepo: input.SourceRepo, Branch: input.Branch, SourceAuthType: input.SourceAuthType, SourceCredentialID: input.SourceCredentialID,
 		BuildType: core.BuildType(input.BuildType), ContextPath: input.ContextPath,
-		DockerfilePath: input.DockerfilePath, ComposePath: input.ComposePath, ComposeContent: input.ComposeContent, ContainerPort: input.ContainerPort,
+		DockerfilePath: input.DockerfilePath, ComposePath: input.ComposePath, ComposeContent: input.ComposeContent, ContainerPort: input.ContainerPort, HealthPolicy: policy,
 		HelmChart: input.HelmChart, HelmVersion: input.HelmVersion, HelmRepository: input.HelmRepository, HelmValues: input.HelmValues,
 		HelmNamespace: input.HelmNamespace, HelmRelease: input.HelmRelease, PreDeployHook: input.PreDeployHook,
 		PostDeployHook: input.PostDeployHook, Domain: strings.TrimSpace(input.Domain), Template: input.Template, State: state, CreatedAt: time.Now().UTC()}

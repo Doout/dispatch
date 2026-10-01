@@ -924,10 +924,22 @@ export async function destructiveRequest<T>(path: string, init: RequestInit): Pr
   return request<T>(path, { ...init, body: JSON.stringify({ ...body, confirmation }) });
 }
 
+export type StorageResource = {
+  id: string; serverId: string; kind: string; name: string; namespace?: string;
+  identity: string; projectId?: string; ownerKind?: string; ownerId?: string;
+  ownership: string; orphaned: boolean; policy: "retain" | "destroy"; state: string;
+  consumers: { id: string; mount?: string; active: boolean }[];
+  revision: number; observedAt: string; message?: string;
+};
+
 export const api = {
  previewSourceTrust: (id: string) => request<PreviewSourceTrustDecision>(`/api/v1/workflow/revisions/${id}/source-trust`),
  approvePreviewSourceTrust: (id: string, confirmDigest: string, expiresAt: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals`, { method: "POST", body: JSON.stringify({ confirmDigest, expiresAt }) }),
  revokePreviewSourceTrust: (id: string, approvalId: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals/${approvalId}`, { method: "DELETE" }),
+  storage: (serverId: string) => request<StorageResource[]>(`/api/v1/storage?serverId=${encodeURIComponent(serverId)}`),
+  reconcileStorage: (serverId: string) => request<StorageResource[]>(`/api/v1/servers/${encodeURIComponent(serverId)}/storage/reconcile`, { method: "POST" }),
+  storagePolicy: (id: string, revision: number, policy: "retain" | "destroy") => request<StorageResource>(`/api/v1/storage/${id}/policy`, { method: "PUT", body: JSON.stringify({ revision, policy }) }),
+  deleteStorage: (id: string) => destructiveRequest<void>(`/api/v1/storage/${id}`, { method: "DELETE" }),
  workflowRevision: (id: string) => request<WorkflowRevision>(`/api/v1/workflow/revisions/${id}`),
  eventRules: () => request<EventRule[]>("/api/v1/events/rules"),
  eventActivity: (transport = "", before = "") => request<EventActivityPage>(`/api/v1/events/activity?${new URLSearchParams({transport,before})}`),

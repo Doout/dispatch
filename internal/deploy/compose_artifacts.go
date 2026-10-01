@@ -329,7 +329,7 @@ func (e DockerExecutor) applyComposeArtifact(ctx context.Context, d core.Deploym
 	if err = e.command(ctx, nil, io.Discard, "docker", "compose", "-p", dockerResourceName(app.ID), "-f", path, "up", "-d", "--no-build", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", "120"); err != nil {
 		return errors.New("Compose apply failed or readiness timed out. Inspect the owned containers before retrying; retained images and volume data were preserved.")
 	}
-	if err = progress(core.DeploymentChecking, "Retained Compose services passed readiness checks"); err != nil {
+	if err = e.checkApplicationHealth(ctx, d, app, server, progress); err != nil {
 		return err
 	}
 	return progress(core.DeploymentRouting, routeMessage(core.App{Domain: inputs.Domain}))
