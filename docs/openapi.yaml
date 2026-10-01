@@ -2592,9 +2592,143 @@ paths:
         "204": { description: Project deleted. }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /automation-accounts:
+    get:
+      summary: List automation accounts (controller owner)
+      responses:
+        '200': { description: Account metadata without credentials }
+    post:
+      summary: Create an automation account (controller owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                description: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Active account with stable identity }
+  /automation-accounts/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    put:
+      summary: Rename, enable or disable an automation account (controller owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, state]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                state: { type: string, enum: [active, disabled] }
+      responses:
+        '200': { description: Updated account; disabled accounts fail subsequent authentication }
+  /automation-accounts/{id}/credentials:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      summary: List nonsecret credential metadata (controller owner)
+      responses:
+        '200': { description: Expiry, revocation and last-use metadata; no token or hash }
+    post:
+      summary: Issue an expiring token once (controller owner)
+      requestBody: { $ref: '#/components/requestBodies/AutomationCredentialInput' }
+      responses:
+        '201': { description: Credential metadata and plaintext token; Cache-Control no-store }
+        '409': { description: Account inactive }
+  /automation-accounts/{id}/credentials/{credentialId}/rotate:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: credentialId, required: true, schema: { type: string } }
+    post:
+      summary: Atomically retire a credential and issue its replacement (controller owner)
+      requestBody: { $ref: '#/components/requestBodies/AutomationCredentialInput' }
+      responses:
+        '201': { description: Replacement metadata and write-once token; account identity is unchanged }
+        '409': { description: Account or credential inactive }
+  /automation-accounts/{id}/credentials/{credentialId}/revoke:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: credentialId, required: true, schema: { type: string } }
+    post:
+      summary: Revoke a credential (controller owner)
+      responses:
+        '204': { description: Subsequent requests using the credential fail authentication }
+  /infrastructure/grants:
+    get:
+      summary: List explicit principal grants (controller owner)
+      responses:
+        '200': { description: Principal, project, permission and expiry metadata }
+    put:
+      summary: Replace a principal's direct project permissions (controller owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [principalType, principalId, projectId, permissions]
+              properties:
+                principalType: { type: string, enum: [user, service_account] }
+                principalId: { type: string }
+                projectId: { type: string }
+                permissions: { type: array, uniqueItems: true, items: { type: string } }
+                expiresAt: { type: string, format: date-time }
+      responses:
+        '200': { description: Saved grant }
+        '422': { description: Unknown principal or project, unsupported permission, or invalid expiry }
+  /infrastructure/grants/{kind}/{principalId}/{projectId}:
+    parameters:
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [user, service_account] } }
+      - { in: path, name: principalId, required: true, schema: { type: string } }
+      - { in: path, name: projectId, required: true, schema: { type: string } }
+    delete:
+      summary: Remove a direct grant (controller owner)
+      responses:
+        '204': { description: Grant removed }
+  /infrastructure/assignments/{projectId}:
+    parameters:
+      - { in: path, name: projectId, required: true, schema: { type: string } }
+    get:
+      summary: List project resource assignments (infrastructure.inspect)
+      responses:
+        '200': { description: Assigned provider and target references }
+    put:
+      summary: Assign an existing provider or target (controller owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, resourceId]
+              properties:
+                kind: { type: string, enum: [provider, target] }
+                resourceId: { type: string }
+      responses:
+        '200': { description: Resource assigned }
+        '422': { description: Resource missing or owned by another project }
+  /infrastructure/assignments/{projectId}/{kind}/{resourceId}:
+    parameters:
+      - { in: path, name: projectId, required: true, schema: { type: string } }
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [provider, target] } }
+      - { in: path, name: resourceId, required: true, schema: { type: string } }
+    delete:
+      summary: Remove an explicit resource assignment (controller owner)
+      responses:
+        '204': { description: Assignment removed; immutable project ownership is preserved }
   /servers:
     get:
       operationId: listServers
+      description: Owners can list all targets. Other callers need infrastructure.inspect for the specified project and receive its assigned targets.
+      parameters:
+        - { in: query, name: projectId, schema: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
     post:
@@ -3241,6 +3375,17 @@ paths:
         "204": { description: Cancellation requested. }
         "409": { $ref: "#/components/responses/Problem" }
 components:
+  requestBodies:
+    AutomationCredentialInput:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name, expiresAt]
+            properties:
+              name: { type: string, maxLength: 120 }
+              expiresAt: { type: string, format: date-time, description: Future expiry within 365 days }
   securitySchemes:
     basicAuth:
       type: http
