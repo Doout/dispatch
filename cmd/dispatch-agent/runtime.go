@@ -34,7 +34,7 @@ func runtimeRequest(ctx context.Context, client *http.Client, controller, node, 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Dispatch-Runtime-Version", remoteruntime.APIVersion)
-	req.Header.Set("X-Dispatch-Runtime-Capabilities", "deploy,inspect,logs,start,stop,rollback,destroy,provision_service,storage_inspect,storage_delete")
+	req.Header.Set("X-Dispatch-Runtime-Capabilities", "deploy,inspect,logs,start,stop,rollback,destroy,provision_service,storage_inspect,storage_delete,retention_inspect,retention_prune")
 	req.Header.Set("X-Dispatch-Agent-Version", "dev")
 	req.Header.Set("X-Dispatch-Agent-Artifact", runningArtifact())
 	resp, err := client.Do(req)

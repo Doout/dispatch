@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -384,4 +385,44 @@ func (w *Worker) GetRuntimeArtifact(ctx context.Context, id string) (core.Runtim
 		return artifact, fmt.Errorf("invalid retained artifact %s", id)
 	}
 	return artifact, nil
+}
+
+func (w *Worker) ListRuntimeArtifacts(ctx context.Context, server string) ([]core.RuntimeArtifact, error) {
+	entries, err := os.ReadDir(w.directory)
+	if err != nil {
+		return nil, err
+	}
+	out := []core.RuntimeArtifact{}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "artifact-") || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
+			return nil, errors.New("invalid runtime artifact file")
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "artifact-"), ".json")
+		a, err := w.GetRuntimeArtifact(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if a.ServerID == server {
+			out = append(out, a)
+		}
+		if len(out) > 10000 {
+			return nil, errors.New("runtime artifact inventory exceeds its limit")
+		}
+	}
+	return out, nil
+}
+func (w *Worker) RetireRuntimeArtifact(ctx context.Context, a core.RuntimeArtifact) error {
+	existing, err := w.GetRuntimeArtifact(ctx, a.DeploymentID)
+	if err != nil {
+		return err
+	}
+	if existing.AppID != a.AppID || existing.ServerID != a.ServerID || existing.ScopeID != a.ScopeID || existing.Ciphertext != a.Ciphertext {
+		return errors.New("retained runtime inputs changed")
+	}
+	a.Metadata.Retired = true
+	a.Ciphertext = ""
+	return w.SaveRuntimeArtifact(ctx, a)
 }

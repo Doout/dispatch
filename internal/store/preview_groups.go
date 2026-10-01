@@ -383,7 +383,16 @@ func (s *SQLStore) listPreviewGroupSources(ctx context.Context, runID string) ([
 }
 
 func (s *SQLStore) UpsertPreviewGroupRunComponent(ctx context.Context, item core.PreviewGroupRunComponent) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE preview_group_run_components SET generated_app_id=?,deployment_id=?,state=?,url=?,outputs=?,message=? WHERE run_id=? AND component_id=?`),
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.checkRuntimeReferences(ctx, tx, []string{item.DeploymentID}); err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE preview_group_run_components SET generated_app_id=?,deployment_id=?,state=?,url=?,outputs=?,message=? WHERE run_id=? AND component_id=?`),
 		nullString(item.GeneratedAppID), nullString(item.DeploymentID), item.State, item.URL, jsonText(item.Outputs), item.Message, item.RunID, item.ComponentID)
 	if err != nil {
 		return err
@@ -393,15 +402,18 @@ func (s *SQLStore) UpsertPreviewGroupRunComponent(ctx context.Context, item core
 		return err
 	}
 	if rows > 0 {
-		return nil
+		return tx.Commit()
 	}
 	if item.ID == "" {
 		item.ID = newID()
 	}
-	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO preview_group_run_components(id,run_id,component_id,alias,generated_app_id,
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO preview_group_run_components(id,run_id,component_id,alias,generated_app_id,
         deployment_id,state,url,outputs,message) VALUES(?,?,?,?,?,?,?,?,?,?)`), item.ID, item.RunID, item.ComponentID,
 		item.Alias, nullString(item.GeneratedAppID), nullString(item.DeploymentID), item.State, item.URL, jsonText(item.Outputs), item.Message)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) ClearPreviewGroupRunComponents(ctx context.Context, runID string) error {

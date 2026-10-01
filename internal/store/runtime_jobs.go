@@ -169,7 +169,7 @@ func (s *SQLStore) ExpireRuntimeJobs(ctx context.Context, now time.Time) error {
 }
 
 func (s *SQLStore) ActiveRuntimeMutation(ctx context.Context, appID string) (*core.RuntimeJob, error) {
-	j, err := scanRuntimeJob(s.db.QueryRowContext(ctx, s.q(`SELECT `+runtimeJobColumns+` FROM runtime_jobs WHERE app_id=? AND operation NOT IN ('inspect','logs','storage_inspect') AND state IN ('pending','running','unknown') LIMIT 1`), appID))
+	j, err := scanRuntimeJob(s.db.QueryRowContext(ctx, s.q(`SELECT `+runtimeJobColumns+` FROM runtime_jobs WHERE app_id=? AND operation NOT IN ('inspect','logs','storage_inspect','retention_inspect') AND state IN ('pending','running','unknown') LIMIT 1`), appID))
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
 	}
@@ -181,7 +181,7 @@ func (s *SQLStore) ActiveRuntimeMutation(ctx context.Context, appID string) (*co
 // enrolled identity may reconcile the same target after the old lease expires;
 // it cannot read or complete the old identity's execution request.
 func (s *SQLStore) AcknowledgeRuntimeJob(ctx context.Context, app, id, inspection string, now time.Time) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state='acknowledged',updated_at=? WHERE id=? AND app_id=? AND state='unknown' AND lease_until<=? AND EXISTS (SELECT 1 FROM runtime_jobs i WHERE i.id=? AND i.app_id=runtime_jobs.app_id AND i.server_id=runtime_jobs.server_id AND i.node_id=runtime_jobs.node_id AND i.project_id=runtime_jobs.project_id AND i.node_generation>=runtime_jobs.node_generation AND i.operation='inspect' AND i.state='succeeded' AND i.created_at>runtime_jobs.updated_at AND EXISTS (SELECT 1 FROM edge_node_credentials c WHERE c.network_id=i.node_id AND c.generation=i.node_generation AND c.revoked=FALSE AND c.public_key<>'')) AND EXISTS (SELECT 1 FROM apps a WHERE a.id=runtime_jobs.app_id AND a.project_id=runtime_jobs.project_id AND a.server_id=runtime_jobs.server_id) AND EXISTS (SELECT 1 FROM servers s WHERE s.id=runtime_jobs.server_id AND s.agent_node_id=runtime_jobs.node_id)`), stamp(now), id, app, stamp(now), inspection)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state='acknowledged',updated_at=? WHERE id=? AND app_id=? AND state='unknown' AND lease_until<=? AND EXISTS (SELECT 1 FROM runtime_jobs i WHERE i.id=? AND i.app_id=runtime_jobs.app_id AND i.server_id=runtime_jobs.server_id AND i.node_id=runtime_jobs.node_id AND i.project_id=runtime_jobs.project_id AND i.node_generation>=runtime_jobs.node_generation AND (i.operation='inspect' OR (i.operation='retention_inspect' AND runtime_jobs.operation='retention_prune')) AND i.state='succeeded' AND i.created_at>runtime_jobs.updated_at AND EXISTS (SELECT 1 FROM edge_node_credentials c WHERE c.network_id=i.node_id AND c.generation=i.node_generation AND c.revoked=FALSE AND c.public_key<>'')) AND EXISTS (SELECT 1 FROM apps a WHERE a.id=runtime_jobs.app_id AND a.project_id=runtime_jobs.project_id AND a.server_id=runtime_jobs.server_id) AND EXISTS (SELECT 1 FROM servers s WHERE s.id=runtime_jobs.server_id AND s.agent_node_id=runtime_jobs.node_id)`), stamp(now), id, app, stamp(now), inspection)
 	if err != nil {
 		return err
 	}

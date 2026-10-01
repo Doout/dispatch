@@ -20,7 +20,8 @@ var (
 )
 
 type Service struct {
-	Storage *StorageManager
+	Retention RuntimeRetentionBackend
+	Storage   *StorageManager
 	// CheckExecution verifies preview provenance before accepting or dispatching work.
 	CheckExecution func(context.Context, core.App, string) error
 	// OnFinished queues follow-up observations after the terminal state is saved.
@@ -39,7 +40,11 @@ type Service struct {
 
 func NewService(data store.Store, executor Executor) *Service {
 	runtimeRollback, _ := executor.(RuntimeRollbackExecutor)
-	return &Service{Storage: NewStorageManager(data), store: data, executor: executor, runtimeRollback: runtimeRollback, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
+	var retention RuntimeRetentionBackend
+	if _, ok := executor.(SimulationExecutor); ok {
+		retention = SimulationRetention{Store: data}
+	}
+	return &Service{Retention: retention, Storage: NewStorageManager(data), store: data, executor: executor, runtimeRollback: runtimeRollback, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
 }
 
 func (s *Service) ConfigureRuntimeRollback(executor RuntimeRollbackExecutor) {

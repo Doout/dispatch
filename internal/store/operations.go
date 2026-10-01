@@ -148,6 +148,13 @@ func (s *SQLStore) SaveRetentionPolicy(ctx context.Context, p core.RetentionPoli
 	if err = s.lockRetentionProject(ctx, tx, p.ProjectID); err != nil {
 		return err
 	}
+	var active int
+	if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM runtime_retention_reviews WHERE project_id=? AND lease_until>?`), p.ProjectID, stamp(time.Now().UTC())).Scan(&active); err != nil {
+		return err
+	}
+	if active > 0 {
+		return ErrRuntimeRetentionChanged
+	}
 	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO retention_policies(project_id,payload) VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET payload=excluded.payload`), p.ProjectID, string(b))
 	if err != nil {
 		return err
@@ -271,7 +278,7 @@ func (s *SQLStore) applyRetention(ctx context.Context, p core.RetentionPolicy, a
 	}
 
 	rows, err := tx.QueryContext(ctx, s.q(`SELECT d.id,d.app_id,d.state,d.created_at,
- CASE WHEN EXISTS(SELECT 1 FROM workflow_stage_runs w WHERE w.deployment_ids LIKE '%' || d.id || '%') OR EXISTS(SELECT 1 FROM preview_group_run_components p WHERE p.deployment_id=d.id) OR EXISTS(SELECT 1 FROM deployment_drift_baselines b WHERE b.deployment_id=d.id) THEN 1 ELSE 0 END
+ CASE WHEN EXISTS(SELECT 1 FROM workflow_stage_runs w WHERE w.deployment_ids LIKE '%' || d.id || '%') OR EXISTS(SELECT 1 FROM preview_group_run_components p WHERE p.deployment_id=d.id) OR EXISTS(SELECT 1 FROM deployment_runtime_artifacts ra WHERE ra.deployment_id=d.id) OR EXISTS(SELECT 1 FROM deployment_drift_baselines b WHERE b.deployment_id=d.id) THEN 1 ELSE 0 END
  FROM deployments d JOIN apps a ON a.id=d.app_id WHERE a.project_id=? ORDER BY d.created_at DESC,d.id DESC`), p.ProjectID)
 	if err != nil {
 		return out, err

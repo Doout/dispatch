@@ -312,13 +312,17 @@ func (a *API) saveRetention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := data.SaveRetentionPolicy(r.Context(), p); err != nil {
+		if errors.Is(err, store.ErrRuntimeRetentionChanged) {
+			problem(w, 409, "Cleanup is active", "Finish the accepted runtime cleanup before changing its retention policy.")
+			return
+		}
 		a.internal(w, err)
 		return
 	}
 	writeJSON(w, 200, p)
 }
 func validRetentionPolicy(p core.RetentionPolicy) bool {
-	return p.LogDays >= 1 && p.LogDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000
+	return p.LogDays >= 1 && p.LogDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000 && p.ImageDays >= 0 && p.ImageDays <= 36500 && p.StoppedRevisionDays >= 0 && p.StoppedRevisionDays <= 36500 && (p.KeepRollbackRevisions == 0 || p.KeepRollbackRevisions >= 2 && p.KeepRollbackRevisions <= 1000)
 }
 func (a *API) previewRetention(w http.ResponseWriter, r *http.Request) { a.runRetention(w, r, false) }
 func (a *API) applyRetention(w http.ResponseWriter, r *http.Request)   { a.runRetention(w, r, true) }
@@ -336,8 +340,11 @@ func (a *API) runRetention(w http.ResponseWriter, r *http.Request, apply bool) {
 		return
 	}
 	var input struct {
-		Confirm        string                `json:"confirm"`
-		ExpectedPolicy *core.RetentionPolicy `json:"expectedPolicy"`
+		Scope               string                `json:"scope"`
+		RuntimeReviewID     string                `json:"runtimeReviewId"`
+		RuntimeReviewDigest string                `json:"runtimeReviewDigest"`
+		Confirm             string                `json:"confirm"`
+		ExpectedPolicy      *core.RetentionPolicy `json:"expectedPolicy"`
 	}
 	if apply || r.ContentLength != 0 {
 		if !decode(w, r, &input) {
@@ -354,6 +361,28 @@ func (a *API) runRetention(w http.ResponseWriter, r *http.Request, apply bool) {
 	}
 	if input.ExpectedPolicy != nil && !validRetentionPolicy(*input.ExpectedPolicy) {
 		problem(w, 400, "Invalid retention", "Keep at least five runs and at least one day of history and logs.")
+		return
+	}
+	if input.Scope == "runtime" {
+		if input.ExpectedPolicy == nil {
+			problem(w, 400, "Policy review required", "Supply the saved retention policy used for this runtime review.")
+			return
+		}
+		var review core.RuntimeRetentionReview
+		if apply {
+			review, err = a.deploy.ApplyRuntimeRetention(r.Context(), *input.ExpectedPolicy, input.RuntimeReviewID, input.RuntimeReviewDigest)
+		} else {
+			review, err = a.deploy.PreviewRuntimeRetention(r.Context(), *input.ExpectedPolicy)
+		}
+		if err != nil {
+			a.runtimeRetentionError(w, err)
+			return
+		}
+		writeJSON(w, 200, core.RetentionResult{Applied: apply, Runtime: &review})
+		return
+	}
+	if input.Scope != "" && input.Scope != "history" {
+		problem(w, 400, "Invalid retention scope", "Select history or runtime retention.")
 		return
 	}
 	var result core.RetentionResult
@@ -420,4 +449,27 @@ func (a *API) ownerCandidates(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]any{"users": userRows, "teams": teamRows})
+}
+
+func (a *API) runtimeRetentionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		problem(w, 404, "Cleanup review not found", "The runtime review does not exist in this project.")
+		return
+	}
+	if errors.Is(err, store.ErrRetentionPolicyChanged) || errors.Is(err, store.ErrRuntimeRetentionChanged) {
+		problem(w, 409, "Runtime review changed", err.Error())
+		return
+	}
+	a.internal(w, err)
+}
+func (a *API) getRuntimeRetentionReview(w http.ResponseWriter, r *http.Request) {
+	if !a.retentionProject(w, r) {
+		return
+	}
+	review, err := a.deploy.GetRuntimeRetentionReview(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "reviewId"))
+	if err != nil {
+		a.runtimeRetentionError(w, err)
+		return
+	}
+	writeJSON(w, 200, review)
 }
