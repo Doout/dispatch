@@ -166,3 +166,6 @@ reconciliation and adoption to one reviewed intent; resource names or public IPs
 alone are insufficient. Deletion inspection must provide authoritative absence
 with HTTP 404. Controller lifecycle details are in
 [On-demand servers](on-demand-servers.md).
+
+Use the [independent provider sidecar package](provider-packaging.md) for image
+pinning, endpoint/credential registration, compatibility checks and rollback.
