@@ -1,3 +1,4 @@
+import { DeploymentHealth } from "./DeploymentHealth";
 import { StorageInventory } from "./StorageInventory";
 import { WorkflowResourceDialog as EventWorkflowResourceDialog } from "./workflows/ResourceDialog";
 import { EventsListPage } from "./EventsPage";
@@ -1370,6 +1371,7 @@ export function DeploymentDetailsPage({
           />
         </section>
       )}
+      {section === "summary" && <DeploymentHealth health={deployment.health} />}
       {overview && deployment.app && !deployment.app.template && <RuntimeSyncDisclosure key={`sync:${deployment.appId}`} application={deployment.app} overview={overview} />}
       {overview && (section === "summary" || section === "history") && <ReleaseTools deployment={deployment} canDeploy={canManageProject(overview, deployment.app?.projectId ?? "", "deployment.run")} canConfigure={canManageProject(overview, deployment.app?.projectId ?? "", "project.configure")} onDeployment={run => onOpenDeployment?.(run.id)} onSelectDeployment={onOpenDeployment ?? onSelectDeployment} />}
       {section === "history" && <DeploymentHistory key={`history:${deployment.appId}`} deployment={deployment} onSelectDeployment={onSelectDeployment} />}

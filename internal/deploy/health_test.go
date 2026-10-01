@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -116,5 +117,29 @@ func TestHealthHelmNativeProbesAndConflicts(t *testing.T) {
 	policy.Checks = append(policy.Checks, core.HealthCheck{ID: "other", Kind: "tcp", Service: "web", Port: 8080})
 	if _, err = configureHelmHealth(document, policy, 0, ""); err == nil {
 		t.Fatal("conflicting native checks were silently omitted")
+	}
+}
+
+func TestHealthRechecksEarlierSuccessBeforePromotion(t *testing.T) {
+	policy := core.HealthPolicy{TimeoutSeconds: 4, IntervalSeconds: 1, FailureThreshold: 2, Checks: []core.HealthCheck{{ID: "http", Kind: "http", Path: "/ready"}}}
+	rounds := 0
+	result, err := RunHealthPolicy(context.Background(), policy, func(_ context.Context, c core.HealthCheck) HealthObservation {
+		if c.Kind == "container" {
+			rounds++
+			return HealthObservation{Passed: rounds == 1}
+		}
+		return HealthObservation{Passed: rounds > 1}
+	})
+	if err == nil || result.State != "failed" || result.Checks[0].Failures != 2 || rounds != 3 {
+		t.Fatalf("old passing check reused: %+v %v", result, err)
+	}
+}
+
+func TestHealthHelmUnmatchedContainerRejectsRenderedCandidate(t *testing.T) {
+	policy, _ := core.NormalizeHealthPolicy(core.HealthPolicy{Checks: []core.HealthCheck{{ID: "process", Kind: "container", Service: "missing"}}})
+	renderer := helmDeploymentMetadata{HealthPolicy: policy}
+	_, err := renderer.Run(bytes.NewBufferString("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\nspec:\n  template:\n    spec:\n      containers:\n      - name: web\n        image: example/web\n"))
+	if err == nil || !strings.Contains(err.Error(), "process") {
+		t.Fatal("unknown container became a passing health check")
 	}
 }

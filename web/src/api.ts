@@ -205,7 +205,11 @@ export type RelaySSHInstallInput = {
   installMode?: "systemd" | "docker";
   relayImage?: string;
 };
+export type HealthCheck = { id: string; kind: "container" | "http" | "tcp" | "tls"; scope: "workload" | "route" | "certificate"; service?: string; port?: number; path?: string };
+export type HealthPolicy = { timeoutSeconds: number; checkTimeoutSeconds: number; intervalSeconds: number; failureThreshold: number; checks: HealthCheck[] };
+export type DeploymentHealth = { state: string; simulated?: boolean; policy: HealthPolicy; checks: { check: HealthCheck; state: string; attempts: number; failures: number; message: string; httpStatus?: number }[]; startedAt?: string; finishedAt?: string };
 export type App = {
+  healthPolicy?: HealthPolicy;
   id: string;
   projectId: string;
   serverId: string;
@@ -246,6 +250,7 @@ export type DeploymentState =
   | "failed"
   | "cancelled";
 export type Deployment = {
+  health?: DeploymentHealth;
   id: string;
   appId: string;
   commitSha: string;
@@ -1210,6 +1215,8 @@ export const api = {
       `/api/v1/apps/${id}/helm-values`,
       { method: "PUT", body: JSON.stringify({ overrides }) },
     ),
+  appHealthPolicy: (id: string) => request<HealthPolicy>(`/api/v1/apps/${id}/health-policy`),
+  updateAppHealthPolicy: (id: string, policy: HealthPolicy) => request<HealthPolicy>(`/api/v1/apps/${id}/health-policy`, {method:"PUT",body:JSON.stringify(policy)}),
   updateAppHooks: (
     id: string,
     body: {

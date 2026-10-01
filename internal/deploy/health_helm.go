@@ -42,6 +42,11 @@ func configureHelmHealth(object map[string]any, policy core.HealthPolicy, port i
 	for _, item := range containers {
 		container, _ := item.(map[string]any)
 		name, _ := container["name"].(string)
+		for _, check := range policy.Checks {
+			if check.Kind == "container" && (check.Service == "" || check.Service == name) {
+				matched[check.ID] = true
+			}
+		}
 		var selected *core.HealthCheck
 		for _, check := range policy.Checks {
 			if check.Kind == "container" || check.Kind == "tls" || check.Service != "" && check.Service != name {

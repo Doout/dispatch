@@ -128,7 +128,7 @@ func (m helmDeploymentMetadata) Run(rendered *bytes.Buffer) (*bytes.Buffer, erro
 		output.Write(raw)
 	}
 	for _, check := range m.HealthPolicy.Checks {
-		if (check.Kind == "http" || check.Kind == "tcp") && !matched[check.ID] {
+		if (check.Kind == "http" || check.Kind == "tcp" || check.Kind == "container" && check.Service != "") && !matched[check.ID] {
 			return nil, fmt.Errorf("health check %s has no selected Helm workload container", check.ID)
 		}
 	}
