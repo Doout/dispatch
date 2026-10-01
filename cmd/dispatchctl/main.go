@@ -62,7 +62,8 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	}
 	if rest[0] == "mcp" {
 		if len(rest) != 1 {
-			return emit(automationclient.Failure("invalid_input", "mcp does not accept operation arguments"))
+			fmt.Fprintln(diagnostics, "mcp does not accept operation arguments")
+			return 2
 		}
 		if err := client.ServeMCP(ctx, in, out); err != nil {
 			fmt.Fprintln(diagnostics, "MCP input exceeded the supported message size or could not be read")
@@ -75,7 +76,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	if _, ok := automationclient.Find(name); !ok && len(rest) > 1 {
 		name = rest[0] + "_" + rest[1]
 		used = 2
-		if name == "server_delete" && len(rest) > 2 && rest[2] == "review" {
+		if (name == "server_delete" || name == "snapshot_delete") && len(rest) > 2 && rest[2] == "review" {
 			name += "_review"
 			used = 3
 		}
@@ -87,6 +88,8 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	flags.SetOutput(diagnostics)
 	var a automationclient.Arguments
 	flags.StringVar(&a.ProjectID, "project", "", "Project ID")
+	flags.StringVar(&a.ProviderID, "provider", "", "Assigned provider ID")
+	flags.StringVar(&a.SnapshotID, "snapshot", "", "Owned machine snapshot ID")
 	flags.StringVar(&a.AppID, "app", "", "Application ID")
 	flags.StringVar(&a.DeploymentID, "deployment", "", "Deployment ID")
 	flags.StringVar(&a.ReceiptID, "receipt", "", "Mutation receipt ID")

@@ -27,7 +27,7 @@ func TestAutomationClientSimulationAndMockProvider(t *testing.T) {
 	}
 	w = automationRequest(t, a, "secret", "POST", "/api/v1/automation-accounts/"+account.ID+"/credentials", map[string]any{"name": "cli", "expiresAt": time.Now().Add(time.Hour)}, 201)
 	json.Unmarshal(w.Body.Bytes(), &issued)
-	grant := core.PrincipalGrant{PrincipalType: core.PrincipalServiceAccount, PrincipalID: account.ID, ProjectID: app.ProjectID, Permissions: []core.Permission{core.PermissionProjectView, core.PermissionDeploymentRun, core.PermissionInfrastructureInspect, core.PermissionInfrastructureCreate}}
+	grant := core.PrincipalGrant{PrincipalType: core.PrincipalServiceAccount, PrincipalID: account.ID, ProjectID: app.ProjectID, Permissions: []core.Permission{core.PermissionProjectView, core.PermissionDeploymentRun, core.PermissionInfrastructureInspect, core.PermissionInfrastructureCreate, core.PermissionSnapshotCreate}}
 	automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/grants", grant, 200)
 	server := httptest.NewServer(a)
 	defer server.Close()
@@ -82,7 +82,7 @@ func TestAutomationClientSimulationAndMockProvider(t *testing.T) {
 	endpoint := httptest.NewServer(provider.Handler(adapter, ""))
 	defer endpoint.Close()
 	var p core.InfrastructureProvider
-	raw := serviceRequestTest(t, a, "POST", "/api/v1/infrastructure/providers", provision.Registration{Name: "CLI mock", Endpoint: endpoint.URL, Enabled: true, Capabilities: []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete}}, 201)
+	raw := serviceRequestTest(t, a, "POST", "/api/v1/infrastructure/providers", provision.Registration{Name: "CLI mock", Endpoint: endpoint.URL, Enabled: true, Capabilities: []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete, provider.CapabilitySnapshotCreate, provider.CapabilitySnapshotInspect, provider.CapabilitySnapshotDelete}}, 201)
 	json.Unmarshal(raw, &p)
 	now := time.Now().UTC()
 	if e = a.store.CreateSecret(ctx, core.Secret{ID: "cli-ssh", Name: "Public SSH", Type: core.SecretTypeSSHPrivateKey, PublicValue: "ssh-ed25519 fixture", CreatedAt: now, UpdatedAt: now}); e != nil {
@@ -91,7 +91,15 @@ func TestAutomationClientSimulationAndMockProvider(t *testing.T) {
 	for kind, id := range map[string]string{"provider": p.ID, "ssh_key": "cli-ssh"} {
 		automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/assignments/"+app.ProjectID, map[string]any{"kind": kind, "resourceId": id}, 200)
 	}
-	policy := core.InfrastructureQuotaPolicy{MaxServers: 1, Providers: []core.InfrastructureProviderRule{{ProviderID: p.ID, Regions: []string{"mock-region"}, Sizes: []string{"mock-small"}}}}
+	catalog := call("providers_list", automationclient.Arguments{ProjectID: app.ProjectID})
+	if !strings.Contains(string(catalog.Data), p.ID) {
+		t.Fatal("assigned provider missing")
+	}
+	options := call("provider_options", automationclient.Arguments{ProjectID: app.ProjectID, ProviderID: p.ID, Input: json.RawMessage(`{"kind":"sizes","config":{}}`)})
+	if !strings.Contains(string(options.Data), "mock-small") {
+		t.Fatal("provider choices missing")
+	}
+	policy := core.InfrastructureQuotaPolicy{MaxServers: 1, MaxSnapshots: 1, Providers: []core.InfrastructureProviderRule{{ProviderID: p.ID, Regions: []string{"mock-region"}, Sizes: []string{"mock-small"}}}}
 	automationRequest(t, a, "secret", "PUT", "/api/v1/projects/"+app.ProjectID+"/infrastructure/quota", policy, 200)
 	create := automationclient.ServerCreateReview{ProjectID: app.ProjectID, ProviderID: p.ID, Name: "CLI server", Region: "mock-region", Size: "mock-small", Image: "mock-linux", Network: "mock-private", SSHKeySecretID: "cli-ssh", Config: map[string]any{}}
 	raw, _ = json.Marshal(create)
@@ -123,8 +131,41 @@ func TestAutomationClientSimulationAndMockProvider(t *testing.T) {
 	if r := client.Call(ctx, "server_delete_review", automationclient.Arguments{ServerID: allocation.ServerID}); r.Status != 403 || r.ExitCode() != 3 {
 		t.Fatal("client gained deletion permission", r)
 	}
+	snapshotReview := call("snapshot_review", automationclient.Arguments{ServerID: allocation.ServerID, Input: json.RawMessage(`{"name":"cli-snapshot","diskSet":"all","consistency":"crash-consistent","encryption":{"mode":"provider-managed"}}`)})
+	var capture core.InfrastructureSnapshotReview
+	json.Unmarshal(snapshotReview.Data, &capture)
+	raw, _ = json.Marshal(automationclient.InfrastructureAcceptance{ReviewID: capture.ID, Digest: capture.Digest, ConfirmName: capture.Name})
+	captureArgs := automationclient.Arguments{Key: "cli-snapshot-capture", Input: raw}
+	first = call("snapshot_accept", captureArgs)
+	json.Unmarshal(first.Data, &receipt)
+	if replay := call("snapshot_accept", captureArgs); !replay.Replayed {
+		t.Fatal("snapshot capture duplicated")
+	}
+	for range 5 {
+		now = now.Add(3 * time.Second)
+		if _, e = manager.Reconcile(ctx); e != nil {
+			t.Fatal(e)
+		}
+	}
+	call("receipt_wait", automationclient.Arguments{ReceiptID: receipt.ID, TimeoutSeconds: 5})
+	snapshots := call("snapshots_list", automationclient.Arguments{ProjectID: app.ProjectID})
+	if !strings.Contains(string(snapshots.Data), capture.SnapshotID) {
+		t.Fatal("accepted snapshot missing")
+	}
+	snapshot := call("snapshot_get", automationclient.Arguments{SnapshotID: capture.SnapshotID})
+	var owned core.InfrastructureSnapshot
+	json.Unmarshal(snapshot.Data, &owned)
+	if owned.State != "ready" {
+		t.Fatal("snapshot is not ready")
+	}
+	if r := client.Call(ctx, "snapshot_delete_review", automationclient.Arguments{SnapshotID: capture.SnapshotID}); r.Status != 403 || r.ExitCode() != 3 {
+		t.Fatal("client gained snapshot deletion permission", r)
+	}
 	automationRequest(t, a, "secret", "DELETE", "/api/v1/infrastructure/grants/service_account/"+account.ID+"/"+app.ProjectID, nil, 204)
 	if r := client.Call(ctx, "server_create", accept); r.Status != 403 {
 		t.Fatal("replay ignored revoked permission", r)
+	}
+	if r := client.Call(ctx, "snapshot_accept", captureArgs); r.Status != 403 {
+		t.Fatal("snapshot replay ignored revoked permission", r)
 	}
 }

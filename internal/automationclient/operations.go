@@ -30,20 +30,36 @@ type BootstrapInput struct {
 	ImageFamily    string `json:"imageFamily"`
 	InstallRuntime bool   `json:"installRuntime"`
 }
+type ProviderOptionsInput struct {
+	Kind   string         `json:"kind"`
+	Config map[string]any `json:"config"`
+}
+type SnapshotReviewInput struct {
+	Name        string `json:"name"`
+	DiskSet     string `json:"diskSet"`
+	Consistency string `json:"consistency"`
+	Encryption  struct {
+		Mode string `json:"mode"`
+	} `json:"encryption"`
+	RetainUntil string `json:"retainUntil,omitempty"`
+}
 type ServerCreateReview struct {
-	ProjectID      string          `json:"projectId"`
-	ProviderID     string          `json:"providerId"`
-	Name           string          `json:"name"`
-	Region         string          `json:"region"`
-	Size           string          `json:"size"`
-	Image          string          `json:"image"`
-	Network        string          `json:"network"`
-	SSHKeySecretID string          `json:"sshKeySecretId"`
-	Config         map[string]any  `json:"config"`
-	Bootstrap      *BootstrapInput `json:"bootstrap,omitempty"`
+	ProjectID        string          `json:"projectId"`
+	ProviderID       string          `json:"providerId"`
+	Name             string          `json:"name"`
+	Region           string          `json:"region"`
+	Size             string          `json:"size"`
+	Image            string          `json:"image"`
+	Network          string          `json:"network"`
+	SSHKeySecretID   string          `json:"sshKeySecretId"`
+	Config           map[string]any  `json:"config"`
+	Bootstrap        *BootstrapInput `json:"bootstrap,omitempty"`
+	SourceSnapshotID string          `json:"sourceSnapshotId,omitempty"`
 }
 type Arguments struct {
 	ProjectID      string          `json:"projectId,omitempty"`
+	ProviderID     string          `json:"providerId,omitempty"`
+	SnapshotID     string          `json:"snapshotId,omitempty"`
 	AppID          string          `json:"appId,omitempty"`
 	DeploymentID   string          `json:"deploymentId,omitempty"`
 	ReceiptID      string          `json:"receiptId,omitempty"`
@@ -74,11 +90,18 @@ var Operations = []Operation{
 	{Name: "receipt_get", Method: "GET", Path: "/mutation-receipts/{receiptId}", Description: "Inspect the original mutation receipt using current permissions.", Fields: []string{"receiptId"}, Required: []string{"receiptId"}},
 	{Name: "receipt_wait", Method: "GET", Path: "/mutation-receipts/{receiptId}", Description: "Wait for a receipt outcome. Pending approval and uncertain outcomes return for operator review.", Fields: []string{"receiptId", "timeoutSeconds"}, Required: []string{"receiptId"}},
 	{Name: "servers_list", Method: "GET", Path: "/infrastructure/servers", Description: "List managed servers visible to the current identity.", Fields: []string{"projectId"}},
+	{Name: "providers_list", Method: "GET", Path: "/projects/{projectId}/infrastructure/providers", Description: "List assigned providers, their capabilities and supported configuration for a project.", Fields: []string{"projectId"}, Required: []string{"projectId"}},
+	{Name: "provider_options", Method: "POST", Path: "/projects/{projectId}/infrastructure/providers/{providerId}/options", Description: "Inspect available provider regions, sizes, images or networks using public configuration.", Fields: []string{"projectId", "providerId", "input"}, Required: []string{"projectId", "providerId", "input"}, InputSchema: "ProviderOptionsInput"},
 	{Name: "server_operations", Method: "GET", Path: "/infrastructure/servers/{serverId}/operations", Description: "Inspect original server operation history and recovery state.", Fields: []string{"serverId"}, Required: []string{"serverId"}},
 	{Name: "server_review", Method: "POST", Path: "/infrastructure/servers/review", Description: "Prepare a server creation review using assigned provider and public SSH key references.", Fields: []string{"input"}, Required: []string{"input"}, InputSchema: "ServerCreateReview"},
 	{Name: "server_create", Method: "POST", Path: "/infrastructure/servers", Description: "Accept a supplied server creation review with an explicit key. Project grants, assignments and quota are enforced by Dispatch.", Fields: []string{"key", "input"}, Required: []string{"key", "input"}, Mutation: true, InputSchema: "InfrastructureAcceptance"},
 	{Name: "server_delete_review", Method: "POST", Path: "/infrastructure/servers/{serverId}/delete-review", Description: "Preview server deletion and protected data consequences without accepting deletion.", Fields: []string{"serverId"}, Required: []string{"serverId"}},
 	{Name: "server_delete", Method: "POST", Path: "/infrastructure/servers/{serverId}/delete", Description: "Submit the operator-supplied deletion digest and exact name with an explicit key. Never generates confirmation or bypasses protected storage.", Fields: []string{"serverId", "key", "input"}, Required: []string{"serverId", "key", "input"}, Mutation: true, InputSchema: "InfrastructureAcceptance"},
+	{Name: "snapshots_list", Method: "GET", Path: "/projects/{projectId}/infrastructure/snapshots", Description: "List owned machine snapshots and their retention and recovery state.", Fields: []string{"projectId"}, Required: []string{"projectId"}},
+	{Name: "snapshot_get", Method: "GET", Path: "/infrastructure/snapshots/{snapshotId}", Description: "Inspect machine snapshot state and source identity.", Fields: []string{"snapshotId"}, Required: []string{"snapshotId"}},
+	{Name: "snapshot_review", Method: "POST", Path: "/infrastructure/servers/{serverId}/snapshot-review", Description: "Prepare a machine snapshot capture review with explicit disk scope, consistency and encryption.", Fields: []string{"serverId", "input"}, Required: []string{"serverId", "input"}, InputSchema: "SnapshotReviewInput"},
+	{Name: "snapshot_delete_review", Method: "POST", Path: "/infrastructure/snapshots/{snapshotId}/delete-review", Description: "Review snapshot deletion, including retention and active restore protection.", Fields: []string{"snapshotId"}, Required: []string{"snapshotId"}},
+	{Name: "snapshot_accept", Method: "POST", Path: "/infrastructure/snapshots/accept", Description: "Accept a supplied snapshot capture or deletion review with an explicit retry key and confirmation. Server grants, quota and retention still apply.", Fields: []string{"key", "input"}, Required: []string{"key", "input"}, Mutation: true, InputSchema: "InfrastructureAcceptance"},
 	{Name: "quota_get", Method: "GET", Path: "/projects/{projectId}/infrastructure/quota", Description: "Inspect project allocation limits and reservations.", Fields: []string{"projectId"}, Required: []string{"projectId"}},
 }
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$`)
@@ -143,7 +166,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 	}
 	path := op.Path
-	for f, v := range map[string]string{"projectId": args.ProjectID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
+	for f, v := range map[string]string{"projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
 		if v != "" && !identifier.MatchString(v) {
 			return Failure("invalid_input", "Invalid resource identifier")
 		}
@@ -162,8 +185,25 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		body = input
 	case "InfrastructureAcceptance":
 		var input InfrastructureAcceptance
-		if decodeStrict(args.Input, &input) != nil || input.Digest == "" || input.ConfirmName == "" || name == "server_create" && input.ReviewID == "" {
+		if decodeStrict(args.Input, &input) != nil || input.Digest == "" || input.ConfirmName == "" || (name == "server_create" || name == "snapshot_accept") && input.ReviewID == "" {
 			return Failure("invalid_input", "Supply the reviewed digest, exact confirmation name and creation review ID when creating")
+		}
+		body = input
+	case "ProviderOptionsInput":
+		var input ProviderOptionsInput
+		if decodeStrict(args.Input, &input) != nil || (input.Kind != "regions" && input.Kind != "sizes" && input.Kind != "images" && input.Kind != "networks") {
+			return Failure("invalid_input", "Supply an option kind of regions, sizes, images or networks and public configuration")
+		}
+		body = input
+	case "SnapshotReviewInput":
+		var input SnapshotReviewInput
+		if decodeStrict(args.Input, &input) != nil || input.Name == "" || (input.DiskSet != "boot" && input.DiskSet != "all") || input.Consistency != "crash-consistent" || input.Encryption.Mode != "provider-managed" {
+			return Failure("invalid_input", "Supply a snapshot name, boot or all disk scope, crash-consistent policy and provider-managed encryption")
+		}
+		if input.RetainUntil != "" {
+			if _, err := time.Parse(time.RFC3339, input.RetainUntil); err != nil {
+				return Failure("invalid_input", "Snapshot retention must be an RFC3339 timestamp")
+			}
 		}
 		body = input
 	case "ServerCreateReview":
@@ -229,7 +269,9 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 		if (name == "apps_list" || name == "servers_list") && args.ProjectID != "" {
 			var items []map[string]any
-			if json.Unmarshal(out.Data, &items) != nil {
+			decoder := json.NewDecoder(bytes.NewReader(out.Data))
+			decoder.UseNumber()
+			if decoder.Decode(&items) != nil {
 				return Failure("invalid_response", "Expected resource inventory")
 			}
 			selected := []map[string]any{}

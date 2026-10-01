@@ -9,17 +9,29 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
-  /infrastructure/servers/review:
+  /projects/{id}/infrastructure/providers:
+    get:
+      summary: List assigned providers available to a project
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Ready providers with public manifest and capabilities, without endpoint credentials }
+        '403': { $ref: '#/components/responses/Problem' }
+  /projects/{id}/infrastructure/providers/{providerId}/options:
     post:
-      summary: Prepare project-scoped server allocation review
+      summary: Inspect assigned provider choices using public configuration
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: providerId, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ServerCreateReview' }
+            schema: { $ref: '#/components/schemas/ProviderOptionsInput' }
       responses:
-        '201': { description: Immutable reviewed allocation and digest, without provider credentials }
+        '200': { description: Supported region, size, image or network choices }
         '403': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers/{id}/operations:
     get:
       parameters:
@@ -293,19 +305,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [name, diskSet, consistency, encryption]
-              properties:
-                name: { type: string, minLength: 1, maxLength: 80 }
-                diskSet: { type: string, enum: [boot, all] }
-                consistency: { type: string, enum: [crash-consistent] }
-                encryption:
-                  type: object
-                  required: [mode]
-                  properties:
-                    mode: { type: string, enum: [provider-managed] }
-                retainUntil: { type: string, format: date-time, description: Defaults to seven days. Must fall within the next year. }
+            schema: { $ref: '#/components/schemas/SnapshotReviewInput' }
       responses:
         '201': { description: Exact disk identities, consistency, retention, digest and expiring review ID }
         '403': { $ref: '#/components/responses/Problem' }
@@ -374,22 +374,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [projectId, providerId, name, region, size, image, network, sshKeySecretId, config]
-              properties:
-                projectId: { type: string }
-                providerId: { type: string }
-                name: { type: string }
-                region: { type: string }
-                size: { type: string }
-                image: { type: string }
-                network: { type: string }
-                sshKeySecretId: { type: string }
-                config: { type: object }
-                secretRefs: { type: object, additionalProperties: { type: string } }
-                sourceSnapshotId: { type: string, description: Optional owned retained snapshot for an isolated fresh clone. }
-                bootstrap: { type: object, description: Reviewed cloud_init bootstrap plan; required for snapshot restores. }
+            schema: { $ref: '#/components/schemas/ServerCreateReview' }
       responses:
         '201': { description: Expiring creation review with digest and fresh node/bootstrap binding }
         '403': { $ref: '#/components/responses/Problem' }
@@ -4647,6 +4632,26 @@ components:
         updatedAt:
           type: string
           format: date-time
+    ProviderOptionsInput:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [regions, sizes, images, networks] }
+        config: { type: object, additionalProperties: true }
+        secretRefs: { type: object, additionalProperties: { type: string }, description: Controller-owner only. Not exposed by scoped clients. }
+    SnapshotReviewInput:
+      type: object
+      required: [name, diskSet, consistency, encryption]
+      properties:
+        name: { type: string }
+        diskSet: { type: string, enum: [boot, all] }
+        consistency: { type: string, enum: [crash-consistent] }
+        encryption:
+          type: object
+          required: [mode]
+          properties:
+            mode: { type: string, enum: [provider-managed] }
+        retainUntil: { type: string, format: date-time, description: Defaults to seven days. Must fall within the next year. }
     ServerCreateReview:
       type: object
       required: [projectId, providerId, name]
@@ -4659,6 +4664,8 @@ components:
         image: { type: string }
         network: { type: string }
         sshKeySecretId: { type: string, description: Assigned public SSH key reference. }
+        sourceSnapshotId: { type: string, description: Optional owned retained snapshot for an isolated fresh clone. Requires fresh cloud-init bootstrap. }
+        secretRefs: { type: object, additionalProperties: { type: string }, description: Controller-owner only. Not exposed by scoped clients. }
         bootstrap:
           type: object
           properties:
