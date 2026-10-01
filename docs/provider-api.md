@@ -153,3 +153,5 @@ is in place. See [GitHub's container registry documentation](https://docs.github
 The fixture scan catches common private-key, token and credential-bearing URL
 formats. Review must also reject provider-specific private identifiers and
 credential formats the scan does not recognize. Public examples use mock values.
+
+Controller registration, capability approval and credential rotation are documented in [Infrastructure providers](infrastructure-providers.md).

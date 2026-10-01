@@ -89,10 +89,45 @@ func (c *Client) request(ctx context.Context, method, path, key string, input, o
 		}
 		return &problem
 	}
+	if c.token != "" && responseContainsSecret(raw, c.token) {
+		return errors.New("provider response contains authentication material")
+	}
 	if contentType != "application/json" || json.Unmarshal(raw, output) != nil {
 		return errors.New("provider returned an invalid JSON response")
 	}
 	return nil
+}
+
+// Decode strings before matching so JSON escaping cannot expose credentials.
+func responseContainsSecret(raw []byte, secret string) bool {
+	if bytes.Contains(raw, []byte(secret)) {
+		return true
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	var contains func(any) bool
+	contains = func(value any) bool {
+		switch item := value.(type) {
+		case string:
+			return strings.Contains(item, secret)
+		case []any:
+			for _, entry := range item {
+				if contains(entry) {
+					return true
+				}
+			}
+		case map[string]any:
+			for key, entry := range item {
+				if strings.Contains(key, secret) || contains(entry) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return contains(value)
 }
 
 func (c *Client) Manifest(ctx context.Context) (Manifest, error) {

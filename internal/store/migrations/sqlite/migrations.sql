@@ -1211,3 +1211,22 @@ CREATE TABLE workflow_preview_panel_leases (
  holder TEXT NOT NULL,
  lease_until TEXT NOT NULL
 );
+
+-- dispatch:migration 075_infrastructure_providers
+CREATE TABLE infrastructure_providers (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL,
+ endpoint TEXT NOT NULL,
+ private_network_id TEXT REFERENCES private_networks(id),
+ credential_secret_id TEXT REFERENCES secrets(id),
+ enabled BOOLEAN NOT NULL DEFAULT FALSE,
+ capabilities TEXT NOT NULL,
+ manifest TEXT NOT NULL DEFAULT '',
+ manifest_digest TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL,
+ last_error TEXT NOT NULL DEFAULT '',
+ revision BIGINT NOT NULL,
+ last_verified_at TEXT,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
