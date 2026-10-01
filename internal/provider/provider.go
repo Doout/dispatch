@@ -8,12 +8,13 @@ import (
 const APIVersion = "dispatch.provider/v1"
 
 type Manifest struct {
-	APIVersion          string          `json:"apiVersion"`
-	Name                string          `json:"name"`
-	DisplayName         string          `json:"displayName"`
-	Version             string          `json:"version"`
-	Capabilities        []string        `json:"capabilities"`
-	ConfigurationSchema json.RawMessage `json:"configurationSchema"`
+	APIVersion          string                `json:"apiVersion"`
+	Name                string                `json:"name"`
+	DisplayName         string                `json:"displayName"`
+	Version             string                `json:"version"`
+	Capabilities        []string              `json:"capabilities"`
+	ConfigurationSchema json.RawMessage       `json:"configurationSchema"`
+	Snapshots           *SnapshotCapabilities `json:"snapshots,omitempty"`
 }
 
 type OptionRequest struct {
@@ -47,11 +48,15 @@ type Operation struct {
 }
 
 type Server struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Address string            `json:"address"`
-	State   string            `json:"state"`
-	Labels  map[string]string `json:"labels,omitempty"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Address         string            `json:"address"`
+	State           string            `json:"state"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	Disks           []Disk            `json:"disks,omitempty"`
+	MachineIdentity string            `json:"machineIdentity,omitempty"`
+	SSHIdentity     string            `json:"sshIdentity,omitempty"`
+	Restore         *RestoreEvidence  `json:"restore,omitempty"`
 }
 
 type Provider interface {

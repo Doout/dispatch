@@ -20,6 +20,7 @@ func (a *API) infrastructureLifecycleRoutes(r chi.Router) {
 		r.Post("/", a.createManagedServer)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/operations", a.managedServerOperations)
+			r.Post("/snapshot-review", a.reviewInfrastructureSnapshot)
 			r.Post("/enrollment", a.enrollManagedServer)
 			r.Post("/adopt", a.adoptManagedServer)
 			r.Post("/delete-review", a.reviewManagedServerDeletion)
@@ -91,7 +92,14 @@ func (a *API) createManagedServer(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeInfrastructureMutationReceipt(w, r, review.ProjectID, review.ProviderID, core.PermissionInfrastructureCreate) {
 		return
 	}
-	r, receipt, proceed := a.reserveMutation(w, r, review.ProjectID, "server.create", in, "infrastructure_operation", review.ServerID)
+	if review.SourceSnapshotID != "" && !a.authorizeInfrastructureMutationReceipt(w, r, review.ProjectID, review.ProviderID, core.PermissionSnapshotRestore) {
+		return
+	}
+	action := "server.create"
+	if review.SourceSnapshotID != "" {
+		action = "server.restore"
+	}
+	r, receipt, proceed := a.reserveMutation(w, r, review.ProjectID, action, in, "infrastructure_operation", review.ServerID)
 	if !proceed {
 		return
 	}
@@ -309,7 +317,7 @@ func (a *API) rejectInfrastructureMutation(w http.ResponseWriter, r *http.Reques
 	if errors.Is(err, store.ErrNotFound) {
 		status = 404
 	}
-	if errors.Is(err, store.ErrInfrastructureChanged) || errors.Is(err, store.ErrInfrastructureProtected) || errors.Is(err, store.ErrStorageProtected) || errors.Is(err, store.ErrProviderChanged) || errors.Is(err, provision.ErrDisabled) || errors.Is(err, provision.ErrIdentity) || errors.Is(err, store.ErrMutationClaimLost) {
+	if errors.Is(err, store.ErrSnapshotProtected) || errors.Is(err, store.ErrInfrastructureChanged) || errors.Is(err, store.ErrInfrastructureProtected) || errors.Is(err, store.ErrStorageProtected) || errors.Is(err, store.ErrProviderChanged) || errors.Is(err, provision.ErrDisabled) || errors.Is(err, provision.ErrIdentity) || errors.Is(err, store.ErrMutationClaimLost) {
 		status = 409
 	}
 	a.failMutationAcceptance(r.Context(), status, "Infrastructure acceptance was rejected. Inspect the review and original operation before retrying.")
@@ -347,6 +355,12 @@ func (a *API) authorizeInfrastructureReview(w http.ResponseWriter, r *http.Reque
 	if err = a.authorizeInfrastructure(r.Context(), review.ProjectID, review.ProviderID, "infrastructure.create"); err != nil {
 		a.infrastructureProblem(w, err)
 		return false
+	}
+	if review.SourceSnapshotID != "" {
+		if err = a.authorizeInfrastructure(r.Context(), review.ProjectID, review.ProviderID, "infrastructure.restore"); err != nil {
+			a.infrastructureProblem(w, err)
+			return false
+		}
 	}
 	var input provision.CreateInput
 	if err = json.Unmarshal(review.Input, &input); err != nil {

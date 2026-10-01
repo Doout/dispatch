@@ -1433,6 +1433,16 @@ CREATE INDEX target_bootstraps_server ON target_bootstraps(server_id);
 ALTER TABLE infrastructure_reviews ADD COLUMN bootstrap_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE managed_servers ADD COLUMN bootstrap_id TEXT NOT NULL DEFAULT '';
 
+-- dispatch:migration 082_provider_snapshots
+CREATE TABLE infrastructure_snapshots(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES managed_servers(id),project_id TEXT NOT NULL REFERENCES projects(id),provider_id TEXT NOT NULL REFERENCES infrastructure_providers(id),resource_id TEXT NOT NULL DEFAULT '',state TEXT NOT NULL,revision BIGINT NOT NULL,record TEXT NOT NULL);
+CREATE UNIQUE INDEX infrastructure_snapshots_resource ON infrastructure_snapshots(provider_id,resource_id) WHERE resource_id<>'';
+CREATE INDEX infrastructure_snapshots_project ON infrastructure_snapshots(project_id,state);
+CREATE TABLE infrastructure_snapshot_reviews(id TEXT PRIMARY KEY,snapshot_id TEXT NOT NULL,server_id TEXT NOT NULL REFERENCES managed_servers(id),project_id TEXT NOT NULL REFERENCES projects(id),provider_id TEXT NOT NULL REFERENCES infrastructure_providers(id),state TEXT NOT NULL,operation_id TEXT UNIQUE,record TEXT NOT NULL,encrypted_request TEXT NOT NULL);
+CREATE INDEX infrastructure_snapshot_reviews_snapshot ON infrastructure_snapshot_reviews(snapshot_id);
+ALTER TABLE infrastructure_reviews ADD COLUMN source_snapshot_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN source_snapshot_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX managed_servers_source_snapshot ON managed_servers(source_snapshot_id);
+
 -- dispatch:migration 083_service_resource_lifecycle
 CREATE TABLE service_resources (
  run_id TEXT PRIMARY KEY,

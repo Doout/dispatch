@@ -43,7 +43,7 @@ jobs:
             if curl --fail --silent http://127.0.0.1:8091/v1/manifest >/dev/null; then break; fi
             sleep 1
           done
-          docker run --rm --network host --entrypoint /usr/local/bin/dispatch-provider-conformance dispatch-provider-mock:test --allow-mutations
+          docker run --rm --network host --entrypoint /usr/local/bin/dispatch-provider-conformance dispatch-provider-mock:test --allow-mutations --snapshots
 
       - name: Validate sidecar upgrades and rollback
         run: scripts/test-provider-sidecar.sh

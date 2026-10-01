@@ -35,9 +35,12 @@ providers. Counts accept `-1` only as an explicit unlimited setting.
 }
 ```
 
-Use identifiers returned by the selected provider. Temporary-environment and
-snapshot limits are stored for their respective workflows; server admission
-currently enforces the server count and provider, region and size rules. A
+Use identifiers returned by the selected provider. Server admission enforces the
+server count and provider, region and size rules. Snapshot admission enforces
+`maxSnapshots` and provider assignment; pending and unresolved captures count
+until verified deletion or cancellation before submission. Isolated restores also
+reserve a server slot. See [Machine snapshots](machine-snapshots.md).
+Temporary-environment limits are stored for that workflow. A
 nonzero temporary-environment allowance requires a maximum lifetime, capped at
 365 days. These fields do not add unsupported provider capabilities.
 

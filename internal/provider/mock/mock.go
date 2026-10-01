@@ -18,10 +18,15 @@ import (
 )
 
 type Options struct {
-	StateFile  string
-	Polls      int
-	FailCreate bool
-	FailDelete bool
+	StateFile        string
+	Polls            int
+	FailCreate       bool
+	FailDelete       bool
+	FailSnapshot     bool
+	FailRestore      bool
+	CorruptSnapshot  bool
+	UnsafeRestore    bool
+	DisableSnapshots bool
 }
 
 type Mock struct {
@@ -31,16 +36,18 @@ type Mock struct {
 }
 
 type savedState struct {
-	Version    int                        `json:"version"`
-	Servers    map[string]provider.Server `json:"servers"`
-	Operations map[string]savedOperation  `json:"operations"`
-	Keys       map[string]savedKey        `json:"keys"`
+	Version    int                          `json:"version"`
+	Servers    map[string]provider.Server   `json:"servers"`
+	Snapshots  map[string]provider.Snapshot `json:"snapshots"`
+	Operations map[string]savedOperation    `json:"operations"`
+	Keys       map[string]savedKey          `json:"keys"`
 }
 type savedOperation struct {
 	Operation provider.Operation `json:"operation"`
 	Remaining int                `json:"remaining"`
 	Delete    bool               `json:"delete"`
 	Fail      bool               `json:"fail"`
+	Kind      string             `json:"kind,omitempty"`
 }
 type savedKey struct {
 	Digest      string `json:"digest"`
@@ -54,7 +61,7 @@ func New(options Options) (*Mock, error) {
 	if options.Polls < 1 || options.Polls > 1000 {
 		return nil, errors.New("mock operation polls must be between 1 and 1000")
 	}
-	m := &Mock{options: options, state: savedState{Version: 1, Servers: map[string]provider.Server{}, Operations: map[string]savedOperation{}, Keys: map[string]savedKey{}}}
+	m := &Mock{options: options, state: savedState{Version: 2, Snapshots: map[string]provider.Snapshot{}, Servers: map[string]provider.Server{}, Operations: map[string]savedOperation{}, Keys: map[string]savedKey{}}}
 	if options.StateFile != "" {
 		info, err := os.Lstat(options.StateFile)
 		if err != nil && !os.IsNotExist(err) {
@@ -66,10 +73,23 @@ func New(options Options) (*Mock, error) {
 			}
 			raw, err := os.ReadFile(options.StateFile)
 			var loaded savedState
-			if err != nil || json.Unmarshal(raw, &loaded) != nil || loaded.Version != 1 || loaded.Servers == nil || loaded.Operations == nil || loaded.Keys == nil {
+			if err != nil || json.Unmarshal(raw, &loaded) != nil || (loaded.Version != 1 && loaded.Version != 2) || loaded.Servers == nil || loaded.Operations == nil || loaded.Keys == nil || loaded.Version == 2 && loaded.Snapshots == nil {
 				return nil, errors.New("mock state file is invalid")
 			}
 			m.state = loaded
+			m.state.Version = 2
+			if m.state.Snapshots == nil {
+				m.state.Snapshots = map[string]provider.Snapshot{}
+			}
+			for id, server := range m.state.Servers {
+				ensureServerMetadata(&server)
+				m.state.Servers[id] = server
+			}
+			for id, snapshot := range m.state.Snapshots {
+				if snapshot.ID != id || provider.ValidateSnapshot(snapshot) != nil {
+					return nil, errors.New("mock state has invalid snapshot evidence")
+				}
+			}
 			for id, op := range m.state.Operations {
 				if op.Operation.ID != id || provider.ValidateOperation(op.Operation) != nil || op.Remaining < 0 || op.Remaining > 1000 {
 					return nil, errors.New("mock state has an invalid operation")
@@ -86,11 +106,12 @@ func New(options Options) (*Mock, error) {
 }
 
 func (m *Mock) Manifest(context.Context) (provider.Manifest, error) {
-	return provider.Manifest{
-		APIVersion: provider.APIVersion, Name: "dispatch-mock", DisplayName: "Dispatch mock provider", Version: "1.0.0",
-		Capabilities:        []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete, provider.CapabilityOwnership},
-		ConfigurationSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"testLabel":{"type":"string","maxLength":80}},"additionalProperties":false}`),
-	}, nil
+	manifest := provider.Manifest{APIVersion: provider.APIVersion, Name: "dispatch-mock", DisplayName: "Dispatch mock provider", Version: "2.0.0", Capabilities: []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete, provider.CapabilityOwnership}, ConfigurationSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"testLabel":{"type":"string","maxLength":80}},"additionalProperties":false}`)}
+	if !m.options.DisableSnapshots {
+		manifest.Capabilities = append(manifest.Capabilities, provider.CapabilitySnapshotCreate, provider.CapabilitySnapshotInspect, provider.CapabilitySnapshotDelete, provider.CapabilityRestore)
+		manifest.Snapshots = &provider.SnapshotCapabilities{DiskSets: []string{"boot", "all"}, Consistency: []string{provider.ConsistencyCrash}, Encryption: []string{"provider-managed"}, Restore: provider.RestoreCapabilities{PrebootSanitization: true, NetworkQuarantine: true, ResetAgentIdentity: true, ResetMachineIdentity: true, ResetSSHIdentity: true, ClearRuntimeJournal: true, DisableCopiedWorkloads: true, IndependentDisks: true, Checks: []string{"provider-disk-map", "provider-content-digest"}}}
+	}
+	return manifest, nil
 }
 
 func (m *Mock) Validate(_ context.Context, config map[string]any) error {
@@ -108,14 +129,15 @@ func (m *Mock) Options(ctx context.Context, input provider.OptionRequest) ([]pro
 		return nil, err
 	}
 	options := map[string]provider.Option{
-		"regions":  {ID: "mock-region", Name: "Mock region"},
-		"sizes":    {ID: "mock-small", Name: "Mock small", Metadata: map[string]any{"cpu": 1, "memoryMiB": 512}},
-		"images":   {ID: "mock-linux", Name: "Mock Linux"},
-		"networks": {ID: "mock-private", Name: "Mock private network"},
+		"regions":          {ID: "mock-region", Name: "Mock region"},
+		"sizes":            {ID: "mock-small", Name: "Mock small", Metadata: map[string]any{"cpu": 1, "memoryMiB": 512}},
+		"images":           {ID: "mock-linux", Name: "Mock Linux"},
+		"networks":         {ID: "mock-private", Name: "Mock private network"},
+		"restore-networks": {ID: "mock-isolated", Name: "Mock isolated restore network", Metadata: map[string]any{"quarantine": true}},
 	}
 	item, ok := options[input.Kind]
 	if !ok {
-		return nil, provider.NewProblem(http.StatusUnprocessableEntity, "Option kind unsupported", "Use regions, sizes, images or networks.")
+		return nil, provider.NewProblem(http.StatusUnprocessableEntity, "Option kind unsupported", "Use regions, sizes, images, networks or restore-networks.")
 	}
 	return []provider.Option{item}, nil
 }
@@ -214,7 +236,9 @@ func (m *Mock) CreateServer(ctx context.Context, key string, input provider.Crea
 		if label, _ := input.ProviderConfig["testLabel"].(string); label != "" {
 			labels["testLabel"] = label
 		}
-		state.Servers[id] = provider.Server{ID: id, Name: input.Name, Address: "192.0.2.10", State: "provisioning", Labels: labels}
+		server := provider.Server{ID: id, Name: input.Name, Address: "192.0.2.10", State: "provisioning", Labels: labels}
+		ensureServerMetadata(&server)
+		state.Servers[id] = server
 		state.Operations[op.ID] = savedOperation{Operation: op, Remaining: m.options.Polls, Fail: m.options.FailCreate}
 		state.Keys[keyID] = savedKey{Digest: requestDigest, OperationID: op.ID}
 		return op, nil
@@ -238,6 +262,25 @@ func (m *Mock) Operation(ctx context.Context, id string) (provider.Operation, er
 		saved.Operation.State = provider.StateRunning
 		if saved.Remaining <= 0 {
 			saved.Operation.State = provider.StateSucceeded
+			if saved.Kind == "snapshot" {
+				snapshot := state.Snapshots[saved.Operation.ResourceID]
+				if saved.Fail {
+					saved.Operation.State = provider.StateFailed
+					saved.Operation.Message = "Configured mock snapshot failure"
+					snapshot.State = "failed"
+					state.Snapshots[snapshot.ID] = snapshot
+				} else if saved.Delete {
+					delete(state.Snapshots, snapshot.ID)
+				} else {
+					snapshot.State = "ready"
+					if m.options.CorruptSnapshot {
+						snapshot.State = "corrupt"
+					}
+					state.Snapshots[snapshot.ID] = snapshot
+				}
+				state.Operations[id] = saved
+				return saved.Operation, nil
+			}
 			server := state.Servers[saved.Operation.ResourceID]
 			if saved.Fail {
 				saved.Operation.State, saved.Operation.Message = provider.StateFailed, "Configured mock operation failure"
@@ -270,6 +313,12 @@ func (m *Mock) Server(ctx context.Context, id string) (provider.Server, error) {
 		labels[key] = value
 	}
 	server.Labels = labels
+	server.Disks = append([]provider.Disk(nil), server.Disks...)
+	if server.Restore != nil {
+		copy := *server.Restore
+		copy.Checks = append([]string(nil), copy.Checks...)
+		server.Restore = &copy
+	}
 	return server, nil
 }
 
