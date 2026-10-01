@@ -9,6 +9,45 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /projects/{id}/infrastructure/quota:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      summary: Inspect project infrastructure limits and durable reservations
+      description: Requires infrastructure.inspect. Reserved, allocated and unknown servers count toward the limit.
+      responses:
+        '200': { description: Policy, usage and original operation references, including released history }
+    put:
+      summary: Replace project infrastructure policy (controller owner)
+      description: A stale revision conflicts. Zero blocks new allocation; -1 explicitly means unlimited. Existing resources remain intact when a limit is reduced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, maxServers, providers]
+              properties:
+                revision: { type: integer, minimum: 0 }
+                maxServers: { type: integer, minimum: -1 }
+                maxTemporaryEnvironments: { type: integer, minimum: -1 }
+                maxSnapshots: { type: integer, minimum: -1 }
+                maxTemporaryLifetimeSeconds: { type: integer, minimum: 0, maximum: 31536000 }
+                providers:
+                  type: array
+                  items:
+                    type: object
+                    required: [providerId, regions, sizes, anyRegion, anySize]
+                    properties:
+                      providerId: { type: string }
+                      regions: { type: array, items: { type: string } }
+                      sizes: { type: array, items: { type: string } }
+                      anyRegion: { type: boolean }
+                      anySize: { type: boolean }
+      responses:
+        '200': { description: Updated policy and revision }
+        '409': { description: Policy changed since it was loaded }
+        '422': { description: Invalid provider, allocation choices, limit or temporary-resource lifetime }
   /servers/{id}/routing:
     parameters:
       - name: id

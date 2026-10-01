@@ -1323,6 +1323,10 @@ CREATE TABLE infrastructure_assignments(project_id TEXT NOT NULL REFERENCES proj
 ALTER TABLE servers ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN credential_id TEXT NOT NULL DEFAULT '';
+-- dispatch:migration 079_infrastructure_quotas
+CREATE TABLE project_infrastructure_policies(project_id TEXT PRIMARY KEY REFERENCES projects(id),revision BIGINT NOT NULL,max_servers BIGINT NOT NULL CHECK(max_servers>=-1),max_temporary_environments BIGINT NOT NULL CHECK(max_temporary_environments>=-1),max_snapshots BIGINT NOT NULL CHECK(max_snapshots>=-1),max_temporary_lifetime_seconds BIGINT NOT NULL CHECK(max_temporary_lifetime_seconds>=0),providers TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE infrastructure_quota_reservations(server_id TEXT PRIMARY KEY,operation_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL REFERENCES projects(id),provider_id TEXT NOT NULL,region TEXT NOT NULL,size TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reserved','allocated','unknown','released')),resource_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE INDEX infrastructure_quota_project ON infrastructure_quota_reservations(project_id,state);
 -- dispatch:migration 080_remote_storage
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect');

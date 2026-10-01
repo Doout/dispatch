@@ -99,6 +99,7 @@ import {
 import { ApplicationsPage } from "./ApplicationsPage";
 import { ConnectionsPage } from "./ConnectionsPage";
 import { InfrastructureProviders } from "./InfrastructureProviders";
+import { InfrastructureQuotas } from "./InfrastructureQuotas";
 import { HookCredentialBindings, HookFields } from "./HookEditorFields";
 import { PageHeader, pageTitles } from "./PageHeader";
 import { StatusLabel, TableIconAction } from "./ResourceTable";
@@ -1863,6 +1864,7 @@ export function ServersPage({
         ]}
       />
       {canManage && <InfrastructureProviders overview={overview} />}
+      <InfrastructureQuotas overview={overview} canManage={canManage} />
       <section className="server-section">
         <div className="section-title">
           <div>

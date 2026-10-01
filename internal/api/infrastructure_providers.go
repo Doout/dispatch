@@ -29,6 +29,9 @@ func (a *API) infrastructureRoutes(r chi.Router) {
 	})
 }
 func (a *API) infrastructureProblem(w http.ResponseWriter, err error) {
+	if infrastructureQuotaProblem(w, err) {
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		problem(w, 404, "Provider not found", "Choose an existing provider registration.")
 		return
