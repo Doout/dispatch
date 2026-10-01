@@ -1,0 +1,11 @@
+{
+  "name": "public-conformance-fixture",
+  "region": "mock-region",
+  "size": "mock-small",
+  "image": "mock-linux",
+  "network": "mock-private",
+  "sshKey": "public-mock-key",
+  "providerConfig": {
+    "testLabel": "public-conformance-fixture"
+  }
+}

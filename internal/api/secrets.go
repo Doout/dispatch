@@ -256,6 +256,11 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Invalid variable", "Enter a JSON value when changing to JSON.")
 		return
 	}
+	if core.PlainSecretType(secretType) || core.JSONSecretType(secretType) || secretType == core.SecretTypeSSHPrivateKey {
+		if !a.providerCredentialUnused(w, r, item.ID) {
+			return
+		}
+	}
 	if core.PlainSecretType(secretType) && !core.PlainSecretType(item.Type) {
 		apps, listErr := a.store.ListApps(r.Context())
 		if listErr != nil {
@@ -363,6 +368,9 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !a.providerCredentialUnused(w, r, id) {
+		return
+	}
 	servers, err := a.store.ListServers(r.Context())
 	if err != nil {
 		a.internal(w, err)

@@ -17,6 +17,7 @@ type Project struct {
 }
 
 type Server struct {
+	ProjectID   string                  `json:"projectId,omitempty"`
 	ID          string                  `json:"id"`
 	Name        string                  `json:"name"`
 	Address     string                  `json:"address"`
