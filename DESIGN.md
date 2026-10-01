@@ -114,6 +114,8 @@ Remove helper text when the label and placeholder already explain the field. Do 
 
 Every tab and selected record must have a stable URL. Back and forward navigation must restore the selected tab, expanded group, filters, and open detail page.
 
+Global navigation uses flat Operate, Resources, and Controller sections. Keep their links visible and aligned, with small section headings and neutral count badges. Controller links are visible only to owners. On short screens, scroll the links while keeping the wordmark and connection status visible.
+
 ## Tables and records
 
 Use sentence case table headings, 70px inventory rows, and softly tinted status labels. On phones, stack both access and inventory records with labels beside their values. Show only the columns needed to identify the item and its current state. Make the name open the detail view. Use the row action menu for edit, retry, pause, or delete.
@@ -146,5 +148,7 @@ Lead with the page title. Keep the primary action at the right on desktop and be
 Deployments use the same white summary panel as the other pages, with counts derived from current deployment stages. Status labels mark ready, active, and failed stages. Deployment records share one bordered list with separators instead of individual cards. Historical failures do not determine the color of a newer successful stage.
 
 Deployment, project, server, and access totals use a shared white summary panel. Keep large numbers above their labels. Empty states use a solid neutral border and a secondary action when the primary action already appears in the page header.
+
+Collapsed deployment rows show the application and one status per environment. For multiple environments, use a compact line of environment names and status icons, with text for active or unresolved states. Keep targets and running-release links in the expanded details; single-environment rows can show their target directly. Surface failures, drift, and overdue checks in the status. Keep source revisions, deployed revisions, and full sync and health diagnostics in the expanded details. Label revision values so their meaning is clear.
 
 Application names open their detail or topology view. Explicit text controls show or hide imported resources and stages. Ordinary row clicks do not toggle the hierarchy.

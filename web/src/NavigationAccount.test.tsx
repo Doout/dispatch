@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountMenu, ImpersonationBanner, Nav } from "./App";
@@ -73,11 +73,14 @@ describe("account menu", () => {
     );
 
     expect(screen.getByText("TU")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Open account menu for Test User" }).textContent).toBe("TU");
+    expect(screen.queryByText("Test User")).toBeNull();
     await user.click(
       screen.getByRole("button", {
         name: "Open account menu for Test User",
       }),
     );
+    expect(screen.getByText("Test User")).not.toBeNull();
     expect(
       screen.getByRole("menuitem", { name: "My profile" }),
     ).not.toBeNull();
@@ -150,13 +153,11 @@ describe("account menu", () => {
 });
 
 describe("optional Operations navigation", () => {
-  it("hides Operations until enabled and limits Settings to controller owners", async () => {
-    const user = userEvent.setup();
+  it("hides Operations until enabled and limits Settings to controller owners", () => {
     const owner = overview({ id: "owner", username: "owner", displayName: "Owner", systemRole: "owner", permissions: [] });
     const props = { open: false, view: "deployments" as const, onClose: vi.fn(), onNavigate: vi.fn() };
     const view = render(<Nav {...props} overview={owner} />);
     expect(screen.queryByRole("link", { name: "Operations" })).toBeNull();
-    await user.click(screen.getByText("Controller"));
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings");
     view.rerender(<Nav {...props} overview={{ ...owner, controllerSettings: { operationsEnabled: true } }} />);
     expect(screen.getByRole("link", { name: "Operations" }).getAttribute("href")).toBe("/operations");
@@ -169,22 +170,54 @@ describe("optional Operations navigation", () => {
 });
 
 describe("configuration navigation", () => {
-  it("opens the current section and lets users expand another section", async () => {
+  it("keeps resource and controller destinations visible when switching pages", async () => {
     const user = userEvent.setup();
     const owner = overview({ id: "owner", username: "owner", displayName: "Owner", systemRole: "owner", permissions: [] });
     const props = { open: false, onClose: vi.fn(), onNavigate: vi.fn() };
     const view = render(<Nav {...props} view="projects" overview={owner} />);
 
+    const resources = screen.getByRole("region", { name: "Resources" });
+    const controller = screen.getByRole("region", { name: "Controller" });
+    expect(within(resources).getAllByRole("link").map(link => link.textContent)).toEqual(["Projects", "Services", "Servers"]);
+    expect(within(controller).getAllByRole("link").map(link => link.textContent)).toEqual(["Variables", "Connections", "Access", "Settings"]);
     expect(screen.getByRole("link", { name: "Projects" }).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByText("Resources").closest("details")?.open).toBe(true);
-    expect(screen.getByText("Controller").closest("details")?.open).toBe(false);
-    await user.click(screen.getByText("Controller"));
-    expect(screen.getByText("Controller").closest("details")?.open).toBe(true);
-    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings");
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("settings");
 
     view.rerender(<Nav {...props} view="settings" overview={owner} />);
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByText("Resources").closest("details")?.open).toBe(false);
-    expect(screen.getByText("Controller").closest("details")?.open).toBe(true);
+    expect(screen.getByRole("link", { name: "Projects" }).getAttribute("aria-current")).toBeNull();
+    expect(within(resources).getAllByRole("link")).toHaveLength(3);
+    expect(within(controller).getAllByRole("link")).toHaveLength(4);
+  });
+
+  it("hides controller destinations and their heading from members", () => {
+    const member = overview({ id: "member", username: "member", displayName: "Member", systemRole: "member", permissions: [] });
+    render(<Nav open={false} view="projects" overview={member} onClose={vi.fn()} onNavigate={vi.fn()} />);
+
+    expect(screen.getByRole("region", { name: "Resources" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Controller" })).toBeNull();
+    for (const name of ["Variables", "Connections", "Access", "Settings"])
+      expect(screen.queryByRole("link", { name })).toBeNull();
+  });
+
+  it("keeps counts out of link names and preserves modified link navigation", () => {
+    const owner = overview({ id: "owner", username: "owner", displayName: "Owner", systemRole: "owner", permissions: [] });
+    owner.projects = [{ id: "project", name: "Project", description: "", createdAt: "" }];
+    const onNavigate = vi.fn();
+    render(<Nav open={false} view="projects" overview={owner} onClose={vi.fn()} onNavigate={onNavigate} />);
+
+    const projects = screen.getByRole("link", { name: "Projects" });
+    expect(projects.getAttribute("href")).toBe("/projects");
+    expect(within(projects).getByText("1").getAttribute("aria-hidden")).toBe("true");
+    let preventedByNavigation: boolean | undefined;
+    document.addEventListener("click", event => {
+      preventedByNavigation = event.defaultPrevented;
+      event.preventDefault();
+    }, { once: true });
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true });
+    fireEvent(projects, click);
+    expect(preventedByNavigation).toBe(false);
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 });
