@@ -209,6 +209,9 @@ func (m *Manager) Prepare(ctx context.Context, b Binding, plan core.TargetBootst
 	if !identifier.MatchString(b.ServerID) || !identifier.MatchString(b.NodeID) || actor == "" {
 		return item, "", errors.New("bootstrap requires an intended target, node and reviewing actor")
 	}
+	if plan.TargetName == "" {
+		plan.TargetName = b.ServerID
+	}
 	var err error
 	plan, err = m.normalize(plan)
 	if err != nil {
@@ -258,7 +261,7 @@ func (m *Manager) Accept(ctx context.Context, id, digest string) (core.TargetBoo
 	if err != nil {
 		return item, err
 	}
-	if item.Digest != digest {
+	if item.Digest != digest || item.State == "cancelled" {
 		return item, ErrConflict
 	}
 	if item.AcceptedAt != nil {
@@ -399,8 +402,30 @@ func (m *Manager) Refresh(ctx context.Context, id string) (core.TargetBootstrap,
 	if err != nil {
 		return item, err
 	}
+	before := item
+	finish := func() (core.TargetBootstrap, error) {
+		if item.State == before.State && item.InstallationState == before.InstallationState && item.EnrollmentState == before.EnrollmentState && item.RuntimeState == before.RuntimeState && item.Message == before.Message && item.EncryptedInput == before.EncryptedInput && item.ClaimHash == before.ClaimHash {
+			return item, nil
+		}
+		err := m.save(ctx, &item)
+		return item, err
+	}
+	if item.AcceptedAt == nil && !item.ReviewExpiresAt.After(m.now()) && item.EncryptedInput != "" {
+		item.State = "failed"
+		item.ClaimHash = ""
+		item.EncryptedInput = ""
+		item.Message = "The installation review expired before approval. Create a new review."
+		return finish()
+	}
 	if item.AcceptedAt == nil || item.State == "failed" || item.State == "cancelled" {
 		return item, nil
+	}
+	if item.State != "ready" && !item.ClaimExpiresAt.After(m.now()) {
+		item.State = "failed"
+		item.ClaimHash = ""
+		item.EncryptedInput = ""
+		item.Message = "The installation claim expired. Create a new verified SSH review for this same target."
+		return finish()
 	}
 	if _, err = m.binding(ctx, item); err != nil {
 		if errors.Is(err, ErrWaiting) {
@@ -414,7 +439,7 @@ func (m *Manager) Refresh(ctx context.Context, id string) (core.TargetBootstrap,
 			item.State = "unknown"
 			item.InstallationState = "interrupted"
 			item.Message = "No enrollment arrived after the installation window. Inspect cloud-init or retry through verified SSH on this same machine."
-			return item, m.save(ctx, &item)
+			return finish()
 		}
 		return item, nil
 	}
@@ -433,7 +458,7 @@ func (m *Manager) Refresh(ctx context.Context, id string) (core.TargetBootstrap,
 			item.EnrollmentState = "expired"
 			item.Message = "Enrollment expired; retry the approved installer to obtain a fresh token for this target."
 		}
-		return item, m.save(ctx, &item)
+		return finish()
 	}
 	if item.Plan.ReplaceIdentity && item.Generation <= item.ExpectedGeneration {
 		return item, nil
@@ -444,10 +469,12 @@ func (m *Manager) Refresh(ctx context.Context, id string) (core.TargetBootstrap,
 		return item, err
 	}
 	checked, _ := time.Parse(time.RFC3339Nano, node.Details["runtimeCheckedAt"])
-	if node.Details["agentArtifactSHA256"] == item.Plan.ArtifactSHA256 && !checked.After(m.now().Add(10*time.Second)) && node.Details["runtimeVersion"] == remoteruntime.APIVersion && strings.Contains(","+node.Details["runtimeCapabilities"]+",", ",deploy,") && checked.After(m.now().Add(-2*time.Minute)) && checked.After(*item.AcceptedAt) {
+	if (item.Plan.Method != "ssh" || item.InstallationState == "installed") && node.Details["agentArtifactSHA256"] == item.Plan.ArtifactSHA256 && !checked.After(m.now().Add(10*time.Second)) && node.Details["runtimeVersion"] == remoteruntime.APIVersion && strings.Contains(","+node.Details["runtimeCapabilities"]+",", ",deploy,") && checked.After(m.now().Add(-2*time.Minute)) && checked.After(*item.AcceptedAt) {
 		item.InstallationState = "installed"
 		item.RuntimeState = "ready"
 		item.State = "ready"
+		item.ClaimHash = ""
+		item.EncryptedInput = ""
 		item.Message = "The intended agent identity and Docker runtime are ready."
 		if item.ProviderID == "" {
 			server, e := m.Store.GetServer(ctx, item.ServerID)
@@ -461,10 +488,12 @@ func (m *Manager) Refresh(ctx context.Context, id string) (core.TargetBootstrap,
 		}
 	} else {
 		item.RuntimeState = "pending"
-		item.State = "waiting"
+		if before.State != "ready" {
+			item.State = "waiting"
+		}
 		item.Message = "Agent enrolled; waiting for a fresh Docker, Compose and Git readiness check."
 	}
-	return item, m.save(ctx, &item)
+	return finish()
 }
 func sshAddress(plan core.TargetBootstrapPlan) string {
 	return net.JoinHostPort(strings.Trim(plan.SSHHost, "[]"), fmt.Sprint(plan.SSHPort))
@@ -486,7 +515,7 @@ func (m *Manager) bindImportedTarget(ctx context.Context, item core.TargetBootst
 		if name == "" {
 			name = item.ServerID
 		}
-		return m.Store.CreateServer(ctx, core.Server{ID: item.ServerID, ProjectID: item.ProjectID, Name: name, Address: item.Plan.SSHHost, Runtime: core.ServerRuntimeDocker, State: "waiting", AgentMode: "enrolled", AgentNodeID: item.NodeID, CreatedAt: m.now()})
+		return m.Store.CreateServer(ctx, core.Server{ID: item.ServerID, ProjectID: item.ProjectID, Name: name, Address: item.Plan.SSHHost, Runtime: core.ServerRuntimeDocker, State: "waiting", AgentMode: "outbound-runtime", AgentNodeID: item.NodeID, CreatedAt: m.now()})
 	}
 	if server.Runtime != core.ServerRuntimeDocker || server.Address == "local" || server.Address != item.Plan.SSHHost || server.ProjectID != item.ProjectID || server.AgentNodeID != "" && server.AgentNodeID != item.NodeID {
 		return ErrConflict
@@ -495,7 +524,7 @@ func (m *Manager) bindImportedTarget(ctx context.Context, item core.TargetBootst
 		return err
 	}
 	server.AgentNodeID = item.NodeID
-	server.AgentMode = "enrolled"
+	server.AgentMode = "outbound-runtime"
 	if item.Plan.ReplaceIdentity || server.State != "ready" {
 		server.State = "waiting"
 	}

@@ -190,6 +190,10 @@ func TestBootstrapReadinessRequiresReviewedArtifactAndFreshRuntimeEvidence(t *te
 	if err != nil || checked.State != "ready" || checked.InstallationState != "installed" || checked.EnrollmentState != "enrolled" {
 		t.Fatal("verified runtime did not become ready", checked, err)
 	}
+	saved, err := f.data.GetTargetBootstrap(ctx, item.ID)
+	if err != nil || saved.EncryptedInput != "" || saved.ClaimHash != "" {
+		t.Fatal("completed installation retained private inputs", err)
+	}
 }
 func TestSSHReviewRequiresVerifiedKeyAndApprovalBeforeExecution(t *testing.T) {
 	f := setup(t)
@@ -278,6 +282,18 @@ func TestBootstrapUpgradePreservesIdentityAndReplacementRetiresIt(t *testing.T) 
 	if current.Generation != old.Generation || current.PublicKey != old.PublicKey {
 		t.Fatal("upgrade replaced identity")
 	}
+	f.now = f.now.Add(time.Second)
+	node, _ := f.data.GetPrivateNetwork(ctx, upgrade.NodeID)
+	node.Details["runtimeVersion"] = remoteruntime.APIVersion
+	node.Details["runtimeCapabilities"] = "deploy"
+	node.Details["runtimeCheckedAt"] = f.now.Format(time.RFC3339Nano)
+	node.Details["agentArtifactSHA256"] = upgrade.Plan.ArtifactSHA256
+	if err = f.data.UpdatePrivateNetwork(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed, e := f.m.Refresh(ctx, upgrade.ID); e != nil || refreshed.State == "ready" {
+		t.Fatal("old agent heartbeat completed an unexecuted SSH reinstall", refreshed, e)
+	}
 	plan.ReplaceIdentity = true
 	replacement, _, err := f.m.Prepare(ctx, f.binding, plan, SSHCredentials{Password: "private-password"}, "owner")
 	if err != nil {
@@ -344,5 +360,82 @@ func TestSSHInterruptedInstallationRetriesSameReceipt(t *testing.T) {
 	rows, err := f.data.ListTargetBootstraps(ctx, item.ServerID)
 	if err != nil || len(rows) != 1 {
 		t.Fatal("retry allocated another operation", err)
+	}
+}
+
+func TestBootstrapIssuanceRechecksProviderResourceWithinTransaction(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	item, _ := f.prepare(t)
+	if _, err := f.accept(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	f.binding.Accepted = true
+	f.binding.ResourceID = "machine"
+	f.allocate(t)
+	// Simulate ownership changing after the manager's resolution. The store must
+	// reject issuance even though the injected resolver still reports allocation.
+	machine, err := f.data.GetManagedServer(ctx, item.ServerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine.AllocationState = "deleted"
+	machine.Revision++
+	if err = f.data.UpdateManagedServer(ctx, machine, machine.Revision-1); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := f.m.inputs(item)
+	if _, err = f.m.Claim(ctx, item.ID, input.ClaimToken); err == nil {
+		t.Fatal("deleted provider target obtained enrollment")
+	}
+	if _, err = f.data.GetEdgeCredential(ctx, item.NodeID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("failed issuance left a credential", err)
+	}
+}
+
+func TestBootstrapMissingUserDataReportsRecoveryAndExpiresPrivateInputs(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	item, _ := f.prepare(t)
+	if _, err := f.accept(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	f.binding.Accepted = true
+	f.binding.ResourceID = "machine"
+	f.allocate(t)
+	f.now = f.now.Add(31 * time.Minute)
+	missing, err := f.m.Refresh(ctx, item.ID)
+	if err != nil || missing.State != "unknown" || missing.InstallationState != "interrupted" {
+		t.Fatal("silent user-data failure", missing, err)
+	}
+	operations, err := f.data.ListInfrastructureOperations(ctx, item.ServerID)
+	if err != nil || len(operations) != 1 {
+		t.Fatal("installation recovery changed allocation", err)
+	}
+	f.now = f.now.Add(24 * time.Hour)
+	expired, err := f.m.Refresh(ctx, item.ID)
+	if err != nil || expired.State != "failed" {
+		t.Fatal(expired, err)
+	}
+	saved, err := f.data.GetTargetBootstrap(ctx, item.ID)
+	if err != nil || saved.EncryptedInput != "" || saved.ClaimHash != "" {
+		t.Fatal("expired installation retained credentials", err)
+	}
+}
+
+func TestExpiredBootstrapReviewErasesPrivateInputWithoutInstalling(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	item, _ := f.prepare(t)
+	f.now = f.now.Add(16 * time.Minute)
+	expired, err := f.m.Refresh(ctx, item.ID)
+	if err != nil || expired.State != "failed" || expired.EncryptedInput != "" || expired.ClaimHash != "" {
+		t.Fatal(expired, err)
+	}
+	if _, err = f.m.Accept(ctx, item.ID, item.Digest); err == nil {
+		t.Fatal("expired installation review accepted")
+	}
+	if _, err = f.data.GetEdgeCredential(ctx, item.NodeID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("expired review created identity", err)
 	}
 }

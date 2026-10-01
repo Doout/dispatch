@@ -58,7 +58,7 @@ export function TargetBootstraps({ overview }: { overview: Overview }) {
     });
   }
   async function accept(event: FormEvent) { event.preventDefault(); if (!review) return; await act(async () => { await post(`${root}/${review.id}/accept`, { digest: review.digest, confirmName: confirmation }); setReview(null); setOpen(false); await refresh(); }); }
-  return <section className="server-section" aria-labelledby="target-bootstrap-title">
+  return <section className="server-section bootstrap-section" aria-labelledby="target-bootstrap-title">
     <div className="section-title"><div><h2 id="target-bootstrap-title">Target agent installation</h2><p>Install, upgrade or recover a Docker target through verified SSH. Routine operations use its enrolled agent.</p></div><button className="quiet-button" onClick={() => { setOpen(true); setReview(null); setPlan(emptyPlan()); setServerId(""); setConfirmation(""); clearCredentials(); }}>Install or recover agent</button></div>
     {error && <p role="alert" className="form-error">{error}</p>}
     {open && !review && <form className="connection-form inline-create" aria-label="Review target installation" onSubmit={event => void prepare(event)}>

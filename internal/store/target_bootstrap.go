@@ -202,7 +202,7 @@ func (s *SQLStore) AcceptTargetBootstrap(ctx context.Context, item core.TargetBo
 		old.Message = "Superseded by a separately reviewed target installation."
 		old.Revision++
 		old.UpdatedAt = item.UpdatedAt
-		result, e := tx.ExecContext(ctx, s.q(`UPDATE target_bootstraps SET active_server_id=NULL,record=?,revision=? WHERE id=? AND revision=?`), jsonText(old), old.Revision, old.ID, old.Revision-1)
+		result, e := tx.ExecContext(ctx, s.q(`UPDATE target_bootstraps SET active_server_id=NULL,claim_hash='',encrypted_input='',record=?,revision=? WHERE id=? AND revision=?`), jsonText(old), old.Revision, old.ID, old.Revision-1)
 		if e = changed(result, e); e != nil {
 			return e
 		}

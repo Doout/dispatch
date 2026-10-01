@@ -119,7 +119,7 @@ func (m *Manager) RefreshReadiness(ctx context.Context) error {
 		if server.BootstrapID != "" {
 			if m.Bootstrap == nil {
 				runtime = "waiting"
-			} else if b, e := m.Bootstrap.Refresh(ctx, server.BootstrapID); e != nil || b.State != "ready" {
+			} else if b, e := m.Bootstrap.Refresh(ctx, server.BootstrapID); e != nil || b.State != "ready" || b.RuntimeState != "ready" {
 				runtime = "waiting"
 			}
 		}
