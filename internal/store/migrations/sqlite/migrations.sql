@@ -1417,3 +1417,18 @@ SELECT m.id,COALESCE((SELECT o.id FROM infrastructure_operations o WHERE o.serve
 -- dispatch:migration 080_remote_storage
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect');
+
+-- dispatch:migration 081_target_bootstrap
+CREATE TABLE target_bootstraps (
+ id TEXT PRIMARY KEY,
+ active_server_id TEXT UNIQUE,
+ server_id TEXT NOT NULL,
+ revision BIGINT NOT NULL DEFAULT 1,
+ record TEXT NOT NULL,
+ claim_hash TEXT NOT NULL,
+ encrypted_input TEXT NOT NULL
+);
+CREATE INDEX target_bootstraps_server ON target_bootstraps(server_id);
+
+ALTER TABLE infrastructure_reviews ADD COLUMN bootstrap_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN bootstrap_id TEXT NOT NULL DEFAULT '';

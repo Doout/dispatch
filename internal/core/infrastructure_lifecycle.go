@@ -17,6 +17,7 @@ type InfrastructureAcceptance struct {
 }
 
 type InfrastructureReview struct {
+	BootstrapID      string          `json:"bootstrapId,omitempty"`
 	ID               string          `json:"id"`
 	ServerID         string          `json:"serverId"`
 	ProjectID        string          `json:"projectId"`
@@ -33,6 +34,7 @@ type InfrastructureReview struct {
 }
 
 type ManagedServer struct {
+	BootstrapID     string    `json:"bootstrapId,omitempty"`
 	ID              string    `json:"id"`
 	ReviewID        string    `json:"reviewId"`
 	ProjectID       string    `json:"projectId"`
