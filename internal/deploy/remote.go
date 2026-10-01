@@ -61,8 +61,11 @@ func (e RemoteExecutor) ExecuteRemote(ctx context.Context, id string, op runtime
 	result, waitErr := e.Broker.Wait(ctx, job.ID, progress)
 	if result.Health != nil {
 		if err := reportDeploymentHealth(ctx, d, *result.Health); err != nil {
-			return result, errors.Join(waitErr, errors.New("remote health evidence could not be persisted"))
+			waitErr = errors.Join(waitErr, errors.New("remote health evidence could not be persisted"))
 		}
+	}
+	if err := reportRemoteRoute(ctx, remoteruntime.NewRequest(op, d, app, server), result); err != nil {
+		waitErr = errors.Join(waitErr, err)
 	}
 	return result, waitErr
 }
@@ -70,4 +73,14 @@ func (e RemoteExecutor) ExecuteRemote(ctx context.Context, id string, op runtime
 func (e RemoteExecutor) Execute(ctx context.Context, op runtimecontract.Operation, d core.Deployment, app core.App, server core.Server, progress Progress) error {
 	_, err := e.ExecuteRemote(ctx, "runtime-"+ulid.Make().String(), op, d, app, server, progress)
 	return err
+}
+
+func reportRemoteRoute(ctx context.Context, request remoteruntime.Request, result remoteruntime.Result) error {
+	if err := request.ValidateRoute(result.Route); err != nil {
+		return err
+	}
+	if result.Route != nil {
+		return ReportRoute(ctx, *result.Route)
+	}
+	return nil
 }

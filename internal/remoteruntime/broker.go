@@ -155,6 +155,9 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	if err != nil {
 		return err
 	}
+	if err := r.ValidateRoute(c.Result.Route); err != nil {
+		return err
+	}
 	if err := r.ValidateHealth(c.Result.Health); err != nil {
 		return err
 	}
