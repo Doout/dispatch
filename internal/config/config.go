@@ -10,6 +10,7 @@ import (
 )
 
 type Config struct {
+	RoutingDirectory   string
 	Addr               string
 	DatabaseURL        string
 	Executor           string
@@ -32,6 +33,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
+		RoutingDirectory:  strings.TrimSpace(os.Getenv("DISPATCH_ROUTING_DIRECTORY")),
 		Addr:              env("DISPATCH_ADDR", "127.0.0.1:8080"),
 		DatabaseURL:       env("DATABASE_URL", "dispatch.db"),
 		Executor:          env("DISPATCH_EXECUTOR", "simulation"),
@@ -51,6 +53,9 @@ func Load() (Config, error) {
 		AnalyticsEnabled:  !strings.EqualFold(os.Getenv("DISPATCH_ANALYTICS_ENABLED"), "false"),
 	}
 	cfg.AnalyticsDirectory = env("DISPATCH_ANALYTICS_DIRECTORY", filepath.Join(filepath.Dir(cfg.MasterKeyFile), "analytics"))
+	if cfg.RoutingDirectory != "" && !filepath.IsAbs(cfg.RoutingDirectory) {
+		return Config{}, errors.New("DISPATCH_ROUTING_DIRECTORY must be an absolute path")
+	}
 	if cfg.Executor != "simulation" && cfg.Executor != "docker" {
 		return Config{}, errors.New("DISPATCH_EXECUTOR must be simulation or docker")
 	}

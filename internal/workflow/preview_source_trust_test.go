@@ -324,3 +324,28 @@ func TestPreviewTrustTemplatePolicySurvivesDeletion(t *testing.T) {
 		t.Fatalf("deleting template weakened policy: %+v %v", decision, err)
 	}
 }
+
+func TestSavedServiceTemplateTrustKeepsParentBoundary(t *testing.T) {
+	f, heads := sourceTrustFixture(t)
+	template := core.WorkflowResource{ID: "saved-template", Kind: KindServiceTemplate, Active: true}
+	runtime := &jobRuntime{service: f.service, serviceTemplate: &template, revision: core.WorkflowRevision{ID: "service-run", ResourceID: template.ID}}
+	if err := runtime.checkExecutionTrust(context.Background()); err != nil {
+		t.Fatal("saved template requires nonexistent workflow row", err)
+	}
+	head := (*heads)["example/service"]
+	head.Head.Repo = &githubapp.PullRequestRepository{ID: 999, FullName: "outsider/service"}
+	(*heads)["example/service"] = head
+	parentCtx := context.WithValue(context.Background(), previewTrustParentKey{}, f.previous)
+	if err := runtime.checkExecutionTrust(parentCtx); !errors.Is(err, ErrPreviewSourceTrust) {
+		t.Fatal("service escaped denied preview", err)
+	}
+	template.Kind = KindApplication
+	if err := runtime.checkExecutionTrust(context.Background()); err == nil {
+		t.Fatal("application substituted for service template")
+	}
+	template.Kind = KindServiceTemplate
+	template.Temporary = true
+	if err := runtime.checkExecutionTrust(context.Background()); err == nil {
+		t.Fatal("temporary resource skipped source trust")
+	}
+}

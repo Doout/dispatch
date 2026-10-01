@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"errors"
+	"github.com/doout/dispatch/internal/core"
 	"net/http"
 
 	"github.com/doout/dispatch/internal/provision"
@@ -14,7 +17,13 @@ func (a *API) infrastructureManager() *provision.Manager {
 	if !ok {
 		return nil
 	}
-	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge, Vault: a.eventConfig.Vault, Bootstrap: a.bootstrapManager()}
+	quota, ok := a.store.(interface {
+		InfrastructureQuotaAdmission(context.Context, *sql.Tx, core.InfrastructureAcceptance) error
+	})
+	if !ok {
+		return nil
+	}
+	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge, Vault: a.eventConfig.Vault, Admission: quota.InfrastructureQuotaAdmission, Authorize: a.authorizeInfrastructure, Bootstrap: a.bootstrapManager()}
 }
 func (a *API) infrastructureRoutes(r chi.Router) {
 	a.infrastructureLifecycleRoutes(r)
@@ -31,6 +40,13 @@ func (a *API) infrastructureRoutes(r chi.Router) {
 	})
 }
 func (a *API) infrastructureProblem(w http.ResponseWriter, err error) {
+	if errors.Is(err, errInfrastructureDenied) {
+		problem(w, 403, "Infrastructure access denied", "The current project permission and provider assignment are required.")
+		return
+	}
+	if infrastructureQuotaProblem(w, err) {
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		problem(w, 404, "Provider not found", "Choose an existing provider registration.")
 		return
@@ -145,4 +161,24 @@ func (a *API) providerCredentialUnused(w http.ResponseWriter, r *http.Request, i
 		}
 	}
 	return true
+}
+
+var errInfrastructureDenied = errors.New("project infrastructure permission denied")
+
+func (a *API) authorizeInfrastructure(ctx context.Context, project, provider, permission string) error {
+	allowed, err := a.canProject(ctx, core.Permission(permission), project)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return errInfrastructureDenied
+	}
+	assigned, err := a.assignedInfrastructure(ctx, project, "provider", provider)
+	if err != nil {
+		return err
+	}
+	if !assigned {
+		return errInfrastructureDenied
+	}
+	return nil
 }

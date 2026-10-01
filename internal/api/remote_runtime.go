@@ -23,6 +23,7 @@ func (a *API) runtimeBroker() *remoteruntime.Broker {
 }
 
 func (a *API) runtimeNode(w http.ResponseWriter, r *http.Request) (core.PrivateNetwork, *remoteruntime.Broker, bool) {
+	w.Header().Set("Cache-Control", "no-store")
 	node, ok := a.authenticateEdge(r)
 	if !ok {
 		problem(w, 401, "Authentication required", "The enrolled runtime session is invalid.")

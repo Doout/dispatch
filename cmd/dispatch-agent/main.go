@@ -121,7 +121,7 @@ func runEdge(logger *slog.Logger, controllerURL, nodeID, token string) error {
 		if legacy {
 			return errors.New("runtime mode requires key-bound enrollment")
 		}
-		worker, err = agentruntime.Open(env("DISPATCH_AGENT_RUNTIME_STATE", "/var/lib/dispatch-edge/runtime"), nodeID)
+		worker, err = agentruntime.Open(env("DISPATCH_AGENT_RUNTIME_STATE", "/var/lib/dispatch-edge/runtime"), nodeID, agentruntime.Options{RoutingDirectory: os.Getenv("DISPATCH_AGENT_ROUTING_DIRECTORY")})
 		if err != nil {
 			return err
 		}

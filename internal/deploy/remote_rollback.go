@@ -49,8 +49,11 @@ func (e RemoteExecutor) RollbackRuntime(ctx context.Context, d, source core.Depl
 	result, waitErr := e.Broker.Wait(ctx, job.ID, progress)
 	if result.Health != nil {
 		if err := reportDeploymentHealth(ctx, d, *result.Health); err != nil {
-			return errors.Join(waitErr, errors.New("remote health evidence could not be persisted"))
+			waitErr = errors.Join(waitErr, errors.New("remote health evidence could not be persisted"))
 		}
+	}
+	if err := reportRemoteRoute(ctx, request, result); err != nil {
+		waitErr = errors.Join(waitErr, err)
 	}
 	return waitErr
 }

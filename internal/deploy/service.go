@@ -113,6 +113,11 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 			return core.Deployment{}, err
 		}
 	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, commitSHA); err != nil {
+			return core.Deployment{}, err
+		}
+	}
 	policy, err := core.NormalizeHealthPolicy(app.HealthPolicy)
 	if err != nil {
 		return core.Deployment{}, err
@@ -124,11 +129,8 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 		State:  core.DeploymentQueued, Message: "Deployment accepted", CreatedAt: now,
 		Acceptance: review, ExecutionAppName: app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
 	}
-	if claim, ok := core.MutationAcceptanceFromContext(ctx); ok {
-		if claim.OperationKind != "deployment" {
-			return core.Deployment{}, store.ErrMutationClaimLost
-		}
-		deployment.ID = claim.OperationID
+	if err := s.reserveRoute(ctx, deployment, app, server); err != nil {
+		return core.Deployment{}, err
 	}
 	if err := s.store.CreateDeployment(ctx, deployment); err != nil {
 		return core.Deployment{}, err
@@ -220,6 +222,11 @@ func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func
 		if err := s.Storage.RefreshLocked(ctx, server); err != nil {
 			return err
 		}
+		if routes, ok := s.store.(store.ApplicationRouteStore); ok {
+			if err := routes.DeleteApplicationRoute(ctx, app.ID, server.ID); err != nil {
+				return err
+			}
+		}
 		if remove {
 			return s.store.DeleteApp(ctx, appID)
 		}
@@ -240,6 +247,7 @@ func (s *Service) lockApp(appID string) func() {
 }
 
 func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.App) {
+	ctx = s.routeContext(ctx)
 	defer func() {
 		s.mu.Lock()
 		delete(s.cancels, deployment.ID)
@@ -296,7 +304,7 @@ func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.
 		s.fail(deployment, errors.New(redactServiceMessage(err.Error(), app.ServiceRuntime)))
 		return
 	}
-	s.finish(&deployment, core.DeploymentSucceeded, "Deployment is live")
+	s.finish(&deployment, core.DeploymentSucceeded, s.routeCompletion(ctx, app, deployment))
 }
 
 func (s *Service) transition(ctx context.Context, deployment *core.Deployment, state core.DeploymentState, message string) error {

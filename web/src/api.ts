@@ -16,9 +16,17 @@ export type Permission =
   | "deployment.cancel"
   | "stage.approve"
   | "infrastructure.manage"
+  | "infrastructure.inspect"
+  | "infrastructure.create"
+  | "infrastructure.modify"
+  | "infrastructure.delete"
+  | "infrastructure.snapshot"
+  | "infrastructure.restore"
   | "secrets.manage"
   | "connections.manage";
 export type Identity = {
+  kind?: "user" | "service_account";
+  credentialId?: string;
   id: string;
   username: string;
   displayName: string;
@@ -163,7 +171,10 @@ export type RelayServerConfig = {
   lastConnectedAt?: string;
   lastError?: string;
 };
+export type RoutingConfig = { baseDomain: string; entryPoint: string; tlsResolver?: string; requireTls: boolean; composeService?: string };
+export type ApplicationRoute = { appId: string; projectId: string; serverId: string; hostname: string; entryPoint: string; tlsResolver?: string; requireTls: boolean; requestedDeploymentId: string; deploymentId?: string; destination?: string; previousDeploymentId?: string; previousDestination?: string; state: string; message: string; dns: string; certificate: { state: string; message: string; expiresAt?: string; checkedAt?: string }; publishedAt?: string; updatedAt: string };
 export type Server = {
+  routing?: RoutingConfig;
   id: string;
   name: string;
   address: string;
@@ -938,13 +949,16 @@ export type StorageResource = {
 };
 
 export const api = {
+ applicationRoute: (id: string) => request<ApplicationRoute | null>(`/api/v1/apps/${id}/route`),
+ checkApplicationRoute: (id: string) => request<ApplicationRoute>(`/api/v1/apps/${id}/route/check`, { method: "POST" }),
+ updateServerRouting: (id: string, routing: RoutingConfig | null) => request<Server>(`/api/v1/servers/${id}/routing`, { method: "PUT", body: JSON.stringify({ routing }) }),
+ previewSourceTrust: (id: string) => request<PreviewSourceTrustDecision>(`/api/v1/workflow/revisions/${id}/source-trust`),
+ approvePreviewSourceTrust: (id: string, confirmDigest: string, expiresAt: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals`, { method: "POST", body: JSON.stringify({ confirmDigest, expiresAt }) }),
+ revokePreviewSourceTrust: (id: string, approvalId: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals/${approvalId}`, { method: "DELETE" }),
   storage: (serverId: string) => request<StorageResource[]>(`/api/v1/storage?serverId=${encodeURIComponent(serverId)}`),
   reconcileStorage: (serverId: string) => request<StorageResource[]>(`/api/v1/servers/${encodeURIComponent(serverId)}/storage/reconcile`, { method: "POST" }),
   storagePolicy: (id: string, revision: number, policy: "retain" | "destroy") => request<StorageResource>(`/api/v1/storage/${id}/policy`, { method: "PUT", body: JSON.stringify({ revision, policy }) }),
   deleteStorage: (id: string) => destructiveRequest<void>(`/api/v1/storage/${id}`, { method: "DELETE" }),
- previewSourceTrust: (id: string) => request<PreviewSourceTrustDecision>(`/api/v1/workflow/revisions/${id}/source-trust`),
- approvePreviewSourceTrust: (id: string, confirmDigest: string, expiresAt: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals`, { method: "POST", body: JSON.stringify({ confirmDigest, expiresAt }) }),
- revokePreviewSourceTrust: (id: string, approvalId: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals/${approvalId}`, { method: "DELETE" }),
  workflowRevision: (id: string) => request<WorkflowRevision>(`/api/v1/workflow/revisions/${id}`),
  eventRules: () => request<EventRule[]>("/api/v1/events/rules"),
  eventActivity: (transport = "", before = "") => request<EventActivityPage>(`/api/v1/events/activity?${new URLSearchParams({transport,before})}`),

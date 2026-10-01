@@ -13,6 +13,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.appPermission(core.PermissionProjectView))
 				r.Get("/sync", a.getApplicationSync)
+				r.Get("/route", a.getApplicationRoute)
 				r.Get("/service-bindings", a.getAppServiceBindings)
 				r.Get("/helm-values", a.getAppHelmValues)
 				r.Get("/deployment-history", a.applicationDeploymentHistory)
@@ -26,6 +27,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.appPermission(core.PermissionProjectConfigure))
 				r.Post("/drift/check", a.checkApplicationDrift)
+				r.Post("/route/check", a.checkApplicationRoute)
 				r.With(a.idleAppMutation).Put("/service-bindings", a.updateAppServiceBindings)
 				r.With(a.idleAppMutation).Put("/helm-values", a.updateAppHelmValues)
 				r.With(a.idleAppMutation).Put("/hooks", a.updateAppHooks)

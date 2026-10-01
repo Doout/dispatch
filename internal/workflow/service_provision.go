@@ -74,7 +74,7 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 	}
 	defer os.RemoveAll(root)
 	revision := core.WorkflowRevision{ID: ulid.Make().String(), ResourceID: resource.ID, Sources: snapshot, CreatedAt: time.Now().UTC()}
-	runtime := &jobRuntime{service: s, source: source, revision: revision, root: root, paths: map[string]string{}, inputs: map[string]string{}}
+	runtime := &jobRuntime{service: s, serviceTemplate: &resource, source: source, revision: revision, root: root, paths: map[string]string{}, inputs: map[string]string{}}
 	defer runtime.close()
 	secrets, err := runtime.resolveSecrets(ctx, spec.Provision.Secrets)
 	if err != nil {
