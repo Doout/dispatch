@@ -1,7 +1,12 @@
 # Retrying public mutations
 
-Send `Idempotency-Key` when starting a deployment through
-`POST /api/v1/apps/{appId}/deployments`. Use 8–128 printable ASCII characters
+Send `Idempotency-Key` with these mutations:
+
+- `POST /api/v1/apps/{appId}/deployments`
+- `POST /api/v1/infrastructure/servers` after reviewing creation
+- `POST /api/v1/infrastructure/servers/{id}/delete` after reviewing deletion
+
+Use 8–128 printable ASCII characters
 without spaces, generated once for the intended request. An identical retry by
 the same stable caller in the same project and action returns the original
 operation. Changing its parameters returns `409` before another operation starts.
@@ -20,8 +25,8 @@ Keyed requests return a mutation receipt with `operationId`, `operationUrl`,
 `state`, `retryUntil`, and `recoveryActions`. `Location` points to
 `GET /api/v1/mutation-receipts/{receiptId}`. Poll this receipt while preparation is
 in progress; the operation URL becomes inspectable after acceptance commits.
-Without the header, the deployment endpoint keeps its existing deployment-record
-response. Existing deployment status, logs, events and cancellation APIs continue
+Without the header, endpoints keep their existing response shapes. Existing
+deployment status, logs, events and cancellation APIs continue
 to work. Other endpoints do not gain this contract merely by receiving a key.
 
 Authentication and current permissions run before replay. A rotated service
@@ -34,7 +39,7 @@ the original operation ID and record the credential used for that request.
 ## Acceptance and recovery
 
 Dispatch first reserves a stable operation identity in SQLite or PostgreSQL. It
-then creates the existing deployment record and accepts the receipt in one
+then creates the existing deployment or provisioning operation and accepts the receipt in one
 transaction, before scheduling execution. Concurrent retries share that identity.
 If a controller stops during preparation, retrying the same request after the
 one-minute preparation lease can complete acceptance with the same operation ID.
@@ -54,8 +59,11 @@ Compact scope, request digest, operation reference and terminal outcome remain a
 a permanent tombstone. Deleting workload history does not make the key reusable.
 The original receipt can still be inspected subject to current authorization.
 
-The shared transaction hooks also support durable infrastructure operations. Server
-creation/deletion must bind the receipt to the original provisioning operation,
-whose own provider request identity controls retries and uncertain-outcome
-reconciliation. Snapshot and temporary-environment mutations adopt this contract
-when their APIs are implemented; they are not covered by this deployment endpoint.
+Server creation and deletion bind the receipt to the original provisioning
+operation. Its provider request identity controls retries and uncertain outcomes.
+A verified adoption reconciles the original receipt without creating another
+machine. Send the reviewed digest and confirmation name in the request body; the
+header replaces the legacy body `requestKey` for these requests.
+
+Snapshot and temporary-environment mutations adopt this contract when their APIs
+are implemented; they are not yet covered.

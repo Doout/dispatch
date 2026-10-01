@@ -158,6 +158,13 @@ func (a *API) writeMutationReceipt(w http.ResponseWriter, r *http.Request, recei
 			case "queued", "pending", "accepted":
 				response.State = "accepted"
 				response.Message = "Operation accepted."
+			case "paused":
+				response.State = "accepted"
+				response.Message = "Operation is paused; inspect the original operation before resuming."
+				response.RecoveryActions = []string{"inspect_operation"}
+			case "adopted":
+				response.State = "succeeded"
+				response.Message = "Owned resource inspected and adopted."
 			case "succeeded":
 				response.State = "succeeded"
 				response.Message = "Operation completed."

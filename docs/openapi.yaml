@@ -9,6 +9,56 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /infrastructure/servers:
+    post:
+      operationId: createManagedServer
+      description: Accepts a reviewed server creation. Requires infrastructure.create and access to the provider. Idempotency-Key reserves one durable provisioning operation; identical retries return its receipt for seven days. Changed inputs or expired keys return 409 without creating another machine.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InfrastructureAcceptance' }
+      responses:
+        '202':
+          description: With Idempotency-Key, returns the original mutation receipt. Without it, returns the legacy server and operation records.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/MutationReceipt' }
+                  - { type: object, required: [server, operation], properties: {server: {type: object}, operation: {type: object}} }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}/delete:
+    post:
+      operationId: deleteManagedServer
+      description: Accepts reviewed deletion of the owned server after data protection checks. Requires infrastructure.delete and access to the provider. Idempotency-Key replays the original operation, including after the machine has been deleted.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InfrastructureAcceptance' }
+      responses:
+        '202':
+          description: With Idempotency-Key, returns the original mutation receipt. Without it, returns the legacy server and operation records.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/MutationReceipt' }
+                  - { type: object, required: [server, operation], properties: {server: {type: object}, operation: {type: object}} }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /mutation-receipts/{receiptId}:
     get:
       operationId: getMutationReceipt
@@ -3387,8 +3437,7 @@ paths:
   /apps/{appId}/deployments:
     post:
       operationId: startDeployment
-      description: Requires deployment.run. When review is supplied, project membership, application settings, binding mappings, and service revisions must still match the preview at atomic acceptance; changes return 409 and require another preview.
-      description: With Idempotency-Key, atomically accepts one operation and returns its durable mutation receipt. Same caller/project/action and identical input replay the original operation for seven days; changed input or an expired key returns 409 without repeating work. Without a key, returns the deployment record.
+      description: Requires deployment.run. When review is supplied, project membership, application settings, binding mappings, and service revisions must still match the preview at atomic acceptance; changes return 409 and require another preview. With Idempotency-Key, atomically accepts one operation and returns its durable mutation receipt. Same caller/project/action and identical input replay the original operation for seven days; changed input or an expired key returns 409 without repeating work. Without a key, returns the deployment record.
       parameters:
         - in: header
           name: Idempotency-Key
@@ -3483,6 +3532,12 @@ components:
       type: http
       scheme: bearer
   parameters:
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: Printable ASCII without spaces. Generate once for the intended request and reuse only for identical retries.
     ProjectID:
       in: path
       name: projectId
@@ -4202,6 +4257,14 @@ components:
         updatedAt:
           type: string
           format: date-time
+    InfrastructureAcceptance:
+      type: object
+      required: [digest, confirmName]
+      properties:
+        reviewId: { type: string, description: Required for server creation. }
+        digest: { type: string, description: Exact digest returned by the current creation or deletion review. }
+        confirmName: { type: string, description: Exact reviewed server name. }
+        requestKey: { type: string, description: Legacy retry key, required only when Idempotency-Key is omitted. }
     MutationReceipt:
       type: object
       required: [id, projectId, action, operationKind, operationId, state, retryUntil, recoveryActions]

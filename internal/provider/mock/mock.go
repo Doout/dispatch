@@ -88,7 +88,7 @@ func New(options Options) (*Mock, error) {
 func (m *Mock) Manifest(context.Context) (provider.Manifest, error) {
 	return provider.Manifest{
 		APIVersion: provider.APIVersion, Name: "dispatch-mock", DisplayName: "Dispatch mock provider", Version: "1.0.0",
-		Capabilities:        []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete},
+		Capabilities:        []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete, provider.CapabilityOwnership},
 		ConfigurationSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"testLabel":{"type":"string","maxLength":80}},"additionalProperties":false}`),
 	}, nil
 }
@@ -205,6 +205,12 @@ func (m *Mock) CreateServer(ctx context.Context, key string, input provider.Crea
 		id := "mock-server-" + keyID[:24]
 		op := provider.Operation{ID: "mock-op-" + keyID[:24], State: provider.StatePending, ResourceID: id}
 		labels := map[string]string{"dispatch.provider": "dispatch-mock"}
+		for label, value := range input.Labels {
+			if len(label) > 128 || len(value) > 128 {
+				return provider.Operation{}, provider.NewProblem(422, "Invalid ownership label", "Keep each ownership label within 128 bytes.")
+			}
+			labels[label] = value
+		}
 		if label, _ := input.ProviderConfig["testLabel"].(string); label != "" {
 			labels["testLabel"] = label
 		}

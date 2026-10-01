@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/provider"
+	"github.com/doout/dispatch/internal/provider/mock"
+	"github.com/doout/dispatch/internal/provision"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -232,5 +235,145 @@ func TestMutationReceiptAutomationRotationRevocationAndCallerIsolation(t *testin
 	}
 	if w = mutationRequest(a, rotated.Token, "GET", url, "", nil); w.Code != 403 {
 		t.Fatal("lost project access retrieved receipt")
+	}
+}
+
+func TestMutationReceiptInfrastructureCreateAndDelete(t *testing.T) {
+	a := serviceTestAPI(t)
+	ctx := context.Background()
+	adapter, err := mock.New(mock.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(provider.Handler(adapter, ""))
+	defer upstream.Close()
+	p, err := a.infrastructureManager().Register(ctx, provision.Registration{Name: "Receipt provider", Endpoint: upstream.URL, Enabled: true, Capabilities: []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, err := a.store.ListProjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err = a.store.CreateSecret(ctx, core.Secret{ID: "receipt-ssh", Name: "Receipt SSH", Type: core.SecretTypeSSHPrivateKey, Source: core.SecretSourceLocal, PublicValue: "ssh-ed25519 fixture", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	input := provision.CreateInput{ProjectID: projects[0].ID, ProviderID: p.ID, Name: "Receipt server", Region: "mock-region", Size: "mock-small", Image: "mock-linux", Network: "mock-private", SSHKeySecretID: "receipt-ssh", Config: map[string]any{}}
+	var review core.InfrastructureReview
+	if err = json.Unmarshal(serviceRequestTest(t, a, "POST", "/api/v1/infrastructure/servers/review", input, 201), &review); err != nil {
+		t.Fatal(err)
+	}
+	acceptance := provision.Acceptance{ReviewID: review.ID, Digest: review.Digest, ConfirmName: input.Name}
+	concurrent := func(path, key string, body provision.Acceptance) mutationReceiptResponse {
+		t.Helper()
+		var wg sync.WaitGroup
+		results := make(chan *httptest.ResponseRecorder, 8)
+		for range 8 {
+			wg.Add(1)
+			go func() { defer wg.Done(); results <- mutationRequest(a, "secret", "POST", path, key, body) }()
+		}
+		wg.Wait()
+		close(results)
+		var original mutationReceiptResponse
+		for w := range results {
+			if w.Code != 202 {
+				t.Fatalf("concurrent acceptance: %d %s", w.Code, w.Body.String())
+			}
+			receipt := decodeMutation(t, w)
+			if original.ID == "" {
+				original = receipt
+			}
+			if receipt.ID != original.ID || receipt.OperationID != original.OperationID || receipt.ResourceID != review.ServerID {
+				t.Fatal("retry changed the owned operation", receipt)
+			}
+		}
+		return original
+	}
+	path := "/api/v1/infrastructure/servers"
+	created := concurrent(path, "create-server-receipt", acceptance)
+	{
+		changed := acceptance
+		changed.ConfirmName = "different"
+		if w := mutationRequest(a, "secret", "POST", path, "create-server-receipt", changed); w.Code != 409 {
+			t.Fatalf("changed acceptance: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if w := mutationRequest(a, "secret", "POST", path, "another-server-key", acceptance); w.Code != 409 {
+		t.Fatalf("review accepted twice: %d %s", w.Code, w.Body.String())
+	}
+	data := a.store.(store.InfrastructureLifecycleStore)
+	manager := a.infrastructureManager()
+	manager.Now = func() time.Time { return now }
+	settle := func() {
+		t.Helper()
+		for range 5 {
+			now = now.Add(3 * time.Second)
+			if _, err := manager.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	settle()
+	assertReplay := func(path, key string, body provision.Acceptance, original mutationReceiptResponse) {
+		t.Helper()
+		w := mutationRequest(a, "secret", "POST", path, key, body)
+		replayed := decodeMutation(t, w)
+		if w.Code != 202 || replayed.OperationID != original.OperationID || replayed.State != "succeeded" || w.Header().Get("Idempotency-Replayed") != "true" {
+			t.Fatalf("terminal replay: %d %s", w.Code, w.Body.String())
+		}
+		if w = mutationRequest(a, "secret", "GET", replayed.OperationURL, "", nil); w.Code != 200 {
+			t.Fatalf("original history: %d %s", w.Code, w.Body.String())
+		}
+		w = mutationRequest(a, "secret", "GET", "/api/v1/mutation-receipts/"+original.ID, "", nil)
+		if w.Code != 200 || decodeMutation(t, w).State != "succeeded" {
+			t.Fatalf("terminal receipt: %d %s", w.Code, w.Body.String())
+		}
+	}
+	assertReplay(path, "create-server-receipt", acceptance, created)
+	server, err := data.GetManagedServer(ctx, review.ServerID)
+	if err != nil || server.AllocationState != "allocated" {
+		t.Fatalf("allocation: %#v %v", server, err)
+	}
+	if _, err = adapter.Server(ctx, server.ResourceID); err != nil {
+		t.Fatal("accepted provider server missing", err)
+	}
+	var deletion provision.DeletionReview
+	if err = json.Unmarshal(serviceRequestTest(t, a, "POST", path+"/"+server.ID+"/delete-review", nil, 200), &deletion); err != nil {
+		t.Fatal(err)
+	}
+	deleteInput := provision.Acceptance{Digest: deletion.Digest, ConfirmName: server.Name}
+	deletePath := path + "/" + server.ID + "/delete"
+	deleted := concurrent(deletePath, "delete-server-receipt", deleteInput)
+	settle()
+	assertReplay(deletePath, "delete-server-receipt", deleteInput, deleted)
+	server, err = data.GetManagedServer(ctx, server.ID)
+	if err != nil || server.AllocationState != "deleted" {
+		t.Fatalf("deletion: %#v %v", server, err)
+	}
+	operations, err := data.ListInfrastructureOperations(ctx, server.ID)
+	if err != nil || len(operations) != 2 {
+		t.Fatalf("accepted %d operations: %v", len(operations), err)
+	}
+	for _, receipt := range []mutationReceiptResponse{created, deleted} {
+		saved, err := a.store.(store.MutationReceiptStore).GetMutationReceipt(ctx, receipt.ID)
+		if err != nil || saved.State != "succeeded" {
+			t.Fatalf("terminal evidence was not persisted: %#v %v", saved, err)
+		}
+	}
+	events, err := a.store.(operationsStore).ListAuditEvents(ctx, core.AuditFilter{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{created.OperationID, deleted.OperationID} {
+		linked := 0
+		for _, event := range events {
+			if event.OperationID == id {
+				linked++
+			}
+		}
+		if linked < 2 {
+			t.Fatalf("missing acceptance/replay audit for %s", id)
+		}
 	}
 }
