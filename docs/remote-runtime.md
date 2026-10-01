@@ -39,6 +39,18 @@ with project, template, target and provision-run ownership checked before lease
 and completion. Generated connection values remain encrypted until the controller
 saves the service connection. Other remote service provisioners are rejected.
 
+Storage inventory and reviewed volume deletion use target-scoped typed jobs.
+They support retained storage even after the original application is removed.
+Ownership and policy are checked at submission, lease and completion; the worker
+re-inspects identity and consumers before removal. Existing storage permission
+and destructive-review requirements still apply. See [storage](storage.md).
+
+The worker encrypts and fsyncs final health evidence in its running operation
+receipt before the readiness gate returns. A candidate cannot be promoted if
+that write fails. Completed and interrupted receipts return the captured health
+evidence, including when subsequent route publication fails; the controller
+saves it against the accepted deployment or rollback policy.
+
 `GET /api/v1/servers/{id}/capabilities` describes the configured runtime driver.
 The node's `runtimeVersion` and `runtimeCapabilities` details describe its last
 advertisement. A queued unsupported operation fails before its inputs are sent.

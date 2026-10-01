@@ -45,7 +45,7 @@ func TestStorageReconciliationPreservesOwnershipAndUnknownOutcomes(t *testing.T)
 	now := time.Now().UTC()
 	project := core.Project{ID: "p", Name: "p", CreatedAt: now}
 	server := core.Server{ID: "s", Name: "s", Runtime: core.ServerRuntimeDocker, Address: "local", State: "ready", CreatedAt: now}
-	app := core.App{ID: "a", Name: "a", ProjectID: "p", ServerID: "s", BuildType: core.BuildTypeDockerfile, CreatedAt: now}
+	app := core.App{ID: "a", Name: "a", ProjectID: "p", ServerID: "s", BuildType: core.BuildTypeDockerfile, Generated: true, State: "closed", CreatedAt: now}
 	if err = data.CreateProject(ctx, project); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestStorageReconciliationPreservesOwnershipAndUnknownOutcomes(t *testing.T)
 	}
 	id := StorageID("s", "docker_volume", "", "data")
 	item, _ := data.GetStorage(ctx, id)
-	if item.Ownership != "verified" || item.Policy != "retain" || item.OwnerID != "a" {
+	if item.Ownership != "verified" || item.Policy != "retain" || item.OwnerID != "a" || !item.Orphaned {
 		t.Fatalf("adoption: %+v", item)
 	}
 	claim := core.StorageResource{ID: "retained-claim", ServerID: server.ID, Kind: "provider_disk", Name: "claim", Namespace: "preview", Identity: "disk", Ownership: "verified", State: "present", Consumers: []core.StorageConsumer{}}
@@ -202,5 +202,32 @@ func TestStorageHelmRetentionAndLegacyCleanup(t *testing.T) {
 		if err := checkHelmStorageCleanup(unsafe); err == nil {
 			t.Fatal("accepted unsafe cascading cleanup")
 		}
+	}
+}
+
+func TestStorageNamespaceCleanupInspectsUnregisteredPreview(t *testing.T) {
+	ctx := context.Background()
+	data, err := store.Open(ctx, filepath.Join(t.TempDir(), "namespace.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+	if err = data.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	server := core.Server{ID: "target", Name: "target", Runtime: core.ServerRuntimeKubernetes, Kubernetes: &core.KubernetesServerConfig{Namespace: "default"}, CreatedAt: time.Now().UTC()}
+	if err = data.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	client := fake.NewClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "retained", Namespace: "forgotten-preview", UID: "claim-uid"}})
+	manager := NewStorageManager(data)
+	manager.Backend = RuntimeStorage{Kubernetes: func(core.Server) (kubernetes.Interface, error) { return client, nil }}
+	called := false
+	if err = manager.CleanupNamespace(ctx, server, "forgotten-preview", func() error { called = true; return nil }); err == nil || called {
+		t.Fatal("unregistered preview namespace was deleted with PVC data")
+	}
+	item, err := data.GetStorage(ctx, StorageID(server.ID, "kubernetes_pvc", "forgotten-preview", "retained"))
+	if err != nil || item.State != "present" || item.Ownership != "unverified" {
+		t.Fatalf("forgotten storage was not protected: %+v %v", item, err)
 	}
 }

@@ -58,7 +58,13 @@ func (e RemoteExecutor) ExecuteRemote(ctx context.Context, id string, op runtime
 	if err != nil {
 		return remoteruntime.Result{}, err
 	}
-	return e.Broker.Wait(ctx, job.ID, progress)
+	result, waitErr := e.Broker.Wait(ctx, job.ID, progress)
+	if result.Health != nil {
+		if err := reportDeploymentHealth(ctx, d, *result.Health); err != nil {
+			return result, errors.Join(waitErr, errors.New("remote health evidence could not be persisted"))
+		}
+	}
+	return result, waitErr
 }
 
 func (e RemoteExecutor) Execute(ctx context.Context, op runtimecontract.Operation, d core.Deployment, app core.App, server core.Server, progress Progress) error {

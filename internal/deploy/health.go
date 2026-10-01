@@ -114,7 +114,9 @@ func RunHealthPolicy(ctx context.Context, policy core.HealthPolicy, probe Health
 	}
 }
 
-func reportDeploymentHealth(ctx context.Context, d core.Deployment, result core.DeploymentHealth) error {
+// ReportDeploymentHealth persists final evidence before a runtime may promote.
+// Reporting survives execution cancellation with its own bounded write context.
+func ReportDeploymentHealth(ctx context.Context, d core.Deployment, result core.DeploymentHealth) error {
 	report, _ := ctx.Value(healthReporterKey{}).(HealthReporter)
 	if report == nil {
 		return nil
@@ -140,4 +142,8 @@ func evaluateDeploymentHealth(ctx context.Context, d core.Deployment, app core.A
 		return err
 	}
 	return progress(core.DeploymentChecking, "Required health checks passed; optional QA remains separate")
+}
+
+func reportDeploymentHealth(ctx context.Context, d core.Deployment, result core.DeploymentHealth) error {
+	return ReportDeploymentHealth(ctx, d, result)
 }

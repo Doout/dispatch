@@ -59,6 +59,9 @@ func (b *Broker) Submit(ctx context.Context, id string, r Request) (core.Runtime
 			return core.RuntimeJob{}, err
 		}
 	}
+	if err = b.validateStorageOwner(ctx, j, r); err != nil {
+		return core.RuntimeJob{}, err
+	}
 	if err = b.Store.CreateRuntimeJob(ctx, j); err != nil {
 		return core.RuntimeJob{}, err
 	}
@@ -95,6 +98,9 @@ func (b *Broker) Lease(ctx context.Context, node string) (*LeasedJob, error) {
 	r, err := b.request(*j)
 	if err == nil {
 		err = b.validateServiceOwner(ctx, *j, r)
+		if err == nil {
+			err = b.validateStorageOwner(ctx, *j, r)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -113,6 +119,9 @@ func (b *Broker) Renew(ctx context.Context, node, id string, h Heartbeat) (bool,
 	r, err := b.request(j)
 	if err == nil {
 		err = b.validateServiceOwner(ctx, j, r)
+		if err == nil {
+			err = b.validateStorageOwner(ctx, j, r)
+		}
 	}
 	if err != nil {
 		return false, err
@@ -139,8 +148,25 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	r, err := b.request(j)
 	if err == nil {
 		err = b.validateServiceOwner(ctx, j, r)
+		if err == nil {
+			err = b.validateStorageOwner(ctx, j, r)
+		}
 	}
 	if err != nil {
+		return err
+	}
+	if err := r.ValidateHealth(c.Result.Health); err != nil {
+		return err
+	}
+	if c.Result.Health != nil {
+		for index := range c.Result.Health.Checks {
+			c.Result.Health.Checks[index].Message = r.Redact(c.Result.Health.Checks[index].Message)
+		}
+	}
+	if (r.Operation == runtimecontract.Deploy || r.Operation == runtimecontract.Rollback) && r.Deployment.Health.State != "" && c.Result.State == "succeeded" && (c.Result.Health == nil || c.Result.Health.State != "passed") {
+		return errors.New("successful remote deployment requires persisted passing health evidence")
+	}
+	if err := r.ValidateStorageResult(c.Result); err != nil {
 		return err
 	}
 	c.Result.Message, c.Result.Logs = r.Redact(c.Result.Message), r.Redact(c.Result.Logs)
