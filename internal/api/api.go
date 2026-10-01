@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/doout/dispatch/internal/analytics"
+	"github.com/doout/dispatch/internal/bootstrap"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/drift"
@@ -32,6 +33,7 @@ type AuthConfig struct {
 }
 
 type EventConfig struct {
+	Bootstrap       *bootstrap.Manager
 	BackupDirectory string
 	MasterKeyFile   string
 	DatabaseURL     string
@@ -53,6 +55,8 @@ type githubEventServices struct {
 }
 
 type API struct {
+	bootstrapOnce      sync.Once
+	bootstrap          *bootstrap.Manager
 	previewPanelMu     sync.Mutex
 	backupMu           sync.Mutex
 	previewReportMu    sync.Mutex

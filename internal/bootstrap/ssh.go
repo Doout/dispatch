@@ -81,9 +81,9 @@ func installSSH(ctx context.Context, item core.TargetBootstrap, credentials SSHC
 	session.Stdin = strings.NewReader(script)
 	session.Stdout = io.Discard
 	session.Stderr = io.Discard
-	command := "sh -s"
+	command := "timeout --signal=TERM --kill-after=10s 14m sh -s"
 	if item.Plan.SSHUser != "root" {
-		command = "sudo -n sh -s"
+		command = "sudo -n timeout --signal=TERM --kill-after=10s 14m sh -s"
 	}
 	if err = session.Run(command); err != nil {
 		return errors.New("approved installation did not finish; retry the same operation after checking prerequisites")
@@ -97,7 +97,7 @@ func (m *Manager) InstallSSH(ctx context.Context, id, digest string) (core.Targe
 		m.mu.Unlock()
 		return item, err
 	}
-	if item.Digest != digest || item.AcceptedAt == nil || item.Plan.Method != "ssh" {
+	if item.Digest != digest || item.AcceptedAt == nil || item.Plan.Method != "ssh" || item.State == "cancelled" || !item.ClaimExpiresAt.After(m.now()) {
 		m.mu.Unlock()
 		return item, ErrConflict
 	}
@@ -145,6 +145,9 @@ func (m *Manager) InstallSSH(ctx context.Context, id, digest string) (core.Targe
 		return current, loadErr
 	}
 	current.LeaseUntil = nil
+	if current.State == "ready" {
+		return current, m.save(ctx, &current)
+	}
 	if err != nil {
 		current.State = "unknown"
 		current.InstallationState = "interrupted"

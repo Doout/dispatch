@@ -25,6 +25,7 @@ type TargetBootstrapPlan struct {
 
 type TargetBootstrap struct {
 	ID                 string              `json:"id"`
+	ResourceID         string              `json:"resourceId,omitempty"`
 	ReviewID           string              `json:"reviewId,omitempty"`
 	ServerID           string              `json:"serverId"`
 	NodeID             string              `json:"nodeId"`

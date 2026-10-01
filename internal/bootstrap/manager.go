@@ -51,8 +51,8 @@ type Store interface {
 // Binding must come from the accepted provider lifecycle or existing target
 // inventory. A claim cannot supply or override this authoritative binding.
 type Binding struct {
-	ReviewID, ServerID, NodeID, ProviderID, ProjectID, ResourceID string
-	Accepted, Cancelled                                           bool
+	ReviewID, ServerID, NodeID, ProviderID, ProjectID, ResourceID, Address string
+	Accepted, Cancelled                                                    bool
 }
 type SSHCredentials struct {
 	Password           string `json:"password,omitempty"`
@@ -203,6 +203,9 @@ func (m *Manager) Prepare(ctx context.Context, b Binding, plan core.TargetBootst
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var item core.TargetBootstrap
+	if m.Vault == nil || m.Store == nil {
+		return item, "", errors.New("encrypted bootstrap storage is unavailable")
+	}
 	if !identifier.MatchString(b.ServerID) || !identifier.MatchString(b.NodeID) || actor == "" {
 		return item, "", errors.New("bootstrap requires an intended target, node and reviewing actor")
 	}
@@ -217,7 +220,7 @@ func (m *Manager) Prepare(ctx context.Context, b Binding, plan core.TargetBootst
 		}
 	}
 	now := m.now()
-	item = core.TargetBootstrap{ID: ulid.Make().String(), ReviewID: b.ReviewID, ServerID: b.ServerID, NodeID: b.NodeID, ProviderID: b.ProviderID, ProjectID: b.ProjectID, Plan: plan, ActorID: actor, State: "planned", InstallationState: "pending", EnrollmentState: "pending", RuntimeState: "pending", Revision: 1, CreatedAt: now, UpdatedAt: now, ReviewExpiresAt: now.Add(15 * time.Minute), ClaimExpiresAt: now.Add(24 * time.Hour), Message: "Review the target, pinned artifact and installation actions before approval."}
+	item = core.TargetBootstrap{ID: ulid.Make().String(), ResourceID: b.ResourceID, ReviewID: b.ReviewID, ServerID: b.ServerID, NodeID: b.NodeID, ProviderID: b.ProviderID, ProjectID: b.ProjectID, Plan: plan, ActorID: actor, State: "planned", InstallationState: "pending", EnrollmentState: "pending", RuntimeState: "pending", Revision: 1, CreatedAt: now, UpdatedAt: now, ReviewExpiresAt: now.Add(15 * time.Minute), ClaimExpiresAt: now.Add(24 * time.Hour), Message: "Review the target, pinned artifact and installation actions before approval."}
 	credential, err := m.Store.GetEdgeCredential(ctx, item.NodeID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return item, "", err
@@ -264,6 +267,11 @@ func (m *Manager) Accept(ctx context.Context, id, digest string) (core.TargetBoo
 	if item.State != "planned" || !item.ReviewExpiresAt.After(m.now()) {
 		return item, ErrConflict
 	}
+	if item.ProviderID != "" && item.Plan.Method == "ssh" {
+		if _, err = m.binding(ctx, item); err != nil {
+			return item, err
+		}
+	}
 	if item.ProviderID == "" {
 		if err = m.bindImportedTarget(ctx, item); err != nil {
 			return item, err
@@ -273,7 +281,11 @@ func (m *Manager) Accept(ctx context.Context, id, digest string) (core.TargetBoo
 	item.AcceptedAt = &now
 	item.State = "accepted"
 	item.Message = "Installation approved; waiting for the intended target."
-	err = m.save(ctx, &item)
+	item.UpdatedAt = now
+	err = m.Store.AcceptTargetBootstrap(ctx, item, item.Revision)
+	if err == nil {
+		item.Revision++
+	}
 	return item, err
 }
 func (m *Manager) binding(ctx context.Context, item core.TargetBootstrap) (Binding, error) {
@@ -284,7 +296,7 @@ func (m *Manager) binding(ctx context.Context, item core.TargetBootstrap) (Bindi
 	if err != nil {
 		return binding, err
 	}
-	if binding.ServerID != item.ServerID || binding.NodeID != item.NodeID || binding.ProviderID != item.ProviderID || binding.ProjectID != item.ProjectID || binding.ReviewID != item.ReviewID || binding.Cancelled {
+	if binding.ServerID != item.ServerID || binding.NodeID != item.NodeID || binding.ProviderID != item.ProviderID || binding.ProjectID != item.ProjectID || binding.ReviewID != item.ReviewID || item.ResourceID != "" && binding.ResourceID != item.ResourceID || item.Plan.Method == "ssh" && binding.Address != "" && binding.Address != item.Plan.SSHHost || binding.Cancelled {
 		return binding, ErrConflict
 	}
 	if !binding.Accepted || binding.ResourceID == "" {
@@ -321,9 +333,11 @@ func (m *Manager) Claim(ctx context.Context, id, claimToken string) (Claim, erro
 	if item.AcceptedAt == nil || item.State == "failed" || item.State == "cancelled" {
 		return response, ErrCredential
 	}
-	if _, err = m.binding(ctx, item); err != nil {
+	binding, err := m.binding(ctx, item)
+	if err != nil {
 		return response, err
 	}
+	item.ResourceID = binding.ResourceID
 	if err = m.ensureNode(ctx, item); err != nil {
 		return response, err
 	}
@@ -396,6 +410,12 @@ func (m *Manager) Refresh(ctx context.Context, id string) (core.TargetBootstrap,
 	}
 	credential, err := m.Store.GetEdgeCredential(ctx, item.NodeID)
 	if errors.Is(err, store.ErrNotFound) {
+		if m.now().After(item.AcceptedAt.Add(30*time.Minute)) && item.State != "unknown" {
+			item.State = "unknown"
+			item.InstallationState = "interrupted"
+			item.Message = "No enrollment arrived after the installation window. Inspect cloud-init or retry through verified SSH on this same machine."
+			return item, m.save(ctx, &item)
+		}
 		return item, nil
 	}
 	if err != nil {
@@ -441,6 +461,7 @@ func (m *Manager) Refresh(ctx context.Context, id string) (core.TargetBootstrap,
 		}
 	} else {
 		item.RuntimeState = "pending"
+		item.State = "waiting"
 		item.Message = "Agent enrolled; waiting for a fresh Docker, Compose and Git readiness check."
 	}
 	return item, m.save(ctx, &item)
@@ -465,9 +486,9 @@ func (m *Manager) bindImportedTarget(ctx context.Context, item core.TargetBootst
 		if name == "" {
 			name = item.ServerID
 		}
-		return m.Store.CreateServer(ctx, core.Server{ID: item.ServerID, Name: name, Address: item.Plan.SSHHost, Runtime: core.ServerRuntimeDocker, State: "waiting", AgentMode: "enrolled", AgentNodeID: item.NodeID, CreatedAt: m.now()})
+		return m.Store.CreateServer(ctx, core.Server{ID: item.ServerID, ProjectID: item.ProjectID, Name: name, Address: item.Plan.SSHHost, Runtime: core.ServerRuntimeDocker, State: "waiting", AgentMode: "enrolled", AgentNodeID: item.NodeID, CreatedAt: m.now()})
 	}
-	if server.Runtime != core.ServerRuntimeDocker || server.Address == "local" || server.AgentNodeID != "" && server.AgentNodeID != item.NodeID {
+	if server.Runtime != core.ServerRuntimeDocker || server.Address == "local" || server.Address != item.Plan.SSHHost || server.ProjectID != item.ProjectID || server.AgentNodeID != "" && server.AgentNodeID != item.NodeID {
 		return ErrConflict
 	}
 	if err = m.ensureNode(ctx, item); err != nil {

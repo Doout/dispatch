@@ -31,7 +31,7 @@ func renderCloudInit(item core.TargetBootstrap, claim string) (string, error) {
 		return "", err
 	}
 	path := "/var/lib/dispatch-bootstrap/" + item.ID + ".sh"
-	config := map[string]any{"write_files": []map[string]any{{"path": path, "permissions": "0700", "owner": "root:root", "encoding": "b64", "content": base64.StdEncoding.EncodeToString([]byte(script))}}, "runcmd": []any{[]string{"sh", path}}}
+	config := map[string]any{"write_files": []map[string]any{{"path": path, "permissions": "0700", "owner": "root:root", "encoding": "b64", "content": base64.StdEncoding.EncodeToString([]byte(script))}}, "runcmd": []any{[]string{"timeout", "--signal=TERM", "--kill-after=10s", "14m", "sh", path}}}
 	raw, err := yaml.Marshal(config)
 	return "#cloud-config\n" + string(raw), err
 }
@@ -101,7 +101,8 @@ PYTHON
 chmod 0600 "$bootstrap_root/client.py"
 python3 "$bootstrap_root/client.py" identity
 python3 "$bootstrap_root/client.py" progress downloading
-trap 'python3 "$bootstrap_root/client.py" progress failed; echo "Target installation interrupted; review bootstrap status" >&2' EXIT HUP INT TERM
+trap 'python3 "$bootstrap_root/client.py" progress failed; echo "Target installation interrupted; review bootstrap status" >&2' EXIT
+trap 'exit 1' HUP INT TERM
 {{if .InstallRuntime}}
 . /etc/os-release
 [ "$ID" = ubuntu ] && [ "$VERSION_ID" = 24.04 ] || { echo 'Approved prerequisites require Ubuntu 24.04' >&2; exit 1; }

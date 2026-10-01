@@ -53,6 +53,7 @@ func (a *API) reviewManagedServer(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
+	in.ActorID = currentIdentity(r.Context()).ID
 	item, err := m.ReviewCreate(r.Context(), in)
 	if err != nil {
 		a.infrastructureProblem(w, err)

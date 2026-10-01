@@ -14,10 +14,11 @@ func (a *API) infrastructureManager() *provision.Manager {
 	if !ok {
 		return nil
 	}
-	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge, Vault: a.eventConfig.Vault}
+	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge, Vault: a.eventConfig.Vault, Bootstrap: a.bootstrapManager()}
 }
 func (a *API) infrastructureRoutes(r chi.Router) {
 	a.infrastructureLifecycleRoutes(r)
+	a.targetBootstrapRoutes(r)
 	r.Route("/infrastructure/providers", func(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Get("/", a.listInfrastructureProviders)

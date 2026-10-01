@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/hex"
 	"errors"
 	"github.com/doout/dispatch/internal/runtimecontract"
 	"net/http"
@@ -57,6 +58,12 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	if node.Details == nil {
 		node.Details = map[string]string{}
 	}
+	artifact := r.Header.Get("X-Dispatch-Agent-Artifact")
+	if decoded, err := hex.DecodeString(artifact); artifact != "" && (err != nil || len(decoded) != 32) {
+		problem(w, 422, "Invalid agent artifact", "Provide the installed artifact SHA-256.")
+		return
+	}
+	node.Details["agentArtifactSHA256"] = artifact
 	node.Details["runtimeVersion"] = remoteruntime.APIVersion
 	node.Details["runtimeCheckedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 	advertised := strings.Split(r.Header.Get("X-Dispatch-Runtime-Capabilities"), ",")

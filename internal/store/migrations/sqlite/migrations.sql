@@ -1409,3 +1409,6 @@ CREATE TABLE target_bootstraps (
  encrypted_input TEXT NOT NULL
 );
 CREATE INDEX target_bootstraps_server ON target_bootstraps(server_id);
+
+ALTER TABLE infrastructure_reviews ADD COLUMN bootstrap_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN bootstrap_id TEXT NOT NULL DEFAULT '';

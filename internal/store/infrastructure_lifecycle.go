@@ -35,16 +35,16 @@ type InfrastructureLifecycleStore interface {
 	AdoptInfrastructureServer(context.Context, core.ManagedServer, string, string, time.Time) (core.ManagedServer, error)
 }
 
-const reviewColumns = `id,server_id,project_id,provider_id,provider_revision,manifest_digest,name,input,encrypted_request,digest,state,expires_at,created_at`
+const reviewColumns = `id,server_id,project_id,provider_id,provider_revision,manifest_digest,name,input,encrypted_request,digest,state,expires_at,created_at,bootstrap_id`
 
 func (s *SQLStore) CreateInfrastructureReview(ctx context.Context, r core.InfrastructureReview) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO infrastructure_reviews(`+reviewColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`), r.ID, r.ServerID, r.ProjectID, r.ProviderID, r.ProviderRevision, r.ManifestDigest, r.Name, string(r.Input), r.EncryptedRequest, r.Digest, r.State, stamp(r.ExpiresAt), stamp(r.CreatedAt))
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO infrastructure_reviews(`+reviewColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), r.ID, r.ServerID, r.ProjectID, r.ProviderID, r.ProviderRevision, r.ManifestDigest, r.Name, string(r.Input), r.EncryptedRequest, r.Digest, r.State, stamp(r.ExpiresAt), stamp(r.CreatedAt), r.BootstrapID)
 	return err
 }
 func scanInfrastructureReview(row scanner) (core.InfrastructureReview, error) {
 	var r core.InfrastructureReview
 	var input, expires, created string
-	err := row.Scan(&r.ID, &r.ServerID, &r.ProjectID, &r.ProviderID, &r.ProviderRevision, &r.ManifestDigest, &r.Name, &input, &r.EncryptedRequest, &r.Digest, &r.State, &expires, &created)
+	err := row.Scan(&r.ID, &r.ServerID, &r.ProjectID, &r.ProviderID, &r.ProviderRevision, &r.ManifestDigest, &r.Name, &input, &r.EncryptedRequest, &r.Digest, &r.State, &expires, &created, &r.BootstrapID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -57,12 +57,12 @@ func (s *SQLStore) GetInfrastructureReview(ctx context.Context, id string) (core
 	return scanInfrastructureReview(s.db.QueryRowContext(ctx, s.q(`SELECT `+reviewColumns+` FROM infrastructure_reviews WHERE id=?`), id))
 }
 
-const managedServerColumns = `id,review_id,project_id,provider_id,name,node_id,resource_id,address,allocation_state,enrollment_state,runtime_state,revision,created_at,updated_at`
+const managedServerColumns = `id,review_id,project_id,provider_id,name,node_id,resource_id,address,allocation_state,enrollment_state,runtime_state,revision,created_at,updated_at,bootstrap_id`
 
 func scanManagedServer(row scanner) (core.ManagedServer, error) {
 	var m core.ManagedServer
 	var created, updated string
-	err := row.Scan(&m.ID, &m.ReviewID, &m.ProjectID, &m.ProviderID, &m.Name, &m.NodeID, &m.ResourceID, &m.Address, &m.AllocationState, &m.EnrollmentState, &m.RuntimeState, &m.Revision, &created, &updated)
+	err := row.Scan(&m.ID, &m.ReviewID, &m.ProjectID, &m.ProviderID, &m.Name, &m.NodeID, &m.ResourceID, &m.Address, &m.AllocationState, &m.EnrollmentState, &m.RuntimeState, &m.Revision, &created, &updated, &m.BootstrapID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -175,7 +175,7 @@ func (s *SQLStore) AcceptInfrastructureReview(ctx context.Context, reviewID, dig
 	if err != nil {
 		return core.ManagedServer{}, core.InfrastructureOperation{}, err
 	}
-	m := core.ManagedServer{ID: r.ServerID, ReviewID: r.ID, ProjectID: r.ProjectID, ProviderID: r.ProviderID, Name: r.Name, NodeID: "node-" + r.ServerID, AllocationState: "pending", EnrollmentState: "waiting", RuntimeState: "waiting", Revision: 1, CreatedAt: now, UpdatedAt: now}
+	m := core.ManagedServer{BootstrapID: r.BootstrapID, ID: r.ServerID, ReviewID: r.ID, ProjectID: r.ProjectID, ProviderID: r.ProviderID, Name: r.Name, NodeID: "node-" + r.ServerID, AllocationState: "pending", EnrollmentState: "waiting", RuntimeState: "waiting", Revision: 1, CreatedAt: now, UpdatedAt: now}
 	o := core.InfrastructureOperation{ID: operationID, ServerID: m.ID, ProviderID: m.ProviderID, ActorID: actor, Action: "create", State: "pending", Stage: "submit", ExpiresAt: now.Add(30 * time.Minute), NextAttemptAt: now, RequestDigest: digest, CreatedAt: now, UpdatedAt: now}
 	if r.Digest != digest || r.State != "open" || !r.ExpiresAt.After(now) {
 		return m, o, ErrInfrastructureChanged
@@ -193,9 +193,14 @@ func (s *SQLStore) AcceptInfrastructureReview(ctx context.Context, reviewID, dig
 			return m, o, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO managed_servers(`+managedServerColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), m.ID, m.ReviewID, m.ProjectID, m.ProviderID, m.Name, m.NodeID, "", "", m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(now), stamp(now))
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO managed_servers(`+managedServerColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), m.ID, m.ReviewID, m.ProjectID, m.ProviderID, m.Name, m.NodeID, "", "", m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(now), stamp(now), m.BootstrapID)
 	if err != nil {
 		return m, o, err
+	}
+	if r.BootstrapID != "" {
+		if err = s.acceptProviderBootstrap(ctx, tx.Tx, r, m, now); err != nil {
+			return m, o, err
+		}
 	}
 	if err = s.insertInfrastructureOperation(ctx, tx.Tx, o); err != nil {
 		return m, o, err
