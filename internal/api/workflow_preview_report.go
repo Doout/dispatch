@@ -201,18 +201,37 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 			}
 			continue
 		}
-		body := workflowPreviewReportForTrigger(revision, resource, stages, trigger.PreviewURL, connection.WebURL, trigger)
-		commentID, err := notifier.UpdateComment(ctx, trigger.Repository, trigger.PullRequestNumber, trigger.ReportCommentID, body)
+		commentID, err := a.store.WorkflowPreviewTestComment(ctx, revision.ID)
 		if err != nil {
 			return errors.Join(feedbackErr, err)
 		}
-		if err := a.store.UpdateWorkflowPreviewTriggerComment(ctx, trigger.ID, commentID); err != nil {
-			return errors.Join(feedbackErr, err)
+		if strings.HasPrefix(revision.Trigger, "pull request comment ") {
+			reply := fmt.Sprintf("<!-- dispatch-preview-run:%s -->\nPreview deployment %s. See the preview panel for details.\n", revision.ID, revision.State)
+			if revision.State == "succeeded" && resource.State != "removed" && resource.State != "expired" && resource.State != "expiring" {
+				reply += "\n[Open preview](" + trigger.PreviewURL + ")\n"
+			}
+			commentID, err = notifier.UpdateComment(ctx, trigger.Repository, trigger.PullRequestNumber, commentID, reply)
+			if err != nil {
+				return errors.Join(feedbackErr, err)
+			}
+			if err := a.store.UpdateWorkflowPreviewTestComment(ctx, trigger.ID, strings.TrimPrefix(revision.Trigger, "pull request comment "), commentID); err != nil {
+				return errors.Join(feedbackErr, err)
+			}
+		} else {
+			panels, err := a.store.ListWorkflowPreviewPanels(ctx)
+			if err != nil {
+				return errors.Join(feedbackErr, err)
+			}
+			for _, p := range panels {
+				if p.ResourceID == resource.ID && p.Repository == events.NormalizeRepository(trigger.Repository) && p.PullRequestNumber == trigger.PullRequestNumber {
+					commentID = p.CommentID
+				}
+			}
 		}
-		trigger.ReportCommentID = commentID
 		if err := a.store.SaveWorkflowPreviewReportComment(ctx, revision.ID, trigger.Repository, trigger.PullRequestNumber, commentID); err != nil {
 			return errors.Join(feedbackErr, err)
 		}
+
 	}
 	return feedbackErr
 }
@@ -268,7 +287,14 @@ func workflowPreviewTestReport(revision core.WorkflowRevision, stages []core.Wor
 func workflowPreviewReportBody(revision core.WorkflowRevision, resource core.WorkflowResource, stages []core.WorkflowStageRun, previewURL, githubURL string, links ...core.HelmPullRequest) string {
 	var body strings.Builder
 	fmt.Fprintf(&body, "<!-- dispatch-workflow-preview:%s -->\n### %s preview\n\n", revision.ID, resource.Name)
-	fmt.Fprintf(&body, "**Status:** Ready\n**URL:** [Open preview](%s)\n", previewURL)
+	status := "Ready"
+	if revision.State != "" && revision.State != "succeeded" {
+		status = revision.State
+	}
+	fmt.Fprintf(&body, "**Status:** %s\n", status)
+	if previewURL != "" {
+		fmt.Fprintf(&body, "**URL:** [Open preview](%s)\n", previewURL)
+	}
 	for _, stage := range stages {
 		if stage.TargetRef != "" {
 			fmt.Fprintf(&body, "**Target:** `%s`\n", stage.TargetRef)
@@ -329,12 +355,15 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 	}
 	sort.Strings(aliases)
 	var body strings.Builder
-	body.WriteString("\n### Preview commands\n\nPost a new comment on this PR:\n\n")
+	body.WriteString("\n<details>\n<summary>Preview commands and options</summary>\n\nPost a new comment on this PR:\n\n")
 	fmt.Fprintf(&body, "- `%s`: run again with the latest commits from this PR and its linked PRs.\n", command)
 	fmt.Fprintf(&body, "- `%s test`: run on-demand checks against the deployed preview, when configured. This does not rebuild or redeploy it.\n", command)
 	fmt.Fprintf(&body, "- `%s ttl 1d`: shut down after one day from now; `%s ttl 0` removes the time limit.\n", command, command)
 	fmt.Fprintf(&body, "- `%s extend 1d`: add one day to the current shutdown deadline without rebuilding.\n", command)
-	if trigger.AutoDeploy {
+	fmt.Fprintf(&body, "- `%s live on`: deploy every new commit when detected. `%s live off` returns to this preview's configured update policy.\n", command, command)
+	if trigger.LiveReload {
+		body.WriteString("\nLive reload is on. Every detected new commit starts a deployment. A newer commit cancels queued or running work.\n")
+	} else if trigger.AutoDeploy {
 		limit := trigger.MaxAutoRunsPerHour
 		if limit <= 0 {
 			limit = 2
@@ -344,6 +373,7 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 		body.WriteString("\nNew commits do not deploy automatically. A newer commit cancels a queued or running preview.\n")
 	}
 	if len(aliases) == 0 {
+		body.WriteString("\n</details>\n")
 		return body.String()
 	}
 	example := aliases[0]
@@ -353,10 +383,11 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 			break
 		}
 	}
+	body.WriteString("\n")
 	fmt.Fprintf(&body, "- `%s with %s=#<PR_NUMBER>`: link or replace a PR from `%s`.\n", command, example, revision.Sources[example].Repository)
 	fmt.Fprintf(&body, "- `%s without %s`: unlink that source's PR, restore its configured branch or ref, and redeploy.\n", command, example)
 	body.WriteString("\nReplace `<PR_NUMBER>` with the PR number from that source's repository. Saved links remain attached to later runs; repeat `with` for an alias to replace its link.\n")
-	body.WriteString("\n<details>\n<summary>All source overrides</summary>\n\n| Source | Repository | Link | Unlink |\n| --- | --- | --- | --- |\n")
+	body.WriteString("\n| Source | Repository | Link | Unlink |\n| --- | --- | --- | --- |\n")
 	for _, alias := range aliases {
 		fmt.Fprintf(&body, "| `%s` | `%s` | `%s with %s=#<PR_NUMBER>` | `%s without %s` |\n", alias, revision.Sources[alias].Repository, command, alias, command, alias)
 	}
@@ -384,6 +415,13 @@ func workflowPreviewReportForTrigger(revision core.WorkflowRevision, resource co
 		body = strings.Replace(body, "**Status:** Ready", "**Status:** "+resource.State+" (preview lifetime ended)", 1)
 	}
 	body += "\n**Lifetime:** " + workflowPreviewLifetimeText(trigger) + "\n"
+	updateMode := "Manual"
+	if trigger.LiveReload {
+		updateMode = "Live reload"
+	} else if trigger.AutoDeploy {
+		updateMode = "Limited automatic"
+	}
+	body += "\n**Commit updates:** " + updateMode + "\n"
 	body += workflowPreviewCommandHelp(revision, trigger)
 	if source := trigger.TemplateSource; source != nil && source.CommitSHA != "" {
 		fileURL := strings.TrimRight(githubURL, "/") + "/" + source.Repository + "/blob/" + url.PathEscape(source.CommitSHA)

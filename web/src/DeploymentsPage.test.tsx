@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { catalogClient } from "./deployments/catalogClient";
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DispatchApp, { DeploymentDetailsPage, DeploymentQuickView, DeploymentsPage } from "./App";
@@ -221,6 +221,7 @@ describe("deployment navigation", () => {
     };
     render(<DeploymentList data={data} onSelectStage={onSelectStage} />);
 
+    expect(within(screen.getByRole("article", { name: "checkout" })).getByText("Update available")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Expand checkout deployment" }));
     expect(screen.getByRole("button", { name: /Development, Ready, target development-cluster/ })).not.toBeNull();
     expect(screen.getByRole("button", { name: /Production, Awaiting approval/ }).getAttribute("aria-pressed")).toBe("true");

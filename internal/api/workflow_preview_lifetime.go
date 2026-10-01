@@ -152,73 +152,10 @@ func (a *API) processWorkflowPreviewLifetimeComment(ctx context.Context, target 
 		// Refresh the existing deployment report rather than adding a comment for
 		// every extension. The receipt survives a failed GitHub update.
 		// Reporting retries independently so a GitHub outage does not hold the poll cursor.
-		if err := a.refreshWorkflowPreviewLifetimeReport(ctx, previous.ID); err != nil && a.logger != nil {
-			a.logger.Warn("preview lifetime report pending", "error", err)
-		}
+
 		return a.workflowPreviewActivity(ctx, target, event, next, resource, "", "processed", workflowPreviewLifetimeText(next))
 	}
 	return fmt.Errorf("no preview exists for this PR; post %s first", event.Command)
-}
-
-func (a *API) refreshWorkflowPreviewLifetimeReport(ctx context.Context, triggerID string) error {
-	if a.eventConfig.GitHubApps == nil {
-		return nil
-	}
-	a.previewReportMu.Lock()
-	defer a.previewReportMu.Unlock()
-	triggers, err := a.store.ListWorkflowPreviewTriggers(ctx)
-	if err != nil {
-		return err
-	}
-	for _, trigger := range triggers {
-		if trigger.ID != triggerID {
-			continue
-		}
-		if trigger.ReportCommentID == "" {
-			resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
-			if err != nil {
-				return err
-			}
-			return a.store.MarkWorkflowPreviewLifetimeReported(ctx, trigger, resource.State)
-		}
-		revisions, err := a.store.ListWorkflowRevisions(ctx, trigger.ResourceID, 0)
-		if err != nil {
-			return err
-		}
-		for _, revision := range revisions {
-			if revision.State != "succeeded" || strings.HasPrefix(revision.Trigger, "pull request test ") {
-				continue
-			}
-			resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
-			if err != nil {
-				return err
-			}
-			stages, err := a.store.ListWorkflowStageRuns(ctx, revision.ID)
-			if err != nil {
-				return err
-			}
-			connection, err := a.store.GetGitHubApp(ctx, trigger.GitHubAppID)
-			if err != nil {
-				return err
-			}
-			notifier := events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
-				return a.eventConfig.GitHubApps.RepositoryToken(ctx, trigger.GitHubAppID, repository)
-			}}
-			_, err = notifier.UpdateComment(ctx, trigger.Repository, trigger.PullRequestNumber, trigger.ReportCommentID,
-				workflowPreviewReportForTrigger(revision, resource, stages, trigger.PreviewURL, connection.WebURL, trigger))
-			if err != nil {
-				return err
-			}
-			return a.store.MarkWorkflowPreviewLifetimeReported(ctx, trigger, resource.State)
-		}
-		// The next completed deployment will publish the initial report.
-		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
-		if err != nil {
-			return err
-		}
-		return a.store.MarkWorkflowPreviewLifetimeReported(ctx, trigger, resource.State)
-	}
-	return nil
 }
 
 func (a *API) reportPendingWorkflowPreviewLifetimes(ctx context.Context) error {
@@ -228,9 +165,15 @@ func (a *API) reportPendingWorkflowPreviewLifetimes(ctx context.Context) error {
 	}
 	var joined error
 	for _, trigger := range triggers {
-		if trigger.ClosedAt == nil && trigger.LifetimeReportPending {
-			joined = errors.Join(joined, a.refreshWorkflowPreviewLifetimeReport(ctx, trigger.ID))
+		if !trigger.LifetimeReportPending {
+			continue
 		}
+		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+		if err != nil {
+			joined = errors.Join(joined, err)
+			continue
+		}
+		joined = errors.Join(joined, a.store.MarkWorkflowPreviewLifetimeReported(ctx, trigger, resource.State))
 	}
 	return joined
 }

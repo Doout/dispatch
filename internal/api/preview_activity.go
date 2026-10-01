@@ -97,6 +97,8 @@ func (a *API) workflowPreviewActivity(ctx context.Context, target *previewPollTa
 	kind := "pull_request_comment"
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
 		kind = "preview_test"
+	} else if len(fields) > 0 && fields[0] == "live" {
+		kind = "preview_live_reload"
 	}
 	item := core.EventActivity{ID: ulid.Make().String(), ProjectID: source.ProjectID, RuleID: ruleID, Name: name, Transport: transport, Kind: kind, Repository: target.repository, PullRequest: event.PullRequestNumber, Command: event.Command, CommitSHA: event.HeadSHA, State: state, Message: message, ResourceID: resource.ID, PreviewURL: trigger.PreviewURL, CreatedAt: time.Now().UTC()}
 	if revisionID != "" {
@@ -156,6 +158,23 @@ func (a *API) processWorkflowPreviewWebhook(ctx context.Context, event core.Inco
 				return a.eventConfig.GitHubApps.RepositoryToken(ctx, target.connectionID, repository)
 			}
 		}
+		if event.Kind == core.EventKindPullRequestComment && event.Action == "edited" && target.connectionID != "" {
+			reader, _, _, _, err := a.previewPanelGitHub(ctx, target.connectionID, target.repository)
+			if err != nil {
+				return err
+			}
+			comment, err := reader.GetComment(ctx, target.repository, event.SourceCommentID)
+			if err != nil {
+				return err
+			}
+			handled, err := a.processWorkflowPreviewPanelEdit(ctx, target, reader, comment)
+			if err != nil {
+				return err
+			}
+			if handled {
+				return a.syncWorkflowPreviewPanels(ctx)
+			}
+		}
 		if event.Kind == core.EventKindPullRequestComment {
 			if !event.TrustedActor || !target.commands[event.Command] {
 				continue
@@ -168,15 +187,32 @@ func (a *API) processWorkflowPreviewWebhook(ctx context.Context, event core.Inco
 				continue
 			}
 			event.HeadSHA, event.HeadRef, event.BaseRef = pr.HeadSHA, pr.HeadRef, pr.BaseRef
-			return a.processWorkflowPreviewComment(ctx, target, event, resolver)
+			if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
+				return err
+			}
+			return a.syncWorkflowPreviewPanels(ctx)
 		}
 		if event.Kind == core.EventKindPullRequest {
+			if event.Action == "opened" || event.Action == "reopened" {
+				for _, template := range target.workflowTemplates {
+					if template.CommentOnOpen {
+						if err := a.ensureAvailableWorkflowPreviewPanel(ctx, template, target.repository, event.PullRequestNumber); err != nil {
+							return err
+						}
+					}
+				}
+			}
+
 			for _, trigger := range target.workflowTriggers {
-				if trigger.PullRequestNumber != event.PullRequestNumber {
+				resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+				if err != nil {
+					return err
+				}
+				if previewTriggerLinks(trigger, resource)[target.repository] != event.PullRequestNumber {
 					continue
 				}
 				if event.Action == "closed" {
-					linkedOpen, err := a.workflowPreviewLinkedPullRequestOpen(ctx, trigger, resolver)
+					linkedOpen, err := a.workflowPreviewOpenAfterClosure(ctx, trigger, target.repository, resolver)
 					if err != nil {
 						return err
 					}
@@ -192,7 +228,7 @@ func (a *API) processWorkflowPreviewWebhook(ctx context.Context, event core.Inco
 					}
 				}
 			}
-			return nil
+			return a.syncWorkflowPreviewPanels(ctx)
 		}
 	}
 	return nil
@@ -213,7 +249,7 @@ func (a *API) consumePolledComment(ctx context.Context, target *previewPollTarge
 	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
 		return err
 	}
-	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
+	if fields := strings.Fields(event.Arguments); len(fields) > 0 && (fields[0] == "test" || fields[0] == "live") {
 		return nil
 	}
 	runs, err := groupService.Process(ctx, event)
@@ -261,7 +297,7 @@ func (a *API) consumeGitHubPreviewEvent(ctx context.Context, event core.Incoming
 	if err := a.processWorkflowPreviewWebhook(ctx, event); err != nil {
 		return core.EventResult{}, err
 	}
-	if fields := strings.Fields(event.Arguments); event.Kind == core.EventKindPullRequestComment && len(fields) > 0 && fields[0] == "test" {
+	if fields := strings.Fields(event.Arguments); event.Kind == core.EventKindPullRequestComment && len(fields) > 0 && (fields[0] == "test" || fields[0] == "live") {
 		return core.EventResult{Event: event}, nil
 	}
 	runs, err := groupService.Process(ctx, event)
@@ -324,10 +360,14 @@ func (a *API) consumePolledClosure(ctx context.Context, target *previewPollTarge
 		return err
 	}
 	for _, trigger := range target.workflowTriggers {
-		if trigger.PullRequestNumber != event.PullRequestNumber {
+		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+		if err != nil {
+			return err
+		}
+		if previewTriggerLinks(trigger, resource)[target.repository] != event.PullRequestNumber {
 			continue
 		}
-		linkedOpen, err := a.workflowPreviewLinkedPullRequestOpen(ctx, trigger, resolver)
+		linkedOpen, err := a.workflowPreviewOpenAfterClosure(ctx, trigger, target.repository, resolver)
 		if err != nil {
 			return err
 		}

@@ -115,11 +115,12 @@ type deploymentResourceEvent struct {
 }
 
 type deploymentResourceResponse struct {
-	Manifest deploymentManifest        `json:"manifest"`
-	Loggable bool                      `json:"loggable"`
-	Logs     []deploymentResourceLog   `json:"logs"`
-	Events   []deploymentResourceEvent `json:"events"`
-	Warning  string                    `json:"warning,omitempty"`
+	Manifest         deploymentManifest        `json:"manifest"`
+	Loggable         bool                      `json:"loggable"`
+	DefaultContainer string                    `json:"defaultContainer,omitempty"`
+	Logs             []deploymentResourceLog   `json:"logs"`
+	Events           []deploymentResourceEvent `json:"events"`
+	Warning          string                    `json:"warning,omitempty"`
 }
 
 func (a *API) getDeploymentTopology(w http.ResponseWriter, r *http.Request) {
@@ -288,6 +289,9 @@ func (a *API) getDeploymentResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := deploymentResourceResponse{Manifest: encodeDeploymentManifest(selected), Loggable: kindName == "pod", Logs: []deploymentResourceLog{}, Events: []deploymentResourceEvent{}}
+	if result.Loggable {
+		result.DefaultContainer = defaultPodLogContainer(selected)
+	}
 	config, cleanup, err := kubernetesRESTConfig(*item.Server)
 	if err != nil {
 		result.Warning = err.Error()
@@ -689,6 +693,53 @@ func kubernetesPodLogs(ctx context.Context, client kubernetes.Interface, namespa
 		logs = append(logs, entry)
 	}
 	return logs
+}
+
+func defaultPodLogContainer(pod *unstructured.Unstructured) string {
+	regular, _, _ := unstructured.NestedSlice(pod.Object, "spec", "containers")
+	init, _, _ := unstructured.NestedSlice(pod.Object, "spec", "initContainers")
+	if len(regular) == 0 {
+		return firstContainerName(init)
+	}
+
+	annotations := pod.GetAnnotations()
+	if preferred := annotations["kubectl.kubernetes.io/default-container"]; preferred != "" {
+		for _, raw := range regular {
+			container, _ := raw.(map[string]any)
+			name, _, _ := unstructured.NestedString(container, "name")
+			if name == preferred {
+				return preferred
+			}
+		}
+	}
+
+	var injected struct {
+		Containers []string `json:"containers"`
+	}
+	_ = json.Unmarshal([]byte(annotations["sidecar.istio.io/status"]), &injected)
+	sidecars := make(map[string]bool, len(injected.Containers))
+	for _, name := range injected.Containers {
+		sidecars[name] = true
+	}
+	for _, raw := range regular {
+		container, _ := raw.(map[string]any)
+		name, _, _ := unstructured.NestedString(container, "name")
+		if name != "" && !sidecars[name] {
+			return name
+		}
+	}
+	return firstContainerName(regular)
+}
+
+func firstContainerName(containers []any) string {
+	for _, raw := range containers {
+		container, _ := raw.(map[string]any)
+		name, _, _ := unstructured.NestedString(container, "name")
+		if name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 func kubernetesObjectEvents(ctx context.Context, client kubernetes.Interface, namespace, uid string) ([]deploymentResourceEvent, error) {

@@ -345,6 +345,15 @@ spec:
 	if err != nil || len(initial) != 1 || initial[0].Trigger != "configuration sync" {
 		t.Fatalf("import did not start the initial deployment: %#v err=%v", initial, err)
 	}
+	// A connection without webhook access can stay degraded while polling works.
+	currentSource, err := data.GetConfigSource(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentSource.State, currentSource.LastError = "degraded", "Polling is active. Webhook access is unavailable."
+	if err := data.UpdateConfigSource(ctx, currentSource); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.PollOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -354,6 +363,14 @@ spec:
 	}
 	if treeReads.Load() != 1 {
 		t.Fatalf("unchanged poll downloaded configuration content; tree reads=%d", treeReads.Load())
+	}
+	unchangedActivity, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{source.ProjectID}})
+	if err != nil || len(unchangedActivity) != 0 {
+		t.Fatalf("unchanged fallback scan created activity: %+v %v", unchangedActivity, err)
+	}
+	initialChecks, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{source.ProjectID}, ChecksOnly: true})
+	if err != nil || len(initialChecks) != 1 || initialChecks[0].State != "processed" {
+		t.Fatalf("unchanged scan did not update polling health: %+v %v", initialChecks, err)
 	}
 
 	serviceVersion.Store(2)
@@ -374,7 +391,7 @@ spec:
 		t.Fatalf("poll did not record its accepted run: %+v %v", activity, err)
 	}
 	checks, err := data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{source.ProjectID}, ChecksOnly: true})
-	if err != nil || len(checks) != 1 || checks[0].State != "processed" {
+	if err != nil || len(checks) != 1 || checks[0].State != "processed" || !checks[0].CreatedAt.After(initialChecks[0].CreatedAt) {
 		t.Fatalf("poll health missing: %+v %v", checks, err)
 	}
 	initialDigest := resource.SpecDigest

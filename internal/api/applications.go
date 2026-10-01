@@ -487,6 +487,14 @@ func validateSourceAuthentication(repository, authType, credentialID string) str
 
 func (a *API) deleteApp(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if handled, err := a.removeWorkflowPreviewForApp(r.Context(), id); handled || err != nil {
+		if err != nil {
+			a.previewCleanupProblem(w, err)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
 	if _, err := a.store.GetApp(r.Context(), id); err != nil {
 		a.notFoundOrInternal(w, err, "Application")
 		return
@@ -546,6 +554,14 @@ func (a *API) deleteApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) cleanupApp(w http.ResponseWriter, r *http.Request) {
+	if handled, err := a.removeWorkflowPreviewForApp(r.Context(), chi.URLParam(r, "id")); handled || err != nil {
+		if err != nil {
+			a.previewCleanupProblem(w, err)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
 	err := a.deploy.CleanupReviewed(r.Context(), chi.URLParam(r, "id"), func() error { return a.recheckDestructiveAction(r, "application", "cleanup") }, false, nil)
 	if errors.Is(err, deploy.ErrDeploymentActive) {
 		problem(w, http.StatusConflict, "Deployment active", "Wait for the active deployment to finish before cleaning up the application.")

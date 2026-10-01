@@ -17,6 +17,7 @@ import (
 )
 
 type workflowPreviewTemplateRequest struct {
+	CommentOnOpen      bool                                   `json:"commentOnOpen"`
 	TTL                string                                 `json:"ttl"`
 	GitSource          *core.WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
 	ConfigSourceID     string                                 `json:"configSourceId"`
@@ -25,6 +26,7 @@ type workflowPreviewTemplateRequest struct {
 	Repository         string                                 `json:"repository"`
 	Command            string                                 `json:"command"`
 	AutoDeploy         bool                                   `json:"autoDeploy"`
+	LiveReload         bool                                   `json:"liveReload"`
 	MaxAutoRunsPerHour int                                    `json:"maxAutoRunsPerHour"`
 	PreviewURL         string                                 `json:"previewUrl"`
 	Document           string                                 `json:"document"`
@@ -100,7 +102,7 @@ func (a *API) validateWorkflowPreviewTemplate(w http.ResponseWriter, r *http.Req
 		ConfigSourceID: strings.TrimSpace(input.ConfigSourceID), GitHubAppID: strings.TrimSpace(input.GitHubAppID),
 		Name: strings.TrimSpace(input.Name), Repository: events.NormalizeRepository(input.Repository),
 		Command: strings.TrimSpace(input.Command), PreviewURL: strings.TrimSpace(input.PreviewURL),
-		TTL: workflowservice.NormalizePreviewTTL(input.TTL), Document: input.Document, Active: input.Active, AutoDeploy: input.AutoDeploy, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour,
+		TTL: workflowservice.NormalizePreviewTTL(input.TTL), Document: input.Document, Active: input.Active, AutoDeploy: input.AutoDeploy, LiveReload: input.LiveReload, CommentOnOpen: input.CommentOnOpen, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour,
 	}
 	if item.Command == "" {
 		item.Command = "/preview"
@@ -209,7 +211,8 @@ func applyPreviewTemplateTrigger(item *core.WorkflowPreviewTemplate) error {
 	item.WatchRepositories = nil
 	if trigger != nil {
 		item.Command = trigger.Command
-		item.AutoDeploy, item.MaxAutoRunsPerHour, item.TTL = trigger.AutoDeploy, trigger.MaxAutoRunsPerHour, trigger.TTL
+		item.CommentOnOpen = trigger.CommentOnOpen
+		item.AutoDeploy, item.LiveReload, item.MaxAutoRunsPerHour, item.TTL = trigger.AutoDeploy, trigger.LiveReload, trigger.MaxAutoRunsPerHour, trigger.TTL
 		for _, alias := range trigger.Sources {
 			repository := events.NormalizeRepository(sources[alias].Repository)
 			if !slices.Contains(item.WatchRepositories, repository) {

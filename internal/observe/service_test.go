@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,7 +72,7 @@ func TestObservationDefaultsFreshnessAndNoRepeatedEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.Configuration.Scheduled || initial.Configuration.NotificationsEnabled || initial.Freshness != "not_checked" {
+	if !initial.Configuration.Scheduled || initial.Configuration.IntervalSeconds != 300 || initial.Configuration.NotificationsEnabled || initial.Freshness != "not_checked" {
 		t.Fatal(initial)
 	}
 	first, err := s.Check(ctx, app.ID, "deployment")
@@ -80,6 +81,9 @@ func TestObservationDefaultsFreshnessAndNoRepeatedEvents(t *testing.T) {
 	}
 	if first.State != "healthy" {
 		t.Fatal(first)
+	}
+	if first.NextCheckAt == nil || !first.NextCheckAt.Equal(s.Now().Add(5*time.Minute)) {
+		t.Fatal("default check was not scheduled five minutes later", first.NextCheckAt)
 	}
 	status, _ := s.Status(ctx, app.ID)
 	if status.Freshness != "fresh" || len(status.Events) != 0 {
@@ -265,10 +269,16 @@ func TestObservationWorkerChecksAfterDeploymentWithBoundedConcurrency(t *testing
 	s, data, app := fixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if err := data.CreateServer(ctx, core.Server{ID: "second-server", Name: "second", Runtime: "kubernetes", Kubernetes: &core.KubernetesServerConfig{Namespace: "default"}, CreatedAt: s.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	for i := 1; i <= 4; i++ {
 		a := app
 		a.ID = string(rune('a' + i))
 		a.Name = a.ID
+		if i%2 == 0 {
+			a.ServerID = "second-server"
+		}
 		if err := data.CreateApp(ctx, a); err != nil {
 			t.Fatal(err)
 		}
@@ -279,7 +289,20 @@ func TestObservationWorkerChecksAfterDeploymentWithBoundedConcurrency(t *testing
 	}
 	var running, maximum atomic.Int32
 	started := make(chan struct{}, 8)
-	s.CheckDrift = func(ctx context.Context, _ string) (core.DriftCheck, error) {
+	var firstTarget, secondTarget atomic.Int32
+	s.CheckDrift = func(ctx context.Context, id string) (core.DriftCheck, error) {
+		a, err := data.GetApp(ctx, id)
+		if err != nil {
+			return core.DriftCheck{}, err
+		}
+		target := &firstTarget
+		if a.ServerID == "second-server" {
+			target = &secondTarget
+		}
+		if target.Add(1) != 1 {
+			t.Error("checks overlapped on one target")
+		}
+		defer target.Add(-1)
 		n := running.Add(1)
 		defer running.Add(-1)
 		for {
@@ -309,6 +332,101 @@ func TestObservationWorkerChecksAfterDeploymentWithBoundedConcurrency(t *testing
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("workers did not stop")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.busy) != 0 || len(s.busyTargets) != 0 {
+		t.Fatal("shutdown retained queued observation claims")
+	}
+}
+
+func TestObservationDefaultsRespectOptOutAndUnsupportedApplications(t *testing.T) {
+	s, data, app := fixture(t)
+	ctx := context.Background()
+	configured, err := s.Configure(ctx, app.ID, "operator", ConfigInput{Scheduled: false, IntervalSeconds: 600, StaleAfterSeconds: 1800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.Config(ctx, app.ID)
+	if err != nil || loaded.Scheduled || loaded.IntervalSeconds != 600 || loaded.Revision != configured.Revision {
+		t.Fatal("explicit schedule was replaced by defaults", loaded, err)
+	}
+	for _, kind := range []string{"dockerfile", "compose", "template"} {
+		other := app
+		other.ID, other.Name = kind, kind
+		other.BuildType = core.BuildType(kind)
+		if kind == "template" {
+			other.BuildType, other.Template = core.BuildTypeHelm, true
+		}
+		if err := data.CreateApp(ctx, other); err != nil {
+			t.Fatal(err)
+		}
+		config, err := s.Config(ctx, other.ID)
+		if err != nil || config.Scheduled {
+			t.Fatal("unsupported application received default runtime checks", config, err)
+		}
+	}
+}
+
+func TestObservationSchedulerBatchesDueChecksAndSkipsDisabledSchedules(t *testing.T) {
+	s, data, original := fixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for i := 0; i < observationBatchSize+3; i++ {
+		app := original
+		if i != 0 {
+			app.ID, app.Name = fmt.Sprintf("app-%02d", i), fmt.Sprintf("app-%02d", i)
+			if err := data.CreateApp(ctx, app); err != nil {
+				t.Fatal(err)
+			}
+			if err := data.CreateDeployment(ctx, core.Deployment{ID: app.ID + "-deployment", AppID: app.ID, State: core.DeploymentSucceeded, CreatedAt: s.Now()}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		deployment, _ := data.LatestSuccessfulDeployment(ctx, app.ID)
+		revision := int64(0)
+		if i == observationBatchSize+2 {
+			config, err := s.Configure(ctx, app.ID, "operator", ConfigInput{Scheduled: false, IntervalSeconds: 300, StaleAfterSeconds: 900})
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision = config.Revision
+		}
+		// Already-observed successful deployments avoid the startup callback, so
+		// this exercises periodic checks rather than deployment completion checks.
+		if err := data.SaveObservation(ctx, core.ApplicationObservation{AppID: app.ID, ProjectID: app.ProjectID, DeploymentID: deployment.ID, ConfigurationRevision: revision, State: "healthy"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type batchCountKey struct{}
+	closed := make(chan int32, 10)
+	s.BatchDrift = func(ctx context.Context) (context.Context, func()) {
+		count := &atomic.Int32{}
+		return context.WithValue(ctx, batchCountKey{}, count), func() { closed <- count.Load() }
+	}
+	s.CheckDrift = func(ctx context.Context, id string) (core.DriftCheck, error) {
+		ctx.Value(batchCountKey{}).(*atomic.Int32).Add(1)
+		deployment, err := data.LatestSuccessfulDeployment(ctx, id)
+		return core.DriftCheck{DeploymentID: deployment.ID, State: "synced", Health: "healthy"}, err
+	}
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	for _, expected := range []int32{20, 2} {
+		select {
+		case actual := <-closed:
+			if actual != expected {
+				t.Errorf("batch contained %d checks, expected %d", actual, expected)
+			}
+		case <-time.After(10 * time.Second):
+			cancel()
+			t.Fatal("periodic checks did not complete")
+		}
+	}
+	cancel()
+	<-done
+	observation, err := data.GetObservation(context.Background(), original.ID)
+	if err != nil || observation.Source != "schedule" || observation.NextCheckAt == nil || !observation.NextCheckAt.Equal(s.Now().Add(5*time.Minute)) {
+		t.Fatal("periodic check did not persist its next run", observation, err)
 	}
 }
 

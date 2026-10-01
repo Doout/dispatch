@@ -177,6 +177,8 @@ The job's shell and source checkout remain on the controller. Docker commands us
 
 Dispatch prefers the same available builder for a configuration and its source repositories across commits and preview instances. This keeps Docker layer caches warm. If that builder is full, Dispatch uses another available builder. Jobs on the controller use its existing Docker daemon and cache. Dispatch enables BuildKit and does not prune layer caches after jobs. Recreating a builder or pruning its cache removes those layers. Registry cache export and Dockerfile package cache mounts remain options for the build script; Dispatch does not add flags to arbitrary commands. Layers whose inputs change still rebuild.
 
+The run details show elapsed time, the job and stage phases, individual durations, and reused job results. For Docker BuildKit output, expand **Slowest Docker steps** under a job log to see its three longest recorded steps and the number of steps marked `CACHED`. These counts come from the saved build log, so they do not include package manager caches or builds that do not emit BuildKit progress lines.
+
 The fingerprint includes the job definition, declared source revisions, inputs, resolved secrets, and controller platform. Changing a secret invalidates the result. Separate configuration sources do not share results.
 
 If only the service repository changes, `build-ui` reuses its latest successful result. Dispatch runs the job when there is no prior result, a declared output is missing, or an input changed. Pipeline and `finally` jobs always run.
@@ -446,6 +448,8 @@ spec:
       sources: [service]
       command: /preview
       autoDeploy: false
+      liveReload: false
+      commentOnOpen: false
       maxAutoRunsPerHour: 2
       ttl: 0
   # jobs, deployments, and stages use the Application schema
@@ -463,7 +467,15 @@ Dispatch checks deadlines every 30 seconds, independently of GitHub availability
 
 PR closure also removes the Helm deployments once the primary PR and all linked PRs are closed. An open linked PR keeps the preview alive until it closes or the lifetime expires.
 
-Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` is set. Automatic updates are limited to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. A new `/preview` comment always starts a run, regardless of the limit. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
+Set `commentOnOpen: true` under `spec.triggers.pullRequestComment` to post a preview panel on new PRs in the watched sources. It defaults to false. Opening a PR posts controls without deploying. Polling discovers new open PRs at repository level; signed webhooks handle `opened` and `reopened` events.
+
+The panel shows status and the preview URL, with deployment details and commands collapsed. Check **Deploy latest commits**, **Run configured checks**, or **Extend lifetime by one day** to request an action. Actions reset after acceptance. **Live reload** stays checked until disabled. The extension control appears only when the preview has a time limit. GitHub App Issues write and Pull requests read access are required. Dispatch verifies the current editor and repository write access before accepting checkbox edits. Existing slash commands still work.
+
+Linking a source PR creates a panel there with the same preview status, commits, and controls. Commands from either PR operate on the same preview. Unlinking marks the former PR panel as unlinked. Explicit deletion or closure of all linked PRs removes the preview from Applications after cleanup succeeds and updates its panels. Run history remains available. Lifetime expiry stops the deployment; a new preview command can redeploy it.
+
+Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` or `liveReload: true` is set. `autoDeploy` limits updates to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. `liveReload` deploys every detected new commit without that cap. A new `/preview` comment always starts a run. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
+
+Post `/preview live on` on an existing preview PR to enable live reload for that instance. Post `/preview live off` to return to its configured `autoDeploy` policy. These commands change the update mode without starting a deployment. GitHub webhook updates are handled immediately; polling detects changes on its next check. The deployment report keeps its URL and status visible and puts command options in a collapsed section.
 
 Post `/preview without ui` to remove the linked UI PR, restore its configured branch or ref, and redeploy the same preview. Other PR links remain attached. Use commas to unlink several sources, such as `/preview without ui,worker`. An optional PR number, `/preview without ui=#123`, checks that the saved link still points to that PR before removing it. The primary PR cannot be unlinked. Dispatch saves source defaults before pinning PR commits. Existing template instances recover missing defaults from their saved reusable template; for an older one-off preview without saved defaults, set the source's default branch in **Edit YAML & PR** before unlinking.
 

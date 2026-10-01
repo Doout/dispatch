@@ -47,6 +47,7 @@ import {
   PlugsConnected,
   RocketLaunch,
   SignOut,
+  Stack,
   Trash,
   UploadSimple,
   UserCircle,
@@ -947,12 +948,9 @@ export function Nav({
     };
   }, [open]);
   type NavEntry = { id: View; label: string; icon: ReactNode; count: number };
-  const groups: Array<{
-    label: string;
-    entries?: NavEntry[];
-    sections?: Array<{ label: string; entries: NavEntry[] }>;
-  }> = [
+  const groups: Array<{ id: string; label: string; entries: NavEntry[] }> = [
     {
+      id: "operate",
       label: "Operate",
       entries: [
         {
@@ -980,44 +978,41 @@ export function Nav({
       ],
     },
     {
-      label: "Configure",
-      sections: [
+      id: "resources",
+      label: "Resources",
+      entries: [
         {
-          label: "Resources",
-          entries: [
-            {
-              id: "projects", label: "Projects", icon: <FolderSimple size={18} />,
-              count: overview?.projects.length ?? 0,
-            },
-            {
-              id: "services", label: "Services", icon: <PlugsConnected size={18} />,
-              count: overview?.services?.length ?? 0,
-            },
-            {
-              id: "servers", label: "Servers", icon: <HardDrives size={18} />,
-              count: overview?.servers.length ?? 0,
-            },
-          ],
+          id: "projects", label: "Projects", icon: <FolderSimple size={18} />,
+          count: overview?.projects.length ?? 0,
         },
-        ...(overview?.identity?.systemRole === "owner"
-          ? [{
-              label: "Controller",
-              entries: [
-                {
-                  id: "secrets" as View, label: "Variables", icon: <Key size={18} />,
-                  count: overview?.secrets.length ?? 0,
-                },
-                {
-                  id: "connections" as View, label: "Connections", icon: <PlugsConnected size={18} />,
-                  count: (overview?.githubApps.length ?? 0) + (overview?.secretStores?.length ?? 0),
-                },
-                { id: "access" as View, label: "Access", icon: <UsersThree size={18} />, count: 0 },
-                { id: "settings" as View, label: "Settings", icon: <GearSix size={18} />, count: 0 },
-              ],
-            }]
-          : []),
+        {
+          id: "services", label: "Services", icon: <Stack size={18} />,
+          count: overview?.services?.length ?? 0,
+        },
+        {
+          id: "servers", label: "Servers", icon: <HardDrives size={18} />,
+          count: overview?.servers.length ?? 0,
+        },
       ],
     },
+    ...(overview?.identity?.systemRole === "owner"
+      ? [{
+          id: "controller",
+          label: "Controller",
+          entries: [
+            {
+              id: "secrets" as View, label: "Variables", icon: <Key size={18} />,
+              count: overview?.secrets.length ?? 0,
+            },
+            {
+              id: "connections" as View, label: "Connections", icon: <PlugsConnected size={18} />,
+              count: (overview?.githubApps.length ?? 0) + (overview?.secretStores?.length ?? 0),
+            },
+            { id: "access" as View, label: "Access", icon: <UsersThree size={18} />, count: 0 },
+            { id: "settings" as View, label: "Settings", icon: <GearSix size={18} />, count: 0 },
+          ],
+        }]
+      : []),
   ];
   const renderEntry = (entry: NavEntry) => (
     <a
@@ -1033,7 +1028,7 @@ export function Nav({
     >
       {entry.icon}
       <span>{entry.label}</span>
-      {entry.count > 0 && <small aria-hidden="true">{entry.count}</small>}
+      {entry.count > 0 && <small className="nav-count" aria-hidden="true">{entry.count}</small>}
     </a>
   );
 
@@ -1057,25 +1052,10 @@ export function Nav({
         </div>
         <nav className="nav-list">
           {groups.map((group) => (
-            <div className="nav-group" key={group.label}>
-              <span className="nav-eyebrow">{group.label}</span>
-              {group.entries?.map(renderEntry)}
-              {group.sections?.map((section) => (
-                <details
-                  className="nav-subgroup"
-                  key={`${section.label}-${view}`}
-                  open={section.entries.some((entry) => entry.id === view)}
-                >
-                  <summary>
-                    {section.label}
-                    <CaretDown size={14} />
-                  </summary>
-                  <div className="nav-subgroup-links">
-                    {section.entries.map(renderEntry)}
-                  </div>
-                </details>
-              ))}
-            </div>
+            <section className="nav-group" key={group.id} aria-labelledby={`nav-${group.id}`}>
+              <h2 className="nav-heading" id={`nav-${group.id}`}>{group.label}</h2>
+              {group.entries.map(renderEntry)}
+            </section>
           ))}
         </nav>
         <footer className="rail-foot">
@@ -1126,12 +1106,11 @@ export function AccountMenu({
         <button
           className="account-menu-trigger"
           aria-label={`Open account menu for ${name}`}
+          title={name}
         >
           <span className="account-avatar" aria-hidden="true">
             {accountInitials(name)}
           </span>
-          <span className="account-trigger-name">{name}</span>
-          <CaretDown className="account-menu-caret" size={16} weight="bold" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>

@@ -39,6 +39,10 @@ func TestEventsIncludePollingTemplatesAndScopeHistoryBeforePagination(t *testing
 		item := core.EventActivity{ID: ulid.Make().String(), ProjectID: visible, RuleID: "template:preview-template", Name: "PR previews", Transport: "poll", Kind: "pull_request_comment", Repository: "team/ui", State: "processed", CreatedAt: now}
 		must(a.store.SaveEventActivity(ctx, fmt.Sprint(i), item))
 	}
+	for i := 0; i < 55; i++ {
+		item := core.EventActivity{ID: ulid.Make().String(), ProjectID: visible, RuleID: "configuration:" + source.ID, Name: "Unchanged scan", Transport: "poll", Kind: "branch_scan", Repository: source.Repository, State: "processed", CreatedAt: now}
+		must(a.store.SaveEventActivity(ctx, "scan:"+fmt.Sprint(i), item))
+	}
 	// More recent inaccessible events must not consume the user's page or its count.
 	for i := 0; i < 55; i++ {
 		item := core.EventActivity{ID: ulid.Make().String(), ProjectID: hidden, RuleID: "private", Name: "Private template", Transport: "webhook", Kind: "push", State: "processed", CreatedAt: now}
@@ -80,7 +84,7 @@ func TestEventsIncludePollingTemplatesAndScopeHistoryBeforePagination(t *testing
 		Total int                  `json:"total"`
 	}
 	must(json.Unmarshal(raw, &page))
-	if len(page.Items) != 50 || page.Next == "" || page.Total != 56 || strings.Contains(string(raw), "Private") {
+	if len(page.Items) != 50 || page.Next == "" || page.Total != 56 || strings.Contains(string(raw), "Private") || strings.Contains(string(raw), "Unchanged scan") {
 		t.Fatalf("scoped first page: %s", raw)
 	}
 	must(json.Unmarshal(get("/api/v1/events/activity?transport=poll&before="+page.Next, true, 200), &page))

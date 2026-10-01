@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/flowcontrol"
 	"net/http"
 	"time"
 )
@@ -41,6 +42,8 @@ func Connect(ctx context.Context, server core.Server) (Connection, error) {
 		return Connection{}, err
 	}
 	cfg.Timeout = 10 * time.Second
+	// Discovery and resource reads share the same budget for this connection.
+	cfg.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(5, 10)
 	cfg.WrapTransport = func(next http.RoundTripper) http.RoundTripper { return contextualTransport{ctx: ctx, next: next} }
 	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
@@ -52,6 +55,9 @@ func Connect(ctx context.Context, server core.Server) (Connection, error) {
 		cleanup()
 		return Connection{}, errors.New("resource discovery unavailable")
 	}
+	// Discovery APIs lack a context argument. Dynamic requests carry each
+	// application's context, including when a later check reuses this client.
+	cfg.WrapTransport = nil
 	client, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		cleanup()

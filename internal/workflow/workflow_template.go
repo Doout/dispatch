@@ -128,10 +128,12 @@ type WorkflowTemplateTriggers struct {
 	PullRequestComment *PullRequestCommentTrigger `json:"pullRequestComment,omitempty" yaml:"pullRequestComment,omitempty"`
 }
 type PullRequestCommentTrigger struct {
+	CommentOnOpen      bool     `json:"commentOnOpen,omitempty" yaml:"commentOnOpen,omitempty"`
 	TTL                string   `json:"ttl" yaml:"ttl"`
 	Sources            []string `json:"sources" yaml:"sources"`
 	Command            string   `json:"command" yaml:"command"`
 	AutoDeploy         bool     `json:"autoDeploy,omitempty" yaml:"autoDeploy,omitempty"`
+	LiveReload         bool     `json:"liveReload,omitempty" yaml:"liveReload,omitempty"`
 	MaxAutoRunsPerHour int      `json:"maxAutoRunsPerHour,omitempty" yaml:"maxAutoRunsPerHour,omitempty"`
 }
 

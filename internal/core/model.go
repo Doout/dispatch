@@ -544,8 +544,9 @@ func ParseSecretEnvironmentKey(key string) (id, environmentVariable string, ok b
 }
 
 type IncomingEvent struct {
-	ID       string        `json:"id"`
-	Provider EventProvider `json:"provider"`
+	ControlAction bool          `json:"-"`
+	ID            string        `json:"id"`
+	Provider      EventProvider `json:"provider"`
 	// ProviderConnectionID identifies the GitHub App webhook that delivered
 	// this event. It is intentionally omitted for legacy repository webhooks.
 	ProviderConnectionID string    `json:"providerConnectionId,omitempty"`

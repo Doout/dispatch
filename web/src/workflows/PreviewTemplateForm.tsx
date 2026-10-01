@@ -19,6 +19,8 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
   const [command, setCommand] = useState(template?.command ?? "/preview");
   const [ttl, setTTL] = useState(template?.ttl ?? "0");
   const [autoDeploy, setAutoDeploy] = useState(template?.autoDeploy ?? false);
+  const [commentOnOpen, setCommentOnOpen] = useState(template?.commentOnOpen ?? false);
+  const [liveReload, setLiveReload] = useState(template?.liveReload ?? false);
   const [maxAutoRunsPerHour, setMaxAutoRunsPerHour] = useState(template?.maxAutoRunsPerHour || 2);
   const [previewUrl, setPreviewUrl] = useState(template?.previewUrl ?? "");
   const [document, setDocument] = useState(template?.document ?? "");
@@ -34,7 +36,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
       const config = parseYAML(document);
       if (config?.kind !== "WorkflowTemplate" || !config.spec?.triggers?.pullRequestComment) return undefined;
       const trigger = config.spec.triggers.pullRequestComment;
-      return { ttl: String(trigger.ttl ?? "0"), command: trigger.command || "/preview", autoDeploy: Boolean(trigger.autoDeploy), maxAutoRunsPerHour: Number(trigger.maxAutoRunsPerHour) || 2, repositories: Array.isArray(trigger.sources) ? trigger.sources.map((alias: string) => config.spec.sources?.[alias]?.repository || alias) as string[] : [] };
+      return { ttl: String(trigger.ttl ?? "0"), command: trigger.command || "/preview", autoDeploy: Boolean(trigger.autoDeploy), liveReload: Boolean(trigger.liveReload), commentOnOpen: Boolean(trigger.commentOnOpen), maxAutoRunsPerHour: Number(trigger.maxAutoRunsPerHour) || 2, repositories: Array.isArray(trigger.sources) ? trigger.sources.map((alias: string) => config.spec.sources?.[alias]?.repository || alias) as string[] : [] };
     } catch { return undefined; }
   }, [document]);
   const fileControlsTrigger = Boolean(yamlTrigger) || definitionSource === "github";
@@ -61,6 +63,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
         setCommand(trigger.command);
         setTTL(trigger.ttl ?? "0");
         setAutoDeploy(trigger.autoDeploy ?? false);
+        setLiveReload(trigger.liveReload ?? false);
         setMaxAutoRunsPerHour(trigger.maxAutoRunsPerHour || 2);
         setRepository(trigger.repository);
         setSamplePR(trigger.pullRequestNumber);
@@ -90,7 +93,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
     setBusy(true);
     setError("");
     try {
-      const body = { configSourceId: sourceId, githubAppId, name: name.trim(), repository: repository.trim(), command: command.trim(), ttl: ttl.trim(), autoDeploy, maxAutoRunsPerHour, previewUrl: previewUrl.trim(), document, active, gitSource: definitionSource === "github" ? { repository: gitRepository.trim(), branch: gitBranch.trim(), path: gitPath.trim() } : undefined };
+      const body = { configSourceId: sourceId, githubAppId, name: name.trim(), repository: repository.trim(), command: command.trim(), ttl: ttl.trim(), autoDeploy, liveReload, commentOnOpen, maxAutoRunsPerHour, previewUrl: previewUrl.trim(), document, active, gitSource: definitionSource === "github" ? { repository: gitRepository.trim(), branch: gitBranch.trim(), path: gitPath.trim() } : undefined };
       if (template) await api.updateWorkflowPreviewTemplate(template.id, body);
       else await api.createWorkflowPreviewTemplate(body);
       await onSaved();
@@ -111,9 +114,9 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
     <label><span>PR repository</span><input value={repository} onChange={(event) => setRepository(event.target.value)} placeholder="owner/repository" required spellCheck={false} /></label>
     <label><span>Comment command</span><input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="/preview" required spellCheck={false} /><small>For example, <code>/preview</code>. Linked PR arguments still work.</small></label>
     </>}
-    {fileControlsTrigger ? <p className="wide temporary-preview-intro">Commit updates: {(yamlTrigger?.autoDeploy ?? template?.autoDeploy) ? `automatic, up to ${yamlTrigger?.maxAutoRunsPerHour ?? template?.maxAutoRunsPerHour ?? 2} runs per hour` : "manual only"}. Set <code>autoDeploy</code> and <code>maxAutoRunsPerHour</code> under <code>spec.triggers.pullRequestComment</code> in the YAML. A new <code>{displayCommand}</code> comment always starts a run.</p> : <>
-      <label className="wide temporary-preview-template-active"><input type="checkbox" checked={autoDeploy} onChange={(event) => setAutoDeploy(event.target.checked)} /><span>Automatically deploy new PR commits</span></label>
-      {autoDeploy && <label><span>Automatic runs per hour</span><input type="number" min={1} max={12} value={maxAutoRunsPerHour} onChange={(event) => setMaxAutoRunsPerHour(Number(event.target.value))} required /><small>Per preview. Comment commands bypass this limit. Newer commits cancel older queued or running work.</small></label>}
+    {fileControlsTrigger ? <p className="wide temporary-preview-intro">Commit updates: {(yamlTrigger?.liveReload ?? template?.liveReload) ? "live reload on every commit" : (yamlTrigger?.autoDeploy ?? template?.autoDeploy) ? `automatic, up to ${yamlTrigger?.maxAutoRunsPerHour ?? template?.maxAutoRunsPerHour ?? 2} runs per hour` : "manual only"}. Set <code>liveReload</code>, <code>autoDeploy</code>, and <code>maxAutoRunsPerHour</code> under <code>spec.triggers.pullRequestComment</code> in YAML. A new <code>{displayCommand}</code> comment always starts a run.</p> : <>
+      <label><span>Commit updates</span><select value={liveReload ? "live" : autoDeploy ? "limited" : "manual"} onChange={(event) => { const mode = event.target.value; setLiveReload(mode === "live"); if (mode === "manual") setAutoDeploy(false); if (mode === "limited") setAutoDeploy(true); }}><option value="manual">Only on comment</option><option value="limited">Automatic, limited per hour</option><option value="live">Live reload, every commit</option></select><small>Newer commits cancel older queued or running work. PR comments can switch live reload for one instance.</small></label>
+      {!liveReload && autoDeploy && <label><span>Automatic runs per hour</span><input type="number" min={1} max={12} value={maxAutoRunsPerHour} onChange={(event) => setMaxAutoRunsPerHour(Number(event.target.value))} required /><small>Per preview. Comment commands bypass this limit.</small></label>}
     </>}
     {fileControlsTrigger ? <p className="wide temporary-preview-intro">Preview lifetime: {(yamlTrigger?.ttl ?? template?.ttl ?? "0") === "0" ? "no time limit" : yamlTrigger?.ttl ?? template?.ttl}. Set <code>ttl</code> under <code>spec.triggers.pullRequestComment</code> in YAML; <code>0</code> means unlimited. A manual deployment renews the timer; automatic updates and checks do not.</p> : <label><span>Default preview lifetime</span><input value={ttl} onChange={(event) => setTTL(event.target.value)} required placeholder="0" spellCheck={false} /><small>Use 0 for no time limit, or a duration such as 1d or 24h. PR comments can change an instance's lifetime.</small></label>}
     <label><span>Preview URL pattern</span><input type="text" inputMode="url" value={previewUrl} onChange={(event) => setPreviewUrl(event.target.value)} placeholder="https://dev.example.com/app/preview/{{ instance.id }}" required spellCheck={false} /><small>Use <code>{placeholder}</code> where the PR ID belongs.</small></label>
@@ -128,6 +131,7 @@ export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: {
     {definitionSource === "saved" && <div className="wide temporary-preview-file-import"><label><span>YAML file path in a sample PR</span><input value={configPath} onChange={(event) => setConfigPath(event.target.value)} placeholder=".dispatch/preview.yaml" spellCheck={false} /><small>Optional. Load a template file from one open PR branch into the editor.</small></label><label><span>Sample PR number</span><input type="number" min={1} value={samplePR || ""} onChange={(event) => setSamplePR(Number(event.target.value))} /></label><button type="button" className="quiet-button" disabled={busy || loading || !githubAppId || !repository.trim() || samplePR < 1 || !configPath.trim()} onClick={() => void loadYamlFromPR()}>{loading ? "Loading…" : "Load YAML"}</button></div>}
     <p className="wide temporary-preview-intro">Available variables: <code>{placeholder}</code> is the unique deployment ID; <code>{"{{ trigger.pullRequest.number }}"}</code> is the PR number; <code>{"{{ trigger.repository }}"}</code> is its owner/repository; <code>{"{{ trigger.pullRequest.url }}"}</code> is its GitHub link. Source and job variables resolve when the workflow runs.</p>
     <label className="wide"><span>Application YAML template</span><textarea readOnly={definitionSource === "github"} value={document} onChange={(event) => setDocument(event.target.value)} rows={20} spellCheck={false} required={definitionSource === "saved"} placeholder={"apiVersion: dispatch/v1alpha1\nkind: WorkflowTemplate\nmetadata:\n  name: dev-preview-{{ instance.id }}\nspec:\n  triggers:\n    pullRequestComment:\n      sources: [service, ui]\n      command: /preview\n      ttl: 0\n  # Add sources, jobs, deployments, and stages"} /><small>Put <code>{placeholder}</code> in the Application name and every Helm release name. Dispatch allocates a suffix if the preferred PR ID is already in use.</small></label>
+    {fileControlsTrigger ? <p className="wide temporary-preview-intro">PR panel on new PRs: {(yamlTrigger?.commentOnOpen ?? template?.commentOnOpen) ? "enabled" : "disabled"}. Set <code>commentOnOpen: true</code> under <code>spec.triggers.pullRequestComment</code> in YAML to enable it.</p> : <label className="wide temporary-preview-template-active"><input type="checkbox" checked={commentOnOpen} onChange={(event) => setCommentOnOpen(event.target.checked)} /><span>Post a preview panel when a PR opens<small>Shows controls without deploying. Linked PRs share the same preview status.</small></span></label>}
     <label className="wide temporary-preview-template-active"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /><span>Watch for new <code>{displayCommand || "/preview"}</code> comments</span></label>
     {error && <p className="wide form-error" role="alert">{error}</p>}
     <div className="dialog-actions wide"><button type="button" className="quiet-button" onClick={onCancel}>Cancel</button><button className="primary-button" disabled={busy || loading || !sourceId || !githubAppId || !name.trim() || (!fileControlsTrigger && !repository.trim()) || (definitionSource === "saved" ? !hasPreviewID(document) : !gitRepository.trim() || !gitBranch.trim() || !gitPath.trim()) || !hasPreviewID(previewUrl)}>{busy ? "Saving…" : template ? "Save template" : "Create template"}</button></div>

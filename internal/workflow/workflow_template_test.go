@@ -53,6 +53,27 @@ spec:
 	}
 }
 
+func TestWorkflowTemplateLiveReloadTrigger(t *testing.T) {
+	input := `apiVersion: dispatch/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: preview-{{ instance.id }}
+spec:
+  sources:
+    service:
+      repository: example/service
+  triggers:
+    pullRequestComment:
+      sources: [service]
+      command: /preview
+      liveReload: true
+`
+	trigger, _, err := ReadWorkflowTemplateTrigger([]byte(input))
+	if err != nil || trigger == nil || !trigger.LiveReload {
+		t.Fatalf("live reload trigger was not parsed: %+v, %v", trigger, err)
+	}
+}
+
 func TestWorkflowTemplateStagePromotion(t *testing.T) {
 	for _, scenario := range []struct {
 		name        string
@@ -155,5 +176,25 @@ func TestWorkflowTemplateStagePromotion(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWorkflowTemplateCommentOnOpenOptIn(t *testing.T) {
+	document := []byte(`apiVersion: dispatch/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: preview-{{ instance.id }}
+spec:
+  sources:
+    service: {repository: example/service, branch: main}
+  triggers:
+    pullRequestComment:
+      sources: [service]
+      command: /preview
+      commentOnOpen: true
+`)
+	trigger, _, err := ReadWorkflowTemplateTrigger(document)
+	if err != nil || trigger == nil || !trigger.CommentOnOpen {
+		t.Fatalf("commentOnOpen was not parsed: %+v %v", trigger, err)
 	}
 }

@@ -412,6 +412,7 @@ export type WorkflowPreviewTemplateGitSource = {
   lastError?: string;
 };
 export type WorkflowPreviewTemplate = {
+  commentOnOpen?: boolean;
   ttl?: string;
   watchRepositories?: string[];
   gitSource?: WorkflowPreviewTemplateGitSource;
@@ -422,6 +423,7 @@ export type WorkflowPreviewTemplate = {
   repository: string;
   command: string;
   autoDeploy?: boolean;
+  liveReload?: boolean;
   maxAutoRunsPerHour?: number;
   previewUrl: string;
   document: string;
@@ -441,6 +443,7 @@ export type WorkflowPreviewTrigger = {
   pullRequestNumber: number;
   command: string;
   autoDeploy?: boolean;
+  liveReload?: boolean;
   maxAutoRunsPerHour?: number;
   previewUrl?: string;
   linkedPullRequests?: Record<string, number>;
@@ -448,7 +451,7 @@ export type WorkflowPreviewTrigger = {
   createdAt: string;
   closedAt?: string;
 };
-export type WorkflowPreviewTriggerInput = Pick<WorkflowPreviewTrigger, "githubAppId" | "repository" | "pullRequestNumber" | "command" | "autoDeploy" | "maxAutoRunsPerHour" | "previewUrl" | "ttl">;
+export type WorkflowPreviewTriggerInput = Pick<WorkflowPreviewTrigger, "githubAppId" | "repository" | "pullRequestNumber" | "command" | "autoDeploy" | "liveReload" | "maxAutoRunsPerHour" | "previewUrl" | "ttl">;
 export type WorkflowSourceRevision = {
   alias: string;
   repository: string;
@@ -596,6 +599,7 @@ export type DeploymentResourceEvent = {
 export type DeploymentResource = {
   manifest: DeploymentManifest;
   loggable: boolean;
+  defaultContainer?: string;
   logs: DeploymentResourceLog[];
   events: DeploymentResourceEvent[];
   warning?: string;

@@ -2117,6 +2117,8 @@ paths:
                 repository: { type: string, description: "Fallback owner/repository when YAML does not declare spec.triggers.pullRequestComment.sources" }
                 command: { type: string, example: /preview, description: "Fallback command when YAML does not declare its trigger" }
                 ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
+                commentOnOpen: { type: boolean, default: false, description: "Post controls on new watched PRs without deploying. WorkflowTemplate YAML overrides this field." }
+                liveReload: { type: boolean, default: false }
                 autoDeploy: { type: boolean, default: false, description: "Deploy new PR heads automatically; WorkflowTemplate YAML overrides this field." }
                 maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2, description: "Rolling per-preview limit for automatic starts; comment commands bypass it." }
                 previewUrl: { type: string, description: "HTTPS URL containing {{ instance.id }}" }
@@ -2154,6 +2156,8 @@ paths:
                 repository: { type: string }
                 command: { type: string }
                 ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
+                commentOnOpen: { type: boolean, default: false, description: "Post controls on new watched PRs without deploying. WorkflowTemplate YAML overrides this field." }
+                liveReload: { type: boolean, default: false }
                 autoDeploy: { type: boolean, default: false }
                 maxAutoRunsPerHour: { type: integer, minimum: 1, maximum: 12, default: 2 }
                 previewUrl: { type: string }
@@ -3311,10 +3315,12 @@ components:
           type: integer
         scheduled:
           type: boolean
+          description: Defaults to enabled for Helm applications on Kubernetes or OpenShift targets when no settings have been saved. Default checks start after the first successful deployment. Saved settings take precedence.
         intervalSeconds:
           type: integer
           minimum: 60
           maximum: 86400
+          default: 300
         staleAfterSeconds:
           type: integer
           minimum: 60

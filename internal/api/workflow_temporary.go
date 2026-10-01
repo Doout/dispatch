@@ -217,21 +217,7 @@ func (a *API) deleteTemporaryWorkflowResource(w http.ResponseWriter, r *http.Req
 		a.internal(w, err)
 		return
 	}
-	triggers, err := a.store.ListWorkflowPreviewTriggers(r.Context())
-	if err != nil {
-		a.internal(w, err)
-		return
-	}
-	for _, trigger := range triggers {
-		if trigger.ResourceID == resource.ID && trigger.ClosedAt == nil {
-			if err := a.store.CloseWorkflowPreviewTrigger(r.Context(), trigger.ID, time.Now().UTC()); err != nil {
-				a.internal(w, err)
-				return
-			}
-		}
-	}
-	resource.Active, resource.State, resource.UpdatedAt = false, "removed", time.Now().UTC()
-	if err := a.store.UpdateWorkflowResource(r.Context(), resource); err != nil {
+	if err := a.store.RemoveWorkflowPreviewResource(r.Context(), resource.ID, time.Now().UTC()); err != nil {
 		a.internal(w, err)
 		return
 	}
@@ -376,6 +362,7 @@ type workflowPreviewTriggerRequest struct {
 	PullRequestNumber  int     `json:"pullRequestNumber"`
 	Command            string  `json:"command"`
 	AutoDeploy         bool    `json:"autoDeploy"`
+	LiveReload         bool    `json:"liveReload"`
 	MaxAutoRunsPerHour int     `json:"maxAutoRunsPerHour"`
 	PreviewURL         string  `json:"previewUrl"`
 }
@@ -469,7 +456,7 @@ func (a *API) createWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Reques
 	}
 	item := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), ResourceID: resource.ID, GitHubAppID: input.GitHubAppID,
 		Repository: input.Repository, PullRequestNumber: input.PullRequestNumber, Command: input.Command, PreviewURL: input.PreviewURL,
-		AutoDeploy: input.AutoDeploy, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour, CreatedAt: time.Now().UTC()}
+		AutoDeploy: input.AutoDeploy, LiveReload: input.LiveReload, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour, CreatedAt: time.Now().UTC()}
 	item.TTL = "0"
 	if input.TTL != nil {
 		item.TTL = *input.TTL
@@ -538,7 +525,7 @@ func (a *API) updateWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Reques
 		}
 		trigger.GitHubAppID, trigger.Repository, trigger.PullRequestNumber = input.GitHubAppID, input.Repository, input.PullRequestNumber
 		trigger.Command, trigger.PreviewURL = input.Command, input.PreviewURL
-		trigger.AutoDeploy, trigger.MaxAutoRunsPerHour = input.AutoDeploy, input.MaxAutoRunsPerHour
+		trigger.AutoDeploy, trigger.LiveReload, trigger.MaxAutoRunsPerHour = input.AutoDeploy, input.LiveReload, input.MaxAutoRunsPerHour
 		if input.TTL != nil && *input.TTL != trigger.TTL {
 			trigger.TTL = *input.TTL
 			if err := renewWorkflowPreviewLifetime(&trigger, time.Now().UTC()); err != nil {

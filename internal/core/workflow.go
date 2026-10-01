@@ -74,6 +74,8 @@ type WorkflowPreviewTrigger struct {
 	PullRequestNumber      int                                     `json:"pullRequestNumber"`
 	Command                string                                  `json:"command"`
 	AutoDeploy             bool                                    `json:"autoDeploy"`
+	LiveReload             bool                                    `json:"liveReload"`
+	LiveReloadCommentID    string                                  `json:"-"`
 	MaxAutoRunsPerHour     int                                     `json:"maxAutoRunsPerHour"`
 	PreviewURL             string                                  `json:"previewUrl,omitempty"`
 	ReportCommentID        string                                  `json:"reportCommentId,omitempty"`
@@ -101,6 +103,7 @@ type WorkflowPreviewTemplateGitSource struct {
 }
 
 type WorkflowPreviewTemplate struct {
+	CommentOnOpen      bool                              `json:"commentOnOpen"`
 	TTL                string                            `json:"ttl"`
 	WatchRepositories  []string                          `json:"watchRepositories,omitempty"`
 	GitSource          *WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
@@ -111,6 +114,7 @@ type WorkflowPreviewTemplate struct {
 	Repository         string                            `json:"repository"`
 	Command            string                            `json:"command"`
 	AutoDeploy         bool                              `json:"autoDeploy"`
+	LiveReload         bool                              `json:"liveReload"`
 	MaxAutoRunsPerHour int                               `json:"maxAutoRunsPerHour"`
 	PreviewURL         string                            `json:"previewUrl"`
 	Document           string                            `json:"document"`
@@ -229,4 +233,18 @@ type WorkflowEvent struct {
 	Error          string     `json:"error,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	ProcessedAt    *time.Time `json:"processedAt,omitempty"`
+}
+
+// WorkflowPreviewPanel is the single editable bot comment for a PR. ResourceID
+// binds mirrored panels to the same preview, including after unlink or removal.
+type WorkflowPreviewPanel struct {
+	ActionError       string
+	ID                string
+	TemplateID        string
+	GitHubAppID       string
+	Repository        string
+	PullRequestNumber int
+	ResourceID        string
+	CommentID         string
+	Body              string
 }

@@ -5,7 +5,7 @@ import { canManageProject } from "./permissions";
 import { relative } from "./presentation";
 import { ObservationConfig, ObservationInput, ObservationStatus, observationsClient } from "./observationsClient";
 
-const date = (value?: string) => value ? new Date(value).toLocaleString() : "Not scheduled";
+const date = (value?: string) => value ? new Date(value).toLocaleString() : "Pending";
 export function ObservationSettings({ application, overview, refreshToken = 0, onChecked, runtimeSupported = true }: { application: App; overview: Overview; refreshToken?: number; onChecked?: () => void; runtimeSupported?: boolean }) {
  const [status, setStatus] = useState<ObservationStatus>();
  const [error, setError] = useState("");

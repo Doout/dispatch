@@ -233,7 +233,7 @@ func (s *SQLStore) CreateWorkflowEvent(ctx context.Context, item core.WorkflowEv
 	if err != nil {
 		return false, err
 	}
-	if count > 0 {
+	if count > 0 && workflowEventHasActivity(item) {
 		if err := s.saveEventActivity(ctx, tx, "workflow-event:"+item.ID, workflowEventActivity(item, source)); err != nil {
 			return false, err
 		}
@@ -255,10 +255,16 @@ func (s *SQLStore) UpdateWorkflowEvent(ctx context.Context, item core.WorkflowEv
 	if err := changed(result, err); err != nil {
 		return err
 	}
-	if err := s.saveEventActivity(ctx, tx, "workflow-event:"+item.ID, workflowEventActivity(item, source)); err != nil {
-		return err
+	if workflowEventHasActivity(item) {
+		if err := s.saveEventActivity(ctx, tx, "workflow-event:"+item.ID, workflowEventActivity(item, source)); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
+}
+
+func workflowEventHasActivity(item core.WorkflowEvent) bool {
+	return item.Provider != "poll" || item.Kind != "branch_scan" || item.State == "failed" || len(item.RevisionIDs) > 0
 }
 
 func workflowEventActivity(item core.WorkflowEvent, source core.ConfigSource) core.EventActivity {
