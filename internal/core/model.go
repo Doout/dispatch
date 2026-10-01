@@ -17,6 +17,7 @@ type Project struct {
 }
 
 type Server struct {
+	Routing     *RoutingConfig          `json:"routing,omitempty"`
 	ID          string                  `json:"id"`
 	Name        string                  `json:"name"`
 	Address     string                  `json:"address"`

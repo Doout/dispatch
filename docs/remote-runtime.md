@@ -27,6 +27,10 @@ Docker access automatically. Runtime work can occupy a node for up to thirty
 minutes; use a dedicated node when proxy request latency matters. Routine runtime
 operations use outbound HTTPS and require no inbound management port or SSH.
 
+For public application hostnames, configure the target-local provider with
+`DISPATCH_AGENT_ROUTING_DIRECTORY` and follow [managed application routing](application-routing.md).
+Route publication runs inside the same checked deployment receipt.
+
 ## Operations and evidence
 
 The controller and agent negotiate `dispatch.agent.runtime/v1` and an operation

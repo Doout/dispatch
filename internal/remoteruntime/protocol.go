@@ -57,6 +57,8 @@ type LeasedJob struct {
 }
 
 type Result struct {
+	Route *core.ApplicationRoute `json:"route,omitempty"`
+
 	Health         *core.DeploymentHealth       `json:"health,omitempty"`
 	Storage        []core.StorageObservation    `json:"storage"`
 	State          string                       `json:"state"`

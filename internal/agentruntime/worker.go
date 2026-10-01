@@ -22,6 +22,7 @@ import (
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
 )
@@ -40,13 +41,27 @@ type Worker struct {
 }
 
 type receipt struct {
+	Route  string `json:"route,omitempty"`
 	Health string `json:"health,omitempty"`
 	Digest string `json:"digest"`
 	State  string `json:"state"`
 	Result string `json:"result,omitempty"`
 }
 
-func Open(directory, node string) (*Worker, error) {
+// Options contains host operator configuration; request payloads cannot set paths.
+type Options struct{ RoutingDirectory string }
+
+func Open(directory, node string, options ...Options) (*Worker, error) {
+	var publisher *routing.FilePublisher
+	if len(options) > 1 {
+		return nil, errors.New("multiple runtime options are not supported")
+	}
+	if len(options) == 1 && options[0].RoutingDirectory != "" {
+		if !filepath.IsAbs(options[0].RoutingDirectory) {
+			return nil, errors.New("runtime routing directory must be absolute")
+		}
+		publisher = &routing.FilePublisher{Directory: options[0].RoutingDirectory}
+	}
 	if !safeID.MatchString(node) {
 		return nil, errors.New("invalid runtime node identity")
 	}
@@ -102,7 +117,7 @@ func Open(directory, node string) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine := dockerEngine{executor: deploy.DockerExecutor{Artifacts: w, Vault: w.vault, ArtifactDirectory: filepath.Join(directory, "artifacts")}, command: command}
+	engine := dockerEngine{executor: deploy.DockerExecutor{Routes: publisher, Artifacts: w, Vault: w.vault, ArtifactDirectory: filepath.Join(directory, "artifacts")}, command: command}
 	w.execute = engine.Execute
 	w.hasWorkload = func(ctx context.Context, r remoteruntime.Request) (bool, error) {
 		resources, err := engine.resources(ctx, r)
@@ -194,6 +209,16 @@ func (w *Worker) Run(ctx context.Context, job remoteruntime.LeasedJob, progress 
 					clear(payload)
 				}
 			}
+			if r.Route != "" {
+				payload, err := w.vault.Decrypt("route:"+job.ID, r.Route)
+				if err == nil {
+					var route core.ApplicationRoute
+					if json.Unmarshal(payload, &route) == nil && job.Request.ValidateRoute(&route) == nil {
+						result.Route = &route
+					}
+					clear(payload)
+				}
+			}
 			return result
 		}
 		payload, err := w.vault.Decrypt("receipt:"+job.ID, r.Result)
@@ -280,8 +305,33 @@ func (w *Worker) Run(ctx context.Context, job remoteruntime.LeasedJob, progress 
 		health = &record
 		return nil
 	})
+	var route *core.ApplicationRoute
+	execution = deploy.WithRouteReporter(execution, func(_ context.Context, record core.ApplicationRoute) error {
+		if err := job.Request.ValidateRoute(&record); err != nil {
+			return err
+		}
+		data, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		defer clear(data)
+		if len(data) > remoteruntime.MaxResult/4 {
+			return errors.New("route evidence exceeds its limit")
+		}
+		encrypted, err := w.vault.Encrypt("route:"+job.ID, data)
+		if err != nil {
+			return err
+		}
+		r.Route = encrypted
+		updated, _ := json.Marshal(r)
+		if err = w.save(name, updated); err != nil {
+			return err
+		}
+		route = &record
+		return nil
+	})
 	result := w.execute(execution, job.Request, func(phase core.DeploymentState, message string) error { return progress(phase, redact(message)) })
-	result.Health = health
+	result.Route, result.Health = route, health
 	result.Message, result.Logs = redact(result.Message), redact(result.Logs)
 	raw, err = json.Marshal(result)
 	if err != nil || len(raw) > remoteruntime.MaxResult {
