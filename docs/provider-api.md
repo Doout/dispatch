@@ -169,3 +169,69 @@ with HTTP 404. Controller lifecycle details are in
 
 Use the [independent provider sidecar package](provider-packaging.md) for image
 pinning, endpoint/credential registration, compatibility checks and rollback.
+
+## Optional machine and disk snapshots
+
+Snapshot-capable adapters implement the additional `SnapshotProvider` interface;
+server-only adapters retain the existing interface. The manifest declares
+`snapshot.create`, `snapshot.inspect`, `snapshot.delete` and, separately,
+`server.restore`, with `snapshots` policy metadata. Unsupported operations return
+a 422 problem before allocation. The metadata lists supported disk sets,
+consistency levels, encryption modes and restore guarantees. Application-consistent
+capture must include real quiescing; the mock supports crash consistency only.
+
+| Method | Path | Result |
+| --- | --- | --- |
+| POST | `/v1/snapshots` | Accepted capture operation using `Idempotency-Key`. |
+| GET | `/v1/servers/{id}/snapshots` | Source-scoped retained snapshot inventory. |
+| GET | `/v1/snapshots/{id}` | Snapshot metadata and captured disk evidence. |
+| DELETE | `/v1/snapshots/{id}` | Accepted deletion using `Idempotency-Key`. |
+| POST | `/v1/snapshots/{id}/restore` | Accepted isolated clone using `Idempotency-Key`. |
+
+Capture binds the source machine, exact disk IDs and disk-set selection,
+consistency, encryption metadata and ownership labels. Inspection includes creation
+time, image, source machine/SSH identities, captured disk identities, sizes,
+encryption and content digests. Encryption key references are identifiers only.
+Snapshot retention is independent of source-machine and clone deletion. Deleting
+a snapshot must not remove disks already materialized for a clone.
+
+Restore binds the inspected snapshot digest to a new server request and an
+isolated restore policy. It creates independent disks and fresh identities; it
+never modifies the source or restores over an existing machine. Before the copied
+agent, workloads or network can start, the adapter must remove the copied agent
+identity and private runtime journal, regenerate machine and SSH identities,
+disable copied workloads and production bindings, and apply network quarantine.
+Quarantine must prevent source credentials reaching the controller before that
+sanitation finishes. Cloud-init alone is insufficient when an old agent can run
+first. Adapters that cannot provide these guarantees must omit `server.restore`.
+
+Server inspection returns `restore` evidence for the snapshot, preboot sanitation,
+quarantine, disabled workloads/bindings and independent disks. Restored disk IDs
+map to the captured disk IDs and preserve size, encryption and content digests.
+`VerifyCloneEvidence` validates that evidence and distinct machine/SSH identities.
+This is provider evidence, not proof that a guest booted or an application is
+healthy. Controller boot verification requires fresh enrollment for the new node
+and the reviewed agent artifact; application integrity remains a separate check.
+Memory capture, in-place restore and cross-provider portability are not supported.
+
+Run the additional mutation suite explicitly:
+
+```sh
+go run ./cmd/dispatch-provider-conformance --allow-mutations --snapshots
+```
+
+It allocates a separate source, captures a snapshot, restores an isolated clone,
+checks replay and disk/identity evidence, and verifies independent cleanup. It
+selects a network from `restore-networks` options whose metadata has
+`"quarantine": true`. The public mock exposes `mock-isolated` for this purpose.
+CI runs this suite without cloud credentials. Mock evidence does not establish a
+real adapter's preboot behavior or prove a real VM restore.
+
+Additional mock faults are `--disable-snapshots`, `--fail-snapshot`,
+`--corrupt-snapshot`, `--fail-restore` and `--unsafe-restore`. The latter deliberately
+returns copied identities and an uncleared journal; conformance must reject it.
+Mock version 2 writes state format 2, preserving snapshots across restarts. It
+imports format 1. Older binaries reject format 2 instead of silently losing
+snapshot records. Before this format upgrade, stop the sidecar and take a private
+state backup. A rollback must use a format-compatible binary; restoring an older
+backup after new operations requires reconciling those operations first.
