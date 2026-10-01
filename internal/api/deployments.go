@@ -48,14 +48,28 @@ func (a *API) startDeployment(w http.ResponseWriter, r *http.Request) {
 		CommitSHA string                 `json:"commitSha"`
 		Review    *core.DeploymentReview `json:"review,omitempty"`
 	}
-	if r.ContentLength > 0 && !decode(w, r, &input) {
+	if r.ContentLength != 0 && !decode(w, r, &input) {
 		return
 	}
+	app, err := a.store.GetApp(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Application")
+		return
+	}
+	input.CommitSHA = strings.TrimSpace(input.CommitSHA)
+	r, receipt, proceed := a.reserveMutation(w, r, app.ProjectID, "deployment.start", input, "deployment", app.ID)
+	if !proceed {
+		return
+	}
+	reject := func(status int, title, detail string) {
+		a.failMutationAcceptance(r.Context(), status, title+". No replacement operation was scheduled.")
+		problem(w, status, title, detail)
+	}
 	var item core.Deployment
-	var err error
+	err = nil
 	if input.Review != nil {
 		if input.Review.ExpectedAppName == "" || input.Review.ProjectID == "" || input.Review.AppSpecDigest == "" || input.Review.BindingsDigest == "" || input.Review.ServiceRevisions == nil {
-			problem(w, 422, "Incomplete deployment review", "Preview the application again before deploying reviewed inputs.")
+			reject(422, "Incomplete deployment review", "Preview the application again before deploying reviewed inputs.")
 			return
 		}
 		item, err = a.deploy.StartReviewed(r.Context(), chi.URLParam(r, "id"), strings.TrimSpace(input.CommitSHA), *input.Review)
@@ -63,32 +77,47 @@ func (a *API) startDeployment(w http.ResponseWriter, r *http.Request) {
 		item, err = a.deploy.Start(r.Context(), chi.URLParam(r, "id"), strings.TrimSpace(input.CommitSHA))
 	}
 	if errors.Is(err, workflow.ErrPreviewSourceTrust) {
-		problem(w, http.StatusForbidden, "Preview source trust denied", err.Error())
+		reject(http.StatusForbidden, "Preview source trust denied", err.Error())
 		return
 	}
 	if errors.Is(err, store.ErrDeploymentReviewChanged) {
-		problem(w, 409, "Deployment inputs changed", "Application settings, service bindings, or service revisions changed after preview. Review the current inputs before deploying.")
+		reject(409, "Deployment inputs changed", "Application settings, service bindings, or service revisions changed after preview. Review the current inputs before deploying.")
 		return
 	}
 	if errors.Is(err, deploy.ErrApplicationTemplate) {
-		problem(w, http.StatusConflict, "Template cannot be deployed", "Use this template from an event rule or preview group.")
+		reject(http.StatusConflict, "Template cannot be deployed", "Use this template from an event rule or preview group.")
 		return
 	}
 	if errors.Is(err, deploy.ErrDeploymentActive) {
-		problem(w, http.StatusConflict, "Deployment already active", err.Error())
+		reject(http.StatusConflict, "Deployment already active", err.Error())
 		return
 	}
 	if errors.Is(err, store.ErrNotFound) {
-		problem(w, http.StatusNotFound, "Application not found", "Refresh the application inventory and try again.")
+		reject(http.StatusNotFound, "Application not found", "Refresh the application inventory and try again.")
+		return
+	}
+	if errors.Is(err, store.ErrMutationClaimLost) {
+		problem(w, 409, "Acceptance changed", "Retry the identical request to inspect its original receipt. No replacement operation was scheduled.")
 		return
 	}
 	var runtimeError *runtimecontract.Error
 	if errors.As(err, &runtimeError) {
-		problem(w, http.StatusUnprocessableEntity, "Runtime request rejected", runtimeError.Message)
+		reject(http.StatusUnprocessableEntity, "Runtime request rejected", runtimeError.Message)
 		return
 	}
 	if err != nil {
+		a.failMutationAcceptance(r.Context(), 500, "Deployment acceptance failed; inspect the original receipt before retrying.")
 		a.internal(w, err)
+		return
+	}
+	core.RecordAcceptedOperation(r.Context(), item.ID)
+	if receipt != nil {
+		saved, e := a.store.(store.MutationReceiptStore).GetMutationReceipt(r.Context(), receipt.ID)
+		if e != nil {
+			a.internal(w, e)
+			return
+		}
+		a.writeMutationReceipt(w, r, saved, http.StatusAccepted)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, item)

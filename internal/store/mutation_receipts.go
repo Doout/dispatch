@@ -117,3 +117,45 @@ func (s *SQLStore) FailMutationReceipt(ctx context.Context, claim core.MutationA
 	_, err := s.db.ExecContext(ctx, s.q(`UPDATE public_mutation_receipts SET state='failed',failure_status=?,message=?,claim_token='',updated_at=? WHERE id=? AND state='reserved' AND claim_token=?`), status, message, stamp(now), claim.ReceiptID, claim.ClaimToken)
 	return err
 }
+
+// MutationOperationState reads the original workflow; receipts do not introduce
+// a second executor or queue. Messages and provider payloads stay in that API.
+func (s *SQLStore) MutationOperationState(ctx context.Context, kind, id string) (string, bool, error) {
+	var state string
+	var cancelled bool
+	var err error
+	switch kind {
+	case "deployment":
+		err = s.db.QueryRowContext(ctx, s.q(`SELECT state FROM deployments WHERE id=?`), id).Scan(&state)
+	case "infrastructure_operation":
+		err = s.db.QueryRowContext(ctx, s.q(`SELECT state,cancel_requested FROM infrastructure_operations WHERE id=?`), id).Scan(&state, &cancelled)
+	default:
+		return "", false, ErrNotFound
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		err = ErrNotFound
+	}
+	return state, cancelled, err
+}
+
+// UpdateMutationOutcome keeps a compact terminal result even if operation
+// history is later pruned. Call it in the original operation's update transaction.
+func (s *SQLStore) UpdateMutationOutcome(ctx context.Context, tx *sql.Tx, kind, id, state string) error {
+	message := "Operation accepted."
+	switch state {
+	case "succeeded":
+		message = "Operation completed."
+	case "failed":
+		message = "Operation failed; inspect its sanitized diagnostics."
+	case "cancelled", "canceled":
+		state = "cancelled"
+		message = "Execution stopped after cancellation; external changes may remain."
+	case "unknown", "unresolved":
+		state = "unresolved"
+		message = "The external outcome is uncertain; inspect or reconcile the original operation."
+	default:
+		state = "accepted"
+	}
+	_, err := tx.ExecContext(ctx, s.q(`UPDATE public_mutation_receipts SET state=?,message=?,updated_at=? WHERE operation_kind=? AND operation_id=? AND failure_status=0 AND state<>'reserved'`), state, message, stamp(time.Now().UTC()), kind, id)
+	return err
+}

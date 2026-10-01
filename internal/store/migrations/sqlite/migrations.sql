@@ -1249,6 +1249,7 @@ CREATE TABLE preview_source_trust_approvals (
     revoked_at TEXT
 );
 CREATE INDEX preview_source_trust_approval_lookup ON preview_source_trust_approvals(resource_id,digest);
+
 -- dispatch:migration 072_remote_runtime
 ALTER TABLE servers ADD COLUMN agent_node_id TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX servers_agent_node ON servers(agent_node_id) WHERE agent_node_id<>'';
@@ -1280,6 +1281,7 @@ CREATE INDEX runtime_jobs_node_lease ON runtime_jobs(node_id,state,lease_until);
 CREATE INDEX runtime_jobs_app ON runtime_jobs(app_id,created_at);
 
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs');
+
 -- dispatch:migration 073_deployment_health
 ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';

@@ -50,7 +50,7 @@ func testInfrastructureLifecycle(t *testing.T, dsn string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { s.Close() }()
 	if err = s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +71,15 @@ func testInfrastructureLifecycle(t *testing.T, dsn string) {
 	if err = s.CreateInfrastructureReview(ctx, r); err != nil {
 		t.Fatal(err)
 	}
+	receipt := mutationFixture(prefix)
+	receipt.CallerID, receipt.ProjectID = "actor", project.ID
+	receipt.Action, receipt.OperationKind = "server.create", "infrastructure_operation"
+	receipt.OperationID, receipt.ResourceID = prefix+"operation", r.ServerID
+	reserved, claimed, err := s.ReserveMutationReceipt(ctx, receipt, now)
+	if err != nil || !claimed {
+		t.Fatal("receipt reservation", err)
+	}
+	acceptCtx := core.WithMutationAcceptance(ctx, mutationClaim(reserved))
 	rejected := errors.New("quota exceeded")
 	admission := func(_ context.Context, _ *sql.Tx, accept core.InfrastructureAcceptance) error {
 		if accept.ProjectID != project.ID || accept.ActorID != "actor" || string(accept.DesiredConfig) != string(r.Input) {
@@ -78,16 +87,33 @@ func testInfrastructureLifecycle(t *testing.T, dsn string) {
 		}
 		return rejected
 	}
-	if _, _, err = s.AcceptInfrastructureReview(ctx, r.ID, r.Digest, prefix+"operation", "actor", now, admission); !errors.Is(err, rejected) {
+	if _, _, err = s.AcceptInfrastructureReview(acceptCtx, r.ID, r.Digest, prefix+"operation", "actor", now, admission); !errors.Is(err, rejected) {
 		t.Fatal("admission rejection ignored", err)
+	}
+	reserved, _ = s.GetMutationReceipt(ctx, receipt.ID)
+	if reserved.State != "reserved" {
+		t.Fatal("rejected admission accepted its receipt")
 	}
 	saved, _ := s.GetInfrastructureReview(ctx, r.ID)
 	if saved.State != "open" {
 		t.Fatal("rejected review consumed")
 	}
-	managed, op, err := s.AcceptInfrastructureReview(ctx, r.ID, r.Digest, prefix+"operation", "actor", now, nil)
+	managed, op, err := s.AcceptInfrastructureReview(acceptCtx, r.ID, r.Digest, prefix+"operation", "actor", now, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Losing the acceptance response and restarting must preserve the original
+	// durable operation, with no new preparer or provider request identity.
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, claimed, err := s.ReserveMutationReceipt(ctx, receipt, now.Add(time.Second))
+	if err != nil || claimed || replayed.State != "accepted" || replayed.OperationID != op.ID {
+		t.Fatalf("restart repeated server acceptance: %#v %t %v", replayed, claimed, err)
 	}
 	if _, old, err := s.AcceptInfrastructureReview(ctx, r.ID, r.Digest, op.ID, "actor", now, nil); err != nil || old.ID != op.ID {
 		t.Fatal("idempotent acceptance failed", err)
@@ -119,6 +145,10 @@ func testInfrastructureLifecycle(t *testing.T, dsn string) {
 		t.Fatal(err)
 	}
 	managed, err = s.AdoptInfrastructureServer(ctx, managed, "owned", "192.0.2.10", now)
+	reserved, receiptErr := s.GetMutationReceipt(ctx, receipt.ID)
+	if receiptErr != nil || reserved.State != "succeeded" {
+		t.Fatalf("adoption did not reconcile receipt: %#v %v", reserved, receiptErr)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

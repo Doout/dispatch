@@ -424,6 +424,11 @@ func (s *SQLStore) AdoptInfrastructureServer(ctx context.Context, m core.Managed
 	if err != nil || n != 1 {
 		return m, ErrInfrastructureChanged
 	}
+	// Adoption reconciles the original uncertain operation. Preserve that verified
+	// outcome on its receipt instead of leaving retries permanently unresolved.
+	if _, err = tx.ExecContext(ctx, s.q(`UPDATE public_mutation_receipts SET state='succeeded',message='Owned resource inspected and adopted.',updated_at=? WHERE operation_kind='infrastructure_operation' AND failure_status=0 AND state<>'reserved' AND operation_id IN (SELECT id FROM infrastructure_operations WHERE server_id=? AND state='adopted')`), stamp(now), m.ID); err != nil {
+		return m, err
+	}
 	if err = tx.Commit(); err != nil {
 		return m, err
 	}
@@ -471,6 +476,9 @@ func (s *SQLStore) CompleteInfrastructureOperation(ctx context.Context, m core.M
 		if err = admission(ctx, tx.Tx, core.InfrastructureAcceptance{ActorID: o.ActorID, ProjectID: m.ProjectID, ProviderID: m.ProviderID, OperationID: o.ID, ServerID: m.ID, Action: action, ResourceID: m.ResourceID}); err != nil {
 			return err
 		}
+	}
+	if err := s.UpdateMutationOutcome(ctx, tx.Tx, "infrastructure_operation", o.ID, o.State); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

@@ -49,6 +49,9 @@ func (s *SQLStore) RecoverInterruptedDeployments(ctx context.Context, now, start
 		if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployment_logs(deployment_id,level,message,created_at) VALUES(?,?,?,?)`), d.ID, "error", d.Message, stamp(now)); err != nil {
 			return nil, err
 		}
+		if _, err = tx.ExecContext(ctx, s.q(`UPDATE public_mutation_receipts SET state='unresolved',message='Controller lost contact with the accepted execution; inspect the original runtime before recovery.',updated_at=? WHERE operation_kind='deployment' AND operation_id=? AND state='accepted'`), stamp(now), d.ID); err != nil {
+			return nil, err
+		}
 		recovered = append(recovered, d)
 	}
 	return recovered, tx.Commit()

@@ -43,6 +43,7 @@ func TestMutationReceiptPostgres(t *testing.T) {
 		t.Skip("set DISPATCH_TEST_POSTGRES_URL to a disposable PostgreSQL database")
 	}
 	testMutationReceipt(t, mutationStore(t, url))
+	testAtomicMutationAcceptance(t, url)
 }
 func testMutationReceipt(t *testing.T, s *SQLStore) {
 	t.Helper()
@@ -142,12 +143,17 @@ func testMutationReceipt(t *testing.T, s *SQLStore) {
 }
 
 func TestMutationReceiptRestartAndAtomicDeploymentAcceptance(t *testing.T) {
+	testAtomicMutationAcceptance(t, filepath.Join(t.TempDir(), "receipts.db"))
+}
+
+func testAtomicMutationAcceptance(t *testing.T, path string) {
+	t.Helper()
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "receipts.db")
 	s := mutationStore(t, path)
 	now := time.Now().UTC()
-	r := mutationFixture("restart")
-	for _, err := range []error{s.CreateProject(ctx, core.Project{ID: r.ProjectID, Name: "Project", CreatedAt: now}), s.CreateServer(ctx, core.Server{ID: "server", Name: "Server", Address: "local", CreatedAt: now}), s.CreateApp(ctx, core.App{ID: r.ResourceID, ProjectID: r.ProjectID, ServerID: "server", Name: "App", CreatedAt: now})} {
+	r := mutationFixture(ulid.Make().String())
+	serverID := "server-" + r.OperationID
+	for _, err := range []error{s.CreateProject(ctx, core.Project{ID: r.ProjectID, Name: r.ProjectID, CreatedAt: now}), s.CreateServer(ctx, core.Server{ID: serverID, Name: serverID, Address: "local", CreatedAt: now}), s.CreateApp(ctx, core.App{ID: r.ResourceID, ProjectID: r.ProjectID, ServerID: serverID, Name: "App", CreatedAt: now})} {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,5 +186,24 @@ func TestMutationReceiptRestartAndAtomicDeploymentAcceptance(t *testing.T) {
 	deployments, err := s.ListDeployments(ctx, 20)
 	if err != nil || len(deployments) != 1 || deployments[0].ID != d.ID {
 		t.Fatalf("operation not atomic: %#v %v", deployments, err)
+	}
+	recovered, err := s.RecoverInterruptedDeployments(ctx, now.Add(2*time.Second), now.Add(time.Second))
+	if err != nil || len(recovered) != 1 {
+		t.Fatalf("accepted execution recovery: %#v %v", recovered, err)
+	}
+	unresolved, won, err := s.ReserveMutationReceipt(ctx, r, now.Add(3*time.Second))
+	if err != nil || won || unresolved.State != "unresolved" {
+		t.Fatalf("uncertain operation was rescheduled: %#v %t %v", unresolved, won, err)
+	}
+	d.State = core.DeploymentSucceeded
+	if err = s.UpdateDeployment(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DeleteApp(ctx, r.ResourceID); err != nil {
+		t.Fatal(err)
+	}
+	final, won, err := s.ReserveMutationReceipt(ctx, r, now.Add(2*time.Second))
+	if err != nil || won || final.State != "succeeded" {
+		t.Fatalf("pruning lost accepted outcome: %#v %t %v", final, won, err)
 	}
 }

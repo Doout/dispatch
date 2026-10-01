@@ -74,12 +74,32 @@ func (a *API) createManagedServer(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
+	data, ok := a.store.(store.InfrastructureLifecycleStore)
+	if !ok {
+		problem(w, 503, "Infrastructure unavailable", "Durable infrastructure storage is unavailable.")
+		return
+	}
 	if !a.authorizeInfrastructureReview(w, r, m, in.ReviewID) {
+		return
+	}
+	review, err := data.GetInfrastructureReview(r.Context(), in.ReviewID)
+	if err != nil {
+		a.infrastructureProblem(w, err)
+		return
+	}
+	if !a.authorizeInfrastructureMutationReceipt(w, r, review.ProjectID, review.ProviderID, core.PermissionInfrastructureCreate) {
+		return
+	}
+	r, receipt, proceed := a.reserveMutation(w, r, review.ProjectID, "server.create", in, "infrastructure_operation", review.ServerID)
+	if !proceed {
 		return
 	}
 	item, err := m.AcceptCreate(r.Context(), currentIdentity(r.Context()).Kind+":"+currentIdentity(r.Context()).ID, in)
 	if err != nil {
-		a.infrastructureProblem(w, err)
+		a.rejectInfrastructureMutation(w, r, err)
+		return
+	}
+	if a.completeInfrastructureMutation(w, r, receipt, item.Operation.ID) {
 		return
 	}
 	writeJSON(w, 202, item)
@@ -184,16 +204,19 @@ func (a *API) deleteManagedServer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	data, ok := a.store.(store.InfrastructureLifecycleStore)
 	if !ok {
-		problem(w, 503, "Infrastructure unavailable", "Durable lifecycle storage is required.")
+		problem(w, 503, "Infrastructure unavailable", "Durable infrastructure storage is unavailable.")
 		return
 	}
-	owned, err := data.GetManagedServer(r.Context(), id)
+	server, err := data.GetManagedServer(r.Context(), id)
 	if err != nil {
 		a.infrastructureProblem(w, err)
 		return
 	}
-	if err = a.authorizeInfrastructure(r.Context(), owned.ProjectID, owned.ProviderID, "infrastructure.delete"); err != nil {
-		a.infrastructureProblem(w, err)
+	if !a.authorizeInfrastructureMutationReceipt(w, r, server.ProjectID, server.ProviderID, core.PermissionInfrastructureDelete) {
+		return
+	}
+	r, receipt, proceed := a.reserveMutation(w, r, server.ProjectID, "server.delete", in, "infrastructure_operation", id)
+	if !proceed {
 		return
 	}
 	var item provision.Accepted
@@ -202,6 +225,7 @@ func (a *API) deleteManagedServer(w http.ResponseWriter, r *http.Request) {
 		item, err = m.Delete(r.Context(), id, currentIdentity(r.Context()).Kind+":"+currentIdentity(r.Context()).ID, in)
 		return err
 	}
+	err = nil
 	if server, e := a.store.GetServer(r.Context(), id); e == nil {
 		err = a.deploy.Storage.WithTarget(r.Context(), id, func() error {
 			if e := a.deploy.Storage.RefreshLocked(r.Context(), server); e != nil {
@@ -215,7 +239,10 @@ func (a *API) deleteManagedServer(w http.ResponseWriter, r *http.Request) {
 		err = remove()
 	}
 	if err != nil {
-		a.infrastructureProblem(w, err)
+		a.rejectInfrastructureMutation(w, r, err)
+		return
+	}
+	if a.completeInfrastructureMutation(w, r, receipt, item.Operation.ID) {
 		return
 	}
 	writeJSON(w, 202, item)
@@ -250,6 +277,59 @@ func (a *API) projectInfrastructureOptions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, 200, items)
+}
+
+// Receipt replay must pass the same current action and assignment checks as a
+// fresh acceptance, even though it bypasses the provisioning manager.
+func (a *API) authorizeInfrastructureMutationReceipt(w http.ResponseWriter, r *http.Request, project, providerID string, permission core.Permission) bool {
+	if !a.requireProject(w, r, permission, project) {
+		return false
+	}
+	assigned, err := a.assignedInfrastructure(r.Context(), project, "provider", providerID)
+	if err != nil {
+		a.internal(w, err)
+		return false
+	}
+	if !assigned {
+		problem(w, 403, "Provider access denied", "The provider is not assigned to this project.")
+		return false
+	}
+	return true
+}
+func (a *API) rejectInfrastructureMutation(w http.ResponseWriter, r *http.Request, err error) {
+	status := 422
+	if errors.Is(err, errInfrastructureDenied) {
+		status = 403
+	}
+	var quota *core.InfrastructureQuotaViolation
+	if errors.As(err, &quota) && quota.Code != "allocation_disallowed" {
+		status = 409
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		status = 404
+	}
+	if errors.Is(err, store.ErrInfrastructureChanged) || errors.Is(err, store.ErrInfrastructureProtected) || errors.Is(err, store.ErrStorageProtected) || errors.Is(err, store.ErrProviderChanged) || errors.Is(err, provision.ErrDisabled) || errors.Is(err, provision.ErrIdentity) || errors.Is(err, store.ErrMutationClaimLost) {
+		status = 409
+	}
+	a.failMutationAcceptance(r.Context(), status, "Infrastructure acceptance was rejected. Inspect the review and original operation before retrying.")
+	if errors.Is(err, store.ErrMutationClaimLost) {
+		problem(w, 409, "Acceptance changed", "Retry the identical request to inspect its original receipt.")
+		return
+	}
+	a.infrastructureProblem(w, err)
+}
+func (a *API) completeInfrastructureMutation(w http.ResponseWriter, r *http.Request, receipt *core.MutationReceipt, id string) bool {
+	core.RecordAcceptedOperation(r.Context(), id)
+	if receipt == nil {
+		return false
+	}
+	saved, err := a.store.(store.MutationReceiptStore).GetMutationReceipt(r.Context(), receipt.ID)
+	if err != nil {
+		a.internal(w, err)
+		return true
+	}
+	a.writeMutationReceipt(w, r, saved, 202)
+	return true
 }
 
 func (a *API) authorizeInfrastructureReview(w http.ResponseWriter, r *http.Request, m *provision.Manager, id string) bool {
