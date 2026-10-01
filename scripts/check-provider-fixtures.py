@@ -13,7 +13,7 @@ patterns = [
     re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
     re.compile(r"https?://[^\s/@:]+:[^\s/@]+@"),
 ]
-paths = [root / "docs/provider-api.md"]
+paths = [root / path for path in ["docs/provider-api.md", "docs/provider-packaging.md", "docs/infrastructure-providers.md", "docs/on-demand-servers.md"]]
 for folder in ["examples/providers", "internal/provider", "cmd/dispatch-provider-mock", "cmd/dispatch-provider-conformance"]:
     paths.extend(path for path in (root / folder).rglob("*") if path.is_file())
 failed = []

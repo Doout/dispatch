@@ -1,0 +1,16 @@
+name: dispatch-provider-sidecar
+services:
+  provider:
+    image: ${DISPATCH_PROVIDER_IMAGE:-ghcr.io/doout/dispatch-provider-mock:main}
+    network_mode: container:${DISPATCH_CONTAINER:?Set DISPATCH_CONTAINER to the running Dispatch container name or ID}
+    command: ["--listen", "127.0.0.1:8091", "--state", "/data/mock-state.json", "--fault", "${DISPATCH_PROVIDER_FAULT:-}"]
+    environment:
+      - DISPATCH_PROVIDER_TOKEN
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - provider-state:/data
+volumes:
+  provider-state:

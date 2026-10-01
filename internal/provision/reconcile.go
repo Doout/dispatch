@@ -86,7 +86,13 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 			capability = provider.CapabilityDelete
 		}
 	}
-	client, _, err := m.Adapter(ctx, server.ProviderID, capability, review.ManifestDigest)
+	expectedManifest := review.ManifestDigest
+	// Reviewed create payloads remain pinned. Inspection and deletion reference
+	// durable operation/resource identities under the current approved contract.
+	if op.Stage == "poll" || op.Action == "delete" {
+		expectedManifest = ""
+	}
+	client, _, err := m.Adapter(ctx, server.ProviderID, capability, expectedManifest)
 	if err != nil {
 		return true, retry(err)
 	}

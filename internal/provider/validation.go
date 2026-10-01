@@ -19,13 +19,15 @@ const (
 	StateCancelled      = "cancelled"
 )
 
+var ErrAPIVersion = errors.New("unsupported provider API version; supported versions: " + APIVersion)
+
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
 
 func ValidID(value string) bool { return identifier.MatchString(value) }
 
 func ValidateManifest(manifest Manifest) error {
 	if manifest.APIVersion != APIVersion {
-		return errors.New("provider API version is unsupported")
+		return ErrAPIVersion
 	}
 	if !ValidID(manifest.Name) || strings.TrimSpace(manifest.DisplayName) == "" || strings.TrimSpace(manifest.Version) == "" {
 		return errors.New("provider manifest identity is incomplete")

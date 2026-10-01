@@ -2,10 +2,10 @@ name: Provider conformance
 
 on:
   pull_request:
-    paths: ['internal/provider/**', 'cmd/dispatch-provider-*/**', 'Containerfile.provider-mock', 'examples/providers/**', 'docs/provider-api.md', 'scripts/check-provider-fixtures.py', '.github/workflows/provider-conformance.yml', 'go.mod', 'go.sum']
+    paths: ['internal/provider/**', 'internal/provision/**', 'internal/store/infrastructure*', 'internal/store/migrations/**', 'cmd/dispatch-provider-*/**', 'Containerfile.provider-mock', 'examples/providers/**', 'docs/provider-api.md', 'docs/provider-packaging.md', 'scripts/test-provider-sidecar.sh', 'scripts/check-provider-fixtures.py', '.github/workflows/provider-conformance.yml', 'go.mod', 'go.sum']
   push:
     branches: [main]
-    paths: ['internal/provider/**', 'cmd/dispatch-provider-*/**', 'Containerfile.provider-mock', 'examples/providers/**', 'docs/provider-api.md', 'scripts/check-provider-fixtures.py', '.github/workflows/provider-conformance.yml', 'go.mod', 'go.sum']
+    paths: ['internal/provider/**', 'internal/provision/**', 'internal/store/infrastructure*', 'internal/store/migrations/**', 'cmd/dispatch-provider-*/**', 'Containerfile.provider-mock', 'examples/providers/**', 'docs/provider-api.md', 'docs/provider-packaging.md', 'scripts/test-provider-sidecar.sh', 'scripts/check-provider-fixtures.py', '.github/workflows/provider-conformance.yml', 'go.mod', 'go.sum']
   workflow_dispatch:
 
 permissions:
@@ -21,8 +21,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: python3 scripts/check-provider-fixtures.py
-      - run: go test -race -p 2 ./internal/provider/... ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
-      - run: go vet ./internal/provider/... ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
+      - run: go test -race -p 2 ./internal/provider/... ./internal/provision ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
+      - run: go vet ./internal/provider/... ./internal/provision ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -44,6 +44,9 @@ jobs:
             sleep 1
           done
           docker run --rm --network host --entrypoint /usr/local/bin/dispatch-provider-conformance dispatch-provider-mock:test --allow-mutations
+
+      - name: Validate sidecar upgrades and rollback
+        run: scripts/test-provider-sidecar.sh
 
   publish:
     needs: test

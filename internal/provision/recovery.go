@@ -37,7 +37,7 @@ func (m *Manager) Adopt(ctx context.Context, id string, in Adoption) (core.Manag
 	if err != nil {
 		return server, err
 	}
-	client, _, err := m.Adapter(ctx, server.ProviderID, provider.CapabilityInspect, review.ManifestDigest)
+	client, _, err := m.Adapter(ctx, server.ProviderID, provider.CapabilityInspect, "")
 	if err != nil {
 		return server, err
 	}

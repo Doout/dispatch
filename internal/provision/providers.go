@@ -205,7 +205,14 @@ func manifestDigest(manifest provider.Manifest) (json.RawMessage, string, error)
 func checkedManifest(ctx context.Context, client provider.Provider, token string) (provider.Manifest, json.RawMessage, string, error) {
 	manifest, err := client.Manifest(ctx)
 	if err != nil {
-		return manifest, nil, "", errors.New("provider manifest request failed or returned incompatible data")
+		if errors.Is(err, provider.ErrAPIVersion) {
+			return manifest, nil, "", provider.ErrAPIVersion
+		}
+		var problem *provider.Problem
+		if errors.Is(err, provider.ErrTransport) || errors.As(err, &problem) && problem.Status >= 500 {
+			return manifest, nil, "", provider.ErrTransport
+		}
+		return manifest, nil, "", errors.New("provider manifest is invalid; restore the previous adapter and verify; supported versions: " + provider.APIVersion)
 	}
 	if _, _, err = configurationSchema(manifest.ConfigurationSchema); err != nil {
 		return manifest, nil, "", err
