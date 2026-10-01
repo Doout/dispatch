@@ -346,6 +346,9 @@ func (a *API) serviceProvisionTarget(ctx context.Context, spec workflow.ServiceT
 	if err != nil {
 		return nil, errors.New("choose an available deployment server")
 	}
+	if server.AgentNodeID != "" && (a.runtimeBroker() == nil || spec.ServiceType != "postgresql") {
+		return nil, errors.New("this remote runtime requires encrypted storage and supports built-in PostgreSQL provisioning")
+	}
 	if err := deploy.ValidateServiceTarget(server, target.Provider); err != nil {
 		return nil, err
 	}

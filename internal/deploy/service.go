@@ -20,9 +20,9 @@ var (
 )
 
 type Service struct {
+	Storage *StorageManager
 	// CheckExecution verifies preview provenance before accepting or dispatching work.
 	CheckExecution func(context.Context, core.App, string) error
-	Storage        *StorageManager
 	// OnFinished queues follow-up observations after the terminal state is saved.
 	OnFinished      func(core.Deployment)
 	services        serviceconn.Resolver
@@ -63,6 +63,9 @@ func (s *Service) start(ctx context.Context, appID, commitSHA string, review *co
 
 // startLocked requires the application lock, also used by automatic comparison.
 func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, review *core.DeploymentReview) (core.Deployment, error) {
+	if err := s.checkRemoteMutation(ctx, appID); err != nil {
+		return core.Deployment{}, err
+	}
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
 	if err != nil {
 		return core.Deployment{}, err
@@ -97,6 +100,11 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 			commitSHA = "inline"
 		} else {
 			commitSHA = "HEAD"
+		}
+	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, commitSHA); err != nil {
+			return core.Deployment{}, err
 		}
 	}
 	if s.resolveRevision != nil {
@@ -162,6 +170,9 @@ func (s *Service) Cleanup(ctx context.Context, appID string, progress Progress) 
 func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func() error, remove bool, progress Progress) error {
 	unlock := s.lockApp(appID)
 	defer unlock()
+	if err := s.checkRemoteMutation(ctx, appID); err != nil {
+		return err
+	}
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
 	if err != nil {
 		return err
@@ -341,6 +352,9 @@ func (s *Service) WithIdleApplication(ctx context.Context, appID string, fn func
 		return ErrDeploymentActive
 	}
 	defer lock.Unlock()
+	if err := s.checkRemoteMutation(ctx, appID); err != nil {
+		return err
+	}
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
 	if err != nil {
 		return err
@@ -363,4 +377,19 @@ func (s *Service) CleanupRuntimeIdentity(ctx context.Context, app core.App, serv
 		return "", nil
 	}
 	return inspector.CurrentRuntimeIdentity(ctx, app, server)
+}
+
+func (s *Service) checkRemoteMutation(ctx context.Context, app string) error {
+	if data, ok := s.store.(interface {
+		ActiveRuntimeMutation(context.Context, string) (*core.RuntimeJob, error)
+	}); ok {
+		job, err := data.ActiveRuntimeMutation(ctx, app)
+		if err != nil {
+			return err
+		}
+		if job != nil {
+			return ErrDeploymentActive
+		}
+	}
+	return nil
 }

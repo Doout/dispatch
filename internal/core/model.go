@@ -17,17 +17,18 @@ type Project struct {
 }
 
 type Server struct {
-	Routing    *RoutingConfig          `json:"routing,omitempty"`
-	ID         string                  `json:"id"`
-	Name       string                  `json:"name"`
-	Address    string                  `json:"address"`
-	Runtime    string                  `json:"runtime"`
-	State      string                  `json:"state"`
-	AgentMode  string                  `json:"agentMode"`
-	Kubernetes *KubernetesServerConfig `json:"kubernetes,omitempty"`
-	Relay      *RelayServerConfig      `json:"relay,omitempty"`
-	Builder    *BuilderServerConfig    `json:"builder,omitempty"`
-	CreatedAt  time.Time               `json:"createdAt"`
+	Routing     *RoutingConfig          `json:"routing,omitempty"`
+	ID          string                  `json:"id"`
+	Name        string                  `json:"name"`
+	Address     string                  `json:"address"`
+	Runtime     string                  `json:"runtime"`
+	State       string                  `json:"state"`
+	AgentMode   string                  `json:"agentMode"`
+	AgentNodeID string                  `json:"agentNodeId,omitempty"`
+	Kubernetes  *KubernetesServerConfig `json:"kubernetes,omitempty"`
+	Relay       *RelayServerConfig      `json:"relay,omitempty"`
+	Builder     *BuilderServerConfig    `json:"builder,omitempty"`
+	CreatedAt   time.Time               `json:"createdAt"`
 }
 
 const (
@@ -221,26 +222,27 @@ func (s DeploymentState) Terminal() bool {
 }
 
 type Deployment struct {
-	Health             DeploymentHealth   `json:"health"`
-	RollbackCurrentID  string             `json:"-"`
-	Acceptance         *DeploymentReview  `json:"-"`
-	ExecutionAppName   string             `json:"-"`
-	ExecutionTemplate  bool               `json:"-"`
-	ExecutionGenerated bool               `json:"-"`
-	ID                 string             `json:"id"`
-	AppID              string             `json:"appId"`
-	CommitSHA          string             `json:"commitSha"`
-	SpecDigest         string             `json:"specDigest"`
-	State              DeploymentState    `json:"state"`
-	Message            string             `json:"message"`
-	CreatedAt          time.Time          `json:"createdAt"`
-	StartedAt          *time.Time         `json:"startedAt,omitempty"`
-	FinishedAt         *time.Time         `json:"finishedAt,omitempty"`
-	LeaseUntil         *time.Time         `json:"leaseUntil,omitempty"`
-	Outputs            map[string]string  `json:"outputs,omitempty"`
-	Snapshot           DeploymentSnapshot `json:"-"`
-	App                *App               `json:"app,omitempty"`
-	Server             *Server            `json:"server,omitempty"`
+	Health              DeploymentHealth   `json:"health"`
+	RuntimeReviewDigest string             `json:"-"`
+	RollbackCurrentID   string             `json:"-"`
+	Acceptance          *DeploymentReview  `json:"-"`
+	ExecutionAppName    string             `json:"-"`
+	ExecutionTemplate   bool               `json:"-"`
+	ExecutionGenerated  bool               `json:"-"`
+	ID                  string             `json:"id"`
+	AppID               string             `json:"appId"`
+	CommitSHA           string             `json:"commitSha"`
+	SpecDigest          string             `json:"specDigest"`
+	State               DeploymentState    `json:"state"`
+	Message             string             `json:"message"`
+	CreatedAt           time.Time          `json:"createdAt"`
+	StartedAt           *time.Time         `json:"startedAt,omitempty"`
+	FinishedAt          *time.Time         `json:"finishedAt,omitempty"`
+	LeaseUntil          *time.Time         `json:"leaseUntil,omitempty"`
+	Outputs             map[string]string  `json:"outputs,omitempty"`
+	Snapshot            DeploymentSnapshot `json:"-"`
+	App                 *App               `json:"app,omitempty"`
+	Server              *Server            `json:"server,omitempty"`
 }
 
 type DeploymentSnapshot struct {

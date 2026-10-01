@@ -238,6 +238,7 @@ Use `make check` for the race detector, `go vet`, TypeScript checks, and fronten
 - [API reference](docs/openapi.yaml)
 - [Provider API](docs/provider-api.md)
 - [Runtime contract](docs/runtime-contract.md)
+- [Enrolled remote Docker runtime](docs/remote-runtime.md)
 - [Private routes](docs/private-networks.md)
 - [Roadmap](docs/roadmap.md)
 
