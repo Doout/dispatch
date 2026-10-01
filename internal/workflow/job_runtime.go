@@ -68,6 +68,9 @@ func (s *Service) lockBuild(ctx context.Context, key string) (func(), error) {
 }
 
 type jobRuntime struct {
+	// Saved service templates are accepted from their own inventory and have no
+	// workflow-resource row. Keep their reviewed resource for the trust check.
+	serviceTemplate *core.WorkflowResource
 	maxParallelJobs int
 	service         *Service
 	source          core.ConfigSource
@@ -76,6 +79,21 @@ type jobRuntime struct {
 	paths           map[string]string
 	inputs          map[string]string
 	worktrees       []*cachedWorktree
+}
+
+func (r *jobRuntime) checkExecutionTrust(ctx context.Context) error {
+	if r.serviceTemplate == nil {
+		return r.service.checkRevisionTrust(ctx, r.revision)
+	}
+	template := r.serviceTemplate
+	if template.Kind != KindServiceTemplate || !template.Active || template.Temporary || template.ID != r.revision.ResourceID {
+		return errors.New("service template execution scope is invalid")
+	}
+	// Nested work still inherits the preview's current source approval.
+	if parent, ok := ctx.Value(previewTrustParentKey{}).(core.WorkflowRevision); ok {
+		return r.service.checkRevisionTrust(context.WithValue(ctx, previewTrustParentKey{}, nil), parent)
+	}
+	return nil
 }
 
 func (r *jobRuntime) executeJobs(ctx context.Context, resource core.WorkflowResource, jobs, final map[string]JobSpec, pipeline bool) (map[string]map[string]string, error) {
@@ -94,7 +112,7 @@ func (r *jobRuntime) executeJobs(ctx context.Context, resource core.WorkflowReso
 
 func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResource, name string, job JobSpec, pipeline bool) (map[string]string, error) {
 	if r.service != nil && r.service.Store != nil {
-		if err := r.service.checkRevisionTrust(ctx, r.revision); err != nil {
+		if err := r.checkExecutionTrust(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -214,7 +232,7 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 			return nil, prelude, err
 		}
 		defer release()
-		if err := r.service.checkRevisionTrust(ctx, r.revision); err != nil {
+		if err := r.checkExecutionTrust(ctx); err != nil {
 			return nil, prelude, err
 		}
 		builderEnv, cleanup, err := r.service.dockerBuilderEnvironment(ctx, builder)
@@ -225,7 +243,7 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 		environment = append(environment, builderEnv...)
 		prelude += "Using Docker builder " + builder.Name + "\n"
 	}
-	if err := r.service.checkRevisionTrust(ctx, r.revision); err != nil {
+	if err := r.checkExecutionTrust(ctx); err != nil {
 		return nil, prelude, err
 	}
 	var logs limitedBuffer
