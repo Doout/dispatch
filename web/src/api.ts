@@ -16,9 +16,17 @@ export type Permission =
   | "deployment.cancel"
   | "stage.approve"
   | "infrastructure.manage"
+  | "infrastructure.inspect"
+  | "infrastructure.create"
+  | "infrastructure.modify"
+  | "infrastructure.delete"
+  | "infrastructure.snapshot"
+  | "infrastructure.restore"
   | "secrets.manage"
   | "connections.manage";
 export type Identity = {
+  kind?: "user" | "service_account";
+  credentialId?: string;
   id: string;
   username: string;
   displayName: string;

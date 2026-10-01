@@ -51,6 +51,7 @@ func testInfrastructureLifecycleAPI(t *testing.T, realRuntime bool) {
 	if strings.Contains(string(catalog), upstream.URL) || strings.Contains(string(catalog), "credentialSecretId") {
 		t.Fatal("catalog leaked registration connection")
 	}
+	serviceRequestTest(t, a, "PUT", "/api/v1/projects/"+projects[0].ID+"/infrastructure/quota", core.InfrastructureQuotaPolicy{MaxServers: 3, Providers: []core.InfrastructureProviderRule{{ProviderID: p.ID, Regions: []string{"mock-region"}, Sizes: []string{"mock-small"}}}}, 200)
 	input := provision.CreateInput{ProjectID: projects[0].ID, ProviderID: p.ID, Name: "Reviewed", Region: "mock-region", Size: "mock-small", Image: "mock-linux", Network: "mock-private", SSHKeySecretID: "lifecycle-ssh", Config: map[string]any{}}
 	raw := serviceRequestTest(t, a, "POST", "/api/v1/infrastructure/servers/review", input, 201)
 	var review core.InfrastructureReview

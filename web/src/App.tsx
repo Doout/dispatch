@@ -99,6 +99,7 @@ import {
 import { ApplicationsPage } from "./ApplicationsPage";
 import { ConnectionsPage } from "./ConnectionsPage";
 import { InfrastructureProviders } from "./InfrastructureProviders";
+import { InfrastructureQuotas } from "./InfrastructureQuotas";
 import { ManagedServers } from "./ManagedServers";
 import { HookCredentialBindings, HookFields } from "./HookEditorFields";
 import { PageHeader, pageTitles } from "./PageHeader";
@@ -1863,7 +1864,9 @@ export function ServersPage({
           { label: "Relay connected", value: connected },
         ]}
       />
-      {canManage && <><InfrastructureProviders overview={overview} /><ManagedServers overview={overview} /></>}
+      {canManage && <InfrastructureProviders overview={overview} />}
+      <InfrastructureQuotas overview={overview} canManage={canManage} />
+      {canManage && <ManagedServers overview={overview} />}
       <section className="server-section">
         <div className="section-title">
           <div>

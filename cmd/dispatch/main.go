@@ -111,7 +111,7 @@ func run(logger *slog.Logger) error {
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go runtimeBroker.RunExpiration(shutdownCtx, logger)
-	infrastructure := &provision.Manager{Store: data, Secrets: secretResolver, Edge: edgeBroker, Vault: vault}
+	infrastructure := &provision.Manager{Store: data, Secrets: secretResolver, Edge: edgeBroker, Vault: vault, Admission: data.InfrastructureQuotaAdmission}
 	go infrastructure.Run(shutdownCtx, logger)
 	var history analytics.Reader
 	if cfg.AnalyticsEnabled {

@@ -1249,6 +1249,7 @@ CREATE TABLE preview_source_trust_approvals (
     revoked_at TEXT
 );
 CREATE INDEX preview_source_trust_approval_lookup ON preview_source_trust_approvals(resource_id,digest);
+
 -- dispatch:migration 072_remote_runtime
 ALTER TABLE servers ADD COLUMN agent_node_id TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX servers_agent_node ON servers(agent_node_id) WHERE agent_node_id<>'';
@@ -1280,6 +1281,7 @@ CREATE INDEX runtime_jobs_node_lease ON runtime_jobs(node_id,state,lease_until);
 CREATE INDEX runtime_jobs_app ON runtime_jobs(app_id,created_at);
 
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs');
+
 -- dispatch:migration 073_deployment_health
 ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';
@@ -1404,6 +1406,13 @@ CREATE TABLE public_mutation_receipts (
 );
 CREATE INDEX public_mutation_operation ON public_mutation_receipts(operation_kind,operation_id);
 ALTER TABLE audit_events ADD COLUMN operation_id TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 079_infrastructure_quotas
+CREATE TABLE project_infrastructure_policies(project_id TEXT PRIMARY KEY REFERENCES projects(id),revision BIGINT NOT NULL,max_servers BIGINT NOT NULL CHECK(max_servers>=-1),max_temporary_environments BIGINT NOT NULL CHECK(max_temporary_environments>=-1),max_snapshots BIGINT NOT NULL CHECK(max_snapshots>=-1),max_temporary_lifetime_seconds BIGINT NOT NULL CHECK(max_temporary_lifetime_seconds>=0),providers TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE infrastructure_quota_reservations(server_id TEXT PRIMARY KEY,operation_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL REFERENCES projects(id),provider_id TEXT NOT NULL,region TEXT NOT NULL,size TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reserved','allocated','unknown','released')),resource_id TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE INDEX infrastructure_quota_project ON infrastructure_quota_reservations(project_id,state);
+INSERT INTO infrastructure_quota_reservations(server_id,operation_id,project_id,provider_id,region,size,state,resource_id,created_at,updated_at)
+SELECT m.id,COALESCE((SELECT o.id FROM infrastructure_operations o WHERE o.server_id=m.id AND o.action='create' ORDER BY o.created_at LIMIT 1),'legacy-'||m.id),m.project_id,m.provider_id,COALESCE(json_extract(r.input,'$.region'),''),COALESCE(json_extract(r.input,'$.size'),''),CASE WHEN m.allocation_state IN ('deleted','cancelled') THEN 'released' WHEN m.allocation_state='allocated' THEN 'allocated' WHEN m.allocation_state IN ('unknown','failed') THEN 'unknown' ELSE 'reserved' END,m.resource_id,m.created_at,m.updated_at FROM managed_servers m JOIN infrastructure_reviews r ON r.id=m.review_id;
 
 -- dispatch:migration 080_remote_storage
 DROP INDEX runtime_jobs_active_mutation;

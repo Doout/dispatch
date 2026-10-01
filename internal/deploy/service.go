@@ -129,6 +129,12 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 		State:  core.DeploymentQueued, Message: "Deployment accepted", CreatedAt: now,
 		Acceptance: review, ExecutionAppName: app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
 	}
+	if claim, ok := core.MutationAcceptanceFromContext(ctx); ok {
+		if claim.OperationKind != "deployment" {
+			return core.Deployment{}, store.ErrMutationClaimLost
+		}
+		deployment.ID = claim.OperationID
+	}
 	if err := s.reserveRoute(ctx, deployment, app, server); err != nil {
 		return core.Deployment{}, err
 	}
