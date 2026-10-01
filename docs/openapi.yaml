@@ -9,6 +9,30 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /infrastructure/servers/review:
+    post:
+      summary: Prepare project-scoped server allocation review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServerCreateReview' }
+      responses:
+        '201': { description: Immutable reviewed allocation and digest, without provider credentials }
+        '403': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}/operations:
+    get:
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Owned server operation history and recovery state }
+  /infrastructure/servers/{id}/delete-review:
+    post:
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Current deletion digest, exact server name and protected storage consequences }
+        '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/bootstrap:
     get:
       operationId: listTargetBootstraps
@@ -372,6 +396,10 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers:
+    get:
+      summary: List managed servers permitted by the current project grants and provider assignments
+      responses:
+        '200': { description: Visible managed server records }
     post:
       operationId: createManagedServer
       description: Accepts a reviewed server creation or isolated clone. Requires infrastructure.create and access to the provider; a clone also requires infrastructure.restore. Verified clones remain isolated and are not published as ordinary workload targets. Idempotency-Key reserves one durable provisioning operation; identical retries return its receipt for seven days. Changed inputs or expired keys return 409 without creating another machine.
@@ -4619,6 +4647,28 @@ components:
         updatedAt:
           type: string
           format: date-time
+    ServerCreateReview:
+      type: object
+      required: [projectId, providerId, name]
+      properties:
+        projectId: { type: string }
+        providerId: { type: string }
+        name: { type: string }
+        region: { type: string }
+        size: { type: string }
+        image: { type: string }
+        network: { type: string }
+        sshKeySecretId: { type: string, description: Assigned public SSH key reference. }
+        bootstrap:
+          type: object
+          properties:
+            method: { type: string, enum: [cloud_init] }
+            platform: { type: string, enum: [linux-amd64, linux-arm64] }
+            imageFamily: { type: string, enum: [ubuntu-24.04, existing-systemd] }
+            installRuntime: { type: boolean }
+          additionalProperties: false
+
+        config: { type: object, additionalProperties: true }
     InfrastructureAcceptance:
       type: object
       required: [digest, confirmName]
