@@ -208,6 +208,21 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 		} else {
 			out.Summary += " Application configuration and deployment history remain."
 		}
+		if app.Generated && app.HelmProvenance.WorkflowResourceID != "" {
+			resource, e := a.store.GetWorkflowResource(ctx, app.HelmProvenance.WorkflowResourceID)
+			if e != nil && !errors.Is(e, store.ErrNotFound) {
+				return out, e
+			}
+			if e == nil && resource.Temporary {
+				preview, resources, e := a.workflowCleanupReview(ctx, resource, app.ProjectID)
+				if e != nil {
+					return out, e
+				}
+				extra = struct{ Application, Preview any }{extra, preview}
+				out.Resources = resources
+				out.Summary = "Remove the entire preview " + resource.Name + ", including all listed applications, and close its PR triggers. Application configuration and deployment history remain. Retained data follows the runtime's storage policy."
+			}
+		}
 	case "project":
 		var item core.Project
 		item, err = a.store.GetProject(ctx, id)
@@ -386,6 +401,65 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 	}
 	out.Version = fmt.Sprintf("%x", sha256.Sum256(raw))
 	return out, nil
+}
+
+// A generated application can remove its whole preview, including applications
+// connected only through older workflow stages. Review exactly that cleanup set.
+func (a *API) workflowCleanupReview(ctx context.Context, resource core.WorkflowResource, projectID string) (any, []string, error) {
+	source, err := a.store.GetConfigSource(ctx, resource.ConfigSourceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if source.ProjectID != projectID {
+		return nil, nil, errors.New("Preview ownership no longer matches this application's project. Repair the preview links before cleanup.")
+	}
+	apps, err := a.workflowPreviewCleanupApps(ctx, resource)
+	if err != nil {
+		return nil, nil, err
+	}
+	type applicationInputs struct {
+		App             core.App
+		Server          core.Server
+		Bindings        []core.ServiceBinding
+		History         []core.Deployment
+		RuntimeIdentity string
+	}
+	inputs := []applicationInputs{}
+	resources := []string{}
+	for _, app := range apps {
+		if app.ProjectID != projectID {
+			return nil, nil, errors.New("Preview application ownership no longer matches its project. Repair the preview links before cleanup.")
+		}
+		server, err := a.store.GetServer(ctx, app.ServerID)
+		if err != nil {
+			return nil, nil, err
+		}
+		bindings, err := a.store.GetAppServiceBindings(ctx, app.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		history, err := a.store.ListApplicationHistory(ctx, app.ID, "", 1)
+		if err != nil {
+			return nil, nil, err
+		}
+		validation, cancel := context.WithTimeout(ctx, 15*time.Second)
+		identity, err := a.deploy.CleanupRuntimeIdentity(validation, app, server)
+		cancel()
+		if err != nil {
+			return nil, nil, err
+		}
+		inputs = append(inputs, applicationInputs{app, server, bindings, history, identity})
+		resources = append(resources, "Application "+app.Name+" on "+server.Name)
+	}
+	revisions, err := a.store.ListWorkflowRevisions(ctx, resource.ID, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	return struct {
+		Resource     core.WorkflowResource
+		Applications []applicationInputs
+		Revisions    []core.WorkflowRevision
+	}{resource, inputs, revisions}, resources, nil
 }
 
 func (a *API) idleAppMutation(next http.Handler) http.Handler {

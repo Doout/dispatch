@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -501,11 +502,11 @@ func (a *API) closeWorkflowPreview(ctx context.Context, trigger core.WorkflowPre
 	return a.store.RemoveWorkflowPreviewResource(ctx, resource.ID, time.Now().UTC())
 }
 
-func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.WorkflowResource) error {
+func (a *API) workflowPreviewCleanupApps(ctx context.Context, resource core.WorkflowResource) ([]core.App, error) {
 	appIDs := map[string]bool{}
 	apps, err := a.store.ListActiveApps(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, app := range apps {
 		if app.HelmProvenance.WorkflowResourceID == resource.ID {
@@ -515,12 +516,12 @@ func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.
 	// Older previews may predate Helm provenance, so retain their stage links.
 	revisions, err := a.store.ListWorkflowRevisions(ctx, resource.ID, 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, revision := range revisions {
 		stages, err := a.store.ListWorkflowStageRuns(ctx, revision.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, stage := range stages {
 			for _, result := range stage.DeploymentResults {
@@ -530,19 +531,32 @@ func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.
 			}
 		}
 	}
+	result := []core.App{}
 	for appID := range appIDs {
 		app, err := a.store.GetApp(ctx, appID)
 		if errors.Is(err, store.ErrNotFound) {
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if app.State == "closed" {
 			continue
 		}
-		if err := a.deploy.Cleanup(ctx, appID, nil); err != nil {
-			return fmt.Errorf("clean preview app %s: %w", appID, err)
+		result = append(result, app)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
+}
+
+func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.WorkflowResource) error {
+	apps, err := a.workflowPreviewCleanupApps(ctx, resource)
+	if err != nil {
+		return err
+	}
+	for _, app := range apps {
+		if err := a.deploy.Cleanup(ctx, app.ID, nil); err != nil {
+			return fmt.Errorf("clean preview app %s: %w", app.ID, err)
 		}
 		app.State = "closed"
 		if err := a.store.UpdateApp(ctx, app); err != nil {

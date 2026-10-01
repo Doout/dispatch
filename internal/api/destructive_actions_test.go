@@ -15,6 +15,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/go-chi/chi/v5"
 )
 
 // Existing lifecycle tests use this helper to act with a reviewed confirmation.
@@ -233,5 +234,122 @@ func TestDestructiveCleanupFailureKeepsRegistrationAndRecordsOutcome(t *testing.
 	a.ServeHTTP(rr, confirmedTokenRequest(t, a, "DELETE", path, nil))
 	if rr.Code != 204 || recorder.calls != 2 {
 		t.Fatalf("reviewed cleanup retry failed: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGeneratedPreviewConfirmationIncludesAllCleanupTargets(t *testing.T) {
+	for _, action := range []string{"cleanup", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := context.Background()
+			a, data, executor, _ := previewLifetimeFixture(t, "0", nil)
+			route := chi.NewRouteContext()
+			route.URLParams.Add("id", "current")
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/apps/current/cleanup", nil)
+			request = request.WithContext(context.WithValue(withIdentity(ctx, core.Identity{ID: "owner", SystemRole: core.UserRoleOwner}), chi.RouteCtxKey, route))
+			review, err := a.destructiveReview(ctx, request, "application", action)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(review.Summary, "entire preview preview-42") || !strings.Contains(review.Summary, "history remain") || len(review.Resources) != 2 || !strings.Contains(strings.Join(review.Resources, "\n"), "Older") {
+				t.Fatalf("review omitted preview cleanup scope: %+v", review)
+			}
+			body, _ := json.Marshal(map[string]any{"confirmation": destructiveConfirmation{ResourceID: review.ResourceID, Action: review.Action, ExpectedVersion: review.Version, ConfirmName: review.Name}})
+			request.Body = io.NopCloser(bytes.NewReader(body))
+			handler := a.cleanupApp
+			if action == "delete" {
+				handler = a.deleteApp
+			}
+			// The old application's stage link expands cleanup beyond the current
+			// application. Changing it must invalidate the current app's review.
+			older, err := data.GetApp(ctx, "older")
+			if err != nil {
+				t.Fatal(err)
+			}
+			older.HelmRelease = "changed-after-review"
+			if err = data.UpdateApp(ctx, older); err != nil {
+				t.Fatal(err)
+			}
+			recorder := httptest.NewRecorder()
+			a.confirmDestructiveAction("application", action, handler).ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusConflict || executor.count != 0 {
+				t.Fatalf("stale sibling review reached cleanup: %d %s", recorder.Code, recorder.Body.String())
+			}
+			resource, err := data.GetWorkflowResource(ctx, "resource")
+			if err != nil || !resource.Active {
+				t.Fatalf("stale confirmation changed the preview: %+v %v", resource, err)
+			}
+		})
+	}
+}
+
+func TestGeneratedPreviewRechecksConfirmationInsideCleanupLock(t *testing.T) {
+	ctx := context.Background()
+	a, data, executor, _ := previewLifetimeFixture(t, "0", nil)
+	route := chi.NewRouteContext()
+	route.URLParams.Add("id", "current")
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/apps/current/cleanup", nil).WithContext(context.WithValue(ctx, chi.RouteCtxKey, route))
+	review, err := a.destructiveReview(ctx, request, "application", "cleanup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = request.WithContext(context.WithValue(request.Context(), destructiveConfirmationKey{}, destructiveConfirmation{ResourceID: review.ResourceID, Action: review.Action, ExpectedVersion: review.Version, ConfirmName: review.Name}))
+	// Simulate a change after middleware validation, before the handler obtains
+	// the preview lock. The handler must check the saved confirmation again.
+	older, err := data.GetApp(ctx, "older")
+	if err != nil {
+		t.Fatal(err)
+	}
+	older.HelmRelease = "changed-before-lock"
+	if err = data.UpdateApp(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	a.cleanupApp(recorder, request)
+	if recorder.Code != http.StatusConflict || executor.count != 0 {
+		t.Fatalf("handler skipped confirmation recheck: %d %s", recorder.Code, recorder.Body.String())
+	}
+	resource, err := data.GetWorkflowResource(ctx, "resource")
+	if err != nil || !resource.Active {
+		t.Fatalf("failed recheck deactivated the preview: %+v %v", resource, err)
+	}
+}
+
+func TestGeneratedPreviewReviewRejectsCrossProjectCleanup(t *testing.T) {
+	for _, moved := range []string{"source", "application"} {
+		t.Run(moved, func(t *testing.T) {
+			ctx := context.Background()
+			a, data, executor, _ := previewLifetimeFixture(t, "0", nil)
+			if err := data.CreateProject(ctx, core.Project{ID: "other-project", Name: "Other", CreatedAt: time.Now().UTC()}); err != nil {
+				t.Fatal(err)
+			}
+			if moved == "source" {
+				source, err := data.GetConfigSource(ctx, "config")
+				if err != nil {
+					t.Fatal(err)
+				}
+				source.ProjectID = "other-project"
+				if err = data.UpdateConfigSource(ctx, source); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				app, err := data.GetApp(ctx, "older")
+				if err != nil {
+					t.Fatal(err)
+				}
+				app.ProjectID = "other-project"
+				if err = data.UpdateApp(ctx, app); err != nil {
+					t.Fatal(err)
+				}
+			}
+			route := chi.NewRouteContext()
+			route.URLParams.Add("id", "current")
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/apps/current/cleanup-preview", nil).WithContext(context.WithValue(ctx, chi.RouteCtxKey, route))
+			if _, err := a.destructiveReview(ctx, request, "application", "cleanup"); err == nil || !strings.Contains(err.Error(), "project") {
+				t.Fatalf("cross-project preview cleanup remained available: %v", err)
+			}
+			if executor.count != 0 {
+				t.Fatal("review changed the runtime")
+			}
+		})
 	}
 }

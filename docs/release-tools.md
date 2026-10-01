@@ -149,6 +149,12 @@ Cancellation sends no destructive request. The audit retains the confirmed name,
 resource, version, actor and request outcome even after the resource is deleted.
 Existing API clients that delete resources must adopt this review flow.
 
+Cleaning up or deleting a generated preview application removes the entire
+preview, including applications retained through older workflow stages, and closes
+its PR triggers. The review lists that full scope and preserves application
+configuration and deployment history. Changes to a listed application's inputs or
+the preview invalidate the review before cleanup starts.
+
 Migration `067_runtime_artifacts` adds encrypted runtime inputs and confirmed audit
 metadata for SQLite and PostgreSQL. Run the local Docker/Compose restore tests
 with `DISPATCH_ROLLBACK_DOCKER_INTEGRATION=1 go test ./internal/deploy -run TestDockerComposeRollbackIntegration`.

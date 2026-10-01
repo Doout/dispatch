@@ -487,8 +487,9 @@ func validateSourceAuthentication(repository, authType, credentialID string) str
 
 func (a *API) deleteApp(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if handled, err := a.removeWorkflowPreviewForApp(r.Context(), id); handled || err != nil {
+	if handled, err := a.removeWorkflowPreviewForAppReviewed(r.Context(), id, func() error { return a.recheckDestructiveAction(r, "application", "delete") }); handled || err != nil {
 		if err != nil {
+			destructiveOutcome(r, "failed")
 			a.previewCleanupProblem(w, err)
 		} else {
 			w.WriteHeader(http.StatusNoContent)
@@ -554,8 +555,9 @@ func (a *API) deleteApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) cleanupApp(w http.ResponseWriter, r *http.Request) {
-	if handled, err := a.removeWorkflowPreviewForApp(r.Context(), chi.URLParam(r, "id")); handled || err != nil {
+	if handled, err := a.removeWorkflowPreviewForAppReviewed(r.Context(), chi.URLParam(r, "id"), func() error { return a.recheckDestructiveAction(r, "application", "cleanup") }); handled || err != nil {
 		if err != nil {
+			destructiveOutcome(r, "failed")
 			a.previewCleanupProblem(w, err)
 		} else {
 			w.WriteHeader(http.StatusNoContent)
