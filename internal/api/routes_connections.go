@@ -69,6 +69,7 @@ func (a *API) connectionsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.ownerOnly)
 				r.Put("/", a.updateServer)
+				r.Put("/routing", a.updateServerRouting)
 				r.Post("/relay/verify", a.verifyRelayServer)
 				r.Get("/relay/webhooks", a.listRelayWebhooks)
 				r.Post("/relay/webhooks", a.createRelayWebhook)

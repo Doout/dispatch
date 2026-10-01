@@ -14,6 +14,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
 )
@@ -120,6 +121,7 @@ func routeMessage(app core.App) string {
 type commandFunc func(context.Context, io.Reader, io.Writer, string, ...string) error
 
 type DockerExecutor struct {
+	Routes            *routing.FilePublisher
 	run               commandFunc
 	Artifacts         store.RuntimeArtifactStore
 	Vault             *secretcrypto.Vault
@@ -134,6 +136,10 @@ func (e DockerExecutor) Deploy(ctx context.Context, deployment core.Deployment, 
 
 func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, app core.App, server core.Server, progress Progress) error {
 	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Deploy); err != nil {
+		return err
+	}
+	route, err := e.prepareManagedRoute(ctx, deployment, app, server)
+	if err != nil {
 		return err
 	}
 	directCompose := app.BuildType == core.BuildTypeCompose && strings.TrimSpace(app.ComposeContent) != ""
@@ -187,6 +193,9 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if e.Artifacts != nil && e.Vault != nil {
 			return e.deployRetainedCompose(ctx, deployment, app, server, workspace, composeArgs, progress)
 		}
+		if route != nil {
+			return errors.New("managed Compose routing requires encrypted retained runtime inputs")
+		}
 		if err := e.commandWithOutput(ctx, "docker", append(append([]string{}, composeArgs...), "config", "--quiet")...); err != nil {
 			return fmt.Errorf("validate compose: %w", err)
 		}
@@ -234,6 +243,9 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		serviceEnv, err := dockerServiceEnv(workspace, app.ServiceRuntime)
 		if err != nil {
 			return err
+		}
+		if route != nil {
+			return e.startRoutedDocker(ctx, deployment, app, server, *route, image, serviceEnv, progress)
 		}
 		if e.Artifacts != nil && e.Vault != nil {
 			if err := e.removeOwnedContainer(ctx, app); err != nil {
@@ -284,6 +296,19 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 func (e DockerExecutor) Cleanup(ctx context.Context, app core.App, server core.Server, progress Progress) error {
 	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Destroy); err != nil {
 		return err
+	}
+	if e.Routes != nil {
+		route, err := e.Routes.Read(ctx, app.ID)
+		if err == nil {
+			if route.ProjectID != app.ProjectID || route.ServerID != server.ID {
+				return routing.ErrConflict
+			}
+			if err := e.Routes.Remove(ctx, route); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	name := dockerResourceName(app.ID)
 	if e.Artifacts != nil && e.Vault != nil {

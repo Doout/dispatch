@@ -25,6 +25,11 @@ func (e DockerExecutor) deployRetainedCompose(ctx context.Context, d core.Deploy
 	if !ok || len(services) == 0 {
 		return errors.New("Compose has no active services to deploy.")
 	}
+	if server.Routing != nil {
+		if _, err := routedComposeConfig(config, app, server, d); err != nil {
+			return err
+		}
+	}
 	// Build outputs get a per-deployment tag before resolving their image IDs.
 	buildImages := map[string]any{}
 	for name, item := range services {
@@ -319,6 +324,9 @@ func (e DockerExecutor) materializeCompose(d core.Deployment, app core.App, inpu
 }
 
 func (e DockerExecutor) applyComposeArtifact(ctx context.Context, d core.Deployment, app core.App, server core.Server, inputs dockerArtifact, progress Progress) error {
+	if server.Routing != nil {
+		return e.applyRoutedCompose(ctx, d, app, server, inputs, progress)
+	}
 	path, err := e.materializeCompose(d, app, inputs)
 	if err != nil {
 		return errors.New("Cannot prepare retained Compose runtime files.")

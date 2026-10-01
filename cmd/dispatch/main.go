@@ -21,6 +21,7 @@ import (
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/installation"
+	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
 )
@@ -80,6 +81,9 @@ func run(logger *slog.Logger) error {
 	}
 	var executor deploy.Executor = deploy.SimulationExecutor{}
 	dockerExecutor := deploy.DockerExecutor{Artifacts: data, Vault: vault, ArtifactDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "runtime-artifacts")}
+	if cfg.RoutingDirectory != "" {
+		dockerExecutor.Routes = &routing.FilePublisher{Directory: cfg.RoutingDirectory}
+	}
 	if cfg.Executor == "docker" {
 		helmExecutor := deploy.HelmExecutor{}
 		if vault != nil {
@@ -121,6 +125,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	go deployments.RunRecovery(shutdownCtx, logger)
+	go deployments.RunRouteReconciliation(shutdownCtx)
 	if cfg.Executor == "docker" {
 		go controller.RunObservations(shutdownCtx)
 	}

@@ -1202,3 +1202,14 @@ CREATE INDEX preview_source_trust_approval_lookup ON preview_source_trust_approv
 -- dispatch:migration 073_deployment_health
 ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';
+
+-- dispatch:migration 074_application_routes
+ALTER TABLE servers ADD COLUMN routing_config TEXT NOT NULL DEFAULT 'null';
+CREATE TABLE application_routes (
+ app_id TEXT PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ server_id TEXT NOT NULL REFERENCES servers(id),
+ hostname TEXT NOT NULL UNIQUE,
+ requested_deployment_id TEXT NOT NULL,
+ record TEXT NOT NULL
+);

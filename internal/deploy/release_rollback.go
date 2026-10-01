@@ -281,6 +281,11 @@ func (s *Service) PreviewRollback(ctx context.Context, id string) (RollbackPrevi
 		if err != nil {
 			return err
 		}
+		if s.CheckExecution != nil {
+			if err := s.CheckExecution(ctx, app, d.CommitSHA); err != nil {
+				return err
+			}
+		}
 		server, err := s.store.GetServer(ctx, app.ServerID)
 		if err != nil {
 			return err
@@ -350,6 +355,11 @@ func (s *Service) StartRollback(ctx context.Context, id, expectedCurrent, expect
 	if err != nil {
 		return core.Deployment{}, err
 	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, source.CommitSHA); err != nil {
+			return core.Deployment{}, err
+		}
+	}
 	server, err := s.store.GetServer(ctx, app.ServerID)
 	if err != nil {
 		return core.Deployment{}, err
@@ -394,6 +404,9 @@ func (s *Service) StartRollback(ctx context.Context, id, expectedCurrent, expect
 		ExecutionAppName:  app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
 	}
 	action := core.ReleaseAction{ID: ulid.Make().String(), ProjectID: prepared.app.ProjectID, AppID: source.AppID, DeploymentID: d.ID, SourceDeploymentID: source.ID, Actor: actor, Action: "deployment.rollback", Message: "Rollback accepted from retained successful deployment " + source.ID, CreatedAt: now}
+	if err := s.reserveRoute(ctx, d, app, server); err != nil {
+		return core.Deployment{}, err
+	}
 	if err = data.CreateRollbackDeployment(ctx, d, source, action); err != nil {
 		return core.Deployment{}, err
 	}
@@ -406,6 +419,7 @@ func (s *Service) StartRollback(ctx context.Context, id, expectedCurrent, expect
 }
 
 func (s *Service) runRollback(ctx context.Context, d core.Deployment, sourceID, expectedCurrent, expectedReview, actor, projectID string, capture ReleaseCapture) {
+	ctx = s.routeContext(ctx)
 	defer func() {
 		finished, err := s.store.GetDeployment(context.Background(), d.ID)
 		if err == nil {
@@ -433,6 +447,12 @@ func (s *Service) runRollback(ctx context.Context, d core.Deployment, sourceID, 
 		s.fail(d, err)
 		return
 	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, source.CommitSHA); err != nil {
+			s.fail(d, err)
+			return
+		}
+	}
 	if app.BuildType != core.BuildTypeHelm {
 		server, err := s.store.GetServer(ctx, source.Snapshot.TargetID)
 		if err != nil {
@@ -459,7 +479,7 @@ func (s *Service) runRollback(ctx context.Context, d core.Deployment, sourceID, 
 			}
 			return
 		}
-		s.finish(&d, core.DeploymentSucceeded, "Retained runtime restored; database migrations and external side effects were not reverted")
+		s.finish(&d, core.DeploymentSucceeded, s.routeCompletion(ctx, app, d)+"; database migrations and external side effects were not reverted")
 		return
 	}
 	prepared, err := s.prepareRollback(ctx, sourceID)
