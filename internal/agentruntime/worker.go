@@ -22,6 +22,7 @@ import (
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
 )
@@ -45,7 +46,20 @@ type receipt struct {
 	Result string `json:"result,omitempty"`
 }
 
-func Open(directory, node string) (*Worker, error) {
+// Options contains host operator configuration; request payloads cannot set paths.
+type Options struct{ RoutingDirectory string }
+
+func Open(directory, node string, options ...Options) (*Worker, error) {
+	var publisher *routing.FilePublisher
+	if len(options) > 1 {
+		return nil, errors.New("multiple runtime options are not supported")
+	}
+	if len(options) == 1 && options[0].RoutingDirectory != "" {
+		if !filepath.IsAbs(options[0].RoutingDirectory) {
+			return nil, errors.New("runtime routing directory must be absolute")
+		}
+		publisher = &routing.FilePublisher{Directory: options[0].RoutingDirectory}
+	}
 	if !safeID.MatchString(node) {
 		return nil, errors.New("invalid runtime node identity")
 	}
@@ -101,7 +115,7 @@ func Open(directory, node string) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine := dockerEngine{executor: deploy.DockerExecutor{Artifacts: w, Vault: w.vault, ArtifactDirectory: filepath.Join(directory, "artifacts")}, command: command}
+	engine := dockerEngine{executor: deploy.DockerExecutor{Routes: publisher, Artifacts: w, Vault: w.vault, ArtifactDirectory: filepath.Join(directory, "artifacts")}, command: command}
 	w.execute = engine.Execute
 	w.hasWorkload = func(ctx context.Context, r remoteruntime.Request) (bool, error) {
 		resources, err := engine.resources(ctx, r)
@@ -237,7 +251,16 @@ func (w *Worker) Run(ctx context.Context, job remoteruntime.LeasedJob, progress 
 	if progress == nil {
 		progress = func(core.DeploymentState, string) error { return execution.Err() }
 	}
+	var route *core.ApplicationRoute
+	execution = deploy.WithRouteReporter(execution, func(_ context.Context, record core.ApplicationRoute) error {
+		if err := job.Request.ValidateRoute(&record); err != nil {
+			return err
+		}
+		route = &record
+		return nil
+	})
 	result := w.execute(execution, job.Request, func(phase core.DeploymentState, message string) error { return progress(phase, redact(message)) })
+	result.Route = route
 	result.Message, result.Logs = redact(result.Message), redact(result.Logs)
 	raw, err = json.Marshal(result)
 	if err != nil || len(raw) > remoteruntime.MaxResult {

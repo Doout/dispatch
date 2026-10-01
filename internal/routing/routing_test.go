@@ -154,3 +154,43 @@ func TestPublicEvidenceDistinguishesCertificateDelayRenewalAndRouteMismatch(t *t
 		t.Fatal("old route header accepted for new destination")
 	}
 }
+
+func TestPreparationCannotChangeServingListenerOrTLSPolicy(t *testing.T) {
+	publisher, plan := routeFixture(t)
+	ctx := context.Background()
+	if _, err := publisher.Prepare(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisher.Promote(ctx, plan, LoopbackDestination(32001)); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(filepath.Join(publisher.Directory, routeFile(plan.AppID)))
+	for _, change := range []func(*core.ApplicationRoute){
+		func(r *core.ApplicationRoute) { r.EntryPoint = "other" },
+		func(r *core.ApplicationRoute) { r.RequireTLS = false },
+		func(r *core.ApplicationRoute) { r.TLSResolver = "other" },
+	} {
+		candidate := plan
+		candidate.RequestedDeploymentID = "next"
+		change(&candidate)
+		if _, err := publisher.Prepare(ctx, candidate); !errors.Is(err, ErrConflict) {
+			t.Fatal("serving policy changed before candidate readiness", err)
+		}
+		after, _ := os.ReadFile(filepath.Join(publisher.Directory, routeFile(plan.AppID)))
+		if string(before) != string(after) {
+			t.Fatal("serving route was rewritten")
+		}
+	}
+}
+func TestPublicProxyFailureCannotBeLiveEvenWithDeploymentHeader(t *testing.T) {
+	_, route := routeFixture(t)
+	route.RequireTLS = false
+	route.DeploymentID = "first"
+	probe := Probe{LookupHost: func(context.Context, string) ([]string, error) { return []string{"192.0.2.10"}, nil }, Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 502, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{"X-Dispatch-Deployment": []string{"first"}}}, nil
+	})}}
+	checked := probe.Check(context.Background(), route)
+	if checked.State != "degraded" {
+		t.Fatal("broken proxy claimed live", checked)
+	}
+}

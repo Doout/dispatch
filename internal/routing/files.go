@@ -213,6 +213,7 @@ func (p *FilePublisher) Prepare(ctx context.Context, plan core.ApplicationRoute)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		plan.State = "preparing"
 		plan.UpdatedAt = time.Now().UTC()
 		result = plan
 		return p.write(plan)

@@ -143,6 +143,9 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	if err != nil {
 		return err
 	}
+	if err := r.ValidateRoute(c.Result.Route); err != nil {
+		return err
+	}
 	c.Result.Message, c.Result.Logs = r.Redact(c.Result.Message), r.Redact(c.Result.Logs)
 	if len(c.Result.Resources) > 1000 {
 		return errors.New("too many runtime resources")

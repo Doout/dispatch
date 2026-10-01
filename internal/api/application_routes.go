@@ -2,11 +2,12 @@ package api
 
 import (
 	"errors"
+	"net/http"
+
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
-	"net/http"
 )
 
 func (a *API) getApplicationRoute(w http.ResponseWriter, r *http.Request) {
@@ -65,18 +66,16 @@ func (a *API) updateServerRouting(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Routing configuration invalid", err.Error())
 		return
 	}
-	if input.Routing == nil {
-		if data, ok := a.store.(store.ApplicationRouteStore); ok {
-			routes, err := data.ListApplicationRoutes(r.Context())
-			if err != nil {
-				a.internal(w, err)
+	if data, ok := a.store.(store.ApplicationRouteStore); ok {
+		routes, err := data.ListApplicationRoutes(r.Context())
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		for _, route := range routes {
+			if route.ServerID == server.ID && (input.Routing == nil || route.EntryPoint != input.Routing.EntryPoint || route.RequireTLS != input.Routing.RequireTLS || route.TLSResolver != input.Routing.TLSResolver) {
+				problem(w, 409, "Managed routes remain", "Clean up this target's application routes before disabling routing or changing their listener and TLS policy.")
 				return
-			}
-			for _, route := range routes {
-				if route.ServerID == server.ID {
-					problem(w, 409, "Managed routes remain", "Clean up this target's application routes before disabling managed routing.")
-					return
-				}
 			}
 		}
 	}

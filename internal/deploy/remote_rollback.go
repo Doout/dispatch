@@ -46,7 +46,10 @@ func (e RemoteExecutor) RollbackRuntime(ctx context.Context, d, source core.Depl
 	if err != nil {
 		return err
 	}
-	_, err = e.Broker.Wait(ctx, job.ID, progress)
+	result, err := e.Broker.Wait(ctx, job.ID, progress)
+	if reportErr := reportRemoteRoute(ctx, request, result); reportErr != nil {
+		return reportErr
+	}
 	return err
 }
 

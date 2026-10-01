@@ -42,7 +42,9 @@ func TestManagedDockerCandidateFailurePreservesServingRoute(t *testing.T) {
 					_, _ = io.WriteString(output, "127.0.0.1:32444\n")
 				}
 				if len(args) > 0 && args[0] == "inspect" {
-					if strings.Contains(command, "running") {
+					if strings.Contains(command, "{{.Image}}") {
+						_, _ = io.WriteString(output, app.ID+"|"+app.ProjectID+"|"+d.ID+"|sha256:"+strings.Repeat("a", 64))
+					} else if strings.Contains(command, "running") {
 						raw, _ := json.Marshal(map[string]any{"running": healthy, "health": "none"})
 						_, _ = output.Write(raw)
 					} else {
@@ -51,7 +53,7 @@ func TestManagedDockerCandidateFailurePreservesServingRoute(t *testing.T) {
 				}
 				return nil
 			}}
-			err := executor.startRoutedDocker(ctx, d, app, server, *plan, "sha256:image", "", func(core.DeploymentState, string) error { return nil })
+			err := executor.startRoutedDocker(ctx, d, app, server, *plan, "sha256:"+strings.Repeat("a", 64), "", func(core.DeploymentState, string) error { return nil })
 			current, readErr := publisher.Read(ctx, app.ID)
 			if readErr != nil {
 				t.Fatal(readErr)
@@ -104,5 +106,19 @@ func TestManagedComposeRejectsUnsafeStagingBeforeApply(t *testing.T) {
 	original, _ := json.Marshal(config)
 	if !strings.Contains(string(original), "0.0.0.0") {
 		t.Fatal("staging mutated retained artifact")
+	}
+}
+
+func TestManagedCandidateRejectsReplacedRevisionOrOwner(t *testing.T) {
+	image := "sha256:" + strings.Repeat("a", 64)
+	app := core.App{ID: "app", ProjectID: "project"}
+	for _, metadata := range []string{"other|project|deployment|" + image, "app|other|deployment|" + image, "app|project|other|" + image, "app|project|deployment|sha256:" + strings.Repeat("b", 64)} {
+		executor := DockerExecutor{run: func(_ context.Context, _ io.Reader, out io.Writer, _ string, _ ...string) error {
+			_, err := io.WriteString(out, metadata)
+			return err
+		}}
+		if err := executor.validateRouteCandidate(context.Background(), "candidate", app, "deployment", image); err == nil {
+			t.Fatal("replaced candidate accepted", metadata)
+		}
 	}
 }

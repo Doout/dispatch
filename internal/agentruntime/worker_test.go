@@ -15,6 +15,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/runtimecontract"
 )
 
@@ -224,5 +225,43 @@ func TestWorkerLogsRequireCompleteHistoryAfterStateLoss(t *testing.T) {
 	job.Request.Operation = runtimecontract.Logs
 	if _, err := fresh.redactor(ctx, job.Request); err == nil {
 		t.Fatal("replacement deployment exposed logs of an older workload without history")
+	}
+}
+
+func TestWorkerPersistsRouteEvidenceOnFailureAndReplaysIt(t *testing.T) {
+	w := workerFixture(t)
+	job := leasedJob()
+	job.Request.Application.ContainerPort = 8080
+	job.Request.Server.Routing = &core.RoutingConfig{BaseDomain: "apps.example.com"}
+	raw, _ := json.Marshal(job.Request)
+	digest := sha256.Sum256(raw)
+	job.Digest = hex.EncodeToString(digest[:])
+	calls := 0
+	w.execute = func(ctx context.Context, r remoteruntime.Request, _ deploy.Progress) remoteruntime.Result {
+		calls++
+		route, err := routing.Plan(r.Deployment, r.Application, r.Server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		route.State = "preparing"
+		if err = deploy.ReportRoute(ctx, *route); err != nil {
+			t.Fatal(err)
+		}
+		return failure(runtimecontract.Unavailable, "candidate health failed")
+	}
+	for i := 0; i < 2; i++ {
+		result := w.Run(context.Background(), job, nil)
+		if result.State != "failed" || result.Route == nil || result.Route.State != "preparing" || result.Route.AppID != "app" {
+			t.Fatal("failure lost route evidence", result)
+		}
+	}
+	if calls != 1 {
+		t.Fatal("route retry replayed mutation")
+	}
+}
+func TestWorkerRoutingDirectoryIsOperatorConfiguredAbsolutePath(t *testing.T) {
+	if w, err := Open(t.TempDir(), "node", Options{RoutingDirectory: "relative"}); err == nil {
+		w.Close()
+		t.Fatal("relative publisher directory accepted")
 	}
 }

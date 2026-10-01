@@ -9,6 +9,69 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /servers/{id}/routing:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: updateServerRouting
+      description: Controller-owner configuration of a Docker target's managed domain and Traefik listener. The runtime provider directory is operator configuration, never an API input. Existing owned routes prevent disabling routing or changing listener/TLS policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [routing]
+              properties:
+                routing:
+                  oneOf:
+                    - { $ref: '#/components/schemas/RoutingConfig' }
+                    - { type: 'null' }
+      responses:
+        '200': { description: Updated server record including routing configuration. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /apps/{id}/route:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getApplicationRoute
+      description: Requires project.view. Returns current owned route and separate public DNS/TLS evidence, or null when no managed route is reserved.
+      responses:
+        '200':
+          description: Current managed route or null.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/ApplicationRoute' }
+                  - { type: 'null' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /apps/{id}/route/check:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: checkApplicationRoute
+      description: Requires project.configure. Bounded public DNS, certificate and deployment identity probe. A concurrent route change returns 409 instead of overwriting newer evidence.
+      responses:
+        '200':
+          description: Updated public evidence; workload success alone does not imply the route is live.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationRoute' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /contracts/runtime:
     get:
       operationId: getRuntimeContract
@@ -3322,6 +3385,43 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    RoutingConfig:
+      type: object
+      required: [baseDomain]
+      properties:
+        baseDomain: { type: string, example: apps.example.com }
+        entryPoint: { type: string, description: Defaults to websecure when requireTls is true and web otherwise. }
+        requireTls: { type: boolean, default: false }
+        tlsResolver: { type: string, description: Required when requireTls is true. }
+        composeService: { type: string, description: Optional default ingress service for multi-service Compose definitions. }
+    ApplicationRoute:
+      type: object
+      required: [appId, projectId, serverId, hostname, entryPoint, requireTls, requestedDeploymentId, state, dns, certificate, updatedAt]
+      properties:
+        appId: { type: string }
+        projectId: { type: string }
+        serverId: { type: string }
+        hostname: { type: string }
+        entryPoint: { type: string }
+        requireTls: { type: boolean }
+        tlsResolver: { type: string }
+        requestedDeploymentId: { type: string }
+        deploymentId: { type: string, description: Currently published candidate identity. }
+        destination: { type: string, description: Target-private allocated loopback endpoint. }
+        previousDeploymentId: { type: string }
+        previousDestination: { type: string }
+        state: { type: string, description: Only active means the public endpoint was verified by the controller. }
+        message: { type: string }
+        dns: { type: string, enum: [pending, resolved] }
+        certificate:
+          type: object
+          properties:
+            state: { type: string, enum: [not_required, pending, invalid, verified, renewal_due] }
+            message: { type: string }
+            expiresAt: { type: string, format: date-time }
+            checkedAt: { type: string, format: date-time }
+        publishedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     HealthPolicy:
       type: object
       properties:

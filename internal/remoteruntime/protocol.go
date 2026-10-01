@@ -56,6 +56,7 @@ type LeasedJob struct {
 }
 
 type Result struct {
+	Route          *core.ApplicationRoute       `json:"route,omitempty"`
 	State          string                       `json:"state"`
 	Code           runtimecontract.Code         `json:"code,omitempty"`
 	Message        string                       `json:"message,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/doout/dispatch/internal/core"
 )
@@ -77,6 +78,7 @@ func routedComposeConfig(config map[string]any, app core.App, server core.Server
 			labels = map[string]any{}
 		}
 		labels["dispatch.app"], labels["dispatch.project"], labels["dispatch.deployment"], labels["traefik.enable"] = app.ID, app.ProjectID, d.ID, "false"
+		labels["dispatch.route-candidate"] = "true"
 		service["labels"] = labels
 		if name == ingress {
 			service["ports"] = []map[string]any{{"target": app.ContainerPort, "host_ip": "127.0.0.1", "published": "0", "protocol": "tcp"}}
@@ -94,7 +96,7 @@ func routedComposeConfig(config map[string]any, app core.App, server core.Server
 				continue
 			}
 			network["name"] = project + "_" + key
-			network["labels"] = map[string]string{"dispatch.app": app.ID, "dispatch.deployment": d.ID}
+			network["labels"] = map[string]string{"dispatch.app": app.ID, "dispatch.project": app.ProjectID, "dispatch.deployment": d.ID, "dispatch.route-candidate": "true"}
 		}
 	}
 	return candidate, nil
@@ -119,6 +121,17 @@ func (e DockerExecutor) applyRoutedCompose(ctx context.Context, d core.Deploymen
 	}
 	name := candidateResourceName(app.ID, d.ID)
 	ingress, _ := candidate["x-dispatch-ingress-service"].(string)
+	// Compose must not reconcile a deterministic project name that an external
+	// actor replaced with a different accepted revision or another owner's data.
+	var existing strings.Builder
+	if err = e.command(ctx, nil, &existing, "docker", "ps", "-aq", "--filter", "label=com.docker.compose.project="+name); err != nil {
+		return err
+	}
+	for _, id := range strings.Fields(existing.String()) {
+		if _, err = e.routeComposeIdentity(ctx, id, app, d.ID, inputs.Images); err != nil {
+			return err
+		}
+	}
 	if err = progress(core.DeploymentStarting, "Starting isolated Compose candidate on "+server.Name); err != nil {
 		return err
 	}
@@ -132,14 +145,10 @@ func (e DockerExecutor) applyRoutedCompose(ctx context.Context, d core.Deploymen
 	targets := []CandidateTarget{}
 	ingressPort := 0
 	for _, id := range strings.Fields(output.String()) {
-		if err = e.validateContainerOwner(ctx, id, app.ID); err != nil {
-			return err
+		service, identityErr := e.routeComposeIdentity(ctx, id, app, d.ID, inputs.Images)
+		if identityErr != nil {
+			return identityErr
 		}
-		var metadata strings.Builder
-		if err = e.command(ctx, nil, &metadata, "docker", "inspect", "--format", `{{index .Config.Labels "com.docker.compose.service"}}`, id); err != nil {
-			return errors.New("cannot inspect Compose service identity")
-		}
-		service := strings.TrimSpace(metadata.String())
 		target := CandidateTarget{Container: id, Service: service}
 		if service == ingress {
 			if ingressPort != 0 {
@@ -157,11 +166,22 @@ func (e DockerExecutor) applyRoutedCompose(ctx context.Context, d core.Deploymen
 		return errors.New("Compose candidate has no configured ingress endpoint")
 	}
 	if err = e.promoteCandidate(ctx, d, app, server, *plan, targets, ingressPort, progress); err != nil {
-		current, readErr := e.Routes.Read(context.WithoutCancel(ctx), app.ID)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		current, readErr := e.Routes.Read(cleanup, app.ID)
 		if readErr == nil && current.DeploymentID != d.ID {
-			_ = e.command(context.WithoutCancel(ctx), nil, io.Discard, "docker", "compose", "-p", name, "-f", path, "down")
+			_ = e.command(cleanup, nil, io.Discard, "docker", "compose", "-p", name, "-f", path, "down")
 		}
 		return err
 	}
 	return nil
+}
+
+func (e DockerExecutor) routeComposeIdentity(ctx context.Context, id string, app core.App, deploymentID string, images map[string]string) (string, error) {
+	var metadata strings.Builder
+	if err := e.command(ctx, nil, &metadata, "docker", "inspect", "--format", `{{index .Config.Labels "com.docker.compose.service"}}`, id); err != nil {
+		return "", errors.New("cannot inspect Compose service identity")
+	}
+	service := strings.TrimSpace(metadata.String())
+	return service, e.validateRouteCandidate(ctx, id, app, deploymentID, images[service])
 }

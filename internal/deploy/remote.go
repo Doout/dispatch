@@ -58,10 +58,24 @@ func (e RemoteExecutor) ExecuteRemote(ctx context.Context, id string, op runtime
 	if err != nil {
 		return remoteruntime.Result{}, err
 	}
-	return e.Broker.Wait(ctx, job.ID, progress)
+	result, err := e.Broker.Wait(ctx, job.ID, progress)
+	if reportErr := reportRemoteRoute(ctx, remoteruntime.NewRequest(op, d, app, server), result); reportErr != nil {
+		return result, reportErr
+	}
+	return result, err
 }
 
 func (e RemoteExecutor) Execute(ctx context.Context, op runtimecontract.Operation, d core.Deployment, app core.App, server core.Server, progress Progress) error {
 	_, err := e.ExecuteRemote(ctx, "runtime-"+ulid.Make().String(), op, d, app, server, progress)
 	return err
+}
+
+func reportRemoteRoute(ctx context.Context, request remoteruntime.Request, result remoteruntime.Result) error {
+	if err := request.ValidateRoute(result.Route); err != nil {
+		return err
+	}
+	if result.Route != nil {
+		return ReportRoute(ctx, *result.Route)
+	}
+	return nil
 }
