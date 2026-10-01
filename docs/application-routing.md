@@ -124,6 +124,6 @@ health failure, route rollback, stale observations, certificate delay and proxy 
 `DISPATCH_RUNTIME_INTEGRATION=1 go test ./internal/agentruntime -run TestRemoteManagedRouteCandidateIntegration`
 uses disposable real Docker Compose candidates and Traefik v3.6 to check healthy
 publication, receipt replay, failed HTTP readiness preserving the serving endpoint,
-and a healthy switch through the file provider. DNS is locally resolved by the test.
+a healthy switch and retained rollback through the file provider. DNS is locally resolved by the test.
 Public ACME issuance requires an operator-controlled domain and is not exercised by
 that local integration test.

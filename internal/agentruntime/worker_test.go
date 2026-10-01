@@ -265,3 +265,47 @@ func TestWorkerRoutingDirectoryIsOperatorConfiguredAbsolutePath(t *testing.T) {
 		t.Fatal("relative publisher directory accepted")
 	}
 }
+
+func TestWorkerJournalsRouteEvidenceBeforeCompletion(t *testing.T) {
+	w := workerFixture(t)
+	job := leasedJob()
+	job.Request.Application.ContainerPort = 8080
+	job.Request.Server.Routing = &core.RoutingConfig{BaseDomain: "apps.example.com"}
+	raw, _ := json.Marshal(job.Request)
+	digest := sha256.Sum256(raw)
+	job.Digest = hex.EncodeToString(digest[:])
+	var interrupted []byte
+	w.execute = func(ctx context.Context, r remoteruntime.Request, _ deploy.Progress) remoteruntime.Result {
+		record, _ := routing.Plan(r.Deployment, r.Application, r.Server)
+		record.State = "published"
+		record.DeploymentID = r.Deployment.ID
+		record.Destination = "http://127.0.0.1:32000"
+		if err := deploy.ReportRoute(ctx, *record); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		interrupted, err = os.ReadFile(filepath.Join(w.directory, "receipt-"+job.ID+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved receipt
+		if json.Unmarshal(interrupted, &saved) != nil || saved.State != "running" || saved.Route == "" {
+			t.Fatal("route was not durable before executor completion")
+		}
+		return remoteruntime.Result{State: "succeeded"}
+	}
+	if result := w.Run(context.Background(), job, nil); result.State != "succeeded" {
+		t.Fatal(result)
+	}
+	if err := w.save("receipt-"+job.ID+".json", interrupted); err != nil {
+		t.Fatal(err)
+	}
+	w.execute = func(context.Context, remoteruntime.Request, deploy.Progress) remoteruntime.Result {
+		t.Fatal("uncertain publication replayed")
+		return remoteruntime.Result{}
+	}
+	result := w.Run(context.Background(), job, nil)
+	if result.Code != runtimecontract.Uncertain || result.Route == nil || result.Route.DeploymentID != job.Request.Deployment.ID {
+		t.Fatal("interrupted publication lost evidence", result)
+	}
+}

@@ -32,7 +32,7 @@ export function ServerRoutingSettings({ server, onClose, onChanged }: { server: 
         <label>Default Compose ingress service<input value={composeService} onChange={event => setComposeService(event.target.value)} placeholder="Optional for a single-service app" /><small>A Compose definition can select its service with x-dispatch-ingress-service.</small></label>
       </div>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="form-actions"><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button type="submit" disabled={busy}>{busy ? "Saving…" : "Save routing"}</button></div>
+      <div className="form-actions"><button type="button" className="quiet-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save routing"}</button></div>
     </form>
   </section></div>;
 }

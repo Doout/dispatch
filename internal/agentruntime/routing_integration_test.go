@@ -141,4 +141,33 @@ func TestRemoteManagedRouteCandidateIntegration(t *testing.T) {
 	readVersion(second.Route.Destination, "second")
 	assertPublic(*second.Route, "second")
 	readVersion(second.Route.PreviousDestination, "first")
+
+	runRequest := func(request remoteruntime.Request) remoteruntime.Result {
+		t.Helper()
+		raw, _ := json.Marshal(request)
+		digest := sha256.Sum256(raw)
+		result := worker.Run(ctx, remoteruntime.LeasedJob{ID: ulid.Make().String(), Attempt: 1, Digest: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(time.Minute), Request: request}, nil)
+		if result.State != "succeeded" {
+			t.Fatalf("%s failed: %#v", request.Operation, result)
+		}
+		return result
+	}
+	reviewRequest := remoteruntime.NewRequest(runtimecontract.Inspect, core.Deployment{}, app, server)
+	reviewRequest.SourceDeploymentID = first.Route.DeploymentID
+	reviewed := runRequest(reviewRequest)
+	if reviewed.Rollback == nil || !reviewed.Rollback.Available || reviewed.RuntimeDigest == "" {
+		t.Fatal("missing managed rollback evidence", reviewed)
+	}
+	rollbackDeployment := core.Deployment{ID: ulid.Make().String(), AppID: app.ID, SpecDigest: app.SpecDigest(), Health: core.DeploymentHealth{Policy: app.HealthPolicy}}
+	rollbackRequest := remoteruntime.NewRequest(runtimecontract.Rollback, rollbackDeployment, app, server)
+	rollbackRequest.SourceDeploymentID = first.Route.DeploymentID
+	rollbackRequest.ExpectedRuntime = reviewed.RuntimeDigest
+	restored := runRequest(rollbackRequest)
+	if restored.Route == nil || restored.Route.PreviousDeploymentID != second.Route.DeploymentID {
+		t.Fatal("rollback lost route history", restored)
+	}
+	assertPublic(*restored.Route, "first")
+	if len(restored.Resources) != 2 {
+		t.Fatal("older managed candidates were not pruned", restored.Resources)
+	}
 }

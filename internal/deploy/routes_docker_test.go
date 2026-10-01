@@ -122,3 +122,29 @@ func TestManagedCandidateRejectsReplacedRevisionOrOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedCandidatePruningKeepsCurrentAndPrevious(t *testing.T) {
+	removed := []string{}
+	executor := DockerExecutor{run: func(_ context.Context, _ io.Reader, out io.Writer, _ string, args ...string) error {
+		joined := strings.Join(args, " ")
+		if args[0] == "ps" || strings.HasPrefix(joined, "network ls") {
+			_, _ = io.WriteString(out, "current previous old")
+			return nil
+		}
+		id := args[len(args)-1]
+		if strings.Contains(joined, "inspect") {
+			_, _ = io.WriteString(out, "app|project|"+id)
+			return nil
+		}
+		if strings.Contains(joined, "rm") {
+			removed = append(removed, joined)
+		}
+		return nil
+	}}
+	if err := executor.pruneRouteCandidates(context.Background(), core.App{ID: "app", ProjectID: "project"}, "current", "previous"); err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 2 || removed[0] != "rm -f old" || removed[1] != "network rm old" {
+		t.Fatal("candidate retention changed serving resources", removed)
+	}
+}
