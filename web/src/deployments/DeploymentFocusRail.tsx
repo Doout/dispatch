@@ -1,8 +1,8 @@
 import { DeploymentStatusPills, useDeploymentCatalog } from "./DeploymentCatalog";
-import type { CatalogItem } from "./catalogClient";
+import type { CatalogItem, CatalogStatus } from "./catalogClient";
 import { BuildLogs } from "./BuildLogs";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowSquareOut, CaretDown, CaretRight, CaretUp, CheckCircle, Circle, CircleNotch, GitBranch, WarningCircle } from "@phosphor-icons/react";
+import { ArrowSquareOut, CaretDown, CaretUp, CheckCircle, Circle, CircleNotch, Clock, GitBranch, Question, WarningCircle } from "@phosphor-icons/react";
 import type { App, Deployment, Overview, WorkflowResource, WorkflowRevision, WorkflowStageRun } from "../api";
 import { relative, short } from "../presentation";
 import { routePath, shouldHandleNavigation } from "../routes";
@@ -216,17 +216,14 @@ function DeploymentFocusRail({ rail, expanded, selectedStage, onToggle, onSelect
   onSelectStage: (stageName: string) => void;
   onSelectDeployment: (id: string) => void;
 }) {
-  const readyStages = rail.stages.filter((stage) => stage.state === "succeeded").length;
   const contentID = `deployment-application-${safeID(rail.id)}-details`;
   const headingID = `deployment-application-${safeID(rail.id)}-heading`;
-  const summaryState = railSummaryState(rail.stages);
+  const updatedAt = rail.stages.map(stage => stage.updatedAt).filter((value): value is string => Boolean(value)).sort().at(-1);
   return <article className={`deployment-focus-card ${expanded ? "expanded" : "compact"}`} id={`deployment-application-${safeID(rail.id)}`} aria-labelledby={headingID}>
     <header className="deployment-focus-heading">
-      <div className="deployment-focus-identity"><h2 id={headingID}>{rail.name}</h2><span>{rail.detail}</span></div>
+      <div className="deployment-focus-identity"><h2 id={headingID} title={rail.name}>{rail.name}</h2><span>{updatedAt ? <>Updated <time dateTime={updatedAt}>{relative(updatedAt)}</time></> : "No deployments yet"}</span></div>
       <CompactPromotionSummary rail={rail} onSelectDeployment={onSelectDeployment} onSelectStage={onSelectStage} />
       <div className="deployment-focus-actions">
-        <RailStatus state={summaryState} tone={stateTone(summaryState)} />
-        <span className="deployment-stage-count">{readyStages}/{rail.stages.length} ready</span>
         <button
           type="button"
           className="deployment-focus-toggle"
@@ -244,9 +241,9 @@ function DeploymentFocusRail({ rail, expanded, selectedStage, onToggle, onSelect
     {expanded && <div id={contentID}>
       <div className="deployment-promotion-rail" aria-label={`${rail.name} promotion stages`}>
         <div className="deployment-source-node">
-          <span className="deployment-node-icon"><GitBranch size={17} /></span>
-          <span><strong>Source</strong><small title={rail.source.title}>{rail.source.detail}</small></span>
-          <code title={rail.source.title}>{rail.source.revision}</code>
+          <span className="deployment-source-node-heading"><span className="deployment-node-icon"><GitBranch size={17} /></span><strong>Source</strong></span>
+          <small>{rail.source.detail}</small>
+          <span className="deployment-node-field"><small>Source revision</small><code title={rail.source.title}>{rail.source.revision}</code></span>
         </div>
         {rail.stages.map((stage) => <button
           key={stage.name}
@@ -257,7 +254,10 @@ function DeploymentFocusRail({ rail, expanded, selectedStage, onToggle, onSelect
           onClick={() => onSelectStage(stage.name)}
         >
           <span className="deployment-stage-node-main"><strong>{stage.label}</strong><RailStatus state={stage.state} tone={stage.tone} /></span>
-          <span className="deployment-node-meta"><span>{stage.target}</span><code title={stage.revisionTitle}>{stage.revision}</code></span>
+          <span className="deployment-node-fields">
+            <span className="deployment-node-field"><small>Target</small><span title={stage.target}>{stage.target}</span></span>
+            <span className="deployment-node-field"><small>Deployed revision</small><code title={stage.revisionTitle}>{stage.revision}</code></span>
+          </span>
           {!stage.currentRevision && stage.run && <small className="deployment-revision-drift" title={stage.candidateRevisionTitle ? `Next revision: ${stage.candidateRevisionTitle}` : undefined}>{stage.deployment ? "Older revision" : "Not deployed"}</small>}
         </button>)}
       </div>
@@ -268,37 +268,61 @@ function DeploymentFocusRail({ rail, expanded, selectedStage, onToggle, onSelect
 
 function CompactPromotionSummary({ rail, onSelectDeployment, onSelectStage }: { rail: DeploymentRail; onSelectDeployment: (id: string) => void; onSelectStage: (name: string) => void }) {
   const { items } = useDeploymentCatalog();
-  return <div className="deployment-compact-route" aria-label={`${rail.name} deployment summary`}>
-    <div className="deployment-compact-source">
-      <GitBranch size={15} aria-hidden="true" />
-      <span><strong>Source</strong><code title={rail.source.title}>{rail.source.revision}</code></span>
-    </div>
+  const multiple = rail.stages.length > 1;
+  return <div className={`deployment-compact-route ${multiple ? "multiple" : ""}`} aria-label={`${rail.name} deployment summary`}>
     {rail.stages.map((stage) => {
-      const item = items.find(item => item.appId === stage.deployment?.appId || (item.resourceId === rail.id && item.environment === stage.name));
+      const item = stageCatalogItem(items, rail, stage);
+      const summary = stageSummary(stage, item?.sync);
       const content = <>
-        <CaretRight size={13} aria-hidden="true" />
-        <RailStatusIcon tone={stage.tone} />
-        <span><strong>{stage.label}</strong><small>{stage.target}</small></span>
-        <code title={stage.revisionTitle}>{stage.revision}</code>
+        <span className="deployment-compact-environment"><strong>{stage.label}</strong>{!multiple && <small title={stage.target}>{stage.target}</small>}</span>
+        <span className={`deployment-summary-status ${summary.tone}`} title={summary.detail}>
+          {summary.tone === "warning" ? <Clock size={14} aria-hidden="true" /> : summary.tone === "muted" ? <Question size={14} aria-hidden="true" /> : <RailStatusIcon tone={summary.tone} />}
+          <span className={multiple && summary.tone === "success" ? "sr-only" : undefined}>{summary.label}</span>
+        </span>
       </>;
-      const className = `deployment-compact-stage ${stage.tone}`;
+      const className = "deployment-compact-stage";
       return <div key={stage.name} className="deployment-stage-observation">{stage.deployment ? <a
         key={stage.name}
         className={className}
         href={routePath({ view: "deployments", deploymentID: stage.deployment.id })}
         aria-label={`Open ${rail.name} ${stage.label} latest deployment`}
-        title="Open latest deployment"
+        title={`${stage.label}: ${summary.label}. Target: ${stage.target}. Open latest deployment.`}
         onClick={event => {
           if (!shouldHandleNavigation(event)) return;
           event.preventDefault();
           onSelectDeployment(stage.deployment!.id);
         }}
-      >{content}</a> : <button key={stage.name} type="button" className={className} aria-label={`Inspect ${rail.name} ${stage.label} stage`} title="Show stage details" onClick={() => onSelectStage(stage.name)}>{content}</button>}<DeploymentStatusPills status={item?.sync} />{item?.current && item.current.id !== stage.deployment?.id && <a className="deployment-running-link" href={routePath({ view: "deployments", deploymentID: item.current.id })} onClick={event => { if (!shouldHandleNavigation(event)) return; event.preventDefault(); onSelectDeployment(item.current!.id); }}>Running <code>{short(item.current.commitSha)}</code></a>}</div>;
+      >{content}</a> : <button key={stage.name} type="button" className={className} aria-label={`Inspect ${rail.name} ${stage.label} stage`} title={`${stage.label}: ${summary.label}. Target: ${stage.target}. Show stage details.`} onClick={() => onSelectStage(stage.name)}>{content}</button>}{!multiple && item?.current && item.current.id !== stage.deployment?.id && <a className="deployment-running-link" href={routePath({ view: "deployments", deploymentID: item.current.id })} onClick={event => { if (!shouldHandleNavigation(event)) return; event.preventDefault(); onSelectDeployment(item.current!.id); }}>Running release</a>}</div>;
     })}
   </div>;
 }
 
+function stageCatalogItem(items: CatalogItem[], rail: DeploymentRail, stage: RailStage) {
+  return items.find(item => item.appId === stage.deployment?.appId || (item.resourceId === rail.id && item.environment === stage.name));
+}
+
+function stageSummary(stage: RailStage, status?: CatalogStatus): { label: string; tone: RailTone | "warning" | "muted"; detail: string } {
+  const rollout = { label: stateLabel(stage.state), tone: stage.tone, detail: `Rollout: ${stateLabel(stage.state)}` };
+  const detail = [rollout.detail, status?.configurationMessage, status?.healthMessage, status?.message, status?.checkedAt ? `Last checked ${relative(status.checkedAt)}` : undefined].filter(Boolean).join(". ");
+  const update = { label: "Update available", tone: "warning" as const, detail: `${detail}. This environment is behind the source revision.` };
+  if (stage.tone !== "success") return { ...rollout, detail };
+  if (!status) return !stage.currentRevision && stage.run ? update : { ...rollout, detail: `${rollout.detail}. Observed runtime status is unavailable.` };
+  if (["invalid", "failed", "error"].includes(status.configuration)) return { label: "Configuration error", tone: "danger", detail };
+  if (status.supported && status.checkedAt) {
+    if (["unhealthy", "degraded", "failed", "error"].includes(status.health)) return { label: "Unhealthy", tone: "danger", detail };
+    if (["drifted", "out_of_sync"].includes(status.drift)) return { label: "Drift detected", tone: "danger", detail };
+    if (Date.now() - Date.parse(status.checkedAt) > (status.staleAfterSeconds ?? 900) * 1000)
+      return { label: "Check overdue", tone: "warning", detail };
+    if (!["synced", "in_sync", "current"].includes(status.drift) || status.health !== "healthy")
+      return { label: "Status unknown", tone: "muted", detail };
+  } else if (status.supported) return { label: "Not checked", tone: "muted", detail };
+  if (!stage.currentRevision && stage.run) return update;
+  return { ...rollout, detail };
+}
+
 function StageInspector({ rail, stage, onSelectDeployment }: { rail: DeploymentRail; stage: RailStage; onSelectDeployment: (id: string) => void }) {
+  const { items } = useDeploymentCatalog();
+  const item = stageCatalogItem(items, rail, stage);
   const [showAllRuns, setShowAllRuns] = useState(false);
   const deployState = stage.run && stage.run.state !== "succeeded" ? stage.run.state : stage.deployment?.state ?? stage.run?.state ?? stage.state;
   const readyState = stage.state === "succeeded" ? "Ready" : stage.state === "failed" ? "Failed" : stage.state === "awaiting_approval" ? "Waiting" : "Pending";
@@ -307,13 +331,17 @@ function StageInspector({ rail, stage, onSelectDeployment }: { rail: DeploymentR
 
   return <section className="deployment-stage-inspector" aria-label={`${rail.name} ${stage.label} deployment details`}>
     <div className="deployment-stage-summary">
-      <header><div><h3>{stage.label}</h3><RailStatus state={stage.state} tone={stage.tone} /></div>{stage.deployment && <DeploymentLink deployment={stage.deployment} onSelect={onSelectDeployment} label={`Open ${rail.name} ${stage.label} deployment`} />}</header>
+      <header><div><h3>{stage.label}</h3><RailStatus state={stage.state} tone={stage.tone} /></div><div className="deployment-stage-links">
+        {stage.deployment && <DeploymentLink deployment={stage.deployment} onSelect={onSelectDeployment} label={`Open ${rail.name} ${stage.label} deployment`} />}
+        {item?.current && item.current.id !== stage.deployment?.id && <DeploymentLink deployment={item.current} onSelect={onSelectDeployment} label={`Open ${rail.name} ${stage.label} running release`} text="Running release" />}
+      </div></header>
       <dl>
         <div><dt>Target</dt><dd>{stage.target}</dd></div>
         <div><dt>Revision</dt><dd><code title={stage.revisionTitle}>{stage.revision}</code>{!stage.currentRevision && stage.run && <span title={stage.candidateRevisionTitle}>{stage.candidateRevision ? `Next ${stage.candidateRevision}` : "Behind source"}</span>}</dd></div>
         <div><dt>Updated</dt><dd>{stage.updatedAt ? relative(stage.updatedAt) : "Not deployed"}</dd></div>
         <div><dt>Trigger</dt><dd>{humanize(stage.trigger)}</dd></div>
       </dl>
+      <div className="deployment-observation-details"><h4>Observed status</h4><DeploymentStatusPills status={item?.sync} /></div>
       {stage.workflowRevisionID && <BuildLogs revisionID={stage.workflowRevisionID} />}
       {stage.error && <p className="deployment-stage-error" title={stage.error}>{stage.error}</p>}
       <ol className="deployment-stage-progress" aria-label={`${stage.label} progress`}>
@@ -336,7 +364,7 @@ function StageInspector({ rail, stage, onSelectDeployment }: { rail: DeploymentR
   </section>;
 }
 
-function DeploymentLink({ deployment, onSelect, label, compact = false }: { deployment: Deployment; onSelect: (id: string) => void; label: string; compact?: boolean }) {
+function DeploymentLink({ deployment, onSelect, label, compact = false, text = "Open deployment" }: { deployment: Deployment; onSelect: (id: string) => void; label: string; compact?: boolean; text?: string }) {
   const tone = stateTone(deployment.state);
   return <a
     className={compact ? `deployment-run-link ${tone}` : "deployment-open-link"}
@@ -352,7 +380,7 @@ function DeploymentLink({ deployment, onSelect, label, compact = false }: { depl
     {compact && <code>{short(deployment.commitSha)}</code>}
     {compact && <span>{stateLabel(deployment.state)}</span>}
     {compact && <time dateTime={deployment.finishedAt ?? deployment.createdAt}>{relative(deployment.finishedAt ?? deployment.createdAt)}</time>}
-    {!compact && <><span>Open deployment</span><ArrowSquareOut size={14} /></>}
+    {!compact && <><span>{text}</span><ArrowSquareOut size={14} /></>}
   </a>;
 }
 
@@ -376,15 +404,6 @@ function railPriority(rail: DeploymentRail) {
   if (rail.stages.some((stage) => stage.tone === "active" || stage.state === "awaiting_approval")) return 1;
   if (rail.stages.some((stage) => stage.state === "not_deployed")) return 2;
   return 3;
-}
-
-function railSummaryState(stages: RailStage[]) {
-  if (stages.some((stage) => stage.tone === "danger")) return "failed";
-  const active = stages.find((stage) => stage.tone === "active");
-  if (active) return active.state;
-  if (stages.some((stage) => stage.state === "awaiting_approval")) return "awaiting_approval";
-  if (stages.every((stage) => stage.state === "succeeded")) return "succeeded";
-  return "not_deployed";
 }
 
 function preferredStage(stages: RailStage[]) {
