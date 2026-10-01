@@ -1294,3 +1294,7 @@ CREATE TABLE application_routes (
  requested_deployment_id TEXT NOT NULL,
  record TEXT NOT NULL
 );
+
+-- dispatch:migration 080_remote_storage
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect');

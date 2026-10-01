@@ -57,6 +57,9 @@ func TestRemoteDockerLifecycleIntegration(t *testing.T) {
 	}
 	first := core.Deployment{ID: ulid.Make().String(), AppID: app.ID, CommitSHA: "inline", SpecDigest: app.SpecDigest(), Snapshot: core.DeploymentSnapshot{TargetID: server.ID}}
 	deployed, original := execute(runtimecontract.Deploy, first, "", "")
+	if deployed.Health == nil || deployed.Health.State != "passed" {
+		t.Fatal("remote deployment lost passing health evidence")
+	}
 	if len(deployed.Resources) != 1 {
 		t.Fatalf("unexpected workload %#v", deployed)
 	}
@@ -90,6 +93,9 @@ func TestRemoteDockerLifecycleIntegration(t *testing.T) {
 	}
 	restored := core.Deployment{ID: ulid.Make().String(), AppID: app.ID, CommitSHA: "inline", SpecDigest: app.SpecDigest(), Snapshot: core.DeploymentSnapshot{TargetID: server.ID}}
 	rollback, _ := execute(runtimecontract.Rollback, restored, first.ID, review.RuntimeDigest)
+	if rollback.Health == nil || rollback.Health.State != "passed" {
+		t.Fatal("remote rollback lost passing health evidence")
+	}
 	if rollback.Resources[0].Image != deployed.Resources[0].Image {
 		t.Fatal("rollback rebuilt the image")
 	}

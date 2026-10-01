@@ -46,11 +46,16 @@ func (e RemoteExecutor) RollbackRuntime(ctx context.Context, d, source core.Depl
 	if err != nil {
 		return err
 	}
-	result, err := e.Broker.Wait(ctx, job.ID, progress)
-	if reportErr := reportRemoteRoute(ctx, request, result); reportErr != nil {
-		return reportErr
+	result, waitErr := e.Broker.Wait(ctx, job.ID, progress)
+	if result.Health != nil {
+		if err := reportDeploymentHealth(ctx, d, *result.Health); err != nil {
+			waitErr = errors.Join(waitErr, errors.New("remote health evidence could not be persisted"))
+		}
 	}
-	return err
+	if err := reportRemoteRoute(ctx, request, result); err != nil {
+		waitErr = errors.Join(waitErr, err)
+	}
+	return waitErr
 }
 
 func (e RemoteExecutor) CurrentRuntimeIdentity(ctx context.Context, app core.App, server core.Server) (string, error) {

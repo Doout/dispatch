@@ -90,6 +90,20 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 	var err error
 	var result remoteruntime.Result
 	switch request.Operation {
+	case remoteruntime.StorageInspect, remoteruntime.StorageDelete:
+		backend := deploy.RuntimeStorage{Run: func(ctx context.Context, _ io.Reader, out io.Writer, name string, args ...string) error {
+			if name != "docker" {
+				return errors.New("unsupported storage command")
+			}
+			value, err := e.command(ctx, args...)
+			_, _ = io.WriteString(out, value)
+			return err
+		}}
+		if request.Operation == remoteruntime.StorageInspect {
+			result.Storage, err = backend.Inspect(ctx, server)
+		} else {
+			err = backend.Delete(ctx, server, *request.Storage)
+		}
 	case remoteruntime.ProvisionService:
 		name := deploy.ServiceResourceName(request.Service.Request.Run.ID)
 		var existing string
@@ -168,7 +182,7 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 	default:
 		return failure(runtimecontract.Unsupported, "This agent does not implement the requested operation.")
 	}
-	mutating := request.Operation != runtimecontract.Inspect && request.Operation != runtimecontract.Logs
+	mutating := request.Operation != runtimecontract.Inspect && request.Operation != runtimecontract.Logs && request.Operation != remoteruntime.StorageInspect
 	// Stopping the Docker CLI does not prove that the daemon stopped its
 	// mutation. Keep the application locked until a later inspection reconciles
 	// the outcome, including when the CLI returns an ordinary killed-process error.

@@ -24,6 +24,7 @@ var commitPattern = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 var identityPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Request struct {
+	Storage            *core.StorageResource     `json:"storage,omitempty"`
 	APIVersion         string                    `json:"apiVersion"`
 	Operation          runtimecontract.Operation `json:"operation"`
 	Deployment         core.Deployment           `json:"deployment"`
@@ -56,7 +57,10 @@ type LeasedJob struct {
 }
 
 type Result struct {
-	Route          *core.ApplicationRoute       `json:"route,omitempty"`
+	Route *core.ApplicationRoute `json:"route,omitempty"`
+
+	Health         *core.DeploymentHealth       `json:"health,omitempty"`
+	Storage        []core.StorageObservation    `json:"storage"`
 	State          string                       `json:"state"`
 	Code           runtimecontract.Code         `json:"code,omitempty"`
 	Message        string                       `json:"message,omitempty"`
@@ -99,6 +103,12 @@ func NewRequest(op runtimecontract.Operation, d core.Deployment, app core.App, s
 func (r Request) Validate() error {
 	if r.APIVersion != APIVersion {
 		return errors.New("unsupported agent runtime version")
+	}
+	if IsStorageOperation(r.Operation) {
+		return r.validateStorage()
+	}
+	if r.Storage != nil {
+		return errors.New("workload requests cannot carry storage deletion inputs")
 	}
 	if !identityPattern.MatchString(r.Application.ID) || !identityPattern.MatchString(r.Application.ProjectID) || !identityPattern.MatchString(r.Server.ID) || !identityPattern.MatchString(r.Server.AgentNodeID) {
 		return errors.New("runtime request lacks a valid ownership identity")

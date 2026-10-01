@@ -30,8 +30,12 @@ PVC UID as a precondition and reports pending finalizers as unfinished work.
 
 ## Supported runtimes
 
-Local enrolled Docker targets inspect named and anonymous volumes, provenance
-labels and every container's volume mounts, including stopped containers.
+Local Docker targets and targets bound to an enrolled Docker agent inspect named
+and anonymous volumes, provenance labels and every container's volume mounts,
+including stopped containers. Enrolled targets use typed `storage_inspect` and
+`storage_delete` jobs; they never inspect or delete data on the controller daemon.
+The agent rechecks volume identity, provenance and consumers immediately before
+removal. Only ownership labels are returned; arbitrary volume labels are excluded.
 Dispatch adopts existing volumes only when runtime labels identify an application
 or built-in service provisioning run on the same target and in the correct
 project. Unlabeled volumes remain unverified and protected. Bind-mounted host
@@ -58,7 +62,7 @@ A target cannot be removed while recorded storage still depends on it. Provider
 disk records use the same guard: keeping a database record does not preserve a
 disk that disappears with its machine. A provider must establish independent
 storage preservation before allowing server deletion. Actual provider disk
-creation/deletion, remote storage drivers, backups and snapshots are separate
+creation/deletion, remote Kubernetes storage, backups and snapshots are separate
 capabilities; unsupported storage deletion fails before mutation.
 
 The controller currently has one active execution process. Storage inspection,
@@ -78,6 +82,14 @@ checks and runtime in-use protections reject detected conflicts.
 | `DELETE /api/v1/storage/{id}` | Requires the common destructive confirmation returned by review. |
 
 Policies and ownership are stored in both SQLite and PostgreSQL by migration
-`070_storage_ownership`. No runtime credentials or arbitrary label values are
+`070_storage_ownership`; migration `080_remote_storage` permits target inspection
+while an uncertain storage mutation remains protected. No runtime credentials or arbitrary label values are
 stored in the inventory. Backup and restore workflows can reference these stable
 storage records without changing their deletion policy.
+
+An unknown remote deletion blocks further deletion of that storage record. After
+its execution lease expires, inspect the target again. A successful inventory
+started after the uncertain outcome and old lease reconciles the operation while
+preserving its receipt. Any retry still requires a new data-deletion review with
+current ownership, retention policy and consumers. Inspection failure cannot
+unlock the operation or declare data absent.

@@ -41,6 +41,8 @@ type Worker struct {
 }
 
 type receipt struct {
+	Route  string `json:"route,omitempty"`
+	Health string `json:"health,omitempty"`
 	Digest string `json:"digest"`
 	State  string `json:"state"`
 	Result string `json:"result,omitempty"`
@@ -196,7 +198,28 @@ func (w *Worker) Run(ctx context.Context, job remoteruntime.LeasedJob, progress 
 			return failure(runtimecontract.Conflict, "The operation identity was reused with different inputs.")
 		}
 		if r.State != "complete" {
-			return failure(runtimecontract.Uncertain, "The agent restarted during this operation. Inspect the target before retrying.")
+			result := failure(runtimecontract.Uncertain, "The agent restarted during this operation. Inspect the target before retrying.")
+			if r.Health != "" {
+				payload, err := w.vault.Decrypt("health:"+job.ID, r.Health)
+				if err == nil {
+					var health core.DeploymentHealth
+					if json.Unmarshal(payload, &health) == nil && job.Request.ValidateHealth(&health) == nil {
+						result.Health = &health
+					}
+					clear(payload)
+				}
+			}
+			if r.Route != "" {
+				payload, err := w.vault.Decrypt("route:"+job.ID, r.Route)
+				if err == nil {
+					var route core.ApplicationRoute
+					if json.Unmarshal(payload, &route) == nil && job.Request.ValidateRoute(&route) == nil {
+						result.Route = &route
+					}
+					clear(payload)
+				}
+			}
+			return result
 		}
 		payload, err := w.vault.Decrypt("receipt:"+job.ID, r.Result)
 		if err != nil {
@@ -251,16 +274,64 @@ func (w *Worker) Run(ctx context.Context, job remoteruntime.LeasedJob, progress 
 	if progress == nil {
 		progress = func(core.DeploymentState, string) error { return execution.Err() }
 	}
+	var health *core.DeploymentHealth
+	execution = deploy.WithHealthReporter(execution, func(_ context.Context, id string, record core.DeploymentHealth) error {
+		if id != job.Request.Deployment.ID {
+			return errors.New("health evidence belongs to another deployment")
+		}
+		if err := job.Request.ValidateHealth(&record); err != nil {
+			return err
+		}
+		for index := range record.Checks {
+			record.Checks[index].Message = redact(record.Checks[index].Message)
+		}
+		data, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		defer clear(data)
+		if len(data) > remoteruntime.MaxResult/2 {
+			return errors.New("health evidence exceeds its limit")
+		}
+		encrypted, err := w.vault.Encrypt("health:"+job.ID, data)
+		if err != nil {
+			return err
+		}
+		r.Health = encrypted
+		updated, _ := json.Marshal(r)
+		if err = w.save(name, updated); err != nil {
+			return err
+		}
+		health = &record
+		return nil
+	})
 	var route *core.ApplicationRoute
 	execution = deploy.WithRouteReporter(execution, func(_ context.Context, record core.ApplicationRoute) error {
 		if err := job.Request.ValidateRoute(&record); err != nil {
+			return err
+		}
+		data, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		defer clear(data)
+		if len(data) > remoteruntime.MaxResult/4 {
+			return errors.New("route evidence exceeds its limit")
+		}
+		encrypted, err := w.vault.Encrypt("route:"+job.ID, data)
+		if err != nil {
+			return err
+		}
+		r.Route = encrypted
+		updated, _ := json.Marshal(r)
+		if err = w.save(name, updated); err != nil {
 			return err
 		}
 		route = &record
 		return nil
 	})
 	result := w.execute(execution, job.Request, func(phase core.DeploymentState, message string) error { return progress(phase, redact(message)) })
-	result.Route = route
+	result.Route, result.Health = route, health
 	result.Message, result.Logs = redact(result.Message), redact(result.Logs)
 	raw, err = json.Marshal(result)
 	if err != nil || len(raw) > remoteruntime.MaxResult {
