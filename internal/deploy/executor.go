@@ -150,14 +150,6 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if _, err := e.checkoutRevision(ctx, app, deployment.CommitSHA, workspace); err != nil {
 			return err
 		}
-		if deployment.CommitSHA != "" && deployment.CommitSHA != "HEAD" && deployment.CommitSHA != "inline" {
-			if err := e.gitCommand(ctx, app, "-C", workspace, "fetch", "--depth", "1", "origin", deployment.CommitSHA); err != nil {
-				return fmt.Errorf("fetch deployment revision: %w", err)
-			}
-			if err := e.gitCommand(ctx, app, "-C", workspace, "checkout", "--detach", deployment.CommitSHA); err != nil {
-				return fmt.Errorf("checkout deployment revision: %w", err)
-			}
-		}
 	}
 
 	name := dockerResourceName(app.ID)

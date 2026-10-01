@@ -126,7 +126,7 @@ func TestSourceResolutionIsSavedBeforeDeploymentAcceptance(t *testing.T) {
 	repo := t.TempDir()
 	serviceFixtureRepo(t, repo, map[string]string{"Dockerfile": "FROM scratch\n"})
 	accepted := fixtureGit(t, repo, "rev-parse", "HEAD")
-	data, err := store.Open(ctx, filepath.Join(t.TempDir(), "dispatch.db"))
+	data, err := store.Open(ctx, ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
