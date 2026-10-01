@@ -85,6 +85,19 @@ func TestGeneratedApplicationsRespectProjectVisibility(t *testing.T) {
 		t.Fatalf("shared target topology crossed project boundary: %d %s", response.Code, response.Body.String())
 	}
 	request = httptest.NewRequest("DELETE", "/api/v1/servers/allowed", nil)
+	for _, target := range []struct {
+		id     string
+		status int
+	}{{"allowed", 200}, {"hidden", 403}} {
+		capabilityRequest := httptest.NewRequest("GET", "/api/v1/servers/"+target.id+"/capabilities", nil)
+		capabilityRequest.Header.Set("Authorization", "Bearer secret")
+		capabilityRequest.Header.Set("Impersonate-User", user.ID)
+		capabilityResponse := httptest.NewRecorder()
+		handler.ServeHTTP(capabilityResponse, capabilityRequest)
+		if capabilityResponse.Code != target.status {
+			t.Fatalf("capabilities for %s: %d %s", target.id, capabilityResponse.Code, capabilityResponse.Body.String())
+		}
+	}
 	request.Header.Set("Authorization", "Bearer secret")
 	request.Header.Set("Impersonate-User", user.ID)
 	response = httptest.NewRecorder()

@@ -11,6 +11,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workflow"
 	"github.com/go-chi/chi/v5"
@@ -79,6 +80,11 @@ func (a *API) startDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		problem(w, http.StatusNotFound, "Application not found", "Refresh the application inventory and try again.")
+		return
+	}
+	var runtimeError *runtimecontract.Error
+	if errors.As(err, &runtimeError) {
+		problem(w, http.StatusUnprocessableEntity, "Runtime request rejected", runtimeError.Message)
 		return
 	}
 	if err != nil {

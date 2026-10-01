@@ -235,6 +235,7 @@ Use `make check` for the race detector, `go vet`, TypeScript checks, and fronten
 - [Edge credentials](docs/edge-credentials.md)
 - [API reference](docs/openapi.yaml)
 - [Provider API](docs/provider-api.md)
+- [Runtime contract](docs/runtime-contract.md)
 - [Private routes](docs/private-networks.md)
 - [Roadmap](docs/roadmap.md)
 

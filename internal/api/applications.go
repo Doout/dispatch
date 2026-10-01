@@ -487,8 +487,9 @@ func validateSourceAuthentication(repository, authType, credentialID string) str
 
 func (a *API) deleteApp(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if handled, err := a.removeWorkflowPreviewForApp(r.Context(), id); handled || err != nil {
+	if handled, err := a.removeWorkflowPreviewForAppReviewed(r.Context(), id, func() error { return a.recheckDestructiveAction(r, "application", "delete") }); handled || err != nil {
 		if err != nil {
+			destructiveOutcome(r, "failed")
 			a.previewCleanupProblem(w, err)
 		} else {
 			w.WriteHeader(http.StatusNoContent)
@@ -532,51 +533,38 @@ func (a *API) deleteApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	hasDeployments, err := a.store.AppHasDeployments(r.Context(), id)
-	if err != nil {
-		a.internal(w, err)
-		return
-	}
-	if hasDeployments {
-		if err := a.deploy.Cleanup(r.Context(), id, nil); err != nil {
-			switch {
-			case errors.Is(err, deploy.ErrDeploymentActive):
-				problem(w, http.StatusConflict, "Deployment active", "Wait for the active deployment to finish before deleting this application.")
-			case errors.Is(err, deploy.ErrCleanupUnsupported):
-				problem(w, http.StatusConflict, "Cleanup unavailable", "This application cannot be deleted until its deployed resources can be cleaned up safely.")
-			case errors.Is(err, store.ErrNotFound):
-				problem(w, http.StatusNotFound, "Application not found", "Refresh the application inventory and try again.")
-			default:
-				a.internal(w, err)
-			}
-			return
-		}
-	}
-	if err := a.store.DeleteApp(r.Context(), id); err != nil {
-		if errors.Is(err, store.ErrAppPreviewGroup) {
+	if err := a.deploy.CleanupReviewed(r.Context(), id, func() error { return a.recheckDestructiveAction(r, "application", "delete") }, true, nil); err != nil {
+		switch {
+		case errors.Is(err, deploy.ErrDeploymentActive), errors.Is(err, store.ErrAppActive):
+			problem(w, http.StatusConflict, "Deployment active", "Wait for the active deployment to finish before deleting this application.")
+		case errors.Is(err, deploy.ErrCleanupUnsupported):
+			problem(w, http.StatusConflict, "Cleanup unavailable", "This application cannot be deleted until its deployed resources can be cleaned up safely.")
+		case errors.Is(err, store.ErrNotFound):
+			problem(w, http.StatusNotFound, "Application not found", "Refresh the application inventory and try again.")
+		case errors.Is(err, store.ErrAppPreviewGroup):
 			problem(w, http.StatusConflict, "Application is in a preview group", "Remove this application from every preview group before deleting it.")
-			return
+		case errors.Is(err, errDestructiveReviewChanged):
+			problem(w, 409, "Resource changed", err.Error())
+		default:
+			destructiveOutcome(r, "failed")
+			problem(w, http.StatusConflict, "Deletion stopped", "Cleanup or confirmation failed. Review the current runtime and resource version before retrying.")
 		}
-		if errors.Is(err, store.ErrAppActive) {
-			problem(w, http.StatusConflict, "Deployment active", "A deployment started while the application was being deleted. Wait for it to finish and retry.")
-			return
-		}
-		a.notFoundOrInternal(w, err, "Application")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) cleanupApp(w http.ResponseWriter, r *http.Request) {
-	if handled, err := a.removeWorkflowPreviewForApp(r.Context(), chi.URLParam(r, "id")); handled || err != nil {
+	if handled, err := a.removeWorkflowPreviewForAppReviewed(r.Context(), chi.URLParam(r, "id"), func() error { return a.recheckDestructiveAction(r, "application", "cleanup") }); handled || err != nil {
 		if err != nil {
+			destructiveOutcome(r, "failed")
 			a.previewCleanupProblem(w, err)
 		} else {
 			w.WriteHeader(http.StatusNoContent)
 		}
 		return
 	}
-	err := a.deploy.Cleanup(r.Context(), chi.URLParam(r, "id"), nil)
+	err := a.deploy.CleanupReviewed(r.Context(), chi.URLParam(r, "id"), func() error { return a.recheckDestructiveAction(r, "application", "cleanup") }, false, nil)
 	if errors.Is(err, deploy.ErrDeploymentActive) {
 		problem(w, http.StatusConflict, "Deployment active", "Wait for the active deployment to finish before cleaning up the application.")
 		return
@@ -589,7 +577,12 @@ func (a *API) cleanupApp(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusNotFound, "Application not found", "Refresh the application inventory and try again.")
 		return
 	}
+	if errors.Is(err, errDestructiveReviewChanged) {
+		problem(w, 409, "Resource changed", err.Error())
+		return
+	}
 	if err != nil {
+		destructiveOutcome(r, "failed")
 		a.internal(w, err)
 		return
 	}

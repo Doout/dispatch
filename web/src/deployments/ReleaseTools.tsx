@@ -172,19 +172,23 @@ function ReleaseWorkbench({ deployment, canDeploy, canConfigure, onDeployment, o
       </div>}
 
       {tool === "restore" && canDeploy && <div className="release-restore">
-        <div className="release-panel-heading"><div><h3>Restore this release</h3><small>Retained chart, values, and credentials · <code>{revision}</code></small></div>{deployment.state === "succeeded" && <button type="button" className="quiet-button" disabled={Boolean(busy)} onClick={() => void perform("Checking retained release", async () => {
+        <div className="release-panel-heading"><div><h3>Restore this release</h3><small>Retained artifacts and runtime inputs · <code>{revision}</code></small></div>{deployment.state === "succeeded" && <button type="button" className="quiet-button" disabled={Boolean(busy)} onClick={() => void perform("Checking retained release", async () => {
           setRollback(undefined); setRestoreConfirmed(false);
           const value = await releaseClient.rollbackPreview(selected); if (alive.current) setRollback(value);
         })}><ArrowCounterClockwise size={14} />{rollback ? "Check again" : "Review restore"}</button>}</div>
         {deployment.state !== "succeeded" ? <p className="release-inline-note"><Info size={15} />Choose a successful deployment from History to review a restore.</p> : !rollback ? <p className="release-empty">Check that the original release and its credentials are still available.</p> : <>
-          <div className={`release-result-line ${rollback.available ? "success" : "muted"}`}><ReleaseState state={rollback.available ? "succeeded" : "unknown"} /><strong>{rollback.available ? `Helm revision ${rollback.helmRevision} is available` : "Restore unavailable"}</strong></div>
+          <div className={`release-result-line ${rollback.available ? "success" : "muted"}`}><ReleaseState state={rollback.available ? "succeeded" : "unknown"} /><strong>{rollback.available ? rollback.helmRevision ? `Helm revision ${rollback.helmRevision} is available` : "Retained runtime is available" : "Restore unavailable"}</strong><span>{rollback.target}</span></div>
           <p className="release-result-message">{rollback.message}</p>
+          {rollback.images && <dl className="release-runtime-images">{Object.entries(rollback.images).map(([name,image]) => <div key={name}><dt>{name}</dt><dd><code>{image}</code></dd></div>)}</dl>}
+          {(rollback.domain || rollback.containerPort) && <p className="release-scope-note">{rollback.domain && `Configured domain: ${rollback.domain}`}{rollback.domain && rollback.containerPort ? " · " : ""}{rollback.containerPort ? `Published port: ${rollback.containerPort}` : ""}</p>}
+          {rollback.resources.length > 0 && <details className="release-detail"><summary>Resources to restore <small>{rollback.resources.length}</small></summary><ul>{rollback.resources.map(resource => <li key={`${resource.kind}:${resource.namespace}:${resource.name}`}><strong>{resource.kind}</strong> <code>{resource.name}</code>{resource.namespace && ` in ${resource.namespace}`}</li>)}</ul></details>}
+          {!!rollback.ports?.length && <div className="release-scope-note"><strong>Published ports</strong><ul>{rollback.ports.map(port => <li key={port}><code>{port}</code></li>)}</ul></div>}
           {rollback.bindings?.length > 0 && <details className="release-detail"><summary><span>Retained service credentials</span><small>{rollback.bindings.length}</small><CaretDown size={14} /></summary><ul className="release-binding-list">{rollback.bindings.map(binding => <li key={binding.alias}><strong>{binding.alias}</strong><span>{binding.serviceName}</span><small>Revision {binding.revision}</small></li>)}</ul></details>}
           {rollback.available && <>
             <div className="release-restore-path"><span>Running <code title={rollback.currentDeploymentId}>{rollback.currentDeploymentId.slice(-8)}</code></span><ArrowRight size={13} /><span>Restore <code title={deployment.commitSha || selected}>{revision}</code></span></div>
             <small className="release-scope-note">{rollback.resources.length} resources validated. Uses this version's original service credentials.</small>
             <div className="release-confirmation restore"><label><input type="checkbox" checked={restoreConfirmed} onChange={event => setRestoreConfirmed(event.target.checked)} /><span>Restore release <code>{revision}</code>. I understand this does not undo database migrations or external effects.</span></label><button type="button" className="danger-button" disabled={!restoreConfirmed || Boolean(busy)} onClick={() => void perform("Starting restore", async () => {
-              const value = await releaseClient.rollback(selected, rollback.currentDeploymentId);
+              const value = await releaseClient.rollback(selected, rollback.currentDeploymentId, rollback.reviewDigest);
               if (alive.current) { setRollback(undefined); setRestoreConfirmed(false); setNotice("Restore accepted."); await onDeployment?.(value); }
             })}><ArrowCounterClockwise size={14} />Restore this version</button></div>
           </>}

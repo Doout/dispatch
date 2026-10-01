@@ -13,7 +13,7 @@ func (a *API) previewsRoutes(r chi.Router) {
 		r.Route("/{id}", func(r chi.Router) {
 			r.Use(a.eventTriggerPermission(core.PermissionProjectConfigure))
 			r.Put("/", a.updateEventTrigger)
-			r.Delete("/", a.deleteEventTrigger)
+			a.destructiveRoute(r, "DELETE", "/", "event-trigger", "delete", a.deleteEventTrigger)
 		})
 	})
 	r.Get("/preview-environments", a.listPreviewEnvironments)
@@ -25,7 +25,7 @@ func (a *API) previewsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.ownerOnly)
 				r.Put("/", a.updatePreviewGroup)
-				r.Delete("/", a.deletePreviewGroup)
+				a.destructiveRoute(r, "DELETE", "/", "preview-group", "delete", a.deletePreviewGroup)
 			})
 		})
 	})
@@ -33,7 +33,7 @@ func (a *API) previewsRoutes(r chi.Router) {
 		r.Get("/", a.listPreviewGroupRuns)
 		r.Route("/{id}", func(r chi.Router) {
 			r.With(a.previewGroupRunPermission(core.PermissionProjectView)).Get("/", a.getPreviewGroupRun)
-			r.With(a.previewGroupRunPermission(core.PermissionDeploymentRun)).Post("/cleanup", a.cleanupPreviewGroupRun)
+			a.destructiveRoute(r.With(a.previewGroupRunPermission(core.PermissionDeploymentRun)), "POST", "/cleanup", "preview-run", "cleanup", a.cleanupPreviewGroupRun)
 		})
 	})
 }

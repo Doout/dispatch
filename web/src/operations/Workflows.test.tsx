@@ -116,14 +116,14 @@ it("searches and pages ownership on the server, clearing an editor when filters 
 it("keeps mappings list-first and requires a separate removal review before access changes", async () => {
  vi.spyOn(client.api, "access").mockResolvedValue(access);
  const mapping = { id: "map", providerId: "github", externalGroup: "org/platform", teamId: "team" };
- const request = vi.spyOn(client, "request").mockResolvedValue([mapping]); const user = userEvent.setup(); render(<IdentityMappings />);
+ const remove = vi.spyOn(client, "destructiveRequest").mockResolvedValue(undefined); const request = vi.spyOn(client, "request").mockResolvedValue([mapping]); const user = userEvent.setup(); render(<IdentityMappings />);
  await screen.findByText("org/platform"); expect(screen.queryByRole("form")).toBeNull();
  await user.click(screen.getByRole("button", { name: "Review removal of org/platform mapping" }));
  expect(request.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
  expect(screen.getByText(/Memberships supplied by this mapping are revoked immediately/)).toBeTruthy();
  await user.click(screen.getByRole("button", { name: "Cancel" })); expect(request.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
  await user.click(screen.getByRole("button", { name: "Review removal of org/platform mapping" })); await user.click(screen.getByRole("button", { name: "Remove mapping now" }));
- await waitFor(() => expect(request).toHaveBeenCalledWith("/api/v1/identity-team-mappings/map", { method: "DELETE" })); await screen.findByText("No identity mappings yet");
+ await waitFor(() => expect(remove).toHaveBeenCalledWith("/api/v1/identity-team-mappings/map", { method: "DELETE" })); await screen.findByText("No identity mappings yet");
 });
 
 it("guards mapping saves against repeated submissions and exposes failures without losing the form", async () => {

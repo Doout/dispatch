@@ -1162,6 +1162,19 @@ CREATE TABLE workflow_preview_panel_leases (
  lease_until TEXT NOT NULL
 );
 
+-- dispatch:migration 069_runtime_artifacts
+CREATE TABLE deployment_runtime_artifacts (
+ deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+ app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ server_id TEXT NOT NULL,
+ scope_id TEXT NOT NULL,
+ ciphertext TEXT NOT NULL
+);
+
+ALTER TABLE audit_events ADD COLUMN confirmed_action TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_events ADD COLUMN confirmed_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_events ADD COLUMN confirmed_version TEXT NOT NULL DEFAULT '';
+
 -- dispatch:migration 071_preview_source_trust
 ALTER TABLE workflow_preview_triggers ADD COLUMN source_trust_policy TEXT NOT NULL DEFAULT 'same_repository';
 ALTER TABLE workflow_revisions ADD COLUMN source_trust TEXT NOT NULL DEFAULT 'null';
