@@ -123,6 +123,10 @@ func (m *Manager) RefreshReadiness(ctx context.Context) error {
 				runtime = "waiting"
 			}
 		}
+		// A verified clone remains quarantined and is never offered as a workload target.
+		if server.SourceSnapshotID != "" && runtime == "ready" {
+			runtime = "verified-isolated"
+		}
 		if server.EnrollmentState != enrollment || server.RuntimeState != runtime {
 			server.EnrollmentState = enrollment
 			server.RuntimeState = runtime

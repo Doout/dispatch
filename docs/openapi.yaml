@@ -274,6 +274,127 @@ paths:
       responses:
         '204': { description: Result persisted and queued credentials cleared }
         '409': { description: Lease or resource ownership changed }
+  /projects/{id}/infrastructure/snapshots:
+    get:
+      summary: List owned provider snapshots and retained disk evidence
+      description: Requires infrastructure.inspect and project provider assignment. Includes pending and unresolved snapshots; deleted records remain as ownership tombstones.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Project snapshot records with state, retention, source and provider disk evidence }
+        '403': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}/snapshot-review:
+    post:
+      summary: Review a crash-consistent machine disk snapshot
+      description: Requires infrastructure.snapshot. Resolves current owned source disks and supported provider policy before returning an expiring review. This request does not allocate a snapshot.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, diskSet, consistency, encryption]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                diskSet: { type: string, enum: [boot, all] }
+                consistency: { type: string, enum: [crash-consistent] }
+                encryption:
+                  type: object
+                  required: [mode]
+                  properties:
+                    mode: { type: string, enum: [provider-managed] }
+                retainUntil: { type: string, format: date-time, description: Defaults to seven days. Must fall within the next year. }
+      responses:
+        '201': { description: Exact disk identities, consistency, retention, digest and expiring review ID }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /infrastructure/snapshots/{id}:
+    get:
+      summary: Inspect an owned snapshot record
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Snapshot ownership, retained disk evidence and lifecycle state }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /infrastructure/snapshots/{id}/delete-review:
+    post:
+      summary: Review retained snapshot deletion
+      description: Requires infrastructure.delete. Retention must have elapsed. Acceptance rechecks retention and refuses deletion while an unresolved clone may still need the captured disks.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '201': { description: Expiring snapshot deletion review }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /infrastructure/snapshots/accept:
+    post:
+      summary: Accept a reviewed capture or snapshot deletion
+      description: Requires infrastructure.snapshot for capture or infrastructure.delete for deletion, plus provider assignment. Capture reserves maxSnapshots capacity atomically with the operation. Same-key replay returns the original receipt. Unknown outcomes retain their ownership and quota.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InfrastructureAcceptance' }
+      responses:
+        '202': { description: Mutation receipt when keyed; otherwise snapshot and operation records }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /infrastructure/snapshots/{id}/resolve:
+    post:
+      summary: Inspect and resolve an uncertain snapshot outcome
+      description: Requires infrastructure.snapshot and also infrastructure.delete for an uncertain deletion. Does not resubmit provider work. Absence releases capacity only after the original provider operation is terminal; a lost unacknowledged allocation cannot be dismissed by a temporary 404.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resourceId, revision, confirmName]
+              properties:
+                resourceId: { type: string }
+                revision: { type: integer }
+                confirmName: { type: string }
+      responses:
+        '200': { description: Verified owned snapshot disposition }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/review:
+    post:
+      summary: Review on-demand creation or an isolated snapshot clone
+      description: Requires infrastructure.create and provider assignment. For sourceSnapshotId, also requires infrastructure.restore and a fresh cloud-init bootstrap plan. Restore uses a quarantined restore-network, same project/provider and compatible image. Exact saved snapshot evidence and reviewed agent artifact are pinned; source identities and production bindings are never reused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, providerId, name, region, size, image, network, sshKeySecretId, config]
+              properties:
+                projectId: { type: string }
+                providerId: { type: string }
+                name: { type: string }
+                region: { type: string }
+                size: { type: string }
+                image: { type: string }
+                network: { type: string }
+                sshKeySecretId: { type: string }
+                config: { type: object }
+                secretRefs: { type: object, additionalProperties: { type: string } }
+                sourceSnapshotId: { type: string, description: Optional owned retained snapshot for an isolated fresh clone. }
+                bootstrap: { type: object, description: Reviewed cloud_init bootstrap plan; required for snapshot restores. }
+      responses:
+        '201': { description: Expiring creation review with digest and fresh node/bootstrap binding }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers:
     get:
       summary: List managed servers permitted by the current project grants and provider assignments
@@ -281,7 +402,7 @@ paths:
         '200': { description: Visible managed server records }
     post:
       operationId: createManagedServer
-      description: Accepts a reviewed server creation. Requires infrastructure.create and access to the provider. Idempotency-Key reserves one durable provisioning operation; identical retries return its receipt for seven days. Changed inputs or expired keys return 409 without creating another machine.
+      description: Accepts a reviewed server creation or isolated clone. Requires infrastructure.create and access to the provider; a clone also requires infrastructure.restore. Verified clones remain isolated and are not published as ordinary workload targets. Idempotency-Key reserves one durable provisioning operation; identical retries return its receipt for seven days. Changed inputs or expired keys return 409 without creating another machine.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -4552,9 +4673,9 @@ components:
       type: object
       required: [digest, confirmName]
       properties:
-        reviewId: { type: string, description: Required for server creation. }
+        reviewId: { type: string, description: Required for server creation and snapshot capture/deletion. }
         digest: { type: string, description: Exact digest returned by the current creation or deletion review. }
-        confirmName: { type: string, description: Exact reviewed server name. }
+        confirmName: { type: string, description: Exact reviewed server or snapshot name. }
         requestKey: { type: string, description: Legacy retry key, required only when Idempotency-Key is omitted. }
     MutationReceipt:
       type: object

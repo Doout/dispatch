@@ -48,6 +48,14 @@ func (m *Manager) Adopt(ctx context.Context, id string, in Adoption) (core.Manag
 	if err = ownedResource(review, resource); err != nil || resource.State != "ready" || !m.safeEvidence(review, map[string]string{"id": resource.ID, "address": resource.Address}) {
 		return server, errors.New("resource does not match the reviewed ownership or is not ready")
 	}
+	if review.SourceSnapshotID != "" {
+		if err = m.authorize(ctx, server.ProjectID, server.ProviderID, "infrastructure.restore"); err != nil {
+			return server, err
+		}
+		if err = m.verifyReviewedClone(review, resource); err != nil {
+			return server, err
+		}
+	}
 	return data.AdoptInfrastructureServer(ctx, server, resource.ID, resource.Address, m.now())
 }
 

@@ -2566,3 +2566,16 @@ code { font-family: var(--mono); }
   .bootstrap-section > .section-title { align-items: stretch; flex-direction: column; gap: 12px; }
   .bootstrap-section > .section-title > button { align-self: flex-start; }
 }
+
+
+/* Reviewed infrastructure inputs remain readable on narrow screens. */
+.managed-servers, .managed-servers > *, .machine-snapshots, .machine-snapshots > *, .managed-servers .connection-form > * { min-width: 0; }
+.managed-servers .section-title { flex-wrap: wrap; }
+.managed-servers .connection-form > label, .snapshot-project { display: grid; gap: 7px; min-width: 0; color: #43515d; font-size: 12px; font-weight: 680; }
+.managed-servers .connection-form > label > input:not([type=checkbox]), .snapshot-project select { width: 100%; min-width: 0; min-height: 42px; padding: 10px 11px; color: var(--ink); background: #fff; border: 1px solid var(--rule-strong); border-radius: 8px; }
+.snapshot-project { max-width: 320px; }
+.managed-servers .connection-form > p { margin: 0; font-size: 13px; line-height: 1.55; }
+.managed-servers .connection-form h3 { margin: 0; font-size: 17px; }
+.managed-servers details { min-width: 0; max-width: 100%; font-size: 12px; line-height: 1.5; }
+.managed-servers details pre { max-width: 100%; margin: 10px 0; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface-subtle); border: 1px solid var(--rule); border-radius: 8px; font: 11px/1.55 var(--mono); }
+.machine-snapshots .connection-metadata { align-items: center; font-size: 12px; line-height: 1.4; }

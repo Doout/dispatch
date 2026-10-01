@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/provider"
@@ -24,6 +25,9 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 80*time.Second)
 	defer cancel()
+	if strings.HasPrefix(op.Action, "snapshot.") {
+		return true, m.reconcileSnapshot(ctx, op)
+	}
 	server, err := data.GetManagedServer(ctx, op.ServerID)
 	if err != nil {
 		return true, err
@@ -82,6 +86,9 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 	capability := provider.CapabilityInspect
 	if op.Stage == "submit" || op.Stage == "submitting" {
 		capability = provider.CapabilityCreate
+		if review.SourceSnapshotID != "" {
+			capability = provider.CapabilityRestore
+		}
 		if op.Action == "delete" {
 			capability = provider.CapabilityDelete
 		}
@@ -118,7 +125,15 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 			if e != nil {
 				return true, stop("review_unavailable", "The saved encrypted review is unavailable; creation will not resume.")
 			}
-			remote, err = client.CreateServer(ctx, op.ID, request)
+			if review.SourceSnapshotID != "" {
+				snapshot, e := m.reviewedCloneSnapshot(review)
+				if e != nil {
+					return true, stop("restore_review", "Saved restore evidence is unavailable.")
+				}
+				remote, err = client.RestoreServer(ctx, op.ID, snapshot.ID, provider.RestoreServerRequest{Server: request, Policy: provider.IsolatedRestorePolicy(), ExpectedSnapshotDigest: provider.SnapshotDigest(snapshot)})
+			} else {
+				remote, err = client.CreateServer(ctx, op.ID, request)
+			}
 		} else {
 			resource, e := client.Server(ctx, server.ResourceID)
 			var absent *provider.Problem
@@ -176,6 +191,9 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 			}
 			if e = ownedResource(review, resource); e != nil || resource.State != "ready" || !m.safeEvidence(review, map[string]string{"id": resource.ID, "address": resource.Address}) {
 				return true, stop("ownership", "The provider resource is not ready or does not match Dispatch ownership.")
+			}
+			if m.verifyReviewedClone(review, resource) != nil {
+				return true, stop("restore_evidence", "Clone isolation, fresh identity or disk integrity evidence was not verified.")
 			}
 			server.ResourceID = resource.ID
 			server.Address = resource.Address

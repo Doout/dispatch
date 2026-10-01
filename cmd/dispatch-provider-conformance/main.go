@@ -17,12 +17,13 @@ import (
 func main() {
 	endpoint := flag.String("endpoint", "http://127.0.0.1:8091", "provider HTTP(S) endpoint")
 	fixture := flag.String("request", "", "path to a create-server JSON fixture; omitted uses public mock options")
+	snapshots := flag.Bool("snapshots", false, "also capture and delete a retained snapshot and create and delete an isolated clone")
 	allow := flag.Bool("allow-mutations", false, "allow the suite to create and delete a disposable server")
 	timeout := flag.Duration("timeout", 2*time.Minute, "lifecycle timeout; failure cleanup gets a separate timeout")
 	interval := flag.Duration("poll-interval", 100*time.Millisecond, "operation polling interval")
 	flag.Parse()
 	if !*allow {
-		fmt.Fprintln(os.Stderr, "Conformance creates and deletes a server. Use an isolated test account and pass --allow-mutations.")
+		fmt.Fprintln(os.Stderr, "Conformance creates and deletes test servers; --snapshots also captures and deletes a retained snapshot and isolated clone. Use an isolated test account and pass --allow-mutations.")
 		os.Exit(2)
 	}
 	if *timeout <= 0 || *interval <= 0 {
@@ -57,6 +58,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	report, err := provider.RunConformance(ctx, client, provider.ConformanceOptions{Request: request, Timeout: *timeout, PollInterval: *interval})
+	if err == nil && *snapshots {
+		snapshotReport, snapshotErr := provider.RunSnapshotConformance(ctx, client, provider.ConformanceOptions{Request: request, Timeout: *timeout, PollInterval: *interval})
+		report.Checks = append(report.Checks, snapshotReport.Checks...)
+		err = snapshotErr
+	}
 	_ = json.NewEncoder(os.Stdout).Encode(report)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
