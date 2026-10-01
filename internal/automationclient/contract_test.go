@@ -48,7 +48,7 @@ func TestSupportedOpenAPIContract(t *testing.T) {
 		}
 	}
 	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
-	values := map[string]any{"DeploymentReview": core.DeploymentReview{ServiceRevisions: map[string]int64{}}, "InfrastructureAcceptance": InfrastructureAcceptance{ReviewID: "review"}, "ServerCreateReview": ServerCreateReview{Bootstrap: &BootstrapInput{}}}
+	values := map[string]any{"DeploymentReview": core.DeploymentReview{ServiceRevisions: map[string]int64{}}, "InfrastructureAcceptance": InfrastructureAcceptance{ReviewID: "review"}, "ServerCreateReview": ServerCreateReview{Bootstrap: &BootstrapInput{}, SourceSnapshotID: "snapshot"}, "ProviderOptionsInput": ProviderOptionsInput{}, "SnapshotReviewInput": SnapshotReviewInput{RetainUntil: "2030-01-01T00:00:00Z"}}
 	for name, value := range values {
 		schema, ok := schemas[name].(map[string]any)
 		if !ok {
@@ -64,6 +64,9 @@ func TestSupportedOpenAPIContract(t *testing.T) {
 			actual = append(actual, k)
 		}
 		for k := range props {
+			if (name == "ServerCreateReview" || name == "ProviderOptionsInput") && k == "secretRefs" {
+				continue // The scoped client deliberately excludes owner-only credentials.
+			}
 			if name == "InfrastructureAcceptance" && k == "requestKey" {
 				continue
 			}
