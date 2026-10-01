@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doout/dispatch/internal/bootstrap"
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/edge"
@@ -33,9 +34,10 @@ type SecretResolver interface {
 	Resolve(context.Context, string) ([]byte, error)
 }
 type Manager struct {
-	Store   ProviderStore
-	Secrets SecretResolver
-	Edge    *edge.Broker
+	Bootstrap *bootstrap.Manager
+	Store     ProviderStore
+	Secrets   SecretResolver
+	Edge      *edge.Broker
 	// HTTPClient is injectable for certificate-pinned tests and managed transport.
 	HTTPClient *http.Client
 	Vault      *secretcrypto.Vault

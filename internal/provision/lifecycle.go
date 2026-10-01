@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doout/dispatch/internal/bootstrap"
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/provider"
 	"github.com/doout/dispatch/internal/store"
@@ -24,16 +25,18 @@ type LifecycleStore interface {
 }
 
 type CreateInput struct {
-	ProjectID      string            `json:"projectId"`
-	ProviderID     string            `json:"providerId"`
-	Name           string            `json:"name"`
-	Region         string            `json:"region"`
-	Size           string            `json:"size"`
-	Image          string            `json:"image"`
-	Network        string            `json:"network"`
-	SSHKeySecretID string            `json:"sshKeySecretId"`
-	Config         map[string]any    `json:"config"`
-	SecretRefs     map[string]string `json:"secretRefs,omitempty"`
+	Bootstrap      *core.TargetBootstrapPlan `json:"bootstrap,omitempty"`
+	ActorID        string                    `json:"-"`
+	ProjectID      string                    `json:"projectId"`
+	ProviderID     string                    `json:"providerId"`
+	Name           string                    `json:"name"`
+	Region         string                    `json:"region"`
+	Size           string                    `json:"size"`
+	Image          string                    `json:"image"`
+	Network        string                    `json:"network"`
+	SSHKeySecretID string                    `json:"sshKeySecretId"`
+	Config         map[string]any            `json:"config"`
+	SecretRefs     map[string]string         `json:"secretRefs,omitempty"`
 }
 
 type Acceptance struct {
@@ -131,6 +134,20 @@ func (m *Manager) ReviewCreate(ctx context.Context, in CreateInput) (core.Infras
 	now := m.now()
 	review = core.InfrastructureReview{ID: ulid.Make().String(), ServerID: ulid.Make().String(), ProjectID: in.ProjectID, ProviderID: p.ID, ProviderRevision: p.Revision, ManifestDigest: p.ManifestDigest, Name: in.Name, State: "open", CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute)}
 	request := provider.CreateServerRequest{Name: in.Name, Region: in.Region, Size: in.Size, Image: in.Image, Network: in.Network, SSHKey: ssh.PublicValue, ProviderConfig: config, Labels: ownership(review)}
+
+	if in.Bootstrap != nil {
+		if m.Bootstrap == nil || in.Bootstrap.Method != "cloud_init" {
+			return review, errors.New("cloud-init bootstrap is unavailable")
+		}
+		in.Bootstrap.TargetName = in.Name
+		prepared, userData, e := m.Bootstrap.Prepare(ctx, bootstrap.Binding{ReviewID: review.ID, ServerID: review.ServerID, NodeID: "node-" + review.ServerID, ProviderID: review.ProviderID, ProjectID: review.ProjectID}, *in.Bootstrap, bootstrap.SSHCredentials{}, in.ActorID)
+		if e != nil {
+			return review, e
+		}
+		review.BootstrapID = prepared.ID
+		in.Bootstrap = &prepared.Plan
+		request.Bootstrap = userData
+	}
 	raw, err := json.Marshal(request)
 	if err != nil {
 		return review, errors.New("configuration is invalid")

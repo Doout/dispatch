@@ -42,6 +42,9 @@ func (m *Manager) Enrollment(ctx context.Context, id string) (Enrollment, error)
 	if err = m.authorize(ctx, server.ProjectID, server.ProviderID, "infrastructure.modify"); err != nil {
 		return result, err
 	}
+	if server.BootstrapID != "" {
+		return result, errors.New("this machine uses an approved bootstrap; retry that installer to refresh enrollment")
+	}
 	if server.AllocationState != "allocated" {
 		return result, store.ErrInfrastructureChanged
 	}
@@ -111,6 +114,13 @@ func (m *Manager) RefreshReadiness(ctx context.Context) error {
 			checkedAt, checkedErr := time.Parse(time.RFC3339Nano, node.Details["runtimeCheckedAt"])
 			if e == nil && checkedErr == nil && !checkedAt.Before(credential.UpdatedAt) && checkedAt.After(m.now().Add(-90*time.Second)) && node.Details["runtimeVersion"] == remoteruntime.APIVersion && slices.Contains(strings.Split(node.Details["runtimeCapabilities"], ","), "deploy") {
 				runtime = "ready"
+			}
+		}
+		if server.BootstrapID != "" {
+			if m.Bootstrap == nil {
+				runtime = "waiting"
+			} else if b, e := m.Bootstrap.Refresh(ctx, server.BootstrapID); e != nil || b.State != "ready" {
+				runtime = "waiting"
 			}
 		}
 		if server.EnrollmentState != enrollment || server.RuntimeState != runtime {
