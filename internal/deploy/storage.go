@@ -59,6 +59,13 @@ func (m *StorageManager) Refresh(ctx context.Context, server core.Server) error 
 // cleanup must leave that namespace until data is explicitly removed or moved.
 func (m *StorageManager) CleanupNamespace(ctx context.Context, server core.Server, namespace string, cleanup func() error) error {
 	return m.WithTarget(ctx, server.ID, func() error {
+		// The requested preview may no longer have an application record.
+		// Always inspect its namespace before a cascading namespace deletion.
+		if core.IsKubernetesRuntime(server.Runtime) && server.Kubernetes != nil {
+			config := *server.Kubernetes
+			config.Namespace = namespace
+			server.Kubernetes = &config
+		}
 		if err := m.RefreshLocked(ctx, server); err != nil {
 			return err
 		}
@@ -106,7 +113,7 @@ func (m *StorageManager) RefreshLocked(ctx context.Context, server core.Server) 
 	if err != nil {
 		return err
 	}
-	apps, err := m.Store.ListApps(ctx)
+	apps, err := m.Store.ListAppsForUsage(ctx)
 	if err != nil {
 		return err
 	}
@@ -170,6 +177,7 @@ func (m *StorageManager) RefreshLocked(ctx context.Context, server core.Server) 
 					break
 				}
 				item.ProjectID, item.OwnerKind, item.OwnerID, item.Ownership = app.ProjectID, "application", app.ID, "verified"
+				item.Orphaned = app.State == "closed"
 			}
 		}
 		for _, run := range runs {
