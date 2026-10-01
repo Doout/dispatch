@@ -9,6 +9,23 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /mutation-receipts/{receiptId}:
+    get:
+      operationId: getMutationReceipt
+      description: Returns only this stable caller's receipt after checking current authentication and project access. Credential rotation preserves caller identity; revoked credentials are rejected.
+      parameters:
+        - in: path
+          name: receiptId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Original operation reference, current or retained outcome, retry deadline and supported recovery actions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /contracts/runtime:
     get:
       operationId: getRuntimeContract
@@ -3308,7 +3325,13 @@ paths:
     post:
       operationId: startDeployment
       description: Requires deployment.run. When review is supplied, project membership, application settings, binding mappings, and service revisions must still match the preview at atomic acceptance; changes return 409 and require another preview.
+      description: With Idempotency-Key, atomically accepts one operation and returns its durable mutation receipt. Same caller/project/action and identical input replay the original operation for seven days; changed input or an expired key returns 409 without repeating work. Without a key, returns the deployment record.
       parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, minLength: 8, maxLength: 128 }
+          description: Printable ASCII without spaces. Never reuse a key for another intended operation.
         - $ref: "#/components/parameters/AppID"
       requestBody:
         content:
@@ -3320,10 +3343,13 @@ paths:
                 review: { $ref: "#/components/schemas/DeploymentReview" }
       responses:
         "202":
-          description: Deployment accepted.
+          description: Deployment accepted, or original acceptance replayed. Location points to the mutation receipt when a key is supplied.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Deployment" }
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/Deployment' }
+                  - { $ref: '#/components/schemas/MutationReceipt' }
         "409": { $ref: "#/components/responses/Problem" }
   /deployments:
     get:
@@ -4076,9 +4102,30 @@ components:
         updatedAt:
           type: string
           format: date-time
+    MutationReceipt:
+      type: object
+      required: [id, projectId, action, operationKind, operationId, state, retryUntil, recoveryActions]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        action: { type: string }
+        operationKind: { type: string, enum: [deployment, infrastructure_operation] }
+        operationId: { type: string }
+        operationUrl: { type: string }
+        resourceId: { type: string }
+        state: { type: string, enum: [accepted, running, succeeded, failed, unresolved, cancelled] }
+        message: { type: string, description: Bounded sanitized outcome; raw runtime/provider responses are excluded. }
+        cancellation: { type: string, description: Actual cancellation status; cancellation does not undo external effects. }
+        retryUntil: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        recoveryActions:
+          type: array
+          items: { type: string, enum: [retry_same_request, inspect_operation, inspect_runtime] }
     AuditEvent:
       type: object
       properties:
+        operationId: { type: string, description: Original accepted operation, including idempotent request replays. }
         id:
           type: string
         actorId:

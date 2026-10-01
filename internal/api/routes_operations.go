@@ -5,6 +5,7 @@ import (
 )
 
 func (a *API) operationsRoutes(r chi.Router) {
+	r.Get("/mutation-receipts/{id}", a.getMutationReceipt)
 	r.Route("/settings", func(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Get("/", a.getControllerSettings)

@@ -1038,10 +1038,23 @@ func (s *SQLStore) CreateDeployment(ctx context.Context, deployment core.Deploym
 }
 
 func (s *SQLStore) UpdateDeployment(ctx context.Context, deployment core.Deployment) error {
-	_, err := s.db.ExecContext(ctx, s.q(`UPDATE deployments SET state=?,message=?,started_at=?,finished_at=?,lease_until=? WHERE id=?`),
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, s.q(`UPDATE deployments SET state=?,message=?,started_at=?,finished_at=?,lease_until=? WHERE id=?`),
 		string(deployment.State), deployment.Message, nullTime(deployment.StartedAt), nullTime(deployment.FinishedAt),
 		nullTime(deployment.LeaseUntil), deployment.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	if deployment.State.Terminal() {
+		if err := s.UpdateMutationOutcome(ctx, tx.Tx, "deployment", deployment.ID, string(deployment.State)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) UpdateDeploymentOutputs(ctx context.Context, id string, outputs map[string]string) error {
