@@ -57,6 +57,7 @@ func (a *API) reviewManagedServer(w http.ResponseWriter, r *http.Request) {
 	if !a.requireInfrastructureCredentials(w, r, in.ProjectID, in.SSHKeySecretID, in.SecretRefs) {
 		return
 	}
+	in.ActorID = currentIdentity(r.Context()).ID
 	item, err := m.ReviewCreate(r.Context(), in)
 	if err != nil {
 		a.infrastructureProblem(w, err)

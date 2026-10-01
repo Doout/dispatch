@@ -33,6 +33,102 @@ paths:
       responses:
         '200': { description: Current deletion digest, exact server name and protected storage consequences }
         '409': { $ref: '#/components/responses/Problem' }
+  /infrastructure/bootstrap:
+    get:
+      operationId: listTargetBootstraps
+      description: Controller-owner inventory of sanitized installation plans and separate installation, enrollment and runtime states. SSH credentials and installer claims are never returned.
+      parameters:
+        - {name: serverId, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Installation receipts}
+  /infrastructure/bootstrap/review:
+    post:
+      operationId: reviewTargetBootstrap
+      description: Creates an inert verified SSH installation review. Optional serverId selects an existing target; omission imports a machine. The plan requires method ssh, platform, imageFamily, sshHost, sshPort, sshUser, a trusted sshHostKey and sshVerified true. Credentials are write-only, encrypted and operation-scoped. No SSH connection or allocation occurs before approval.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan, credentials]
+              properties:
+                serverId: {type: string}
+                plan: {type: object}
+                credentials:
+                  type: object
+                  writeOnly: true
+                  properties:
+                    password: {type: string, writeOnly: true}
+                    privateKey: {type: string, writeOnly: true}
+                    privateKeyPassword: {type: string, writeOnly: true}
+      responses:
+        '201': {description: Normalized host, fingerprint, pinned artifact, actions, digest and expiry}
+        '422': {description: Missing trusted key, configured HTTPS origin, artifact or prerequisites}
+  /infrastructure/bootstrap/{id}:
+    get:
+      operationId: getTargetBootstrap
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Sanitized installation receipt and refreshed runtime evidence}
+  /infrastructure/bootstrap/{id}/accept:
+    post:
+      operationId: acceptTargetBootstrap
+      description: A human controller owner approves the saved SSH digest and exact target name. The worker executes only the generated installer after pinned host-key verification. Upgrades preserve identity unless replacement was explicitly reviewed.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [digest, confirmName]
+              properties:
+                digest: {type: string}
+                confirmName: {type: string}
+      responses:
+        '202': {description: Durable accepted installation; repeat acceptance returns the same receipt}
+        '409': {description: Review expired or target identity changed}
+  /infrastructure/bootstrap/{id}/retry:
+    post:
+      operationId: retryTargetBootstrap
+      description: Retries the approved SSH installer with its same digest, encrypted credentials and target. Never allocates another machine. An expired claim requires a new review.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [digest]
+              properties:
+                digest: {type: string}
+      responses:
+        '202': {description: Same installation scheduled for retry}
+        '409': {description: Changed review, expired claim or active lease}
+  /bootstrap/claims/{id}:
+    post:
+      operationId: claimTargetBootstrapEnrollment
+      description: Installer-only scoped bearer capability. Requires an accepted review and its allocated provider resource or imported target. Delivers a fresh one-use enrollment credential, replays it after a lost response, and refreshes expired unused tokens without allocation. Responses use Cache-Control no-store.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Intended node and enrollment credential, or already-enrolled state}
+        '401': {description: Invalid, superseded or expired claim}
+        '409': {description: Resource not allocated or identity changed}
+  /bootstrap/claims/{id}/progress:
+    post:
+      operationId: reportTargetBootstrapProgress
+      description: Authenticates the installer claim and accepts only fixed non-secret downloading, installing, installed or failed phases.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Sanitized phase recorded}
   /projects/{id}/infrastructure/quota:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }

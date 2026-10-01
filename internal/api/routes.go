@@ -18,6 +18,7 @@ func (a *API) routes() http.Handler {
 	r.Get("/relay/bin/{platform}", a.relayBinary)
 	r.Get("/edge/install.sh", a.edgeInstallScript)
 	r.Get("/edge/bin/{platform}", a.edgeBinary)
+	r.Get("/edge/artifacts/{digest}/{platform}", a.bootstrapArtifact)
 	r.Route("/api/v1", func(r chi.Router) {
 		a.publicRoutes(r)
 		r.Group(func(r chi.Router) {
@@ -54,6 +55,8 @@ func (a *API) publicRoutes(r chi.Router) {
 	r.Get("/github-apps/manifest/callback", a.completeGitHubAppManifest)
 	r.Get("/laneway-applications/setup", a.completeLanewayApplicationRegistration)
 	r.Get("/laneway-networks/callback", a.completeLanewayAuthorization)
+	r.With(a.limitPublicAuth).Post("/bootstrap/claims/{id}", a.claimTargetBootstrap)
+	r.With(a.limitPublicAuth).Post("/bootstrap/claims/{id}/progress", a.progressTargetBootstrap)
 	r.Post("/edge/nodes/{id}/enroll", a.enrollEdgeNode)
 	r.Post("/edge/nodes/{id}/challenge", a.challengeEdgeNode)
 	r.Post("/edge/nodes/{id}/session", a.createEdgeSession)

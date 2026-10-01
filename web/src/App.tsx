@@ -101,6 +101,7 @@ import { ConnectionsPage } from "./ConnectionsPage";
 import { InfrastructureProviders } from "./InfrastructureProviders";
 import { InfrastructureQuotas } from "./InfrastructureQuotas";
 import { ManagedServers } from "./ManagedServers";
+import { TargetBootstraps } from "./TargetBootstraps";
 import { HookCredentialBindings, HookFields } from "./HookEditorFields";
 import { PageHeader, pageTitles } from "./PageHeader";
 import { StatusLabel, TableIconAction } from "./ResourceTable";
@@ -1866,7 +1867,7 @@ export function ServersPage({
       />
       {canManage && <InfrastructureProviders overview={overview} />}
       <InfrastructureQuotas overview={overview} canManage={canManage} />
-      {canManage && <ManagedServers overview={overview} />}
+      {canManage && <><ManagedServers overview={overview} /><TargetBootstraps overview={overview} /></>}
       <section className="server-section">
         <div className="section-title">
           <div>
