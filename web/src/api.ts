@@ -205,7 +205,11 @@ export type RelaySSHInstallInput = {
   installMode?: "systemd" | "docker";
   relayImage?: string;
 };
+export type HealthCheck = { id: string; kind: "container" | "http" | "tcp" | "tls"; scope: "workload" | "route" | "certificate"; service?: string; port?: number; path?: string };
+export type HealthPolicy = { timeoutSeconds: number; checkTimeoutSeconds: number; intervalSeconds: number; failureThreshold: number; checks: HealthCheck[] };
+export type DeploymentHealth = { state: string; simulated?: boolean; policy: HealthPolicy; checks: { check: HealthCheck; state: string; attempts: number; failures: number; message: string; httpStatus?: number }[]; startedAt?: string; finishedAt?: string };
 export type App = {
+  healthPolicy?: HealthPolicy;
   id: string;
   projectId: string;
   serverId: string;
@@ -246,6 +250,7 @@ export type DeploymentState =
   | "failed"
   | "cancelled";
 export type Deployment = {
+  health?: DeploymentHealth;
   id: string;
   appId: string;
   commitSha: string;
@@ -917,7 +922,19 @@ export async function destructiveRequest<T>(path: string, init: RequestInit): Pr
   return request<T>(path, { ...init, body: JSON.stringify({ ...body, confirmation }) });
 }
 
+export type StorageResource = {
+  id: string; serverId: string; kind: string; name: string; namespace?: string;
+  identity: string; projectId?: string; ownerKind?: string; ownerId?: string;
+  ownership: string; orphaned: boolean; policy: "retain" | "destroy"; state: string;
+  consumers: { id: string; mount?: string; active: boolean }[];
+  revision: number; observedAt: string; message?: string;
+};
+
 export const api = {
+  storage: (serverId: string) => request<StorageResource[]>(`/api/v1/storage?serverId=${encodeURIComponent(serverId)}`),
+  reconcileStorage: (serverId: string) => request<StorageResource[]>(`/api/v1/servers/${encodeURIComponent(serverId)}/storage/reconcile`, { method: "POST" }),
+  storagePolicy: (id: string, revision: number, policy: "retain" | "destroy") => request<StorageResource>(`/api/v1/storage/${id}/policy`, { method: "PUT", body: JSON.stringify({ revision, policy }) }),
+  deleteStorage: (id: string) => destructiveRequest<void>(`/api/v1/storage/${id}`, { method: "DELETE" }),
  workflowRevision: (id: string) => request<WorkflowRevision>(`/api/v1/workflow/revisions/${id}`),
  eventRules: () => request<EventRule[]>("/api/v1/events/rules"),
  eventActivity: (transport = "", before = "") => request<EventActivityPage>(`/api/v1/events/activity?${new URLSearchParams({transport,before})}`),
@@ -1198,6 +1215,8 @@ export const api = {
       `/api/v1/apps/${id}/helm-values`,
       { method: "PUT", body: JSON.stringify({ overrides }) },
     ),
+  appHealthPolicy: (id: string) => request<HealthPolicy>(`/api/v1/apps/${id}/health-policy`),
+  updateAppHealthPolicy: (id: string, policy: HealthPolicy) => request<HealthPolicy>(`/api/v1/apps/${id}/health-policy`, {method:"PUT",body:JSON.stringify(policy)}),
   updateAppHooks: (
     id: string,
     body: {

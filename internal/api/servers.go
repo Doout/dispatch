@@ -478,8 +478,8 @@ func (a *API) deleteServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := a.store.DeleteServer(r.Context(), id); err != nil {
-		a.notFoundOrInternal(w, err, "Server")
+	if err := a.withStorageRegistrationRemoval(r, "server", id, func() error { return a.store.DeleteServer(r.Context(), id) }); err != nil {
+		problem(w, 409, "Server deletion stopped", err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

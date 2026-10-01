@@ -369,7 +369,8 @@ func (s *Service) StartRollback(ctx context.Context, id, expectedCurrent, expect
 	d := core.Deployment{
 		ID: ulid.Make().String(), AppID: source.AppID,
 		CommitSHA: source.CommitSHA, SpecDigest: source.SpecDigest, Snapshot: source.Snapshot,
-		State: core.DeploymentQueued, Message: "Historical rollback accepted", CreatedAt: now, LeaseUntil: &lease,
+		Health: core.DeploymentHealth{Policy: source.Health.Policy, State: "pending", Checks: []core.HealthCheckResult{}},
+		State:  core.DeploymentQueued, Message: "Historical rollback accepted", CreatedAt: now, LeaseUntil: &lease,
 		RollbackCurrentID: expectedCurrent,
 		Acceptance:        &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest()},
 		ExecutionAppName:  app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
@@ -398,6 +399,10 @@ func (s *Service) runRollback(ctx context.Context, d core.Deployment, sourceID, 
 		delete(s.cancels, d.ID)
 		s.mu.Unlock()
 	}()
+	ctx = WithHealthReporter(ctx, func(save context.Context, id string, result core.DeploymentHealth) error {
+		d.Health = result
+		return s.store.UpdateDeploymentHealth(save, id, result)
+	})
 	ctx, cancel := context.WithTimeout(ctx, helmOperationTimeout+time.Minute)
 	defer cancel()
 	source, err := s.store.GetDeployment(ctx, sourceID)
@@ -459,18 +464,53 @@ func (s *Service) runRollback(ctx context.Context, d core.Deployment, sourceID, 
 	if err = s.transition(ctx, &d, core.DeploymentStarting, "Restoring retained Helm release; hooks are disabled"); err != nil {
 		return
 	}
+	policy, err := core.NormalizeHealthPolicy(d.Health.Policy)
+	if err != nil {
+		s.fail(d, err)
+		return
+	}
+	d.Health.Policy = policy
+	for _, check := range policy.Checks {
+		if check.Kind != "tls" {
+			continue
+		}
+		preflight := policy
+		preflight.Checks = []core.HealthCheck{check}
+		result, checkErr := RunHealthPolicy(ctx, preflight, func(ctx context.Context, c core.HealthCheck) HealthObservation {
+			if c.Kind == "container" {
+				return HealthObservation{Passed: true}
+			}
+			return probeCertificate(ctx, app.Domain, c.Port)
+		})
+		if checkErr != nil {
+			result.Policy = policy
+			_ = reportDeploymentHealth(ctx, d, result)
+			s.fail(d, checkErr)
+			return
+		}
+	}
 	rollback := action.NewRollback(prepared.client.configuration)
 	rollback.Version = prepared.release.Version
 	rollback.DisableHooks = true
 	rollback.Wait = true
 	rollback.WaitForJobs = true
-	rollback.Timeout = helmOperationTimeout
+	rollback.Timeout = time.Duration(policy.TimeoutSeconds) * time.Second
 	if err = rollback.Run(prepared.source.Snapshot.Release); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			s.finish(&d, core.DeploymentCancelled, "Rollback cancelled; inspect release status before retrying")
 		} else {
 			s.fail(d, errors.New("Helm rollback failed. Inspect workload readiness and Helm history before retrying; original retained credentials were preserved."))
 		}
+		return
+	}
+	result, healthErr := RunHealthPolicy(ctx, policy, func(context.Context, core.HealthCheck) HealthObservation { return HealthObservation{Passed: true} })
+	if healthErr != nil {
+		_ = reportDeploymentHealth(ctx, d, result)
+		s.fail(d, healthErr)
+		return
+	}
+	if err = reportDeploymentHealth(ctx, d, result); err != nil {
+		s.fail(d, errors.New("cannot persist rollback health evidence"))
 		return
 	}
 	if capture != nil {

@@ -274,7 +274,7 @@ func (e DockerExecutor) RollbackRuntime(ctx context.Context, d, source core.Depl
 	if err = progress(core.DeploymentChecking, "Checking retained container readiness"); err != nil {
 		return err
 	}
-	if err = e.waitContainer(ctx, name); err != nil {
+	if err = e.checkApplicationHealth(ctx, d, app, server, progress); err != nil {
 		return err
 	}
 	return progress(core.DeploymentRouting, routeMessage(app))

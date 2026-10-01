@@ -28,6 +28,7 @@ type destructiveConfirmation struct {
 }
 
 type destructiveReview struct {
+	StoragePolicy string   `json:"storagePolicy,omitempty"`
 	ResourceID    string   `json:"resourceId"`
 	ResourceType  string   `json:"resourceType"`
 	Name          string   `json:"name"`
@@ -73,6 +74,23 @@ func (a *API) previewDestructiveAction(kind, action string) http.HandlerFunc {
 			if !a.requireProject(w, r, permission, review.ProjectID) {
 				return
 			}
+		}
+		if err := a.refreshStorageReview(r.Context(), kind, chi.URLParam(r, "id")); err != nil {
+			problem(w, 409, "Storage inspection unavailable", err.Error())
+			return
+		}
+		review, err = a.destructiveReview(r.Context(), r, kind, action)
+		if err != nil {
+			a.notFoundOrInternal(w, err, "Resource")
+			return
+		}
+		if review.ProjectID != "" && !a.requireProject(w, r, func() core.Permission {
+			if action == "cleanup" {
+				return core.PermissionDeploymentRun
+			}
+			return core.PermissionProjectConfigure
+		}(), review.ProjectID) {
+			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, 200, review)
@@ -142,6 +160,9 @@ func (a *API) recheckDestructiveAction(r *http.Request, kind, action string) err
 	if input.ExpectedVersion != review.Version || input.ConfirmName != review.Name {
 		return errDestructiveReviewChanged
 	}
+	if review.BlockedReason != "" {
+		return errors.New(review.BlockedReason)
+	}
 	return nil
 }
 
@@ -202,7 +223,7 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 		} else {
 			out.Resources = append(out.Resources, "Docker resources dispatch-"+strings.ToLower(app.ID)+" on "+server.Name)
 		}
-		out.Summary = "Remove this application's runtime resources. Named volumes and external database data are preserved. Helm charts control which chart resources uninstall removes."
+		out.Summary = "Remove this application's runtime resources. Volumes and external database data are retained. Cleanup stops when a Helm release would remove protected storage."
 		if action == "delete" {
 			out.Summary += " Application configuration and deployment history will also be deleted."
 		} else {
@@ -240,6 +261,13 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 		item, err = a.store.GetService(ctx, id)
 		record, out.Name, out.ProjectID = item, item.Name, item.ProjectID
 		out.Summary = "Remove this service registration. The provisioned or external service and its data remain. Remove configured consumers first."
+	case "storage":
+		var item core.StorageResource
+		item, err = a.store.GetStorage(ctx, id)
+		item.ObservedAt = time.Time{}
+		record, out.Name, out.ProjectID, out.StoragePolicy = item, item.Name, item.ProjectID, item.Policy
+		out.Summary = "Permanently delete this storage and its data. Workload cleanup does not perform this action. Ownership history remains."
+		out.BlockedReason = item.DeleteBlockedReason()
 	case "service-template":
 		var resource core.WorkflowResource
 		var project string
@@ -391,6 +419,14 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 			Dependencies []string
 		}{extra, dependencies}
 	}
+	storageVersion, storageErr := a.addStorageReview(ctx, &out)
+	if storageErr != nil {
+		return out, storageErr
+	}
+	extra = struct {
+		Inputs         any
+		StorageVersion string
+	}{extra, storageVersion}
 	// Canonical JSON dereferences target configuration instead of hashing memory addresses.
 	raw, err := json.Marshal(struct {
 		Kind, Action  string

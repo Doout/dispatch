@@ -2474,3 +2474,15 @@ code { font-family: var(--mono); }
 .release-runtime-images { display: grid; gap: 8px; margin: 14px 0; }
 .release-runtime-images > div { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 4fr); gap: 12px; }
 .release-runtime-images dd { margin: 0; overflow-wrap: anywhere; }
+
+.storage-dialog { width: min(1180px, 100%); }
+.storage-dialog .resource-table td { vertical-align: top; }
+.storage-dialog .resource-table small { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+
+.storage-dialog select { min-height: 36px; max-width: 100%; border: 1px solid var(--rule-strong); border-radius: 6px; padding: 5px 8px; background: #fff; color: inherit; }
+
+.deployment-health { margin: 16px 0; padding: 16px; border: 1px solid #dce2e9; border-radius: 8px; background: white; }
+.deployment-health summary { cursor: pointer; font-weight: 600; }
+.deployment-health p { color: #617082; font-size: 13px; }
+.deployment-health td { vertical-align: top; }
+.deployment-health td small { display: block; margin-top: 4px; color: #617082; overflow-wrap: anywhere; }

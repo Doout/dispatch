@@ -128,7 +128,7 @@ func (s *SQLStore) CreateRollbackDeployment(ctx context.Context, d, source core.
 	if app != d.AppID || state != string(core.DeploymentSucceeded) {
 		return errors.New("rollback source changed")
 	}
-	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployments(id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`), d.ID, d.AppID, source.CommitSHA, source.SpecDigest, string(d.State), d.Message, stamp(d.CreatedAt), nullTime(d.StartedAt), nullTime(d.FinishedAt), nullTime(d.LeaseUntil), jsonText(source.Outputs), jsonText(source.Snapshot))
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployments(id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot,health) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`), d.ID, d.AppID, source.CommitSHA, source.SpecDigest, string(d.State), d.Message, stamp(d.CreatedAt), nullTime(d.StartedAt), nullTime(d.FinishedAt), nullTime(d.LeaseUntil), jsonText(source.Outputs), jsonText(source.Snapshot), jsonText(core.DeploymentHealth{Policy: source.Health.Policy, State: "pending", Checks: []core.HealthCheckResult{}}))
 	if err != nil {
 		return err
 	}

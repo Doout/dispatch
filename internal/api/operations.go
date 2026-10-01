@@ -65,6 +65,7 @@ func (a *API) auditMutation(next http.Handler) http.Handler {
 		e := core.AuditEvent{ID: ulid.Make().String(), ActorID: identity.ID, ActorName: identity.DisplayName, Action: r.Method + " " + route, ResourceID: id, Outcome: "succeeded", CreatedAt: time.Now().UTC()}
 		if confirmed.Review != nil {
 			e.ResourceID, e.ProjectID, e.AppID = confirmed.Review.ResourceID, confirmed.Review.ProjectID, confirmed.Review.AppID
+			e.ConfirmedPolicy = confirmed.Review.StoragePolicy
 			e.ConfirmedAction, e.ConfirmedName, e.ConfirmedVersion = confirmed.Review.Action, confirmed.Review.Name, confirmed.Review.Version
 		}
 		if ww.Status() >= 400 {

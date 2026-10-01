@@ -44,10 +44,11 @@ func (e RuntimeExecutor) Cleanup(ctx context.Context, app core.App, server core.
 var ErrCleanupUnsupported = errors.New("application executor does not support cleanup")
 
 type SimulationExecutor struct {
-	Delay time.Duration
+	Delay       time.Duration
+	HealthProbe HealthProbe
 }
 
-func (e SimulationExecutor) Deploy(ctx context.Context, _ core.Deployment, app core.App, server core.Server, progress Progress) error {
+func (e SimulationExecutor) Deploy(ctx context.Context, deployment core.Deployment, app core.App, server core.Server, progress Progress) error {
 	delay := e.Delay
 	if delay == 0 {
 		delay = 350 * time.Millisecond
@@ -65,8 +66,6 @@ func (e SimulationExecutor) Deploy(ctx context.Context, _ core.Deployment, app c
 		{core.DeploymentFetching, sourceMessage},
 		{core.DeploymentBuilding, buildMessage(app)},
 		{core.DeploymentStarting, "Started candidate revision on " + server.Name},
-		{core.DeploymentChecking, "Readiness checks passed"},
-		{core.DeploymentRouting, routeMessage(app)},
 	}
 	for _, step := range steps {
 		select {
@@ -78,7 +77,20 @@ func (e SimulationExecutor) Deploy(ctx context.Context, _ core.Deployment, app c
 			return err
 		}
 	}
-	return nil
+	if report, ok := ctx.Value(healthReporterKey{}).(HealthReporter); ok {
+		ctx = WithHealthReporter(ctx, func(ctx context.Context, id string, result core.DeploymentHealth) error {
+			result.Simulated = true
+			return report(ctx, id, result)
+		})
+	}
+	probe := e.HealthProbe
+	if probe == nil {
+		probe = func(context.Context, core.HealthCheck) HealthObservation { return HealthObservation{Passed: true} }
+	}
+	if err := evaluateDeploymentHealth(ctx, deployment, app, probe, progress); err != nil {
+		return err
+	}
+	return progress(core.DeploymentRouting, "Simulation: "+routeMessage(app))
 }
 
 func (SimulationExecutor) Cleanup(ctx context.Context, app core.App, _ core.Server, progress Progress) error {
@@ -181,7 +193,7 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 		if err := progress(core.DeploymentStarting, "Applying Compose project on "+server.Name); err != nil {
 			return err
 		}
-		if err := e.commandWithOutput(ctx, "docker", append(append([]string{}, composeArgs...), "up", "-d", "--build", "--remove-orphans")...); err != nil {
+		if err := e.commandWithOutput(ctx, "docker", append(append([]string{}, composeArgs...), "up", "-d", "--build", "--remove-orphans", "--wait", "--wait-timeout", "120")...); err != nil {
 			return fmt.Errorf("deploy compose: %w", err)
 		}
 	} else {
@@ -260,12 +272,7 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 			}
 		}
 	}
-	if app.BuildType == core.BuildTypeDockerfile && e.Artifacts != nil && e.Vault != nil {
-		if err := e.waitContainer(ctx, name); err != nil {
-			return err
-		}
-	}
-	if err := progress(core.DeploymentChecking, "Docker reports the application running"); err != nil {
+	if err := e.checkApplicationHealth(ctx, deployment, app, server, progress); err != nil {
 		return err
 	}
 	if err := progress(core.DeploymentRouting, routeMessage(app)); err != nil {

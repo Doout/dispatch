@@ -74,6 +74,7 @@ func (a *API) connectionsRoutes(r chi.Router) {
 				r.Post("/relay/webhooks", a.createRelayWebhook)
 				a.destructiveRoute(r, "DELETE", "/relay/webhooks/{webhookId}", "relay-webhook", "delete", a.deleteRelayWebhook)
 				r.Post("/repair", a.repairOpenShiftServer)
+				r.Post("/storage/reconcile", a.reconcileStorage)
 				a.destructiveRoute(r, "DELETE", "/", "server", "delete", a.deleteServer)
 			})
 			r.With(a.serverPermission).Get("/topology", a.getServerTopology)
