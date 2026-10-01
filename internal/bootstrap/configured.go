@@ -67,10 +67,16 @@ func (m *Manager) Run(ctx context.Context, logger *slog.Logger) {
 			if ctx.Err() != nil {
 				return
 			}
-			if item.AcceptedAt == nil || item.State == "failed" || item.State == "cancelled" {
+			if item.State == "failed" || item.State == "cancelled" {
 				continue
 			}
-			if item.Plan.Method == "ssh" && (item.State == "accepted" || item.State == "installing" && item.LeaseUntil != nil && item.LeaseUntil.Before(m.now())) {
+			if item.AcceptedAt == nil {
+				if !item.ReviewExpiresAt.After(m.now()) {
+					_, _ = m.Refresh(ctx, item.ID)
+				}
+				continue
+			}
+			if item.Plan.Method == "ssh" && (item.State == "accepted" || item.LeaseUntil != nil && item.LeaseUntil.Before(m.now())) {
 				select {
 				case workers <- struct{}{}:
 					go func(item core.TargetBootstrap) {

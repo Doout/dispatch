@@ -18,7 +18,7 @@ Allocation, installation, enrollment and runtime readiness are separate. An IP a
 
 ## Verified SSH installation
 
-In **Target agent installation**, choose an existing target or import an existing machine. Enter its SSH host, port and user, then a password or private key. These credentials are encrypted for this installation, excluded from API responses and cleared from the form after review submission. Builder SSH credentials remain separate.
+In **Target agent installation**, choose an existing target or import an existing machine. Enter its SSH host, port and user, then a password or private key. These credentials are encrypted for this installation, excluded from API responses and cleared from the form after review submission. Saved private inputs are erased when installation completes, its claim expires, or a new approved recovery plan supersedes it. Builder SSH credentials remain separate.
 
 Supply the SSH host public key and verify its fingerprint through the provider console or another trusted channel. A network scan alone is insufficient. The approval screen shows the exact host, user, fingerprint, artifact SHA-256 and actions. A controller owner must confirm the target name before execution. SSH verifies the pinned host key before offering authentication and runs only the generated installer. Non-root users require passwordless sudo. There is no arbitrary command endpoint.
 

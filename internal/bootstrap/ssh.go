@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/store"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -112,6 +113,15 @@ func (m *Manager) InstallSSH(ctx context.Context, id, digest string) (core.Targe
 	if _, err = m.binding(ctx, item); err != nil {
 		m.mu.Unlock()
 		return item, err
+	}
+	generation := item.ExpectedGeneration
+	if item.Generation > 0 {
+		generation = item.Generation
+	}
+	credential, readErr := m.Store.GetEdgeCredential(ctx, item.NodeID)
+	if readErr != nil && !errors.Is(readErr, store.ErrNotFound) || credential.Generation != generation {
+		m.mu.Unlock()
+		return item, ErrConflict
 	}
 	input, err := m.inputs(item)
 	if err != nil {
