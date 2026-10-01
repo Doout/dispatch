@@ -66,7 +66,10 @@ func TestComposeServiceNetworksPreserveApplicationNetworks(t *testing.T) {
 func TestDockerfileServiceNetworksAttachedBeforeStarting(t *testing.T) {
 	for _, networks := range [][]string{{"database"}, {"database", "cache"}} {
 		var operations []string
-		executor := DockerExecutor{run: func(_ context.Context, _ io.Reader, _ io.Writer, command string, args ...string) error {
+		executor := DockerExecutor{run: func(_ context.Context, _ io.Reader, output io.Writer, command string, args ...string) error {
+			if command == "docker" && len(args) > 0 && args[0] == "inspect" {
+				_, _ = io.WriteString(output, `{"running":true,"health":"none"}`)
+			}
 			if command == "docker" {
 				operations = append(operations, strings.Join(args, " "))
 			}

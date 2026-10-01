@@ -1184,3 +1184,7 @@ CREATE TABLE storage_resources (
 );
 CREATE INDEX storage_resources_server ON storage_resources(server_id);
 ALTER TABLE audit_events ADD COLUMN confirmed_policy TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 073_deployment_health
+ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';

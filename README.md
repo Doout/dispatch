@@ -233,6 +233,7 @@ Use `make check` for the race detector, `go vet`, TypeScript checks, and fronten
 - [Observations and notifications](docs/observations.md)
 - [Controller operations](docs/operations.md)
 - [Storage ownership and deletion](docs/storage.md)
+- [Deployment health policies](docs/deployment-health.md)
 - [Edge credentials](docs/edge-credentials.md)
 - [API reference](docs/openapi.yaml)
 - [Provider API](docs/provider-api.md)

@@ -462,7 +462,7 @@ func (s *SQLStore) checkDeploymentApp(ctx context.Context, tx *changeTx, d core.
 	if d.Acceptance != nil {
 		q := `SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
    dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
-   helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance FROM apps WHERE id=?`
+   helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance,health_policy FROM apps WHERE id=?`
 		if s.postgres {
 			q += ` FOR UPDATE`
 		}

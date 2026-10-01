@@ -109,6 +109,7 @@ const (
 )
 
 type App struct {
+	HealthPolicy       HealthPolicy            `json:"healthPolicy"`
 	ServiceRuntime     []ServiceRuntimeBinding `json:"-"`
 	ID                 string                  `json:"id"`
 	ProjectID          string                  `json:"projectId"`
@@ -190,9 +191,10 @@ func (a App) SpecDigest() string {
 		HookEnvironment    map[string]string
 		ContainerPort      int
 		Domain             string
+		HealthPolicy       HealthPolicy
 	}{a.ServerID, a.SourceRepo, a.Branch, a.SourceAuthType, a.SourceCredentialID, a.BuildType, a.ContextPath, a.DockerfilePath, a.ComposePath, a.ComposeContent,
 		a.HelmChart, a.HelmVersion, a.HelmRepository, a.HelmValues, a.HelmNamespace, a.HelmRelease,
-		a.PreDeployHook, a.PostDeployHook, a.HelmGroupValues, a.HookEnvironment, a.ContainerPort, a.Domain})
+		a.PreDeployHook, a.PostDeployHook, a.HelmGroupValues, a.HookEnvironment, a.ContainerPort, a.Domain, a.HealthPolicy})
 	sum := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
@@ -216,6 +218,7 @@ func (s DeploymentState) Terminal() bool {
 }
 
 type Deployment struct {
+	Health             DeploymentHealth   `json:"health"`
 	RollbackCurrentID  string             `json:"-"`
 	Acceptance         *DeploymentReview  `json:"-"`
 	ExecutionAppName   string             `json:"-"`

@@ -88,10 +88,15 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 			commitSHA = "HEAD"
 		}
 	}
+	policy, err := core.NormalizeHealthPolicy(app.HealthPolicy)
+	if err != nil {
+		return core.Deployment{}, err
+	}
 	now := time.Now().UTC()
 	deployment := core.Deployment{
 		ID: ulid.Make().String(), AppID: app.ID, CommitSHA: commitSHA, SpecDigest: app.SpecDigest(),
-		State: core.DeploymentQueued, Message: "Deployment accepted", CreatedAt: now,
+		Health: core.DeploymentHealth{Policy: policy, State: "pending", Checks: []core.HealthCheckResult{}},
+		State:  core.DeploymentQueued, Message: "Deployment accepted", CreatedAt: now,
 		Acceptance: review, ExecutionAppName: app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
 	}
 	if err := s.store.CreateDeployment(ctx, deployment); err != nil {
@@ -233,6 +238,10 @@ func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.
 	if err := s.transition(ctx, &deployment, core.DeploymentFetching, preparing); err != nil {
 		return
 	}
+	ctx = WithHealthReporter(ctx, func(save context.Context, id string, result core.DeploymentHealth) error {
+		deployment.Health = result
+		return s.store.UpdateDeploymentHealth(save, id, result)
+	})
 	err = s.Storage.WithTarget(ctx, server.ID, func() error {
 		executionErr := s.executor.Deploy(ctx, deployment, app, server, func(state core.DeploymentState, message string) error {
 			return s.transition(ctx, &deployment, state, redactServiceMessage(message, app.ServiceRuntime))

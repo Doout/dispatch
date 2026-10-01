@@ -9,6 +9,34 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /apps/{id}/health-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getApplicationHealthPolicy
+      description: Requires project.view. Returns the normalized policy including mandatory workload readiness.
+      responses:
+        '200':
+          description: Current application health policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthPolicy' }
+    put:
+      operationId: updateApplicationHealthPolicy
+      description: Requires project.configure and an idle application. Captured historical deployment policies remain unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HealthPolicy' }
+      responses:
+        '200': { description: Saved policy. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /storage:
     get:
       operationId: listStorage
@@ -3168,6 +3196,26 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    HealthPolicy:
+      type: object
+      properties:
+        timeoutSeconds: { type: integer, minimum: 1, maximum: 600, default: 120 }
+        checkTimeoutSeconds: { type: integer, minimum: 1, maximum: 60, default: 5 }
+        intervalSeconds: { type: integer, minimum: 1, maximum: 60, default: 2 }
+        failureThreshold: { type: integer, minimum: 1, maximum: 20, default: 3 }
+        checks:
+          type: array
+          maxItems: 17
+          items:
+            type: object
+            required: [id, kind]
+            properties:
+              id: { type: string }
+              kind: { type: string, enum: [container, http, tcp, tls] }
+              scope: { type: string, enum: [workload, route, certificate], default: workload }
+              service: { type: string }
+              port: { type: integer, minimum: 1, maximum: 65535 }
+              path: { type: string, description: Absolute HTTP path without credentials, query or fragment. }
     EventActivity:
       type: object
       description: Delivery metadata without raw payloads or credentials. Processed describes event handling, not the outcome of the linked run.

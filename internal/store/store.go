@@ -14,6 +14,7 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	UpdateDeploymentHealth(context.Context, string, core.DeploymentHealth) error
 	ClaimWorkflowPreviewPanelLease(context.Context, string, time.Time) (bool, error)
 	ReleaseWorkflowPreviewPanelLease(context.Context, string) error
 	ListWorkflowPreviewPanels(context.Context) ([]core.WorkflowPreviewPanel, error)
