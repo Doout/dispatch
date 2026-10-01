@@ -9,6 +9,55 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /contracts/runtime:
+    get:
+      operationId: getRuntimeContract
+      description: Lists the versioned operation vocabulary. Query target capabilities before requesting an operation.
+      responses:
+        '200':
+          description: Runtime contract metadata and the target-capabilities URL.
+          content:
+            application/json:
+              schema: { type: object }
+  /servers/{serverId}/capabilities:
+    get:
+      operationId: getServerRuntimeCapabilities
+      description: Returns the configured executor's supported operations. Requires visibility of an application using this target, or controller-owner access.
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: buildType
+          in: query
+          schema: { type: string, enum: [dockerfile, compose, helm] }
+      responses:
+        '200':
+          description: Target-specific capabilities; simulation reports itself explicitly.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apiVersion, driver, targetMode, capabilities]
+                properties:
+                  apiVersion: { type: string, const: dispatch.runtime/v1 }
+                  driver: { type: string }
+                  targetMode: { type: string }
+                  capabilities:
+                    type: array
+                    items:
+                      type: object
+                      required: [operation, supported]
+                      properties:
+                        operation: { type: string, enum: [deploy, inspect, logs, start, stop, rollback, destroy] }
+                        supported: { type: boolean }
+                        reason: { type: string }
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
   /analytics:
     get:
       operationId: getAnalytics

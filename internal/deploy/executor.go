@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/runtimecontract"
 )
 
 type Progress func(core.DeploymentState, string) error
@@ -31,26 +32,11 @@ type RuntimeExecutor struct {
 }
 
 func (e RuntimeExecutor) Deploy(ctx context.Context, deployment core.Deployment, app core.App, server core.Server, progress Progress) error {
-	executor := e.Default
-	if app.BuildType == core.BuildTypeHelm {
-		executor = e.Helm
-	}
-	if executor == nil {
-		return fmt.Errorf("no executor configured for %s applications", app.BuildType)
-	}
-	return executor.Deploy(ctx, deployment, app, server, progress)
+	return e.Execute(ctx, runtimecontract.Deploy, deployment, app, server, progress)
 }
 
 func (e RuntimeExecutor) Cleanup(ctx context.Context, app core.App, server core.Server, progress Progress) error {
-	executor := e.Default
-	if app.BuildType == core.BuildTypeHelm {
-		executor = e.Helm
-	}
-	cleaner, ok := executor.(CleanupExecutor)
-	if !ok {
-		return ErrCleanupUnsupported
-	}
-	return cleaner.Cleanup(ctx, app, server, progress)
+	return e.Execute(ctx, runtimecontract.Destroy, core.Deployment{}, app, server, progress)
 }
 
 var ErrCleanupUnsupported = errors.New("application executor does not support cleanup")
@@ -93,7 +79,10 @@ func (e SimulationExecutor) Deploy(ctx context.Context, _ core.Deployment, app c
 	return nil
 }
 
-func (SimulationExecutor) Cleanup(_ context.Context, app core.App, _ core.Server, progress Progress) error {
+func (SimulationExecutor) Cleanup(ctx context.Context, app core.App, _ core.Server, progress Progress) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := progress(core.DeploymentStarting, "Removing simulated resources for "+app.Name); err != nil {
 		return err
 	}
@@ -127,8 +116,8 @@ func (e DockerExecutor) Deploy(ctx context.Context, deployment core.Deployment, 
 }
 
 func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, app core.App, server core.Server, progress Progress) error {
-	if server.Address != "local" && server.Address != "127.0.0.1" && server.Address != "localhost" {
-		return errors.New("live Docker execution currently requires a local enrolled server")
+	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Deploy); err != nil {
+		return err
 	}
 	directCompose := app.BuildType == core.BuildTypeCompose && strings.TrimSpace(app.ComposeContent) != ""
 	if !directCompose && !validGitSourceForExecution(app) {
@@ -150,11 +139,11 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 			return fmt.Errorf("write compose definition: %w", err)
 		}
 	} else {
-		if err := progress(core.DeploymentFetching, "Fetching exact repository branch "+app.Branch); err != nil {
+		if err := progress(core.DeploymentFetching, "Fetching accepted source revision"); err != nil {
 			return err
 		}
-		if err := e.gitCommand(ctx, app, "clone", "--depth", "1", "--branch", app.Branch, app.SourceRepo, workspace); err != nil {
-			return fmt.Errorf("fetch source: %w", err)
+		if _, err := e.checkoutRevision(ctx, app, deployment.CommitSHA, workspace); err != nil {
+			return err
 		}
 	}
 
@@ -257,8 +246,8 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 }
 
 func (e DockerExecutor) Cleanup(ctx context.Context, app core.App, server core.Server, progress Progress) error {
-	if server.Address != "local" && server.Address != "127.0.0.1" && server.Address != "localhost" {
-		return errors.New("live Docker cleanup currently requires a local enrolled server")
+	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Destroy); err != nil {
+		return err
 	}
 	name := dockerResourceName(app.ID)
 	if err := progress(core.DeploymentStarting, "Removing Docker resources for "+app.Name); err != nil {

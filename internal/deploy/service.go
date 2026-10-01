@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/serviceconn"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
@@ -20,15 +21,16 @@ var (
 
 type Service struct {
 	// OnFinished queues follow-up observations after the terminal state is saved.
-	OnFinished     func(core.Deployment)
-	services       serviceconn.Resolver
-	store          store.Store
-	executor       Executor
-	mu             sync.Mutex
-	cancels        map[string]context.CancelFunc
-	appLocks       map[string]*sync.Mutex
-	helmComparison *SourceAuthExecutor
-	compareHelm    func(context.Context, core.App, core.Server, string, core.Deployment) (bool, error)
+	OnFinished      func(core.Deployment)
+	services        serviceconn.Resolver
+	store           store.Store
+	executor        Executor
+	mu              sync.Mutex
+	cancels         map[string]context.CancelFunc
+	appLocks        map[string]*sync.Mutex
+	helmComparison  *SourceAuthExecutor
+	compareHelm     func(context.Context, core.App, core.Server, string, core.Deployment) (bool, error)
+	resolveRevision func(context.Context, core.App, string) (string, error)
 }
 
 func NewService(data store.Store, executor Executor) *Service {
@@ -66,6 +68,13 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 	if app.Template {
 		return core.Deployment{}, ErrApplicationTemplate
 	}
+	server, err := s.store.GetServer(ctx, app.ServerID)
+	if err != nil {
+		return core.Deployment{}, err
+	}
+	if err := s.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Deploy); err != nil {
+		return core.Deployment{}, err
+	}
 	if review == nil {
 		review = &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest()}
 	}
@@ -79,6 +88,12 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 			commitSHA = "inline"
 		} else {
 			commitSHA = "HEAD"
+		}
+	}
+	if s.resolveRevision != nil {
+		commitSHA, err = s.resolveRevision(ctx, app, commitSHA)
+		if err != nil {
+			return core.Deployment{}, err
 		}
 	}
 	now := time.Now().UTC()

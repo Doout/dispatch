@@ -77,6 +77,7 @@ func (a *API) connectionsRoutes(r chi.Router) {
 				r.Delete("/", a.deleteServer)
 			})
 			r.With(a.serverPermission).Get("/topology", a.getServerTopology)
+			r.With(a.serverPermission).Get("/capabilities", a.serverRuntimeCapabilities)
 		})
 	})
 	r.Route("/relay", func(r chi.Router) {
