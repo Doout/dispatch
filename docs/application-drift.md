@@ -19,8 +19,12 @@ check time. An unreachable target, denied resource read, or ownership conflict
 produces **Unknown**. A failed check replaces the previous status; its older
 successful-check timestamp remains visible.
 
-Checks are manual. There is no scheduled monitoring, Argo CD integration, or
-automatic repair. A saved green observation does not establish continuous health.
+Deployed Helm applications receive scheduled checks every five minutes by
+default. Configure another interval or disable them under **Checks and
+notifications**. The controller batches checks by target to share discovery and
+repeated resource reads; see [observations](observations.md). Checks never repair
+resources automatically. A saved green observation does not establish continuous
+health.
 
 ## Saved configuration
 

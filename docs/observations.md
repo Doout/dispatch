@@ -6,9 +6,13 @@ Application status refreshes inline every 15 seconds. Its Details panel contains
 
 Project viewers can read settings and sanitized results. Project admins and operators can configure checks and run them manually. Deployers do not gain configuration permission. All background work rechecks the application's project against the saved settings.
 
-## Optional scheduling
+## Scheduled checks
 
-Scheduling is off until enabled for an application. Choose an interval from 60 seconds to 24 hours and a stale threshold at least as long as that interval, up to seven days. Dispatch runs at most two observations at once and one per application. A deployment or runtime operation takes precedence; checks wait until the application is idle.
+Deployed Helm applications on Kubernetes and OpenShift targets receive health and drift checks every five minutes by default. Other deployment types require an explicit schedule. Saved settings take precedence, including disabled schedules and custom intervals. Choose an interval from 60 seconds to 24 hours and a stale threshold at least as long as that interval, up to seven days. Default observations become stale after fifteen minutes.
+
+The controller groups due checks by registered target in batches of at most twenty applications, with a two-minute deadline per batch. It runs at most two target batches at once and one batch per target, processing each application's check in order. Applications in a batch share Kubernetes discovery and repeated reads of the same resource for up to thirty seconds. Each connection uses a shared budget of five API requests per second with a burst of ten across discovery and resource reads. Connections and read results are discarded when the batch ends; manual checks fetch fresh results. Targets with different credentials never share a connection or resource result.
+
+A deployment or runtime operation takes precedence; checks wait until the application is idle. Checks do not run on page visits: the interface refreshes saved observations, while the controller performs scheduled work independently.
 
 Repeated unsuccessful observations increase the next interval exponentially, capped at 24 hours. A healthy observation resets this backoff. Controller restarts resume saved schedules. A successful deployment missed during a restart receives a check on startup if its revision has no saved observation. Checks never repair drift, restart containers or deploy a release.
 

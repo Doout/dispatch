@@ -3315,10 +3315,12 @@ components:
           type: integer
         scheduled:
           type: boolean
+          description: Defaults to enabled for Helm applications on Kubernetes or OpenShift targets when no settings have been saved. Default checks start after the first successful deployment. Saved settings take precedence.
         intervalSeconds:
           type: integer
           minimum: 60
           maximum: 86400
+          default: 300
         staleAfterSeconds:
           type: integer
           minimum: 60

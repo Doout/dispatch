@@ -34,25 +34,28 @@ var ErrBusy = errors.New("An observation or deployment is already in progress")
 var ErrUnavailable = errors.New("Observation storage is unavailable")
 
 type Service struct {
-	Data       store.Store
-	Repo       Repository
-	Vault      *secretcrypto.Vault
-	CheckDrift func(context.Context, string) (core.DriftCheck, error)
-	Idle       func(context.Context, string, func() error) error
-	Probe      func(context.Context, string) core.EndpointObservation
-	Deliver    func(context.Context, string, core.ObservationEvent) error
-	Now        func() time.Time
-	mu         sync.Mutex
-	busy       map[string]bool
-	pending    map[string]core.Deployment
-	wake       chan struct{}
+	Data        store.Store
+	Repo        Repository
+	Vault       *secretcrypto.Vault
+	CheckDrift  func(context.Context, string) (core.DriftCheck, error)
+	BatchDrift  func(context.Context) (context.Context, func())
+	Idle        func(context.Context, string, func() error) error
+	Probe       func(context.Context, string) core.EndpointObservation
+	Deliver     func(context.Context, string, core.ObservationEvent) error
+	Now         func() time.Time
+	mu          sync.Mutex
+	busy        map[string]bool
+	busyTargets map[string]bool
+	pending     map[string]core.Deployment
+	wake        chan struct{}
 }
 
 func New(data store.Store, d *drift.Service, deployments *deploy.Service, vault *secretcrypto.Vault) *Service {
 	repo, _ := data.(Repository)
-	s := &Service{Data: data, Repo: repo, Vault: vault, Probe: ProbeEndpoint, Deliver: DeliverWebhook, Now: func() time.Time { return time.Now().UTC() }, busy: map[string]bool{}, pending: map[string]core.Deployment{}, wake: make(chan struct{}, 1)}
+	s := &Service{Data: data, Repo: repo, Vault: vault, Probe: ProbeEndpoint, Deliver: DeliverWebhook, Now: func() time.Time { return time.Now().UTC() }, busy: map[string]bool{}, busyTargets: map[string]bool{}, pending: map[string]core.Deployment{}, wake: make(chan struct{}, 1)}
 	if d != nil {
 		s.CheckDrift = d.Check
+		s.BatchDrift = d.Batch
 	}
 	if deployments != nil {
 		s.Idle = deployments.WithIdleApplication
@@ -72,7 +75,15 @@ func (s *Service) Config(ctx context.Context, appID string) (core.ObservationCon
 	}
 	c, err := s.Repo.GetObservationConfig(ctx, appID)
 	if errors.Is(err, store.ErrNotFound) {
-		return defaultConfig(app), nil
+		c = defaultConfig(app)
+		if app.BuildType == core.BuildTypeHelm && !app.Template {
+			server, serverErr := s.Data.GetServer(ctx, app.ServerID)
+			if serverErr != nil {
+				return c, serverErr
+			}
+			c.Scheduled = server.Kubernetes != nil
+		}
+		return c, nil
 	}
 	if err != nil {
 		return c, err
@@ -449,11 +460,59 @@ type task struct {
 	deployment  *core.Deployment
 }
 
+const observationBatchSize = 20
+
+type taskBatch struct {
+	target string
+	tasks  []task
+}
+
+func (s *Service) runBatch(ctx context.Context, batch taskBatch) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	closeBatch := func() {}
+	if s.BatchDrift != nil {
+		ctx, closeBatch = s.BatchDrift(ctx)
+	}
+	completedWork := false
+	defer func() {
+		closeBatch()
+		s.mu.Lock()
+		delete(s.busyTargets, batch.target)
+		s.mu.Unlock()
+		if completedWork && ctx.Err() == nil {
+			select {
+			case s.wake <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	for _, work := range batch.tasks {
+		var err error
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		} else if work.deployment != nil {
+			err = s.completed(ctx, *work.deployment)
+		} else {
+			_, err = s.check(ctx, work.app, work.source)
+		}
+		completedWork = completedWork || err == nil
+		s.release(work.app)
+		if err != nil && work.deployment != nil {
+			s.mu.Lock()
+			if _, ok := s.pending[work.deployment.ID]; !ok {
+				s.pending[work.deployment.ID] = *work.deployment
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
 func (s *Service) Run(ctx context.Context) {
 	if s.Repo == nil {
 		return
 	}
-	tasks := make(chan task, 2)
+	tasks := make(chan taskBatch, 2)
 	var workers sync.WaitGroup
 	for i := 0; i < 2; i++ {
 		workers.Add(1)
@@ -464,31 +523,7 @@ func (s *Service) Run(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case work := <-tasks:
-					var err error
-					if work.deployment != nil {
-						err = s.completed(ctx, *work.deployment)
-					} else {
-						_, err = s.check(ctx, work.app, work.source)
-					}
-					s.release(work.app)
-					if err != nil && ctx.Err() == nil && work.deployment != nil {
-						s.mu.Lock()
-						if _, ok := s.pending[work.deployment.ID]; !ok {
-							s.pending[work.deployment.ID] = *work.deployment
-						}
-						s.mu.Unlock()
-					}
-					if err == nil {
-						s.mu.Lock()
-						waiting := len(s.pending) > 0
-						s.mu.Unlock()
-						if waiting {
-							select {
-							case s.wake <- struct{}{}:
-							default:
-							}
-						}
-					}
+					s.runBatch(ctx, work)
 				}
 			}
 		}()
@@ -528,17 +563,26 @@ func (s *Service) Run(ctx context.Context) {
 	}
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	submit := func(t task) {
-		if !s.claim(t.app) {
-			return
-		}
-		select {
-		case tasks <- t:
-		case <-ctx.Done():
-			s.release(t.app)
-		}
-	}
 	scan := func() {
+		batches := map[string]*taskBatch{}
+		targets := []string{}
+		enqueue := func(work task, target string) bool {
+			batch := batches[target]
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.busy[work.app] || (batch == nil && s.busyTargets[target]) || (batch != nil && len(batch.tasks) >= observationBatchSize) {
+				return false
+			}
+			if batch == nil {
+				batch = &taskBatch{target: target}
+				batches[target] = batch
+				targets = append(targets, target)
+				s.busyTargets[target] = true
+			}
+			s.busy[work.app] = true
+			batch.tasks = append(batch.tasks, work)
+			return true
+		}
 		s.mu.Lock()
 		pending := s.pending
 		s.pending = map[string]core.Deployment{}
@@ -550,37 +594,57 @@ func (s *Service) Run(ctx context.Context) {
 		sort.Slice(ordered, func(i, j int) bool { return ordered[i].CreatedAt.Before(ordered[j].CreatedAt) })
 		for _, d := range ordered {
 			if ctx.Err() != nil {
-				return
+				break
 			}
-			s.mu.Lock()
-			busy := s.busy[d.AppID]
-			if busy {
-				s.pending[d.ID] = d
-			}
-			s.mu.Unlock()
-			if !busy {
-				copy := d
-				submit(task{app: d.AppID, source: "deployment", deployment: &copy})
-			}
-		}
-		configs, err := s.Repo.ListObservationConfigs(ctx)
-		if err != nil {
-			return
-		}
-		now := s.Now()
-		for _, c := range configs {
-			if !c.Scheduled {
+			app, err := s.Data.GetApp(ctx, d.AppID)
+			if err != nil {
 				continue
 			}
-			app, e := s.Data.GetApp(ctx, c.AppID)
-			if e != nil || app.ProjectID != c.ProjectID || app.Template {
+			copy := d
+			if !enqueue(task{app: d.AppID, source: "deployment", deployment: &copy}, app.ServerID) {
+				s.mu.Lock()
+				s.pending[d.ID] = d
+				s.mu.Unlock()
+			}
+		}
+		now := s.Now()
+		apps, _ := s.Data.ListActiveApps(ctx)
+		for _, app := range apps {
+			if ctx.Err() != nil {
+				break
+			}
+			c, err := s.Config(ctx, app.ID)
+			if err != nil || !c.Scheduled || app.Template {
+				continue
+			}
+			// Default runtime checks begin only after a successful deployment.
+			// Explicit endpoint schedules can run before a deployment exists.
+			if c.Revision == 0 {
+				if _, err := s.Data.LatestSuccessfulDeployment(ctx, app.ID); err != nil {
+					continue
+				}
+			}
+			if app.ProjectID != c.ProjectID {
 				continue
 			}
 			old, e := s.Repo.GetObservation(ctx, c.AppID)
 			if e == nil && old.ConfigurationRevision == c.Revision && old.NextCheckAt != nil && old.NextCheckAt.After(now) {
 				continue
 			}
-			submit(task{app: c.AppID, source: "schedule"})
+			enqueue(task{app: c.AppID, source: "schedule"}, app.ServerID)
+		}
+		for _, target := range targets {
+			batch := *batches[target]
+			select {
+			case tasks <- batch:
+			case <-ctx.Done():
+				for _, work := range batch.tasks {
+					s.release(work.app)
+				}
+				s.mu.Lock()
+				delete(s.busyTargets, target)
+				s.mu.Unlock()
+			}
 		}
 	}
 	scan()
@@ -588,7 +652,24 @@ func (s *Service) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			workers.Wait()
-			return
+			for {
+				select {
+				case batch := <-tasks:
+					for _, work := range batch.tasks {
+						s.release(work.app)
+						if work.deployment != nil {
+							s.mu.Lock()
+							s.pending[work.deployment.ID] = *work.deployment
+							s.mu.Unlock()
+						}
+					}
+					s.mu.Lock()
+					delete(s.busyTargets, batch.target)
+					s.mu.Unlock()
+				default:
+					return
+				}
+			}
 		case <-ticker.C:
 			scan()
 		case <-s.wake:
