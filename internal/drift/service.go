@@ -139,23 +139,19 @@ func (s *Service) Check(ctx context.Context, app string) (core.DriftCheck, error
 		result.Message = err.Error()
 		result.HealthMessage = "Readiness was not checked: " + err.Error()
 	} else {
-		conn, e := s.Connect(ctx, server)
+		conn, closeConnection, e := s.connection(ctx, server)
 		if e != nil {
 			result.Message = "Target unavailable or resource discovery denied."
 			result.HealthMessage = "Readiness could not be read from the deployment target."
 		} else {
-			defer conn.Close()
+			defer closeConnection()
 			result.State, result.Health = "synced", "not_applicable"
 			unknownHealth := false
 			unsupportedHealth := 0
 			assessedHealth := 0
 			for _, want := range objects {
 				item := core.DriftResource{APIVersion: want.GetAPIVersion(), Kind: want.GetKind(), Namespace: want.GetNamespace(), Name: want.GetName(), State: "synced", Health: "unknown", Differences: []core.DriftDifference{}}
-				client, e := conn.resource(want, b.Namespace)
-				var live *unstructured.Unstructured
-				if e == nil {
-					live, e = client.Get(ctx, want.GetName(), metav1.GetOptions{})
-				}
+				live, e := s.read(ctx, conn, server, want, b.Namespace)
 				switch {
 				case apierrors.IsNotFound(e):
 					item.State, item.Health = "missing", "degraded"
