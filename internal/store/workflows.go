@@ -278,12 +278,14 @@ func workflowEventActivity(item core.WorkflowEvent, source core.ConfigSource) co
 }
 
 func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.WorkflowRevision) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending,source_trust) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.ResourceID, item.ConfigSHA, item.SpecDigest, item.State, item.Trigger, jsonText(item.Sources), jsonText(item.Outputs), item.Error,
-		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.PullRequests), jsonText(item.Feedback), item.Feedback != nil && !item.Feedback.Complete)
+		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.PullRequests), jsonText(item.Feedback), item.Feedback != nil && !item.Feedback.Complete, jsonText(item.SourceTrust))
 	return err
 }
 
+// Source trust is updated independently so a runtime holding an older revision
+// cannot overwrite a newer decision while saving job or stage progress.
 func (s *SQLStore) UpdateWorkflowRevision(ctx context.Context, item core.WorkflowRevision) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_revisions SET state=?,sources=?,outputs=?,error=?,started_at=?,finished_at=? WHERE id=? AND state!='cancelled'`),
 		item.State, jsonText(item.Sources), jsonText(item.Outputs), item.Error, nullTime(item.StartedAt), nullTime(item.FinishedAt), item.ID)
@@ -348,7 +350,7 @@ func (s *SQLStore) supersedeWorkflowRevisions(ctx context.Context, resourceID st
 	return ids, tx.Commit()
 }
 
-const workflowRevisionSelect = `SELECT id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback FROM workflow_revisions`
+const workflowRevisionSelect = `SELECT id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,source_trust FROM workflow_revisions`
 
 func (s *SQLStore) GetWorkflowRevision(ctx context.Context, id string) (core.WorkflowRevision, error) {
 	item, err := scanWorkflowRevision(s.db.QueryRowContext(ctx, s.q(workflowRevisionSelect+` WHERE id=?`), id))
@@ -387,14 +389,15 @@ func (s *SQLStore) ListWorkflowRevisions(ctx context.Context, resourceID string,
 
 func scanWorkflowRevision(row scanner) (core.WorkflowRevision, error) {
 	var item core.WorkflowRevision
-	var sources, outputs, created, pullRequests, feedback string
+	var sources, outputs, created, pullRequests, feedback, sourceTrust string
 	var started, finished sql.NullString
 	err := row.Scan(&item.ID, &item.ResourceID, &item.ConfigSHA, &item.SpecDigest, &item.State, &item.Trigger, &sources, &outputs,
-		&item.Error, &created, &started, &finished, &pullRequests, &feedback)
+		&item.Error, &created, &started, &finished, &pullRequests, &feedback, &sourceTrust)
 	_ = json.Unmarshal([]byte(sources), &item.Sources)
 	_ = json.Unmarshal([]byte(outputs), &item.Outputs)
 	_ = json.Unmarshal([]byte(pullRequests), &item.PullRequests)
 	_ = json.Unmarshal([]byte(feedback), &item.Feedback)
+	_ = json.Unmarshal([]byte(sourceTrust), &item.SourceTrust)
 	item.CreatedAt, item.StartedAt, item.FinishedAt = parseTime(created), parseNullTime(started), parseNullTime(finished)
 	return item, err
 }

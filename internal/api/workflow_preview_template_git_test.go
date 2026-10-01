@@ -65,19 +65,19 @@ func TestPreviewTemplateGitSourceSyncAndRecovery(t *testing.T) {
 		case r.URL.Path == "/app/installations/73/access_tokens":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC()})
 		case r.URL.Path == "/repos/example/service/pulls/42":
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": "open", "head": map[string]string{"ref": "service-feature", "sha": strings.Repeat("a", 40)}, "base": map[string]string{"ref": "main"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "open", "head": map[string]any{"ref": "service-feature", "sha": strings.Repeat("a", 40), "repo": map[string]any{"id": 101, "full_name": "example/service"}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"id": 101, "full_name": "example/service"}}})
 		case r.URL.Path == "/repos/example/ui/commits/main":
 			_ = json.NewEncoder(w).Encode(map[string]string{"sha": strings.Repeat("b", 40)})
-		case r.URL.Path == "/repos/example/ui/pulls/84" || r.URL.Path == "/repos/example/ui/pulls/85":
+		case r.URL.Path == "/repos/example/ui/pulls/84" || r.URL.Path == "/repos/example/ui/pulls/85" || r.URL.Path == "/repos/example/ui/pulls/42":
 			sha := strings.Repeat(string(rune('c'+uiRevision.Load())), 40)
-			if strings.HasSuffix(r.URL.Path, "/85") {
+			if strings.HasSuffix(r.URL.Path, "/85") || strings.HasSuffix(r.URL.Path, "/42") {
 				sha = strings.Repeat("f", 40)
 			}
 			state := "open"
 			if uiClosed.Load() {
 				state = "closed"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "head": map[string]string{"ref": "ui-feature", "sha": sha}, "base": map[string]string{"ref": "main"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "head": map[string]any{"ref": "ui-feature", "sha": sha, "repo": map[string]any{"id": 102, "full_name": "example/ui"}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"id": 102, "full_name": "example/ui"}}})
 		case r.URL.Path == "/repos/example/service/issues/comments":
 			comments := []map[string]any{}
 			for i, body := range []string{"/preview", "/preview without ui"} {

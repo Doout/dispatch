@@ -102,6 +102,25 @@ func (s *SQLStore) CreateRollbackDeployment(ctx context.Context, d, source core.
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.checkDeploymentApp(ctx, tx, d); err != nil {
+		return err
+	}
+	if d.RollbackCurrentID != "" {
+		var current string
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT id FROM deployments WHERE app_id=? AND state='succeeded' ORDER BY created_at DESC,id DESC LIMIT 1`), d.AppID).Scan(&current); err != nil {
+			return err
+		}
+		if current != d.RollbackCurrentID {
+			return ErrDeploymentReviewChanged
+		}
+		var active int
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM deployments WHERE app_id=? AND state NOT IN ('succeeded','failed','cancelled')`), d.AppID).Scan(&active); err != nil {
+			return err
+		}
+		if active > 0 {
+			return ErrDeploymentReviewChanged
+		}
+	}
 	var state, app string
 	if err = tx.QueryRowContext(ctx, s.q(`SELECT app_id,state FROM deployments WHERE id=?`), source.ID).Scan(&app, &state); err != nil {
 		return err
@@ -109,11 +128,14 @@ func (s *SQLStore) CreateRollbackDeployment(ctx context.Context, d, source core.
 	if app != d.AppID || state != string(core.DeploymentSucceeded) {
 		return errors.New("rollback source changed")
 	}
-	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployments(id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`), d.ID, d.AppID, source.CommitSHA, source.SpecDigest, string(d.State), d.Message, stamp(d.CreatedAt), nullTime(d.StartedAt), nullTime(d.FinishedAt), nullTime(d.LeaseUntil), jsonText(source.Outputs), jsonText(source.Snapshot))
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployments(id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot,health) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`), d.ID, d.AppID, source.CommitSHA, source.SpecDigest, string(d.State), d.Message, stamp(d.CreatedAt), nullTime(d.StartedAt), nullTime(d.FinishedAt), nullTime(d.LeaseUntil), jsonText(source.Outputs), jsonText(source.Snapshot), jsonText(core.DeploymentHealth{Policy: source.Health.Policy, State: "pending", Checks: []core.HealthCheckResult{}}))
 	if err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployment_service_bindings(deployment_id,alias,service_id,payload) SELECT ?,alias,service_id,payload FROM deployment_service_bindings WHERE deployment_id=?`), d.ID, source.ID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployment_runtime_artifacts(deployment_id,app_id,server_id,scope_id,ciphertext) SELECT ?,app_id,server_id,scope_id,ciphertext FROM deployment_runtime_artifacts WHERE deployment_id=?`), d.ID, source.ID); err != nil {
 		return err
 	}
 	if err = s.insertReleaseAction(ctx, tx, action); err != nil {

@@ -1622,6 +1622,16 @@ code { font-family: var(--mono); }
 .workflow-run-timing dt { margin-bottom: 3px; color: var(--muted); font-size: 11px; }
 .workflow-run-timing dd { margin: 0; color: #2d3944; font: 650 12px var(--mono); }
 .workflow-run-timing p { margin: 9px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.workflow-source-trust { display: grid; gap: 10px; min-width: 0; padding: 13px; border-bottom: 1px solid var(--rule); color: #34424d; font-size: 12px; line-height: 1.5; }
+.workflow-source-trust h4, .workflow-source-trust p { margin: 0; }
+.workflow-source-trust ul { display: grid; gap: 7px; margin: 0; padding-left: 18px; }
+.workflow-source-trust code { font-size: 11px; overflow-wrap: anywhere; }
+.workflow-source-trust details { display: grid; gap: 8px; }
+.workflow-source-trust details > p { margin-top: 9px; }
+.workflow-source-trust summary { cursor: pointer; font-weight: 600; }
+.workflow-source-trust > label { display: flex; align-items: flex-start; gap: 7px; }
+.workflow-source-trust input { flex: 0 0 auto; margin-top: 3px; }
+.workflow-source-trust > button { justify-self: start; }
 .workflow-resource-columns .workflow-source-warning { margin: 12px; }
 .workflow-run-list { display: grid; }
 .workflow-run-list h4 { margin: 0; padding: 11px 13px 8px; color: #53616d; font-size: 11px; text-transform: uppercase; letter-spacing: .045em; }
@@ -2466,3 +2476,23 @@ code { font-family: var(--mono); }
 .workflow-feedback-target dt { color: var(--muted); }
 .workflow-feedback-target dd { margin: 4px 0 0; text-transform: capitalize; }
 .workflow-feedback-target p { margin: 0; }
+
+.destructive-layer { z-index: 2000; }
+.destructive-name { display: grid; gap: .6rem; margin-top: 1.25rem; }
+.destructive-name input { width: 100%; }
+
+.release-runtime-images { display: grid; gap: 8px; margin: 14px 0; }
+.release-runtime-images > div { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 4fr); gap: 12px; }
+.release-runtime-images dd { margin: 0; overflow-wrap: anywhere; }
+
+.storage-dialog { width: min(1180px, 100%); }
+.storage-dialog .resource-table td { vertical-align: top; }
+.storage-dialog .resource-table small { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+
+.storage-dialog select { min-height: 36px; max-width: 100%; border: 1px solid var(--rule-strong); border-radius: 6px; padding: 5px 8px; background: #fff; color: inherit; }
+
+.deployment-health { margin: 16px 0; padding: 16px; border: 1px solid #dce2e9; border-radius: 8px; background: white; }
+.deployment-health summary { cursor: pointer; font-weight: 600; }
+.deployment-health p { color: #617082; font-size: 13px; }
+.deployment-health td { vertical-align: top; }
+.deployment-health td small { display: block; margin-top: 4px; color: #617082; overflow-wrap: anywhere; }

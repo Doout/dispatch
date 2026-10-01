@@ -94,6 +94,9 @@ func (s *Service) stageRun(ctx context.Context, revisionID, name string) (core.W
 }
 
 func (s *Service) deployStage(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, document Document, revision core.WorkflowRevision, stage StageSpec, run *core.WorkflowStageRun) error {
+	if err := s.checkRevisionTrust(ctx, revision); err != nil {
+		return err
+	}
 	server, err := s.resolveTarget(ctx, stage.TargetRef)
 	if err != nil {
 		return err
@@ -129,6 +132,10 @@ func (s *Service) deployStage(ctx context.Context, resource core.WorkflowResourc
 }
 
 func (s *Service) runStageCheck(ctx context.Context, resource core.WorkflowResource, revision core.WorkflowRevision, stage StageSpec, run *core.WorkflowStageRun, name string, check CheckSpec) error {
+	if err := s.checkRevisionTrust(ctx, revision); err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, previewTrustParentKey{}, revision)
 	inputs := map[string]string{}
 	for key, value := range check.With {
 		rendered, err := renderRuntime(value, nil, revision.Sources, nil, &stage)
@@ -518,6 +525,9 @@ func (s *Service) ApproveStage(ctx context.Context, id string) (core.WorkflowSta
 	}
 	if index < 0 {
 		return run, errors.New("stage is no longer present in the application")
+	}
+	if err := s.checkRevisionTrust(ctx, revision); err != nil {
+		return run, err
 	}
 	run.State, run.Approval = "queued", "approved"
 	if err := s.Store.UpdateWorkflowStageRun(ctx, run); err != nil {

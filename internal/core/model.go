@@ -17,16 +17,17 @@ type Project struct {
 }
 
 type Server struct {
-	ID         string                  `json:"id"`
-	Name       string                  `json:"name"`
-	Address    string                  `json:"address"`
-	Runtime    string                  `json:"runtime"`
-	State      string                  `json:"state"`
-	AgentMode  string                  `json:"agentMode"`
-	Kubernetes *KubernetesServerConfig `json:"kubernetes,omitempty"`
-	Relay      *RelayServerConfig      `json:"relay,omitempty"`
-	Builder    *BuilderServerConfig    `json:"builder,omitempty"`
-	CreatedAt  time.Time               `json:"createdAt"`
+	ID          string                  `json:"id"`
+	Name        string                  `json:"name"`
+	Address     string                  `json:"address"`
+	Runtime     string                  `json:"runtime"`
+	State       string                  `json:"state"`
+	AgentMode   string                  `json:"agentMode"`
+	AgentNodeID string                  `json:"agentNodeId,omitempty"`
+	Kubernetes  *KubernetesServerConfig `json:"kubernetes,omitempty"`
+	Relay       *RelayServerConfig      `json:"relay,omitempty"`
+	Builder     *BuilderServerConfig    `json:"builder,omitempty"`
+	CreatedAt   time.Time               `json:"createdAt"`
 }
 
 const (
@@ -109,6 +110,7 @@ const (
 )
 
 type App struct {
+	HealthPolicy       HealthPolicy            `json:"healthPolicy"`
 	ServiceRuntime     []ServiceRuntimeBinding `json:"-"`
 	ID                 string                  `json:"id"`
 	ProjectID          string                  `json:"projectId"`
@@ -161,9 +163,11 @@ type HelmProvenance struct {
 }
 
 type HelmPullRequest struct {
-	Repository string `json:"repository"`
-	Number     int    `json:"number"`
-	URL        string `json:"url,omitempty"`
+	GitHubAppID string `json:"githubAppId,omitempty"`
+	CommitSHA   string `json:"commitSha,omitempty"`
+	Repository  string `json:"repository"`
+	Number      int    `json:"number"`
+	URL         string `json:"url,omitempty"`
 }
 
 func (a App) SpecDigest() string {
@@ -190,9 +194,10 @@ func (a App) SpecDigest() string {
 		HookEnvironment    map[string]string
 		ContainerPort      int
 		Domain             string
+		HealthPolicy       HealthPolicy
 	}{a.ServerID, a.SourceRepo, a.Branch, a.SourceAuthType, a.SourceCredentialID, a.BuildType, a.ContextPath, a.DockerfilePath, a.ComposePath, a.ComposeContent,
 		a.HelmChart, a.HelmVersion, a.HelmRepository, a.HelmValues, a.HelmNamespace, a.HelmRelease,
-		a.PreDeployHook, a.PostDeployHook, a.HelmGroupValues, a.HookEnvironment, a.ContainerPort, a.Domain})
+		a.PreDeployHook, a.PostDeployHook, a.HelmGroupValues, a.HookEnvironment, a.ContainerPort, a.Domain, a.HealthPolicy})
 	sum := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
@@ -216,24 +221,27 @@ func (s DeploymentState) Terminal() bool {
 }
 
 type Deployment struct {
-	Acceptance         *DeploymentReview  `json:"-"`
-	ExecutionAppName   string             `json:"-"`
-	ExecutionTemplate  bool               `json:"-"`
-	ExecutionGenerated bool               `json:"-"`
-	ID                 string             `json:"id"`
-	AppID              string             `json:"appId"`
-	CommitSHA          string             `json:"commitSha"`
-	SpecDigest         string             `json:"specDigest"`
-	State              DeploymentState    `json:"state"`
-	Message            string             `json:"message"`
-	CreatedAt          time.Time          `json:"createdAt"`
-	StartedAt          *time.Time         `json:"startedAt,omitempty"`
-	FinishedAt         *time.Time         `json:"finishedAt,omitempty"`
-	LeaseUntil         *time.Time         `json:"leaseUntil,omitempty"`
-	Outputs            map[string]string  `json:"outputs,omitempty"`
-	Snapshot           DeploymentSnapshot `json:"-"`
-	App                *App               `json:"app,omitempty"`
-	Server             *Server            `json:"server,omitempty"`
+	Health              DeploymentHealth   `json:"health"`
+	RuntimeReviewDigest string             `json:"-"`
+	RollbackCurrentID   string             `json:"-"`
+	Acceptance          *DeploymentReview  `json:"-"`
+	ExecutionAppName    string             `json:"-"`
+	ExecutionTemplate   bool               `json:"-"`
+	ExecutionGenerated  bool               `json:"-"`
+	ID                  string             `json:"id"`
+	AppID               string             `json:"appId"`
+	CommitSHA           string             `json:"commitSha"`
+	SpecDigest          string             `json:"specDigest"`
+	State               DeploymentState    `json:"state"`
+	Message             string             `json:"message"`
+	CreatedAt           time.Time          `json:"createdAt"`
+	StartedAt           *time.Time         `json:"startedAt,omitempty"`
+	FinishedAt          *time.Time         `json:"finishedAt,omitempty"`
+	LeaseUntil          *time.Time         `json:"leaseUntil,omitempty"`
+	Outputs             map[string]string  `json:"outputs,omitempty"`
+	Snapshot            DeploymentSnapshot `json:"-"`
+	App                 *App               `json:"app,omitempty"`
+	Server              *Server            `json:"server,omitempty"`
 }
 
 type DeploymentSnapshot struct {

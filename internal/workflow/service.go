@@ -24,12 +24,15 @@ import (
 const defaultPollInterval = 5 * 60
 
 type Service struct {
-	Store        store.Store
-	GitHub       *githubapp.Manager
-	Secrets      *secretvalue.Resolver
-	Deployments  DeploymentRunner
-	Logger       *slog.Logger
-	Repositories *repositoryCache
+	RemoteDockerServices func(context.Context, core.ServiceProvisionRequest, core.DockerServiceProvision, core.Server) (map[string]string, error)
+	// ResolvePreviewSource is a provider metadata adapter; production defaults to GitHub.
+	ResolvePreviewSource func(context.Context, string, string, int) (githubapp.PullRequestHead, error)
+	Store                store.Store
+	GitHub               *githubapp.Manager
+	Secrets              *secretvalue.Resolver
+	Deployments          DeploymentRunner
+	Logger               *slog.Logger
+	Repositories         *repositoryCache
 
 	mu           sync.Mutex
 	locks        map[string]*sync.Mutex
@@ -66,8 +69,12 @@ func NewService(data store.Store, github *githubapp.Manager, secrets *secretvalu
 	if deployments != nil {
 		runner = deployments
 	}
-	return &Service{Store: data, GitHub: github, Secrets: secrets, Deployments: runner, Logger: logger,
+	service := &Service{Store: data, GitHub: github, Secrets: secrets, Deployments: runner, Logger: logger,
 		Repositories: newRepositoryCache(cacheRoot), locks: map[string]*sync.Mutex{}}
+	if deployments != nil {
+		deployments.CheckExecution = service.CheckDeploymentTrust
+	}
+	return service
 }
 
 func (s *Service) SyncSource(ctx context.Context, id string) (core.ConfigSource, error) {
@@ -807,6 +814,15 @@ func (s *Service) startWithSnapshot(ctx context.Context, resource core.WorkflowR
 	var err error
 	revision.PullRequests, err = s.previewPullRequests(ctx, resource, snapshot)
 	if err != nil {
+		return revision, err
+	}
+	revision.SourceTrust, err = s.SourceTrust(ctx, resource, revision)
+	if err != nil {
+		now := time.Now().UTC()
+		revision.State, revision.Error, revision.FinishedAt = "failed", err.Error(), &now
+		if saveErr := s.Store.CreateWorkflowRevision(ctx, revision); saveErr != nil {
+			return revision, saveErr
+		}
 		return revision, err
 	}
 	if err := s.Store.CreateWorkflowRevision(ctx, revision); err != nil {

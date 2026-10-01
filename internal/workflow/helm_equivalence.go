@@ -19,6 +19,12 @@ type workflowEquivalenceStore interface {
 // approvals, or finally jobs to run, and prior successful job results still match
 // all declared inputs including resolved secrets. Manual Start never uses this.
 func (s *Service) reuseEquivalentWorkflow(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, snapshot map[string]core.WorkflowSourceRevision) bool {
+	// Comparing cached outputs resolves job secrets and renders deployment inputs.
+	// It must obey the same source policy as a new execution.
+	candidateTrust := core.WorkflowRevision{ResourceID: resource.ID, SpecDigest: resource.SpecDigest, ConfigSHA: resource.ConfigSHA, Sources: snapshot}
+	if _, err := s.SourceTrust(ctx, resource, candidateTrust); err != nil {
+		return false
+	}
 	data, ok := s.Store.(workflowEquivalenceStore)
 	if !ok || s.Deployments == nil {
 		return false

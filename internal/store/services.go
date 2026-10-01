@@ -238,20 +238,8 @@ func (s *SQLStore) captureServiceBindings(ctx context.Context, tx *changeTx, d c
 	// Lock the app before reading its bindings, matching ReplaceAppServiceBindings.
 	// Validating the prefetched execution inputs inside this lock prevents a
 	// concurrent application edit from mixing old runtime inputs and new bindings.
-	if d.Acceptance != nil {
-		q := `SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
-   dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
-   helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance FROM apps WHERE id=?`
-		if s.postgres {
-			q += ` FOR UPDATE`
-		}
-		current, err := scanApp(tx.QueryRowContext(ctx, s.q(q), d.AppID))
-		if err != nil {
-			return err
-		}
-		if current.Name != d.Acceptance.ExpectedAppName || current.ProjectID != d.Acceptance.ProjectID || current.SpecDigest() != d.Acceptance.AppSpecDigest || current.Name != d.ExecutionAppName || current.Template != d.ExecutionTemplate || current.Generated != d.ExecutionGenerated {
-			return ErrDeploymentReviewChanged
-		}
+	if err := s.checkDeploymentApp(ctx, tx, d); err != nil {
+		return err
 	}
 	var project, build string
 	query := `SELECT project_id,build_type FROM apps WHERE id=?`
@@ -464,6 +452,26 @@ func (s *SQLStore) updateServiceSecretRevisions(ctx context.Context, tx *changeT
 		item.UpdatedAt = time.Now().UTC()
 		if _, err = tx.ExecContext(ctx, s.q(`UPDATE services SET revision=?,payload=? WHERE id=?`), item.Revision, jsonText(encodeService(item)), item.ID); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// Validate accepted application inputs while holding the database application lock.
+func (s *SQLStore) checkDeploymentApp(ctx context.Context, tx *changeTx, d core.Deployment) error {
+	if d.Acceptance != nil {
+		q := `SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
+   dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
+   helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance,health_policy FROM apps WHERE id=?`
+		if s.postgres {
+			q += ` FOR UPDATE`
+		}
+		current, err := scanApp(tx.QueryRowContext(ctx, s.q(q), d.AppID))
+		if err != nil {
+			return err
+		}
+		if current.Name != d.Acceptance.ExpectedAppName || current.ProjectID != d.Acceptance.ProjectID || current.SpecDigest() != d.Acceptance.AppSpecDigest || current.Name != d.ExecutionAppName || current.Template != d.ExecutionTemplate || current.Generated != d.ExecutionGenerated {
+			return ErrDeploymentReviewChanged
 		}
 	}
 	return nil

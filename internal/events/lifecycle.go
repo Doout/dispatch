@@ -27,10 +27,13 @@ func (l DeploymentLifecycle) StartPreview(ctx context.Context, preview core.Prev
 		return StartResult{}, err
 	}
 	instance := previewApplication(template, preview)
+	instance.HelmProvenance.PullRequests[0].CommitSHA = preview.HeadSHA
 	githubURL := "https://github.com"
 	if triggers, err := l.Store.ListEventTriggers(ctx, template.ID); err == nil {
 		for _, trigger := range triggers {
 			if trigger.ID == preview.TriggerID && trigger.GitHubAppID != "" {
+				instance.HelmProvenance.PullRequests[0].GitHubAppID = trigger.GitHubAppID
+				instance.HelmProvenance.PullRequests[0].CommitSHA = preview.HeadSHA
 				if connection, err := l.Store.GetGitHubApp(ctx, trigger.GitHubAppID); err == nil {
 					githubURL = strings.TrimRight(connection.WebURL, "/")
 				}

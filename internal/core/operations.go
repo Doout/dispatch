@@ -3,16 +3,20 @@ package core
 import "time"
 
 type AuditEvent struct {
-	ID             string    `json:"id"`
-	ActorID        string    `json:"actorId"`
-	ActorName      string    `json:"actorName"`
-	ImpersonatorID string    `json:"impersonatorId,omitempty"`
-	ProjectID      string    `json:"projectId,omitempty"`
-	AppID          string    `json:"appId,omitempty"`
-	Action         string    `json:"action"`
-	ResourceID     string    `json:"resourceId,omitempty"`
-	Outcome        string    `json:"outcome"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID               string    `json:"id"`
+	ActorID          string    `json:"actorId"`
+	ActorName        string    `json:"actorName"`
+	ImpersonatorID   string    `json:"impersonatorId,omitempty"`
+	ProjectID        string    `json:"projectId,omitempty"`
+	AppID            string    `json:"appId,omitempty"`
+	Action           string    `json:"action"`
+	ResourceID       string    `json:"resourceId,omitempty"`
+	ConfirmedAction  string    `json:"confirmedAction,omitempty"`
+	ConfirmedName    string    `json:"confirmedName,omitempty"`
+	ConfirmedPolicy  string    `json:"confirmedPolicy,omitempty"`
+	ConfirmedVersion string    `json:"confirmedVersion,omitempty"`
+	Outcome          string    `json:"outcome"`
+	CreatedAt        time.Time `json:"createdAt"`
 }
 type AuditFilter struct {
 	ProjectIDs                                     []string

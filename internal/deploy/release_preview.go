@@ -32,11 +32,8 @@ type ReleaseValidation struct {
 	State   string `json:"state"`
 	Message string `json:"message"`
 }
-type ReleaseResource struct {
-	Kind      string `json:"kind"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace,omitempty"`
-}
+type ReleaseResource = core.ReleaseResource
+
 type ReleasePreview struct {
 	Review     core.DeploymentReview   `json:"review"`
 	Ready      bool                    `json:"ready"`
@@ -55,6 +52,12 @@ func (s *Service) PreviewRelease(ctx context.Context, app core.App, server core.
 	out := ReleasePreview{Review: core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), ServiceRevisions: map[string]int64{}}, Revision: revision, SpecDigest: app.SpecDigest(), Checks: []ReleaseValidation{}, Resources: []ReleaseResource{}}
 	add := func(name, state, message string) {
 		out.Checks = append(out.Checks, ReleaseValidation{name, state, message})
+	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, revision); err != nil {
+			add("Preview source trust", "failed", err.Error())
+			return out
+		}
 	}
 	bindings, err := s.store.GetAppServiceBindings(ctx, app.ID)
 	if err != nil {

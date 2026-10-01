@@ -73,10 +73,10 @@ func TestRollbackUnavailableDoesNotCreateDeployment(t *testing.T) {
 	if preview.Available || preview.Message == "" {
 		t.Fatal("historical artifacts were assumed available")
 	}
-	if _, err = s.StartRollback(ctx, source.ID, "stale-current", "operator", nil); err == nil {
+	if _, err = s.StartRollback(ctx, source.ID, "stale-current", preview.ReviewDigest, "operator", nil); err == nil {
 		t.Fatal("stale rollback confirmation accepted")
 	}
-	if _, err = s.StartRollback(ctx, source.ID, source.ID, "operator", nil); err == nil {
+	if _, err = s.StartRollback(ctx, source.ID, source.ID, preview.ReviewDigest, "operator", nil); err == nil {
 		t.Fatal("rollback without retained artifacts accepted")
 	}
 	history, err := data.ListApplicationHistory(ctx, app.ID, "", 100)

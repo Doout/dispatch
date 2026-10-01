@@ -1,3 +1,4 @@
+import { destructiveRequest } from "../api";
 import { useEffect, useRef, useState } from "react";
 import { ArrowClockwise, ArrowRight, CheckCircle, GithubLogo, Link, Plus, UsersThree, WarningCircle } from "@phosphor-icons/react";
 import { type AccessOverview, api, request } from "../api";
@@ -40,7 +41,7 @@ export function IdentityMappings({ onChanged }: { onChanged?: () => void | Promi
     if (action.current || removing !== item.id) return;
     action.current = true; setBusy(item.id); setError(""); setNotice("");
     try {
-      await request(`/api/v1/identity-team-mappings/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      await destructiveRequest(`/api/v1/identity-team-mappings/${encodeURIComponent(item.id)}`, { method: "DELETE" });
       if (alive.current) { setItems(rows => rows.filter(row => row.id !== item.id)); setRemoving(undefined); setNotice("Identity mapping removed. Memberships supplied by this mapping were revoked."); await changed(); }
     } catch (cause) { if (alive.current) setError(message(cause)); }
     finally { action.current = false; if (alive.current) setBusy(""); }

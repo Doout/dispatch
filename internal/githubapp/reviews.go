@@ -11,12 +11,22 @@ import (
 var ErrReviewOutdated = errors.New("PR closed, draft, or updated since the tested deployment")
 var ErrReviewDismissed = errors.New("This QA review was dismissed. Post a new test command to request another decision")
 
+type PullRequestRepository struct {
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+	Fork     bool   `json:"fork"`
+}
+
 type PullRequestHead struct {
 	State string `json:"state"`
 	Draft bool   `json:"draft"`
 	Head  struct {
-		SHA string `json:"sha"`
+		SHA  string                 `json:"sha"`
+		Repo *PullRequestRepository `json:"repo"`
 	} `json:"head"`
+	Base struct {
+		Repo *PullRequestRepository `json:"repo"`
+	} `json:"base"`
 }
 
 func (m *Manager) PullRequestHead(ctx context.Context, id, repository string, number int) (PullRequestHead, error) {

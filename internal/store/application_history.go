@@ -11,7 +11,7 @@ func (s *SQLStore) ListApplicationHistory(ctx context.Context, appID, beforeID s
 	if limit < 1 || limit > 101 {
 		limit = 51
 	}
-	query := `SELECT id,app_id,commit_sha,spec_digest,state,'',created_at,started_at,finished_at,lease_until,'{}','{}' FROM deployments WHERE app_id=?`
+	query := `SELECT id,app_id,commit_sha,spec_digest,state,'',created_at,started_at,finished_at,lease_until,'{}','{}',health FROM deployments WHERE app_id=?`
 	args := []any{appID}
 	if beforeID != "" {
 		query += ` AND (created_at < (SELECT created_at FROM deployments WHERE id=? AND app_id=?) OR (created_at=(SELECT created_at FROM deployments WHERE id=? AND app_id=?) AND id<?))`

@@ -13,7 +13,7 @@ func (a *API) identityRoutes(r chi.Router) {
 		r.Use(a.directUserOnly)
 		r.Put("/auth/password", a.changePassword)
 		r.Post("/auth/providers/{id}/link", a.startOAuthLink)
-		r.Delete("/auth/providers/{id}/link", a.unlinkAuthProvider)
+		a.destructiveRoute(r, "DELETE", "/auth/providers/{id}/link", "auth-link", "delete", a.unlinkAuthProvider)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(a.ownerOnly)
@@ -21,14 +21,14 @@ func (a *API) identityRoutes(r chi.Router) {
 		r.Post("/auth/providers/manifest", a.startAuthProviderManifest)
 		r.Put("/auth/providers/{id}", a.updateAuthProvider)
 		r.Post("/auth/providers/{id}/verify", a.verifyAuthProvider)
-		r.Delete("/auth/providers/{id}", a.deleteAuthProvider)
+		a.destructiveRoute(r, "DELETE", "/auth/providers/{id}", "auth-provider", "delete", a.deleteAuthProvider)
 	})
 	r.Route("/users", func(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Post("/", a.createUser)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Put("/", a.updateUser)
-			r.Delete("/", a.deleteUser)
+			a.destructiveRoute(r, "DELETE", "/", "user", "delete", a.deleteUser)
 			r.Get("/profile", a.userProfile)
 			r.Post("/merge", a.mergeUser)
 		})
@@ -38,14 +38,14 @@ func (a *API) identityRoutes(r chi.Router) {
 		r.Post("/", a.createTeam)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Put("/", a.updateTeam)
-			r.Delete("/", a.deleteTeam)
+			a.destructiveRoute(r, "DELETE", "/", "team", "delete", a.deleteTeam)
 		})
 	})
 	r.Route("/role-assignments", func(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Post("/", a.upsertRoleAssignment)
 		r.Route("/{id}", func(r chi.Router) {
-			r.Delete("/", a.deleteRoleAssignment)
+			a.destructiveRoute(r, "DELETE", "/", "role-assignment", "delete", a.deleteRoleAssignment)
 		})
 	})
 	r.With(a.ownerOnly).Get("/access", a.accessOverview)

@@ -1,3 +1,4 @@
+import { requestDestructiveConfirmation, type DestructiveReview } from "./destructive";
 import { setOverviewState } from "./overviewState";
 export type Project = {
   id: string;
@@ -204,7 +205,11 @@ export type RelaySSHInstallInput = {
   installMode?: "systemd" | "docker";
   relayImage?: string;
 };
+export type HealthCheck = { id: string; kind: "container" | "http" | "tcp" | "tls"; scope: "workload" | "route" | "certificate"; service?: string; port?: number; path?: string };
+export type HealthPolicy = { timeoutSeconds: number; checkTimeoutSeconds: number; intervalSeconds: number; failureThreshold: number; checks: HealthCheck[] };
+export type DeploymentHealth = { state: string; simulated?: boolean; policy: HealthPolicy; checks: { check: HealthCheck; state: string; attempts: number; failures: number; message: string; httpStatus?: number }[]; startedAt?: string; finishedAt?: string };
 export type App = {
+  healthPolicy?: HealthPolicy;
   id: string;
   projectId: string;
   serverId: string;
@@ -245,6 +250,7 @@ export type DeploymentState =
   | "failed"
   | "cancelled";
 export type Deployment = {
+  health?: DeploymentHealth;
   id: string;
   appId: string;
   commitSha: string;
@@ -411,6 +417,7 @@ export type WorkflowPreviewTemplateGitSource = {
   lastError?: string;
 };
 export type WorkflowPreviewTemplate = {
+  sourceTrustPolicy?: "same_repository" | "approval_required";
   commentOnOpen?: boolean;
   ttl?: string;
   watchRepositories?: string[];
@@ -467,7 +474,13 @@ export type WorkflowFeedback = {
   reviewOnFailure?: string;
   targets: { githubAppId: string; repository: string; number: number; commitSha: string; url?: string; status?: string; review?: string; reviewId?: number; error?: string; skipReason?: string }[];
 };
+export type PreviewSourceTrustDecision = {
+  policy: string; digest: string; allowed: boolean; reason: string;
+  sources: { alias: string; repository: string; repositoryId: number; headRepository: string; headRepositoryId: number; fork: boolean; pullRequest: number; commitSha: string; githubAppId: string }[];
+  credentialScope: string[]; environments: string[]; approvalId?: string; checkedAt: string;
+};
 export type WorkflowRevision = {
+  sourceTrust?: PreviewSourceTrustDecision;
   feedback?: WorkflowFeedback;
   id: string;
   resourceId: string;
@@ -905,7 +918,33 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return value;
 }
 
+export async function destructiveRequest<T>(path: string, init: RequestInit): Promise<T> {
+  const token = getToken(), impersonated = getImpersonatedUserID();
+  const [pathname, query] = path.split("?");
+  const preview = init.method === "DELETE" ? `${pathname}/delete-preview` : `${pathname}-preview`;
+  const review = await request<DestructiveReview>(`${preview}${query ? `?${query}` : ""}`, { method: "POST" });
+  const confirmation = await requestDestructiveConfirmation(review);
+  if (token !== getToken() || impersonated !== getImpersonatedUserID()) throw new Error("Your account changed. Review this action again.");
+  const body = typeof init.body === "string" ? JSON.parse(init.body) : {};
+  return request<T>(path, { ...init, body: JSON.stringify({ ...body, confirmation }) });
+}
+
+export type StorageResource = {
+  id: string; serverId: string; kind: string; name: string; namespace?: string;
+  identity: string; projectId?: string; ownerKind?: string; ownerId?: string;
+  ownership: string; orphaned: boolean; policy: "retain" | "destroy"; state: string;
+  consumers: { id: string; mount?: string; active: boolean }[];
+  revision: number; observedAt: string; message?: string;
+};
+
 export const api = {
+  storage: (serverId: string) => request<StorageResource[]>(`/api/v1/storage?serverId=${encodeURIComponent(serverId)}`),
+  reconcileStorage: (serverId: string) => request<StorageResource[]>(`/api/v1/servers/${encodeURIComponent(serverId)}/storage/reconcile`, { method: "POST" }),
+  storagePolicy: (id: string, revision: number, policy: "retain" | "destroy") => request<StorageResource>(`/api/v1/storage/${id}/policy`, { method: "PUT", body: JSON.stringify({ revision, policy }) }),
+  deleteStorage: (id: string) => destructiveRequest<void>(`/api/v1/storage/${id}`, { method: "DELETE" }),
+ previewSourceTrust: (id: string) => request<PreviewSourceTrustDecision>(`/api/v1/workflow/revisions/${id}/source-trust`),
+ approvePreviewSourceTrust: (id: string, confirmDigest: string, expiresAt: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals`, { method: "POST", body: JSON.stringify({ confirmDigest, expiresAt }) }),
+ revokePreviewSourceTrust: (id: string, approvalId: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals/${approvalId}`, { method: "DELETE" }),
  workflowRevision: (id: string) => request<WorkflowRevision>(`/api/v1/workflow/revisions/${id}`),
  eventRules: () => request<EventRule[]>("/api/v1/events/rules"),
  eventActivity: (transport = "", before = "") => request<EventActivityPage>(`/api/v1/events/activity?${new URLSearchParams({transport,before})}`),
@@ -916,12 +955,12 @@ export const api = {
  serviceTemplates: () => request<ServiceTemplate[]>("/api/v1/service-templates"),
  serviceTemplate: (id: string) => request<ServiceTemplate>(`/api/v1/service-templates/${id}`),
  saveServiceTemplate: (id: string | undefined, data: { projectId: string; document: string; configSourceId: string; revision?: number }) => request<{ id: string; revision: number }>(`/api/v1/service-templates${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(data) }),
- deleteServiceTemplate: (id: string, revision: number) => request<void>(`/api/v1/service-templates/${id}?revision=${revision}`, { method: "DELETE" }),
+ deleteServiceTemplate: (id: string, revision: number) => destructiveRequest<void>(`/api/v1/service-templates/${id}?revision=${revision}`, { method: "DELETE" }),
  startServiceProvision: (id: string, data: { name: string; description: string; inputs: Record<string,string> }) => request<ServiceProvisionRun>(`/api/v1/service-templates/${id}/runs`, { method: "POST", body: JSON.stringify(data) }),
  serviceProvisionRun: (id: string) => request<ServiceProvisionRun>(`/api/v1/service-provision-runs/${id}`),
  serviceProvisionRuns: () => request<ServiceProvisionRun[]>("/api/v1/service-provision-runs"),
  saveService: (id: string | undefined, data: ServiceInput) => request<ServiceConnection>(`/api/v1/services${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(data) }),
- deleteService: (id: string) => request<void>(`/api/v1/services/${id}`, { method: "DELETE" }),
+ deleteService: (id: string) => destructiveRequest<void>(`/api/v1/services/${id}`, { method: "DELETE" }),
  verifyService: (id: string) => request<ServiceCheck>(`/api/v1/services/${id}/verify`, { method: "POST" }),
  serviceBindings: (id: string) => request<ServiceBinding[]>(`/api/v1/apps/${id}/service-bindings`),
  saveServiceBindings: (id: string, bindings: ServiceBinding[]) => request<ServiceBinding[]>(`/api/v1/apps/${id}/service-bindings`, { method: "PUT", body: JSON.stringify(bindings) }),
@@ -970,7 +1009,7 @@ export const api = {
       { method: "POST", body: JSON.stringify({ returnTo }) },
     ),
   unlinkAuthProvider: (id: string) =>
-    request<void>(`/api/v1/auth/providers/${id}/link`, {
+    destructiveRequest<void>(`/api/v1/auth/providers/${id}/link`, {
       method: "DELETE",
     }),
   analytics: (days: number) => request<AnalyticsSummary>(`/api/v1/analytics?days=${days}`),
@@ -1005,7 +1044,7 @@ export const api = {
       method: "POST",
     }),
   deleteAuthProvider: (id: string) =>
-    request<void>(`/api/v1/auth/providers/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/auth/providers/${id}`, { method: "DELETE" }),
   createUser: (body: {
     username: string;
     displayName: string;
@@ -1033,7 +1072,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteUser: (id: string) =>
-    request<void>(`/api/v1/users/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/users/${id}`, { method: "DELETE" }),
   mergeUser: (sourceID: string, targetUserId: string) =>
     request<User>(`/api/v1/users/${sourceID}/merge`, {
       method: "POST",
@@ -1057,7 +1096,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteTeam: (id: string) =>
-    request<void>(`/api/v1/teams/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/teams/${id}`, { method: "DELETE" }),
   upsertRoleAssignment: (body: {
     expiresAt?: string | null;
     principalType: RoleAssignment["principalType"];
@@ -1070,7 +1109,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteRoleAssignment: (id: string) =>
-    request<void>(`/api/v1/role-assignments/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/role-assignments/${id}`, { method: "DELETE" }),
   logs: (id: string) =>
     request<DeploymentLog[]>(`/api/v1/deployments/${id}/logs`),
   deployment: (id: string) => request<Deployment>(`/api/v1/deployments/${encodeURIComponent(id)}`),
@@ -1094,7 +1133,7 @@ export const api = {
       body: JSON.stringify({ commitSha, review }),
     }),
   cleanup: (appId: string) =>
-    request<void>(`/api/v1/apps/${appId}/cleanup`, { method: "POST" }),
+    destructiveRequest<void>(`/api/v1/apps/${appId}/cleanup`, { method: "POST" }),
   cancel: (id: string) =>
     request<void>(`/api/v1/deployments/${id}/cancel`, { method: "POST" }),
   createProject: (body: { name: string; description: string }) =>
@@ -1108,7 +1147,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteProject: (id: string) =>
-    request<void>(`/api/v1/projects/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/projects/${id}`, { method: "DELETE" }),
   createServer: (body: {
     name: string;
     address?: string;
@@ -1164,7 +1203,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteRelayWebhook: (serverId: string, id: string) =>
-    request<void>(`/api/v1/servers/${serverId}/relay/webhooks/${id}`, {
+    destructiveRequest<void>(`/api/v1/servers/${serverId}/relay/webhooks/${id}`, {
       method: "DELETE",
     }),
   repairServer: (id: string, loginCommand: string) =>
@@ -1173,7 +1212,7 @@ export const api = {
       body: JSON.stringify({ loginCommand }),
     }),
   deleteServer: (id: string) =>
-    request<void>(`/api/v1/servers/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/servers/${id}`, { method: "DELETE" }),
   createApp: (body: Record<string, unknown>) =>
     request<App>("/api/v1/apps", {
       method: "POST",
@@ -1186,6 +1225,8 @@ export const api = {
       `/api/v1/apps/${id}/helm-values`,
       { method: "PUT", body: JSON.stringify({ overrides }) },
     ),
+  appHealthPolicy: (id: string) => request<HealthPolicy>(`/api/v1/apps/${id}/health-policy`),
+  updateAppHealthPolicy: (id: string, policy: HealthPolicy) => request<HealthPolicy>(`/api/v1/apps/${id}/health-policy`, {method:"PUT",body:JSON.stringify(policy)}),
   updateAppHooks: (
     id: string,
     body: {
@@ -1222,7 +1263,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteGitHubApp: (id: string) =>
-    request<void>(`/api/v1/github-apps/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/github-apps/${id}`, { method: "DELETE" }),
   verifyGitHubApp: (id: string) =>
     request<{
       connection: GitHubAppConnection;
@@ -1284,7 +1325,7 @@ export const api = {
       method: "POST",
     }),
   deleteConfigSource: (id: string) =>
-    request<void>(`/api/v1/config-sources/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/config-sources/${id}`, { method: "DELETE" }),
   workflowPreviewTriggers: () =>
     request<WorkflowPreviewTrigger[]>("/api/v1/workflow/preview-triggers"),
   createWorkflowPreviewTemplate: (body: Omit<WorkflowPreviewTemplate, "id" | "createdAt" | "updatedAt">) =>
@@ -1294,7 +1335,7 @@ export const api = {
   syncWorkflowPreviewTemplate: (id: string) =>
     request<WorkflowPreviewTemplate>(`/api/v1/workflow/preview-templates/${id}/sync`, { method: "POST" }),
   deleteWorkflowPreviewTemplate: (id: string) =>
-    request<void>(`/api/v1/workflow/preview-templates/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/workflow/preview-templates/${id}`, { method: "DELETE" }),
   createTemporaryWorkflowResource: (body: { configSourceId: string; document: string; previewId?: string }) =>
     request<WorkflowResource>("/api/v1/workflow/temporary-resources", { method: "POST", body: JSON.stringify(body) }),
   importWorkflowPreviewDocument: (body: { githubAppId: string; repository: string; pullRequestNumber: number; path: string }) =>
@@ -1302,7 +1343,7 @@ export const api = {
   updateTemporaryWorkflowResource: (id: string, document: string) =>
     request<WorkflowResource>(`/api/v1/workflow/temporary-resources/${id}`, { method: "PUT", body: JSON.stringify({ document }) }),
   deleteTemporaryWorkflowResource: (id: string) =>
-    request<void>(`/api/v1/workflow/temporary-resources/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/workflow/temporary-resources/${id}`, { method: "DELETE" }),
   createWorkflowPreviewTrigger: (resourceId: string, body: WorkflowPreviewTriggerInput) =>
     request<WorkflowPreviewTrigger>(`/api/v1/workflow/temporary-resources/${resourceId}/preview-trigger`, { method: "POST", body: JSON.stringify(body) }),
   updateWorkflowPreviewTrigger: (id: string, body: WorkflowPreviewTriggerInput) =>
@@ -1335,7 +1376,7 @@ export const api = {
       method: "POST",
     }),
   deleteApp: (id: string) =>
-    request<void>(`/api/v1/apps/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/apps/${id}`, { method: "DELETE" }),
   createEventTrigger: (
     appId: string,
     body: {
@@ -1373,7 +1414,7 @@ export const api = {
       `/api/v1/event-triggers${appId ? `?appId=${encodeURIComponent(appId)}` : ""}`,
     ),
   deleteEventTrigger: (id: string) =>
-    request<void>(`/api/v1/event-triggers/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/event-triggers/${id}`, { method: "DELETE" }),
   secretUsage: () => request<SecretUsage[]>("/api/v1/secrets/usage"),
   secretUsageDeployments: (id: string, before = "") =>
     request<{ items: Deployment[]; next?: string }>(`/api/v1/secrets/${encodeURIComponent(id)}/usage/deployments${before ? `?before=${encodeURIComponent(before)}` : ""}`),
@@ -1411,7 +1452,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteSecret: (id: string) =>
-    request<void>(`/api/v1/secrets/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/secrets/${id}`, { method: "DELETE" }),
   createSecretStore: (body: {
     name: string;
     provider: string;
@@ -1448,7 +1489,7 @@ export const api = {
       method: "POST",
     }),
   deleteSecretStore: (id: string) =>
-    request<void>(`/api/v1/secret-stores/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/secret-stores/${id}`, { method: "DELETE" }),
   createPrivateNetwork: (body: {
     name: string;
     driver: string;
@@ -1479,7 +1520,7 @@ export const api = {
       method: "POST",
     }),
   rotatePrivateNetworkToken: (id: string) =>
-    request<PrivateNetwork>(`/api/v1/private-networks/${id}/rotate-token`, {
+    destructiveRequest<PrivateNetwork>(`/api/v1/private-networks/${id}/rotate-token`, {
       method: "POST",
     }),
   installLanewayConnector: (id: string, bootstrapCommand: string) =>
@@ -1488,7 +1529,7 @@ export const api = {
       { method: "POST", body: JSON.stringify({ bootstrapCommand }) },
     ),
   deletePrivateNetwork: (id: string) =>
-    request<void>(`/api/v1/private-networks/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/private-networks/${id}`, { method: "DELETE" }),
   startLanewayNetworkAuthorization: (body: { name: string; authority: string }) =>
     request<{
       method: "post" | "redirect";
@@ -1546,11 +1587,11 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deletePreviewGroup: (id: string) =>
-    request<void>(`/api/v1/preview-groups/${id}`, { method: "DELETE" }),
+    destructiveRequest<void>(`/api/v1/preview-groups/${id}`, { method: "DELETE" }),
   previewGroupRun: (id: string) =>
     request<PreviewGroupRun>(`/api/v1/preview-group-runs/${id}`),
   cleanupPreviewGroupRun: (id: string) =>
-    request<PreviewGroupRun>(`/api/v1/preview-group-runs/${id}/cleanup`, {
+    destructiveRequest<PreviewGroupRun>(`/api/v1/preview-group-runs/${id}/cleanup`, {
       method: "POST",
     }),
 };

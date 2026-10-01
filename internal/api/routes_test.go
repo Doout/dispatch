@@ -26,6 +26,7 @@ func TestRouteGroupsRequireAuthentication(t *testing.T) {
 		"GET /laneway-networks/callback", "POST /edge/nodes/{id}/enroll",
 		"POST /edge/nodes/{id}/challenge", "POST /edge/nodes/{id}/session",
 		"GET /edge/nodes/{id}/jobs/next", "POST /edge/nodes/{id}/jobs/{jobId}/complete",
+		"GET /edge/nodes/{id}/runtime/jobs/next", "POST /edge/nodes/{id}/runtime/jobs/{jobId}/heartbeat", "POST /edge/nodes/{id}/runtime/jobs/{jobId}/complete",
 	} {
 		public[route] = true
 	}

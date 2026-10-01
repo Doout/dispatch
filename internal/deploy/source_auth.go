@@ -11,6 +11,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/runtimecontract"
 )
 
 const (
@@ -43,6 +44,9 @@ type SourceAuthExecutor struct {
 }
 
 func (e SourceAuthExecutor) Deploy(ctx context.Context, deployment core.Deployment, app core.App, server core.Server, progress Progress) error {
+	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Deploy); err != nil {
+		return err
+	}
 	resolved, err := e.Resolve(ctx, app)
 	if err != nil {
 		return err
@@ -51,6 +55,9 @@ func (e SourceAuthExecutor) Deploy(ctx context.Context, deployment core.Deployme
 }
 
 func (e SourceAuthExecutor) Cleanup(ctx context.Context, app core.App, server core.Server, progress Progress) error {
+	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Destroy); err != nil {
+		return err
+	}
 	cleaner, ok := e.Next.(CleanupExecutor)
 	if !ok {
 		return ErrCleanupUnsupported

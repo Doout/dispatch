@@ -128,6 +128,7 @@ type WorkflowTemplateTriggers struct {
 	PullRequestComment *PullRequestCommentTrigger `json:"pullRequestComment,omitempty" yaml:"pullRequestComment,omitempty"`
 }
 type PullRequestCommentTrigger struct {
+	SourceTrustPolicy  string   `json:"sourceTrustPolicy,omitempty" yaml:"sourceTrustPolicy,omitempty"`
 	CommentOnOpen      bool     `json:"commentOnOpen,omitempty" yaml:"commentOnOpen,omitempty"`
 	TTL                string   `json:"ttl" yaml:"ttl"`
 	Sources            []string `json:"sources" yaml:"sources"`
@@ -177,5 +178,8 @@ func ReadWorkflowTemplateTrigger(contents []byte) (*PullRequestCommentTrigger, m
 		return nil, nil, err
 	}
 	trigger.TTL = NormalizePreviewTTL(trigger.TTL)
+	if _, err := NormalizeSourceTrustPolicy(trigger.SourceTrustPolicy); err != nil {
+		return nil, nil, err
+	}
 	return trigger, header.Spec.Sources, nil
 }

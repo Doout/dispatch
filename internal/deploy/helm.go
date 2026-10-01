@@ -54,6 +54,15 @@ type sdkHelmClient struct {
 var helmNamePart = regexp.MustCompile(`[^a-z0-9-]+`)
 
 func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, app core.App, server core.Server, progress Progress) error {
+	policy := deployment.Health.Policy
+	if policy.TimeoutSeconds == 0 {
+		policy = app.HealthPolicy
+	}
+	policy, policyErr := core.NormalizeHealthPolicy(policy)
+	if policyErr != nil {
+		return policyErr
+	}
+	deployment.Health.Policy = policy
 	if err := ValidateHelmTarget(app, server); err != nil {
 		return err
 	}
@@ -132,14 +141,61 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 			return err
 		}
 	}
+	ctx, cancelHealth := context.WithTimeout(ctx, time.Duration(policy.TimeoutSeconds)*time.Second)
+	defer cancelHealth()
+	// Certificate checks precede chart mutation. Application HTTP/TCP checks
+	// become native readiness probes in the saved Helm manifest.
+	for _, check := range policy.Checks {
+		if check.Kind == "tls" {
+			preflight := policy
+			preflight.Checks = []core.HealthCheck{check}
+			result, err := RunHealthPolicy(ctx, preflight, func(ctx context.Context, c core.HealthCheck) HealthObservation {
+				if c.Kind == "container" {
+					return HealthObservation{Passed: true}
+				}
+				return probeCertificate(ctx, app.Domain, c.Port)
+			})
+			if err != nil {
+				result.Policy = policy
+				_ = reportDeploymentHealth(ctx, deployment, result)
+				return err
+			}
+		}
+	}
+	nativeStarted := time.Now().UTC()
 	if err := client.UpgradeInstall(ctx, release, app, deployment, values); err != nil {
-		return fmt.Errorf("install Helm release: %w", err)
+		nativeFinished := time.Now().UTC()
+		result := core.DeploymentHealth{Policy: policy, State: "failed", StartedAt: &nativeStarted, FinishedAt: &nativeFinished, Checks: []core.HealthCheckResult{}}
+		for _, check := range policy.Checks {
+			state, message := "unavailable", fmt.Sprintf("Native readiness did not complete within the %d second limit; configured failure threshold is %d. Inspect workload events.", policy.TimeoutSeconds, policy.FailureThreshold)
+			if check.Kind == "tls" {
+				state, message = "passed", "Certificate preflight passed before chart application."
+			}
+			result.Checks = append(result.Checks, core.HealthCheckResult{Check: check, State: state, Message: message})
+		}
+		if ctx.Err() != nil {
+			result.State = "cancelled"
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				result.State = "timeout"
+			}
+		}
+		_ = reportDeploymentHealth(ctx, deployment, result)
+		return errors.New("Helm apply failed or native readiness timed out; promotion did not complete")
 	}
 	if err := progress(core.DeploymentChecking, "Checking Helm release status"); err != nil {
 		return err
 	}
 	if err := client.Status(ctx, release); err != nil {
 		return fmt.Errorf("check Helm release: %w", err)
+	}
+	result, healthErr := RunHealthPolicy(ctx, policy, func(ctx context.Context, check core.HealthCheck) HealthObservation {
+		return HealthObservation{Passed: true} // Native wait covered workload probes; certificates passed preflight.
+	})
+	if err := reportDeploymentHealth(ctx, deployment, result); err != nil {
+		return errors.New("cannot persist Helm health evidence")
+	}
+	if healthErr != nil {
+		return healthErr
 	}
 	if e.Capture != nil {
 		captureErr := func() error {
@@ -372,7 +428,8 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 		install.CreateNamespace = true
 		install.Atomic = true
 		install.Wait = true
-		install.Timeout = helmOperationTimeout
+		install.WaitForJobs = true
+		install.Timeout = time.Duration(metadata.HealthPolicy.TimeoutSeconds) * time.Second
 		install.Description = metadata.description()
 		install.PostRenderer = metadata
 		var installed *helmrelease.Release
@@ -394,7 +451,8 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	upgrade.ResetValues = true
 	upgrade.Atomic = true
 	upgrade.Wait = true
-	upgrade.Timeout = helmOperationTimeout
+	upgrade.WaitForJobs = true
+	upgrade.Timeout = time.Duration(metadata.HealthPolicy.TimeoutSeconds) * time.Second
 	upgrade.MaxHistory = c.settings.MaxHistory
 	upgrade.Description = metadata.description()
 	upgrade.PostRenderer = metadata
@@ -411,19 +469,36 @@ func (c *sdkHelmClient) Status(ctx context.Context, release string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := action.NewStatus(c.configuration).Run(release)
-	return err
+	current, err := action.NewStatus(c.configuration).Run(release)
+	if err != nil {
+		return err
+	}
+	if current == nil || current.Info == nil || current.Info.Status != helmrelease.StatusDeployed {
+		return errors.New("Helm release is not deployed")
+	}
+	return nil
 }
 
 func (c *sdkHelmClient) Uninstall(ctx context.Context, release string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	retained, err := action.NewGet(c.configuration).Run(release)
+	if errors.Is(err, driver.ErrReleaseNotFound) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("cannot inspect release storage before cleanup")
+	}
+	if err := checkHelmStorageCleanup(retained.Manifest); err != nil {
+		return err
+	}
 	uninstall := action.NewUninstall(c.configuration)
+	uninstall.DisableHooks = true // Arbitrary chart hooks cannot bypass data protection.
 	uninstall.IgnoreNotFound = true
 	uninstall.Wait = true
 	uninstall.Timeout = helmOperationTimeout
-	_, err := uninstall.Run(release)
+	_, err = uninstall.Run(release)
 	return err
 }
 

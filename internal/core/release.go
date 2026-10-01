@@ -2,6 +2,16 @@ package core
 
 import "time"
 
+// RuntimeArtifact contains encrypted execution inputs. Only rollback execution
+// opens them; API responses must never include this record.
+type RuntimeArtifact struct {
+	DeploymentID string
+	AppID        string
+	ServerID     string
+	ScopeID      string
+	Ciphertext   string
+}
+
 // ReleaseNote contains operator-authored release context, never execution inputs.
 type ReleaseNote struct {
 	DeploymentID string    `json:"deploymentId"`

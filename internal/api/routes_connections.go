@@ -14,7 +14,7 @@ func (a *API) connectionsRoutes(r chi.Router) {
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/usage/deployments", a.secretUsageDeployments)
 			r.Put("/", a.updateSecret)
-			r.Delete("/", a.deleteSecret)
+			a.destructiveRoute(r, "DELETE", "/", "secret", "delete", a.deleteSecret)
 		})
 	})
 	r.Route("/secret-stores", func(r chi.Router) {
@@ -24,7 +24,7 @@ func (a *API) connectionsRoutes(r chi.Router) {
 		r.Route("/{id}", func(r chi.Router) {
 			r.Put("/", a.updateSecretStore)
 			r.Post("/verify", a.verifySecretStore)
-			r.Delete("/", a.deleteSecretStore)
+			a.destructiveRoute(r, "DELETE", "/", "secret-store", "delete", a.deleteSecretStore)
 		})
 	})
 	r.Route("/private-networks", func(r chi.Router) {
@@ -34,10 +34,10 @@ func (a *API) connectionsRoutes(r chi.Router) {
 		r.Route("/{id}", func(r chi.Router) {
 			r.Put("/", a.updatePrivateNetwork)
 			r.Post("/verify", a.verifyPrivateNetwork)
-			r.Post("/rotate-token", a.rotateEdgeToken)
-			r.Post("/revoke", a.revokeEdgeNode)
+			a.destructiveRoute(r, "POST", "/rotate-token", "private-network", "rotate-token", a.rotateEdgeToken)
+			a.destructiveRoute(r, "POST", "/revoke", "private-network", "revoke", a.revokeEdgeNode)
 			r.Post("/install-connector", a.installLanewayConnector)
-			r.Delete("/", a.deletePrivateNetwork)
+			a.destructiveRoute(r, "DELETE", "/", "private-network", "delete", a.deletePrivateNetwork)
 		})
 	})
 	r.Route("/laneway-networks", func(r chi.Router) {
@@ -54,7 +54,7 @@ func (a *API) connectionsRoutes(r chi.Router) {
 		r.Get("/github-apps", a.listGitHubApps)
 		r.Post("/github-apps", a.createGitHubApp)
 		r.Put("/github-apps/{id}", a.updateGitHubApp)
-		r.Delete("/github-apps/{id}", a.deleteGitHubApp)
+		a.destructiveRoute(r, "DELETE", "/github-apps/{id}", "github-app", "delete", a.deleteGitHubApp)
 		r.Post("/github-apps/{id}/verify", a.verifyGitHubApp)
 		r.Get("/github-apps/{id}/installations", a.listGitHubAppInstallations)
 		r.Get("/github-apps/{id}/repositories", a.listGitHubAppRepositories)
@@ -73,11 +73,13 @@ func (a *API) connectionsRoutes(r chi.Router) {
 				r.Post("/relay/verify", a.verifyRelayServer)
 				r.Get("/relay/webhooks", a.listRelayWebhooks)
 				r.Post("/relay/webhooks", a.createRelayWebhook)
-				r.Delete("/relay/webhooks/{webhookId}", a.deleteRelayWebhook)
+				a.destructiveRoute(r, "DELETE", "/relay/webhooks/{webhookId}", "relay-webhook", "delete", a.deleteRelayWebhook)
 				r.Post("/repair", a.repairOpenShiftServer)
-				r.Delete("/", a.deleteServer)
+				r.Post("/storage/reconcile", a.reconcileStorage)
+				a.destructiveRoute(r, "DELETE", "/", "server", "delete", a.deleteServer)
 			})
 			r.With(a.serverPermission).Get("/topology", a.getServerTopology)
+			r.With(a.serverPermission).Get("/capabilities", a.serverRuntimeCapabilities)
 		})
 	})
 	r.Route("/relay", func(r chi.Router) {

@@ -9,6 +9,163 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /contracts/runtime:
+    get:
+      operationId: getRuntimeContract
+      description: Lists the versioned operation vocabulary. Query target capabilities before requesting an operation.
+      responses:
+        '200':
+          description: Runtime contract metadata and the target-capabilities URL.
+          content:
+            application/json:
+              schema: { type: object }
+  /servers/{serverId}/capabilities:
+    get:
+      operationId: getServerRuntimeCapabilities
+      description: Returns the configured executor's supported operations. Requires visibility of an application using this target, or controller-owner access.
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: buildType
+          in: query
+          schema: { type: string, enum: [dockerfile, compose, helm] }
+      responses:
+        '200':
+          description: Target-specific capabilities; simulation reports itself explicitly.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apiVersion, driver, targetMode, capabilities]
+                properties:
+                  apiVersion: { type: string, const: dispatch.runtime/v1 }
+                  driver: { type: string }
+                  targetMode: { type: string }
+                  capabilities:
+                    type: array
+                    items:
+                      type: object
+                      required: [operation, supported]
+                      properties:
+                        operation: { type: string, enum: [deploy, inspect, logs, start, stop, rollback, destroy] }
+                        supported: { type: boolean }
+                        reason: { type: string }
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+  /apps/{id}/health-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getApplicationHealthPolicy
+      description: Requires project.view. Returns the normalized policy including mandatory workload readiness.
+      responses:
+        '200':
+          description: Current application health policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthPolicy' }
+    put:
+      operationId: updateApplicationHealthPolicy
+      description: Requires project.configure and an idle application. Captured historical deployment policies remain unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HealthPolicy' }
+      responses:
+        '200': { description: Saved policy. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /storage:
+    get:
+      operationId: listStorage
+      description: Recorded storage filtered by current project access. Unknown ownership is visible only to controller owners. Does not contact the runtime.
+      parameters:
+      - { name: serverId, in: query, schema: { type: string } }
+      - { name: projectId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Storage records with owner, runtime identity, consumers, retain/destroy policy, state and revision. }
+        '403': { $ref: '#/components/responses/Problem' }
+  /storage/{id}:
+    parameters:
+    - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getStorage
+      responses:
+        '200': { description: A project-visible storage record. }
+        '403': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteStorageData
+      description: Permanently delete verified, unused storage with destroy policy. Requires project.configure and a current destructive confirmation from delete-preview. Ownership history remains.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation:
+                  type: object
+                  required: [resourceId, action, expectedVersion, confirmName]
+                  properties:
+                    resourceId: { type: string }
+                    action: { const: delete }
+                    expectedVersion: { type: string }
+                    confirmName: { type: string }
+      responses:
+        '204': { description: Runtime absence confirmed; record retained. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { description: Stale review, protected data, changed consumers, or unfinished deletion. }
+        '422': { description: Missing or incorrect confirmation. }
+  /storage/{id}/policy:
+    parameters:
+    - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: setStoragePolicy
+      description: Requires project.configure. A policy change does not delete data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, policy]
+              properties:
+                revision: { type: integer, minimum: 1 }
+                policy: { type: string, enum: [retain, destroy] }
+      responses:
+        '200': { description: Updated storage record. }
+        '409': { description: Revision changed or ownership is unverified. }
+  /storage/{id}/delete-preview:
+    parameters:
+    - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: previewStorageDeletion
+      description: Requires project.configure. Refreshes runtime identity and returns consequences, blocked reason, name and confirmation version.
+      responses:
+        '200': { description: Current destructive review. }
+        '409': { description: Runtime inspection unavailable. }
+  /servers/{id}/storage/reconcile:
+    parameters:
+    - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: reconcileStorage
+      description: Controller-owner inspection of runtime volumes and consumers. Adopts only verified Dispatch ownership. Unavailable inspection never marks data absent.
+      responses:
+        '200': { description: Updated inventory for the target. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { description: Unsupported runtime or incomplete inspection. }
   /analytics:
     get:
       operationId: getAnalytics
@@ -2115,6 +2272,7 @@ paths:
                 githubAppId: { type: string }
                 name: { type: string }
                 repository: { type: string, description: "Fallback owner/repository when YAML does not declare spec.triggers.pullRequestComment.sources" }
+                sourceTrustPolicy: { type: string, enum: [same_repository, approval_required], default: same_repository }
                 command: { type: string, example: /preview, description: "Fallback command when YAML does not declare its trigger" }
                 ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
                 commentOnOpen: { type: boolean, default: false, description: "Post controls on new watched PRs without deploying. WorkflowTemplate YAML overrides this field." }
@@ -2154,6 +2312,7 @@ paths:
                 githubAppId: { type: string }
                 name: { type: string }
                 repository: { type: string }
+                sourceTrustPolicy: { type: string, enum: [same_repository, approval_required], default: same_repository }
                 command: { type: string }
                 ttl: { type: string, default: "0", description: "Preview lifetime: 0 is unlimited; use a duration such as 1d or 24h. YAML overrides the template default." }
                 commentOnOpen: { type: boolean, default: false, description: "Post controls on new watched PRs without deploying. WorkflowTemplate YAML overrides this field." }
@@ -2284,6 +2443,55 @@ paths:
         - { in: query, name: resourceId, schema: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/revisions/{revisionId}/source-trust:
+    parameters:
+      - { in: path, name: revisionId, required: true, schema: { type: string } }
+    get:
+      operationId: reviewPreviewSourceTrust
+      description: Requires project.view. Re-evaluates exact PR origins, commits, credential scope and environments without decrypting workload secrets. A denied decision is returned with allowed false.
+      responses:
+        "200":
+          description: Current source policy decision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreviewSourceTrustDecision" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /workflow/revisions/{revisionId}/source-trust/approvals:
+    parameters:
+      - { in: path, name: revisionId, required: true, schema: { type: string } }
+    post:
+      operationId: approvePreviewSourceTrust
+      description: Requires controller owner. Approves the current exact review digest until an explicit expiry no more than 24 hours away. Does not start execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmDigest, expiresAt]
+              properties:
+                confirmDigest: { type: string }
+                expiresAt: { type: string, format: date-time }
+      responses:
+        "201": { description: Scoped approval recorded. }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /workflow/revisions/{revisionId}/source-trust/approvals/{approvalId}:
+    parameters:
+      - { in: path, name: revisionId, required: true, schema: { type: string } }
+      - name: approvalId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: revokePreviewSourceTrust
+      description: Requires controller owner. Revokes an approval belonging to this preview resource.
+      responses:
+        "204": { description: Approval revoked. }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /workflow/revisions/{revisionId}/jobs:
     get:
       operationId: listWorkflowJobs
@@ -3082,12 +3290,58 @@ components:
       content:
         application/json:
           schema: { type: array, items: {} }
+    PreviewSourceTrustDecision:
+      type: object
+      required: [policy, digest, allowed, reason, sources, credentialScope, environments, checkedAt]
+      properties:
+        policy: { type: string, enum: [same_repository, approval_required] }
+        digest: { type: string }
+        allowed: { type: boolean }
+        reason: { type: string }
+        approvalId: { type: string }
+        checkedAt: { type: string, format: date-time }
+        credentialScope: { type: array, items: { type: string } }
+        environments: { type: array, items: { type: string } }
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              alias: { type: string }
+              repository: { type: string }
+              repositoryId: { type: integer, format: int64 }
+              headRepository: { type: string }
+              headRepositoryId: { type: integer, format: int64 }
+              fork: { type: boolean }
+              pullRequest: { type: integer }
+              commitSha: { type: string }
+              githubAppId: { type: string }
     Problem:
       description: RFC 9457-style problem response.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    HealthPolicy:
+      type: object
+      properties:
+        timeoutSeconds: { type: integer, minimum: 1, maximum: 600, default: 120 }
+        checkTimeoutSeconds: { type: integer, minimum: 1, maximum: 60, default: 5 }
+        intervalSeconds: { type: integer, minimum: 1, maximum: 60, default: 2 }
+        failureThreshold: { type: integer, minimum: 1, maximum: 20, default: 3 }
+        checks:
+          type: array
+          maxItems: 17
+          items:
+            type: object
+            required: [id, kind]
+            properties:
+              id: { type: string }
+              kind: { type: string, enum: [container, http, tcp, tls] }
+              scope: { type: string, enum: [workload, route, certificate], default: workload }
+              service: { type: string }
+              port: { type: integer, minimum: 1, maximum: 65535 }
+              path: { type: string, description: Absolute HTTP path without credentials, query or fragment. }
     EventActivity:
       type: object
       description: Delivery metadata without raw payloads or credentials. Processed describes event handling, not the outcome of the linked run.

@@ -124,11 +124,21 @@ func TestWithinRejectsRepositoryEscape(t *testing.T) {
 func TestDockerExecutorDeploysPastedComposeWithoutGit(t *testing.T) {
 	content := "services:\n  app:\n    image: ghcr.io/example/app:latest"
 	commands := [][]string{}
-	executor := DockerExecutor{run: func(_ context.Context, _ io.Reader, _ io.Writer, name string, args ...string) error {
+	executor := DockerExecutor{run: func(_ context.Context, _ io.Reader, output io.Writer, name string, args ...string) error {
 		if name == "git" {
 			t.Fatal("pasted Compose deployment must not invoke Git")
 		}
 		commands = append(commands, append([]string{name}, args...))
+		if args[0] == "ps" {
+			_, _ = io.WriteString(output, "app-container")
+		}
+		if args[0] == "inspect" {
+			if strings.Contains(args[2], ".State.Running") {
+				_, _ = io.WriteString(output, `{"running":true,"health":"none"}`)
+			} else {
+				_, _ = io.WriteString(output, `{"service":"app","networks":{}}`)
+			}
+		}
 		for index, arg := range args {
 			if arg != "-f" || index+1 >= len(args) {
 				continue
@@ -153,10 +163,10 @@ func TestDockerExecutorDeploysPastedComposeWithoutGit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(commands) != 2 || commands[0][0] != "docker" || commands[1][0] != "docker" {
-		t.Fatalf("expected Compose validation and apply commands, got %#v", commands)
+	if len(commands) != 5 || commands[0][0] != "docker" || commands[1][0] != "docker" {
+		t.Fatalf("expected Compose validation, apply and runtime readiness commands, got %#v", commands)
 	}
-	wantStates := []core.DeploymentState{core.DeploymentFetching, core.DeploymentBuilding, core.DeploymentStarting, core.DeploymentChecking, core.DeploymentRouting}
+	wantStates := []core.DeploymentState{core.DeploymentFetching, core.DeploymentBuilding, core.DeploymentStarting, core.DeploymentChecking, core.DeploymentChecking, core.DeploymentRouting}
 	if !reflect.DeepEqual(states, wantStates) {
 		t.Fatalf("unexpected deployment states: %#v", states)
 	}
@@ -189,6 +199,9 @@ func TestDockerExecutorReusesApplicationBuildCache(t *testing.T) {
 						return nil
 					}
 					return errors.New("cache image not found")
+				}
+				if len(args) > 0 && args[0] == "inspect" {
+					_, _ = io.WriteString(output, `{"running":true,"health":"none"}`)
 				}
 				if len(args) > 0 && args[0] == "build" {
 					build = append([]string(nil), args...)

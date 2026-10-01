@@ -35,7 +35,11 @@ func serviceRequestTest(t *testing.T, a *API, method, path string, body any, wan
 	t.Helper()
 	encoded, _ := json.Marshal(body)
 	rr := httptest.NewRecorder()
-	a.ServeHTTP(rr, tokenRequest(method, path, bytes.NewReader(encoded)))
+	req := tokenRequest(method, path, bytes.NewReader(encoded))
+	if want != http.StatusForbidden && (method == "DELETE" || method == "POST" && (strings.HasSuffix(path, "/revoke") || strings.HasSuffix(path, "/rotate-token") || strings.HasSuffix(path, "/cleanup"))) {
+		req = confirmedTokenRequest(t, a, method, path, bytes.NewReader(encoded))
+	}
+	a.ServeHTTP(rr, req)
 	if rr.Code != want {
 		t.Fatalf("%s %s: %d %s", method, path, rr.Code, rr.Body.String())
 	}

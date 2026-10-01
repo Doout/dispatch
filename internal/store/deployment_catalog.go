@@ -23,7 +23,7 @@ func (s *SQLStore) SearchDeploymentHistory(ctx context.Context, filter core.Depl
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	query := `SELECT d.id,d.app_id,d.commit_sha,d.spec_digest,d.state,'',d.created_at,d.started_at,d.finished_at,d.lease_until,'{}','{}' FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.app_id IN (` + strings.Join(placeholders, ",") + `)`
+	query := `SELECT d.id,d.app_id,d.commit_sha,d.spec_digest,d.state,'',d.created_at,d.started_at,d.finished_at,d.lease_until,'{}','{}',d.health FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.app_id IN (` + strings.Join(placeholders, ",") + `)`
 	if filter.Before != "" {
 		query += ` AND (d.created_at < (SELECT created_at FROM deployments WHERE id=?) OR (d.created_at=(SELECT created_at FROM deployments WHERE id=?) AND d.id<?))`
 		args = append(args, filter.Before, filter.Before, filter.Before)

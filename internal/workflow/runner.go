@@ -16,6 +16,10 @@ func (s *Service) runApplication(ctx context.Context, resource core.WorkflowReso
 	if ctx.Err() != nil {
 		return
 	}
+	if err := s.checkRevisionTrust(ctx, revision); err != nil {
+		s.failRevision(ctx, source, &revision, err)
+		return
+	}
 	now := time.Now().UTC()
 	revision.State, revision.StartedAt = "running", &now
 	if err := s.Store.UpdateWorkflowRevision(ctx, revision); err != nil {

@@ -64,15 +64,23 @@ func TestComposeServiceNetworksPreserveApplicationNetworks(t *testing.T) {
 }
 
 func TestDockerfileServiceNetworksAttachedBeforeStarting(t *testing.T) {
+	repo := t.TempDir()
+	serviceFixtureRepo(t, repo, map[string]string{"Dockerfile": "FROM scratch\n"})
 	for _, networks := range [][]string{{"database"}, {"database", "cache"}} {
 		var operations []string
-		executor := DockerExecutor{run: func(_ context.Context, _ io.Reader, _ io.Writer, command string, args ...string) error {
-			if command == "docker" {
+		executor := DockerExecutor{run: func(ctx context.Context, stdin io.Reader, output io.Writer, name string, args ...string) error {
+			if name == "git" {
+				return command(ctx, stdin, output, name, args...)
+			}
+			if name == "docker" && len(args) > 0 && args[0] == "inspect" {
+				_, _ = io.WriteString(output, `{"running":true,"health":"none"}`)
+			}
+			if name == "docker" {
 				operations = append(operations, strings.Join(args, " "))
 			}
 			return nil
 		}}
-		app := core.App{ID: "network-app", Name: "application", SourceRepo: "https://example.test/app.git", Branch: "main", BuildType: core.BuildTypeDockerfile, ContextPath: ".", DockerfilePath: "Dockerfile"}
+		app := core.App{ID: "network-app", Name: "application", SourceRepo: "file://" + repo, Branch: "main", BuildType: core.BuildTypeDockerfile, ContextPath: ".", DockerfilePath: "Dockerfile"}
 		for _, network := range networks {
 			app.ServiceRuntime = append(app.ServiceRuntime, core.ServiceRuntimeBinding{DockerNetwork: network, Binding: core.ServiceBinding{Environment: map[string]string{"DB": "url"}}, Values: map[string]string{"url": "connection"}})
 		}

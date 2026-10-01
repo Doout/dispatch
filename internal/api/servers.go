@@ -25,13 +25,14 @@ func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
 }
 
 type createServerRequest struct {
-	Name       string                    `json:"name"`
-	Address    string                    `json:"address"`
-	Runtime    string                    `json:"runtime"`
-	AgentMode  string                    `json:"agentMode"`
-	Kubernetes *kubernetesServerRequest  `json:"kubernetes"`
-	Relay      *relayServerRequest       `json:"relay"`
-	Builder    *core.BuilderServerConfig `json:"builder"`
+	Name        string                    `json:"name"`
+	Address     string                    `json:"address"`
+	Runtime     string                    `json:"runtime"`
+	AgentNodeID string                    `json:"agentNodeId"`
+	AgentMode   string                    `json:"agentMode"`
+	Kubernetes  *kubernetesServerRequest  `json:"kubernetes"`
+	Relay       *relayServerRequest       `json:"relay"`
+	Builder     *core.BuilderServerConfig `json:"builder"`
 }
 
 type relayServerRequest struct {
@@ -59,18 +60,33 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Runtime = normalizeServerRuntime(input.Runtime)
+	if input.AgentNodeID != "" && input.Runtime != core.ServerRuntimeDocker {
+		problem(w, 422, "Agent target invalid", "Only Docker servers accept a runtime node binding.")
+		return
+	}
 	item := core.Server{ID: ulid.Make().String(), Name: input.Name, Runtime: input.Runtime, CreatedAt: time.Now().UTC()}
 	switch input.Runtime {
 	case core.ServerRuntimeDocker:
+		if input.AgentNodeID != "" {
+			if !a.bindRuntimeNode(w, r, &item, strings.TrimSpace(input.AgentNodeID)) {
+				return
+			}
+			if input.Address == "" {
+				input.Address = "agent:" + item.AgentNodeID
+			}
+		}
 		if input.Address == "" {
 			problem(w, http.StatusBadRequest, "Server address required", "Enter the Docker host name or IP address.")
 			return
 		}
-		if strings.EqualFold(input.Address, "local") {
+		if strings.EqualFold(input.Address, "local") || item.AgentNodeID != "" && (strings.EqualFold(input.Address, "localhost") || strings.Trim(input.Address, "[]") == "::1" || input.Address == "127.0.0.1") {
 			problem(w, http.StatusConflict, "Controller Docker is managed automatically", "Mount the Docker socket to register this controller.")
 			return
 		}
 		item.Address, item.State, item.AgentMode = input.Address, "pending", "ssh-bootstrap"
+		if item.AgentNodeID != "" {
+			item.State, item.AgentMode = "ready", "outbound-runtime"
+		}
 	case core.ServerRuntimeKubernetes:
 		kubernetes, detail := validateKubernetesServer(input.Kubernetes, nil)
 		if detail != "" {
@@ -175,7 +191,7 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusBadRequest, "Server address required", "Enter the Docker host name or IP address.")
 			return
 		}
-		if strings.EqualFold(input.Address, "local") {
+		if strings.EqualFold(input.Address, "local") || item.AgentNodeID != "" && (strings.EqualFold(input.Address, "localhost") || strings.Trim(input.Address, "[]") == "::1" || input.Address == "127.0.0.1") {
 			problem(w, http.StatusConflict, "Connection type cannot be changed", "Create a separate server when you need a different connection type.")
 			return
 		}
@@ -462,8 +478,8 @@ func (a *API) deleteServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := a.store.DeleteServer(r.Context(), id); err != nil {
-		a.notFoundOrInternal(w, err, "Server")
+	if err := a.withStorageRegistrationRemoval(r, "server", id, func() error { return a.store.DeleteServer(r.Context(), id) }); err != nil {
+		problem(w, 409, "Server deletion stopped", err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
