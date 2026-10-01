@@ -15,6 +15,7 @@ for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatch-hook" ./cmd/dispatch-hook
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/edge/linux-$arch" ./cmd/dispatch-agent
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/relay/linux-$arch" ./cmd/dispatch-relay
-  tar -czf "$output/dispatch-linux-$arch.tar.gz" -C "$output/$arch" dispatch -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
+  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatchctl" ./cmd/dispatchctl
+  tar -czf "$output/dispatch-linux-$arch.tar.gz" -C "$output/$arch" dispatch dispatchctl -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
 done
 (cd "$output" && sha256sum dispatch-linux-*.tar.gz > SHA256SUMS)

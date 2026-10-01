@@ -236,6 +236,7 @@ Use `make check` for the race detector, `go vet`, TypeScript checks, and fronten
 - [Deployment health policies](docs/deployment-health.md)
 - [Managed application routes](docs/application-routing.md)
 - [Edge credentials](docs/edge-credentials.md)
+- [DevOps CLI and MCP tools](docs/automation-client.md)
 - [API reference](docs/openapi.yaml)
 - [Provider API](docs/provider-api.md)
 - [Runtime contract](docs/runtime-contract.md)
