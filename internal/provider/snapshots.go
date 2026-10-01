@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"time"
@@ -122,7 +123,7 @@ func (e RestoreEvidence) SafeClone() bool {
 }
 
 func ValidateSnapshot(s Snapshot) error {
-	if !ValidID(s.ID) || !ValidID(s.SourceServerID) || s.Name == "" || s.CreatedAt.IsZero() || len(s.Disks) == 0 || len(s.Disks) > 128 || len(s.Name) > 256 || !ValidID(s.Image) || s.SourceMachineIdentity == "" || s.SourceSSHIdentity == "" {
+	if !ValidID(s.ID) || !ValidID(s.SourceServerID) || s.Name == "" || s.CreatedAt.IsZero() || len(s.Disks) == 0 || len(s.Disks) > 128 || len(s.Name) > 256 || !ValidID(s.Image) || !ValidID(s.SourceMachineIdentity) || !ValidID(s.SourceSSHIdentity) {
 		return errors.New("snapshot identity or disk evidence is invalid")
 	}
 	if !slices.Contains([]string{"pending", "ready", "failed", "deleting", "corrupt"}, s.State) {
@@ -133,7 +134,8 @@ func ValidateSnapshot(s Snapshot) error {
 	}
 	seen := map[string]bool{}
 	for _, d := range s.Disks {
-		if !ValidID(d.ID) || seen[d.ID] || d.SizeBytes <= 0 || d.ContentDigest == "" {
+		checksum, checksumErr := hex.DecodeString(d.ContentDigest)
+		if !ValidID(d.ID) || seen[d.ID] || d.SizeBytes <= 0 || checksumErr != nil || len(checksum) != 32 || s.Encryption.Mode == "provider-managed" && !d.Encrypted {
 			return errors.New("snapshot disk evidence is invalid")
 		}
 		seen[d.ID] = true
@@ -147,7 +149,7 @@ func VerifyCloneEvidence(snapshot Snapshot, clone Server) error {
 	if ValidateSnapshot(snapshot) != nil || snapshot.State != "ready" || !ValidID(clone.ID) {
 		return errors.New("clone requires valid ready snapshot evidence")
 	}
-	if clone.ID == snapshot.SourceServerID || clone.MachineIdentity == "" || clone.SSHIdentity == "" || snapshot.SourceMachineIdentity == "" || snapshot.SourceSSHIdentity == "" || clone.MachineIdentity == snapshot.SourceMachineIdentity || clone.SSHIdentity == snapshot.SourceSSHIdentity {
+	if clone.ID == snapshot.SourceServerID || !ValidID(clone.MachineIdentity) || !ValidID(clone.SSHIdentity) || snapshot.SourceMachineIdentity == "" || snapshot.SourceSSHIdentity == "" || clone.MachineIdentity == snapshot.SourceMachineIdentity || clone.SSHIdentity == snapshot.SourceSSHIdentity {
 		return errors.New("clone did not establish distinct machine and SSH identities")
 	}
 	if clone.Restore == nil || clone.Restore.SnapshotID != snapshot.ID || !clone.Restore.SafeClone() {

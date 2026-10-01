@@ -25,18 +25,19 @@ type LifecycleStore interface {
 }
 
 type CreateInput struct {
-	Bootstrap      *core.TargetBootstrapPlan `json:"bootstrap,omitempty"`
-	ActorID        string                    `json:"-"`
-	ProjectID      string                    `json:"projectId"`
-	ProviderID     string                    `json:"providerId"`
-	Name           string                    `json:"name"`
-	Region         string                    `json:"region"`
-	Size           string                    `json:"size"`
-	Image          string                    `json:"image"`
-	Network        string                    `json:"network"`
-	SSHKeySecretID string                    `json:"sshKeySecretId"`
-	Config         map[string]any            `json:"config"`
-	SecretRefs     map[string]string         `json:"secretRefs,omitempty"`
+	SourceSnapshotID string                    `json:"sourceSnapshotId,omitempty"`
+	Bootstrap        *core.TargetBootstrapPlan `json:"bootstrap,omitempty"`
+	ActorID          string                    `json:"-"`
+	ProjectID        string                    `json:"projectId"`
+	ProviderID       string                    `json:"providerId"`
+	Name             string                    `json:"name"`
+	Region           string                    `json:"region"`
+	Size             string                    `json:"size"`
+	Image            string                    `json:"image"`
+	Network          string                    `json:"network"`
+	SSHKeySecretID   string                    `json:"sshKeySecretId"`
+	Config           map[string]any            `json:"config"`
+	SecretRefs       map[string]string         `json:"secretRefs,omitempty"`
 }
 
 type Acceptance struct {
@@ -90,6 +91,10 @@ func (m *Manager) ReviewCreate(ctx context.Context, in CreateInput) (core.Infras
 	if err = m.authorize(ctx, in.ProjectID, in.ProviderID, "infrastructure.create"); err != nil {
 		return review, err
 	}
+	snapshot, err := m.restoreSnapshot(ctx, in)
+	if err != nil {
+		return review, err
+	}
 	if _, err = data.GetProject(ctx, in.ProjectID); err != nil {
 		return review, err
 	}
@@ -111,14 +116,18 @@ func (m *Manager) ReviewCreate(ctx context.Context, in CreateInput) (core.Infras
 	if err = client.Validate(ctx, config); err != nil {
 		return review, errors.New("provider rejected the configuration")
 	}
-	for kind, selected := range map[string]string{"regions": in.Region, "sizes": in.Size, "images": in.Image, "networks": in.Network} {
+	networkKind := "networks"
+	if snapshot != nil {
+		networkKind = "restore-networks"
+	}
+	for kind, selected := range map[string]string{"regions": in.Region, "sizes": in.Size, "images": in.Image, networkKind: in.Network} {
 		options, e := client.Options(ctx, provider.OptionRequest{Kind: kind, Config: config})
 		if e != nil {
 			return review, errors.New("provider options are unavailable")
 		}
 		found := false
 		for _, option := range options {
-			if option.ID == selected {
+			if option.ID == selected && (kind != "restore-networks" || option.Metadata["quarantine"] == true) {
 				found = true
 				break
 			}
@@ -132,7 +141,7 @@ func (m *Manager) ReviewCreate(ctx context.Context, in CreateInput) (core.Infras
 		return review, errors.New("choose an SSH key with a stored public key")
 	}
 	now := m.now()
-	review = core.InfrastructureReview{ID: ulid.Make().String(), ServerID: ulid.Make().String(), ProjectID: in.ProjectID, ProviderID: p.ID, ProviderRevision: p.Revision, ManifestDigest: p.ManifestDigest, Name: in.Name, State: "open", CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute)}
+	review = core.InfrastructureReview{SourceSnapshotID: in.SourceSnapshotID, ID: ulid.Make().String(), ServerID: ulid.Make().String(), ProjectID: in.ProjectID, ProviderID: p.ID, ProviderRevision: p.Revision, ManifestDigest: p.ManifestDigest, Name: in.Name, State: "open", CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute)}
 	request := provider.CreateServerRequest{Name: in.Name, Region: in.Region, Size: in.Size, Image: in.Image, Network: in.Network, SSHKey: ssh.PublicValue, ProviderConfig: config, Labels: ownership(review)}
 
 	if in.Bootstrap != nil {
@@ -148,7 +157,14 @@ func (m *Manager) ReviewCreate(ctx context.Context, in CreateInput) (core.Infras
 		in.Bootstrap = &prepared.Plan
 		request.Bootstrap = userData
 	}
-	raw, err := json.Marshal(request)
+	var payload any = request
+	if snapshot != nil {
+		payload = struct {
+			provider.CreateServerRequest
+			Snapshot provider.Snapshot `json:"_dispatchRestoreSnapshot"`
+		}{request, *snapshot}
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return review, errors.New("configuration is invalid")
 	}
@@ -179,6 +195,11 @@ func (m *Manager) AcceptCreate(ctx context.Context, actor string, in Acceptance)
 	}
 	if err = m.authorize(ctx, r.ProjectID, r.ProviderID, "infrastructure.create"); err != nil {
 		return result, err
+	}
+	if r.SourceSnapshotID != "" {
+		if err = m.authorize(ctx, r.ProjectID, r.ProviderID, "infrastructure.restore"); err != nil {
+			return result, err
+		}
 	}
 	if in.ConfirmName != r.Name || in.Digest != r.Digest {
 		return result, store.ErrInfrastructureChanged
@@ -212,7 +233,14 @@ func (m *Manager) ChangeOperation(ctx context.Context, id, action string) error 
 	if err != nil {
 		return err
 	}
-	if err = m.authorize(ctx, server.ProjectID, server.ProviderID, "infrastructure.modify"); err != nil {
+	permission := "infrastructure.modify"
+	if op.Action == "snapshot.create" {
+		permission = "infrastructure.snapshot"
+	}
+	if op.Action == "snapshot.delete" {
+		permission = "infrastructure.delete"
+	}
+	if err = m.authorize(ctx, server.ProjectID, server.ProviderID, permission); err != nil {
 		return err
 	}
 	switch action {
