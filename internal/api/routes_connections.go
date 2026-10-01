@@ -61,9 +61,9 @@ func (a *API) connectionsRoutes(r chi.Router) {
 		r.Post("/github-apps/manifest", a.startGitHubAppManifest)
 	})
 	r.Route("/servers", func(r chi.Router) {
+		r.Get("/", a.listServers)
 		r.Group(func(r chi.Router) {
 			r.Use(a.ownerOnly)
-			r.Get("/", a.listServers)
 			r.Post("/", a.createServer)
 		})
 		r.Route("/{id}", func(r chi.Router) {

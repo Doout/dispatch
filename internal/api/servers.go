@@ -21,11 +21,38 @@ import (
 
 func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListServers(r.Context())
-	a.list(w, items, err)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
+		project := r.URL.Query().Get("projectId")
+		if project == "" {
+			problem(w, 400, "Project required", "Specify projectId when listing assigned targets.")
+			return
+		}
+		if !a.requireProject(w, r, core.PermissionInfrastructureInspect, project) {
+			return
+		}
+		filtered := []core.Server{}
+		for _, item := range items {
+			allowed, err := a.assignedInfrastructure(r.Context(), project, "target", item.ID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			if allowed {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+	writeJSON(w, 200, items)
 }
 
 type createServerRequest struct {
 	Name        string                    `json:"name"`
+	ProjectID   string                    `json:"projectId"`
 	Address     string                    `json:"address"`
 	Runtime     string                    `json:"runtime"`
 	AgentNodeID string                    `json:"agentNodeId"`
@@ -64,7 +91,13 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Agent target invalid", "Only Docker servers accept a runtime node binding.")
 		return
 	}
-	item := core.Server{ID: ulid.Make().String(), Name: input.Name, Runtime: input.Runtime, CreatedAt: time.Now().UTC()}
+	if input.ProjectID != "" {
+		if _, err := a.store.GetProject(r.Context(), input.ProjectID); err != nil {
+			a.notFoundOrInternal(w, err, "Project")
+			return
+		}
+	}
+	item := core.Server{ID: ulid.Make().String(), ProjectID: input.ProjectID, Name: input.Name, Runtime: input.Runtime, CreatedAt: time.Now().UTC()}
 	switch input.Runtime {
 	case core.ServerRuntimeDocker:
 		if input.AgentNodeID != "" {

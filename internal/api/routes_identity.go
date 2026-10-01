@@ -5,6 +5,7 @@ import (
 )
 
 func (a *API) identityRoutes(r chi.Router) {
+	a.automationRoutes(r)
 	r.Get("/auth/me", a.authMe)
 	r.Post("/auth/logout", a.logout)
 	r.Get("/auth/profile", a.accountProfile)

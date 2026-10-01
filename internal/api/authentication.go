@@ -61,6 +61,10 @@ const impersonateUserHeader = "Impersonate-User"
 func (a *API) authorizedContext(w http.ResponseWriter, r *http.Request, actor core.Identity) (context.Context, bool) {
 	ctx := withIdentity(r.Context(), actor)
 	targetID := strings.TrimSpace(r.Header.Get(impersonateUserHeader))
+	if actor.Kind == core.PrincipalServiceAccount && targetID != "" {
+		problem(w, 403, "Impersonation denied", "Automation identities cannot impersonate users.")
+		return nil, false
+	}
 	if targetID == "" || targetID == actor.ID {
 		return ctx, true
 	}
@@ -94,6 +98,20 @@ func (a *API) bearerIdentity(r *http.Request) (core.Identity, bool) {
 		return controllerIdentity("token"), true
 	}
 	now := time.Now().UTC()
+	if strings.HasPrefix(provided, "dsa_") {
+		if len(provided) > 512 {
+			return core.Identity{}, false
+		}
+		data, ok := a.store.(store.AutomationStore)
+		if !ok {
+			return core.Identity{}, false
+		}
+		account, credential, err := data.AuthenticateAutomationCredential(r.Context(), sessionHash(provided), now)
+		if err != nil {
+			return core.Identity{}, false
+		}
+		return core.Identity{ID: account.ID, Kind: core.PrincipalServiceAccount, CredentialID: credential.ID, Username: account.Name, DisplayName: account.Name, SystemRole: core.UserRoleMember}, true
+	}
 	user, err := a.store.SessionUser(r.Context(), sessionHash(provided), now)
 	if err == nil && user.State == core.UserStateActive {
 		return identityForUser(user), true

@@ -1283,7 +1283,6 @@ CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE s
 -- dispatch:migration 073_deployment_health
 ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';
-
 -- dispatch:migration 075_infrastructure_providers
 CREATE TABLE infrastructure_providers (
  id TEXT PRIMARY KEY,
@@ -1302,3 +1301,13 @@ CREATE TABLE infrastructure_providers (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL
 );
+
+-- dispatch:migration 077_automation_identities
+CREATE TABLE service_accounts (id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,description TEXT NOT NULL DEFAULT '',state TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE automation_credentials (id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES service_accounts(id),name TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,expires_at TEXT NOT NULL,created_at TEXT NOT NULL,revoked_at TEXT,last_used_at TEXT);
+CREATE INDEX automation_credentials_account ON automation_credentials(account_id);
+CREATE TABLE principal_grants(principal_type TEXT NOT NULL,principal_id TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id),permissions TEXT NOT NULL,expires_at TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(principal_type,principal_id,project_id));
+CREATE TABLE infrastructure_assignments(project_id TEXT NOT NULL REFERENCES projects(id),kind TEXT NOT NULL,resource_id TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(project_id,kind,resource_id));
+ALTER TABLE servers ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE audit_events ADD COLUMN credential_id TEXT NOT NULL DEFAULT '';

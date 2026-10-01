@@ -11,7 +11,7 @@ import (
 )
 
 func (s *SQLStore) AppendAuditEvent(ctx context.Context, e core.AuditEvent) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO audit_events(id,actor_id,actor_name,impersonator_id,project_id,app_id,action,resource_id,outcome,created_at,confirmed_action,confirmed_name,confirmed_version,confirmed_policy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), e.ID, e.ActorID, e.ActorName, e.ImpersonatorID, e.ProjectID, e.AppID, e.Action, e.ResourceID, e.Outcome, stamp(e.CreatedAt), e.ConfirmedAction, e.ConfirmedName, e.ConfirmedVersion, e.ConfirmedPolicy)
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO audit_events(id,actor_id,actor_name,impersonator_id,project_id,app_id,action,resource_id,outcome,created_at,confirmed_action,confirmed_name,confirmed_version,confirmed_policy,actor_type,credential_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), e.ID, e.ActorID, e.ActorName, e.ImpersonatorID, e.ProjectID, e.AppID, e.Action, e.ResourceID, e.Outcome, stamp(e.CreatedAt), e.ConfirmedAction, e.ConfirmedName, e.ConfirmedVersion, e.ConfirmedPolicy, e.ActorType, e.CredentialID)
 	return err
 }
 func (s *SQLStore) ListAuditEvents(ctx context.Context, f core.AuditFilter) ([]core.AuditEvent, error) {
@@ -19,7 +19,7 @@ func (s *SQLStore) ListAuditEvents(ctx context.Context, f core.AuditFilter) ([]c
 	if f.Limit < 1 || f.Limit > 200 {
 		f.Limit = 100
 	}
-	q := `SELECT id,actor_id,actor_name,impersonator_id,project_id,app_id,action,resource_id,outcome,created_at,confirmed_action,confirmed_name,confirmed_version,confirmed_policy FROM audit_events WHERE ` + where + ` ORDER BY id DESC LIMIT ?`
+	q := `SELECT id,actor_id,actor_name,impersonator_id,project_id,app_id,action,resource_id,outcome,created_at,confirmed_action,confirmed_name,confirmed_version,confirmed_policy,actor_type,credential_id FROM audit_events WHERE ` + where + ` ORDER BY id DESC LIMIT ?`
 	args = append(args, f.Limit)
 	rows, err := s.db.QueryContext(ctx, s.q(q), args...)
 	if err != nil {
@@ -30,7 +30,7 @@ func (s *SQLStore) ListAuditEvents(ctx context.Context, f core.AuditFilter) ([]c
 	for rows.Next() {
 		var e core.AuditEvent
 		var at string
-		if err = rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.ImpersonatorID, &e.ProjectID, &e.AppID, &e.Action, &e.ResourceID, &e.Outcome, &at, &e.ConfirmedAction, &e.ConfirmedName, &e.ConfirmedVersion, &e.ConfirmedPolicy); err != nil {
+		if err = rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.ImpersonatorID, &e.ProjectID, &e.AppID, &e.Action, &e.ResourceID, &e.Outcome, &at, &e.ConfirmedAction, &e.ConfirmedName, &e.ConfirmedVersion, &e.ConfirmedPolicy, &e.ActorType, &e.CredentialID); err != nil {
 			return nil, err
 		}
 		e.CreatedAt = parseTime(at)
