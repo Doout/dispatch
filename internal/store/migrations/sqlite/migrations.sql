@@ -1283,3 +1283,7 @@ CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE s
 -- dispatch:migration 073_deployment_health
 ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';
+
+-- dispatch:migration 080_remote_storage
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect');

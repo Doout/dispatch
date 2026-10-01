@@ -96,7 +96,7 @@ func run(logger *slog.Logger) error {
 	executor = sourceAuth
 	deployments := deploy.NewService(data, executor)
 	if cfg.Executor == "docker" {
-		deployments.Storage.Backend = deploy.RuntimeStorage{}
+		deployments.Storage.Backend = deploy.RemoteStorageBackend{Local: deploy.RuntimeStorage{}, Broker: runtimeBroker}
 	}
 	if cfg.Executor == "docker" {
 		deployments.ConfigureHelmComparison(sourceAuth)

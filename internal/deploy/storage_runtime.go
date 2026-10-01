@@ -36,18 +36,25 @@ func (r RuntimeStorage) docker(ctx context.Context, args ...string) (string, err
 	return out.String(), err
 }
 
-func storageEvidence(labels map[string]string) string {
+func storageLabels(labels map[string]string) map[string]string {
 	allowed := map[string]string{}
 	for _, key := range []string{"dispatch.app", "dispatch.app/app-id", "dispatch.app/managed-by", "dispatch.project", "dispatch.managed-by", "dispatch.service-template", "dispatch.service-provision", "com.docker.compose.project", "meta.helm.sh/release-name", "meta.helm.sh/release-namespace", "app.kubernetes.io/managed-by"} {
 		if value := labels[key]; value != "" {
 			allowed[key] = value
 		}
 	}
-	raw, _ := json.Marshal(allowed)
+	return allowed
+}
+
+func storageEvidence(labels map[string]string) string {
+	raw, _ := json.Marshal(storageLabels(labels))
 	return fmt.Sprintf("%x", sha256.Sum256(raw))
 }
 
 func (r RuntimeStorage) Inspect(ctx context.Context, server core.Server) ([]core.StorageObservation, error) {
+	if server.AgentNodeID != "" {
+		return nil, errors.New("enrolled storage inspection requires its remote worker")
+	}
 	if core.IsKubernetesRuntime(server.Runtime) {
 		return r.inspectKubernetes(ctx, server)
 	}
@@ -80,7 +87,7 @@ func (r RuntimeStorage) Inspect(ctx context.Context, server core.Server) ([]core
 		}
 		item := core.StorageResource{Kind: "docker_volume", Name: name, Identity: volume.CreatedAt + ":" + volume.Driver, Evidence: storageEvidence(volume.Labels), Consumers: []core.StorageConsumer{}}
 		indexes[name] = len(items)
-		items = append(items, core.StorageObservation{Resource: item, Labels: volume.Labels})
+		items = append(items, core.StorageObservation{Resource: item, Labels: storageLabels(volume.Labels)})
 	}
 	containers, err := r.docker(ctx, "ps", "-aq")
 	if err != nil {
@@ -167,7 +174,7 @@ func (r RuntimeStorage) inspectKubernetes(ctx context.Context, server core.Serve
 			return nil, errors.New("PVC identity is unavailable")
 		}
 		indexes[claim.Namespace+"/"+claim.Name] = len(items)
-		items = append(items, core.StorageObservation{Resource: item, Labels: labels})
+		items = append(items, core.StorageObservation{Resource: item, Labels: storageLabels(labels)})
 	}
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
