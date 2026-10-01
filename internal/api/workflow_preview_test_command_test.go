@@ -52,6 +52,8 @@ func TestPreviewTestCommentStartsOneCheckRunWithoutCreatingPreview(t *testing.T)
 		}
 	}
 	must(data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now}))
+	// On-demand preview checks still review the accepted target credential scope.
+	must(data.CreateServer(ctx, core.Server{ID: "dev", Name: "QA development target", Runtime: core.ServerRuntimeKubernetes, State: "ready", CreatedAt: now}))
 	must(data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", APIURL: github.URL, WebURL: github.URL, State: "ready", CreatedAt: now, UpdatedAt: now}))
 	must(data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", GitHubAppID: "github", Name: "Source", Repository: "example/config", Active: true, CreatedAt: now, UpdatedAt: now}))
 	document := `apiVersion: dispatch/v1alpha1

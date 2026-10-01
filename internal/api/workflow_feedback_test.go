@@ -373,6 +373,8 @@ spec:
 	must(err)
 	must(f.a.store.UpdateWorkflowResource(ctx, resource))
 	now := time.Now().UTC()
+	// The trust decision includes the target even when this run only executes QA.
+	must(f.a.store.CreateServer(ctx, core.Server{ID: "dev", Name: "QA development target", Runtime: core.ServerRuntimeKubernetes, State: "ready", CreatedAt: now}))
 	sources := map[string]core.WorkflowSourceRevision{}
 	prs := []core.WorkflowPullRequest{}
 	for _, target := range f.revision.Feedback.Targets {
