@@ -19,6 +19,7 @@ var (
 )
 
 type Service struct {
+	Storage *StorageManager
 	// OnFinished queues follow-up observations after the terminal state is saved.
 	OnFinished      func(core.Deployment)
 	services        serviceconn.Resolver
@@ -34,7 +35,7 @@ type Service struct {
 
 func NewService(data store.Store, executor Executor) *Service {
 	runtimeRollback, _ := executor.(RuntimeRollbackExecutor)
-	return &Service{store: data, executor: executor, runtimeRollback: runtimeRollback, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
+	return &Service{Storage: NewStorageManager(data), store: data, executor: executor, runtimeRollback: runtimeRollback, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
 }
 
 func (s *Service) ConfigureRuntimeRollback(executor RuntimeRollbackExecutor) {
@@ -138,11 +139,6 @@ func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func
 	if active != nil {
 		return ErrDeploymentActive
 	}
-	if review != nil {
-		if err := review(); err != nil {
-			return err
-		}
-	}
 	app, err := s.store.GetApp(ctx, appID)
 	if err != nil {
 		return err
@@ -151,29 +147,45 @@ func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func
 	if err != nil {
 		return err
 	}
-	cleanup := true
-	if remove {
-		cleanup, err = s.store.AppHasDeployments(ctx, appID)
-		if err != nil {
+	return s.Storage.WithTarget(ctx, server.ID, func() error {
+		if err := s.Storage.RefreshLocked(ctx, server); err != nil {
 			return err
 		}
-	}
-	if progress == nil {
-		progress = func(core.DeploymentState, string) error { return nil }
-	}
-	if cleanup {
-		cleaner, ok := s.executor.(CleanupExecutor)
-		if !ok {
-			return ErrCleanupUnsupported
+		if review != nil {
+			if err := review(); err != nil {
+				return err
+			}
 		}
-		if err := cleaner.Cleanup(ctx, app, server, progress); err != nil {
+		cleanup := true
+		if remove {
+			cleanup, err = s.store.AppHasDeployments(ctx, appID)
+			if err != nil {
+				return err
+			}
+		}
+		if progress == nil {
+			progress = func(core.DeploymentState, string) error { return nil }
+		}
+		if cleanup {
+			if err := s.Storage.CheckApplicationCleanup(ctx, app, server); err != nil {
+				return err
+			}
+			cleaner, ok := s.executor.(CleanupExecutor)
+			if !ok {
+				return ErrCleanupUnsupported
+			}
+			if err := cleaner.Cleanup(ctx, app, server, progress); err != nil {
+				return err
+			}
+		}
+		if err := s.Storage.RefreshLocked(ctx, server); err != nil {
 			return err
 		}
-	}
-	if remove {
-		return s.store.DeleteApp(ctx, appID)
-	}
-	return nil
+		if remove {
+			return s.store.DeleteApp(ctx, appID)
+		}
+		return nil
+	})
 }
 
 func (s *Service) lockApp(appID string) func() {
@@ -221,8 +233,11 @@ func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.
 	if err := s.transition(ctx, &deployment, core.DeploymentFetching, preparing); err != nil {
 		return
 	}
-	err = s.executor.Deploy(ctx, deployment, app, server, func(state core.DeploymentState, message string) error {
-		return s.transition(ctx, &deployment, state, redactServiceMessage(message, app.ServiceRuntime))
+	err = s.Storage.WithTarget(ctx, server.ID, func() error {
+		executionErr := s.executor.Deploy(ctx, deployment, app, server, func(state core.DeploymentState, message string) error {
+			return s.transition(ctx, &deployment, state, redactServiceMessage(message, app.ServiceRuntime))
+		})
+		return errors.Join(executionErr, s.Storage.RefreshLocked(ctx, server))
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

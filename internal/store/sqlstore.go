@@ -602,6 +602,15 @@ func (s *SQLStore) UpdateServer(ctx context.Context, server core.Server) error {
 }
 
 func (s *SQLStore) DeleteServer(ctx context.Context, id string) error {
+	storage, err := s.ListStorage(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, item := range storage {
+		if item.State != "absent" && !item.Independent {
+			return ErrStorageProtected
+		}
+	}
 	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM servers WHERE id=?`), id)
 	return changed(result, err)
 }

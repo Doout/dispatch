@@ -101,6 +101,7 @@ func (m helmDeploymentMetadata) Run(rendered *bytes.Buffer) (*bytes.Buffer, erro
 			object["annotations"] = annotations
 		}
 		annotations[helmProvenanceAnnotation] = m.annotation()
+		protectHelmStorage(document, m.labels())
 		if output.Len() > 0 {
 			output.WriteString("\n---\n")
 		}

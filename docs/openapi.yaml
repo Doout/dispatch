@@ -9,6 +9,86 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /storage:
+    get:
+      operationId: listStorage
+      description: Recorded storage filtered by current project access. Unknown ownership is visible only to controller owners. Does not contact the runtime.
+      parameters:
+      - { name: serverId, in: query, schema: { type: string } }
+      - { name: projectId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Storage records with owner, runtime identity, consumers, retain/destroy policy, state and revision. }
+        '403': { $ref: '#/components/responses/Problem' }
+  /storage/{id}:
+    parameters:
+    - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getStorage
+      responses:
+        '200': { description: A project-visible storage record. }
+        '403': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteStorageData
+      description: Permanently delete verified, unused storage with destroy policy. Requires project.configure and a current destructive confirmation from delete-preview. Ownership history remains.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation:
+                  type: object
+                  required: [resourceId, action, expectedVersion, confirmName]
+                  properties:
+                    resourceId: { type: string }
+                    action: { const: delete }
+                    expectedVersion: { type: string }
+                    confirmName: { type: string }
+      responses:
+        '204': { description: Runtime absence confirmed; record retained. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { description: Stale review, protected data, changed consumers, or unfinished deletion. }
+        '422': { description: Missing or incorrect confirmation. }
+  /storage/{id}/policy:
+    parameters:
+    - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: setStoragePolicy
+      description: Requires project.configure. A policy change does not delete data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, policy]
+              properties:
+                revision: { type: integer, minimum: 1 }
+                policy: { type: string, enum: [retain, destroy] }
+      responses:
+        '200': { description: Updated storage record. }
+        '409': { description: Revision changed or ownership is unverified. }
+  /storage/{id}/delete-preview:
+    parameters:
+    - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: previewStorageDeletion
+      description: Requires project.configure. Refreshes runtime identity and returns consequences, blocked reason, name and confirmation version.
+      responses:
+        '200': { description: Current destructive review. }
+        '409': { description: Runtime inspection unavailable. }
+  /servers/{id}/storage/reconcile:
+    parameters:
+    - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: reconcileStorage
+      description: Controller-owner inspection of runtime volumes and consumers. Adopts only verified Dispatch ownership. Unavailable inspection never marks data absent.
+      responses:
+        '200': { description: Updated inventory for the target. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { description: Unsupported runtime or incomplete inspection. }
   /analytics:
     get:
       operationId: getAnalytics

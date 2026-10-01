@@ -1224,3 +1224,13 @@ CREATE TABLE deployment_runtime_artifacts (
 ALTER TABLE audit_events ADD COLUMN confirmed_action TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN confirmed_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN confirmed_version TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 070_storage_ownership
+CREATE TABLE storage_resources (
+ id TEXT PRIMARY KEY,
+ server_id TEXT NOT NULL,
+ revision BIGINT NOT NULL,
+ payload TEXT NOT NULL
+);
+CREATE INDEX storage_resources_server ON storage_resources(server_id);
+ALTER TABLE audit_events ADD COLUMN confirmed_policy TEXT NOT NULL DEFAULT '';

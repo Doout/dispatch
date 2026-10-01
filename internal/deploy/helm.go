@@ -419,11 +419,22 @@ func (c *sdkHelmClient) Uninstall(ctx context.Context, release string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	retained, err := action.NewGet(c.configuration).Run(release)
+	if errors.Is(err, driver.ErrReleaseNotFound) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("cannot inspect release storage before cleanup")
+	}
+	if err := checkHelmStorageCleanup(retained.Manifest); err != nil {
+		return err
+	}
 	uninstall := action.NewUninstall(c.configuration)
+	uninstall.DisableHooks = true // Arbitrary chart hooks cannot bypass data protection.
 	uninstall.IgnoreNotFound = true
 	uninstall.Wait = true
 	uninstall.Timeout = helmOperationTimeout
-	_, err := uninstall.Run(release)
+	_, err = uninstall.Run(release)
 	return err
 }
 

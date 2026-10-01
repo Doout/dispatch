@@ -13,6 +13,7 @@ type AuditEvent struct {
 	ResourceID       string    `json:"resourceId,omitempty"`
 	ConfirmedAction  string    `json:"confirmedAction,omitempty"`
 	ConfirmedName    string    `json:"confirmedName,omitempty"`
+	ConfirmedPolicy  string    `json:"confirmedPolicy,omitempty"`
 	ConfirmedVersion string    `json:"confirmedVersion,omitempty"`
 	Outcome          string    `json:"outcome"`
 	CreatedAt        time.Time `json:"createdAt"`

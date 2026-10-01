@@ -1,3 +1,4 @@
+import { StorageInventory } from "./StorageInventory";
 import { WorkflowResourceDialog as EventWorkflowResourceDialog } from "./workflows/ResourceDialog";
 import { EventsListPage } from "./EventsPage";
 import { SecretUsageDialog, useSecretUsage, VariableUsageButton } from "./SecretUsage";
@@ -1823,6 +1824,7 @@ export function ServersPage({
   onDelete: (server: Server) => void;
   onTopology?: (server: Server) => void;
 }) {
+  const [storageServer, setStorageServer] = useState<Server>();
   const targets = overview.servers.filter(
     (server) => server.runtime !== "relay" && server.runtime !== "builder",
   );
@@ -1838,6 +1840,7 @@ export function ServersPage({
   ).length;
   return (
     <div className="page-layout">
+      {storageServer && <StorageInventory server={storageServer} canManage={canManage} onClose={() => setStorageServer(undefined)} />}
       <PageHeader
         view="servers"
         action={canManage ? { label: "Add server", onClick: onAdd } : undefined}
@@ -1906,6 +1909,7 @@ export function ServersPage({
                     </td>
                     <td className="row-actions">
                       <div className="table-icon-actions">
+                        <TableIconAction label={`View storage on ${server.name}`} tooltip="Storage" onClick={() => setStorageServer(server)}><HardDrives size={16} /></TableIconAction>
                         {onTopology && (
                           <TableIconAction
                             label={`View deployments on ${server.name}`}

@@ -807,7 +807,7 @@ func (s *Service) cleanupNamespace(ctx context.Context, group core.PreviewGroup,
 	if err != nil {
 		return err
 	}
-	return s.cleaner.CleanupNamespace(ctx, server, namespace)
+	return s.deployments.Storage.CleanupNamespace(ctx, server, namespace, func() error { return s.cleaner.CleanupNamespace(ctx, server, namespace) })
 }
 
 func (s *Service) notifyCommandError(ctx context.Context, group core.PreviewGroup, event core.IncomingEvent, cause error) error {
