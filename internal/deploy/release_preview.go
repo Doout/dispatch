@@ -149,7 +149,7 @@ func (s *Service) PreviewRelease(ctx context.Context, app core.App, server core.
 		add("Chart values", "failed", "A service destination conflicts with the chart values.")
 		return out
 	}
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		add("Target", "failed", "Target credentials are unavailable.")
 		return out
@@ -195,7 +195,7 @@ func (s *Service) PreviewRelease(ctx context.Context, app core.App, server core.
 	}
 	// Carry cancellation through discovery, Helm history reads, and dry-run calls.
 	client := genericClient.(*sdkHelmClient)
-	getter := driftRESTGetter{RESTClientGetter: client.settings.RESTClientGetter(), ctx: ctx}
+	getter := driftRESTGetter{RESTClientGetter: scopedHelmGetter(client.settings.RESTClientGetter(), client.server), ctx: ctx}
 	if err = client.configuration.Init(getter, namespace, os.Getenv("HELM_DRIVER"), func(string, ...any) {}); err != nil {
 		add("Target", "failed", "Cannot initialize target validation.")
 		return out
@@ -316,7 +316,7 @@ func previewRuntimeSource(ctx context.Context, app core.App, revision string) (s
 }
 
 func dryRunReleaseManifest(ctx context.Context, client *sdkHelmClient, namespace, manifest string) ([]ReleaseResource, error) {
-	getter := driftRESTGetter{RESTClientGetter: client.settings.RESTClientGetter(), ctx: ctx}
+	getter := driftRESTGetter{RESTClientGetter: scopedHelmGetter(client.settings.RESTClientGetter(), client.server), ctx: ctx}
 	config, err := getter.ToRESTConfig()
 	if err != nil {
 		return nil, errors.New("Target credentials are unavailable.")

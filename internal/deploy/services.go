@@ -269,7 +269,7 @@ func (e HelmExecutor) cleanupServiceSecrets(ctx context.Context, server core.Ser
 	if server.Kubernetes == nil {
 		return nil
 	}
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return err
 	}

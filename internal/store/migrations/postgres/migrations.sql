@@ -1591,7 +1591,6 @@ CREATE TABLE workflow_preview_cleanup_apps (
  node_id TEXT NOT NULL DEFAULT '', node_generation BIGINT NOT NULL DEFAULT 0, previous_job_ids TEXT NOT NULL DEFAULT '[]',
  PRIMARY KEY(cleanup_id,app_id)
 );
-
 -- dispatch:migration 090_neon_services
 CREATE TABLE neon_providers (
   id TEXT PRIMARY KEY,
@@ -1623,6 +1622,8 @@ CREATE TABLE workflow_check_reports (
 );
 CREATE INDEX workflow_check_pending ON workflow_check_reports(complete,next_attempt_at,lease_until);
 CREATE INDEX workflow_check_revision ON workflow_check_reports(revision_id);
+-- dispatch:migration 092_kubernetes_validation
+ALTER TABLE servers ADD COLUMN kube_validation TEXT NOT NULL DEFAULT 'null';
 
 -- dispatch:migration 093_neon_lifecycle
 CREATE TABLE workflow_preview_cleanup_services (

@@ -1979,5 +1979,10 @@ func testHandlerWithEventConfig(t *testing.T, auth AuthConfig, seedDemo bool, ev
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := New(data, deploy.NewService(data, deploy.SimulationExecutor{Delay: time.Millisecond}), seedDemo, auth, logger, eventConfig)
+	// These API fixtures simulate runtime access. Kubernetes connection tests use
+	// the real validator against a TLS API fixture in internal/kubeconfig.
+	handler.kubernetesTargetValidator = func(context.Context, core.KubernetesServerConfig) (core.KubernetesTargetEvidence, error) {
+		return core.KubernetesTargetEvidence{ClusterUID: "fixture-cluster", NamespaceUID: "fixture-namespace", Version: "v1.36.2", CheckedAt: time.Now().UTC()}, nil
+	}
 	return handler, func() { cancel(); _ = data.Close() }
 }
