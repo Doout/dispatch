@@ -59,14 +59,22 @@ func IsKubernetesRuntime(runtime string) bool {
 }
 
 type KubernetesServerConfig struct {
-	KubeconfigPath             string                 `json:"kubeconfigPath,omitempty"`
-	KubeconfigData             string                 `json:"-"`
-	CertificateAuthorityData   string                 `json:"-"`
-	KubeconfigStored           bool                   `json:"kubeconfigStored"`
-	CertificateAuthorityStored bool                   `json:"certificateAuthorityStored"`
-	Context                    string                 `json:"context,omitempty"`
-	Namespace                  string                 `json:"namespace,omitempty"`
-	OpenShift                  *OpenShiftServerConfig `json:"openShift,omitempty"`
+	Validation                 *KubernetesTargetEvidence `json:"validation,omitempty"`
+	KubeconfigPath             string                    `json:"kubeconfigPath,omitempty"`
+	KubeconfigData             string                    `json:"-"`
+	CertificateAuthorityData   string                    `json:"-"`
+	KubeconfigStored           bool                      `json:"kubeconfigStored"`
+	CertificateAuthorityStored bool                      `json:"certificateAuthorityStored"`
+	Context                    string                    `json:"context,omitempty"`
+	Namespace                  string                    `json:"namespace,omitempty"`
+	OpenShift                  *OpenShiftServerConfig    `json:"openShift,omitempty"`
+}
+
+type KubernetesTargetEvidence struct {
+	ClusterUID   string    `json:"clusterUid"`
+	NamespaceUID string    `json:"namespaceUid"`
+	Version      string    `json:"version"`
+	CheckedAt    time.Time `json:"checkedAt"`
 }
 
 type OpenShiftServerConfig struct {

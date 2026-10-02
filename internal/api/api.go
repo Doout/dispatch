@@ -10,6 +10,7 @@ import (
 
 	"github.com/doout/dispatch/internal/analytics"
 	"github.com/doout/dispatch/internal/bootstrap"
+	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/drift"
@@ -55,35 +56,36 @@ type githubEventServices struct {
 }
 
 type API struct {
-	serviceResourceBackend serviceResourceRuntime
-	bootstrapOnce          sync.Once
-	bootstrap              *bootstrap.Manager
-	previewPanelMu         sync.Mutex
-	backupMu               sync.Mutex
-	previewReportMu        sync.Mutex
-	temporaryPreviewMu     sync.Mutex
-	observations           *observe.Service
-	drift                  *drift.Service
-	overviewSnapshots      overviewCache
-	handler                http.Handler
-	store                  store.Store
-	deploy                 *deploy.Service
-	demo                   bool
-	auth                   AuthConfig
-	logger                 *slog.Logger
-	events                 *events.Service
-	groups                 *groups.Service
-	eventConfig            EventConfig
-	secretResolver         *secretvalue.Resolver
-	edge                   *edge.Broker
-	openShift              *openshift.Bootstrapper
-	lifecycle              events.Lifecycle
-	githubMu               sync.Mutex
-	githubServices         map[string]githubEventServices
-	manifestMu             sync.Mutex
-	manifestStates         map[string]githubAppManifestState
-	authManifestStates     map[string]authProviderManifestState
-	workflows              *workflowservice.Service
+	kubernetesTargetValidator func(context.Context, core.KubernetesServerConfig) (core.KubernetesTargetEvidence, error)
+	serviceResourceBackend    serviceResourceRuntime
+	bootstrapOnce             sync.Once
+	bootstrap                 *bootstrap.Manager
+	previewPanelMu            sync.Mutex
+	backupMu                  sync.Mutex
+	previewReportMu           sync.Mutex
+	temporaryPreviewMu        sync.Mutex
+	observations              *observe.Service
+	drift                     *drift.Service
+	overviewSnapshots         overviewCache
+	handler                   http.Handler
+	store                     store.Store
+	deploy                    *deploy.Service
+	demo                      bool
+	auth                      AuthConfig
+	logger                    *slog.Logger
+	events                    *events.Service
+	groups                    *groups.Service
+	eventConfig               EventConfig
+	secretResolver            *secretvalue.Resolver
+	edge                      *edge.Broker
+	openShift                 *openshift.Bootstrapper
+	lifecycle                 events.Lifecycle
+	githubMu                  sync.Mutex
+	githubServices            map[string]githubEventServices
+	manifestMu                sync.Mutex
+	manifestStates            map[string]githubAppManifestState
+	authManifestStates        map[string]authProviderManifestState
+	workflows                 *workflowservice.Service
 
 	trustedProxies []*net.IPNet
 	oauthMu        sync.Mutex

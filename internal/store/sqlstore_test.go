@@ -697,6 +697,7 @@ func TestSQLiteKubernetesServerLifecycle(t *testing.T) {
 	stored.Kubernetes.KubeconfigPath = ""
 	stored.Kubernetes.KubeconfigData = "apiVersion: v1\nkind: Config\n"
 	stored.Kubernetes.CertificateAuthorityData = "test-ca"
+	stored.Kubernetes.Validation = &core.KubernetesTargetEvidence{ClusterUID: "cluster-identity", NamespaceUID: "namespace-identity", Version: "v1.36.2", CheckedAt: now}
 	if err := data.UpdateServer(ctx, stored); err != nil {
 		t.Fatal(err)
 	}
@@ -708,6 +709,9 @@ func TestSQLiteKubernetesServerLifecycle(t *testing.T) {
 		updated.Kubernetes.KubeconfigData != stored.Kubernetes.KubeconfigData || updated.Kubernetes.CertificateAuthorityData != "test-ca" ||
 		!updated.Kubernetes.KubeconfigStored || !updated.Kubernetes.CertificateAuthorityStored {
 		t.Fatalf("unexpected updated Kubernetes configuration: %#v", updated.Kubernetes)
+	}
+	if updated.Kubernetes.Validation == nil || *updated.Kubernetes.Validation != *stored.Kubernetes.Validation {
+		t.Fatal("Kubernetes identity evidence was not retained", updated.Kubernetes.Validation)
 	}
 }
 

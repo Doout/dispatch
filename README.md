@@ -206,6 +206,8 @@ See [edge nodes and private routes](docs/private-networks.md).
 
 ## Kubernetes and OpenShift credentials
 
+See [Kubernetes and K3s targets](docs/kubernetes-targets.md) for registration checks, namespace limits and validation status.
+
 Kubernetes targets accept pasted, uploaded, or controller-mounted kubeconfig files. Stored kubeconfigs and CA bundles are write-only through the API. Dispatch creates a mode `0600` temporary file for each operation and removes it afterward.
 
 OpenShift setup accepts a non-interactive `oc login` command or username and password. Dispatch parses the login data and calls the OpenShift API. It does not execute `oc`. Setup creates a `dispatch-controller` service account in `dispatch-system`, grants `cluster-admin`, and stores only the managed service-account kubeconfig.

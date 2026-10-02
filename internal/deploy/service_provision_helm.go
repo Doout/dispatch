@@ -94,7 +94,7 @@ func (e HelmExecutor) Provision(ctx context.Context, req core.ServiceProvisionRe
 	}
 	app := core.App{ID: req.Run.ID, ProjectID: req.Run.ProjectID, Name: name, BuildType: core.BuildTypeHelm, HelmChart: chart, HelmRepository: spec.Repository, HelmVersion: spec.Version, HelmRelease: name, HelmNamespace: namespace, HelmValues: string(raw), HelmProvenance: core.HelmProvenance{WorkflowResourceID: req.Run.TemplateID}}
 	deployment := core.Deployment{ID: req.Run.ID, CommitSHA: req.ConfigSHA, CreatedAt: time.Now().UTC()}
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return nil, errors.New("cannot load the service target kubeconfig")
 	}

@@ -1513,3 +1513,6 @@ CREATE TABLE repository_deletions (
   observed_at TEXT NOT NULL,
   PRIMARY KEY(github_app_id, repository_id)
 );
+
+-- dispatch:migration 092_kubernetes_validation
+ALTER TABLE servers ADD COLUMN kube_validation TEXT NOT NULL DEFAULT 'null';
