@@ -8,6 +8,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/events"
+	"github.com/doout/dispatch/internal/store"
 )
 
 func (a *API) processWorkflowPreviewTestComment(ctx context.Context, target *previewPollTarget, event core.IncomingEvent) error {
@@ -36,7 +37,7 @@ func (a *API) processWorkflowPreviewTestComment(ctx context.Context, target *pre
 		if strings.TrimSpace(event.Arguments) != "test" {
 			return a.previewTestStartError(ctx, target, event, trigger, "Use `"+trigger.Command+" test` without extra arguments.")
 		}
-		revision, err := a.workflows.StartPreviewChecks(ctx, trigger.ResourceID, event.SourceCommentID)
+		revision, err := a.workflows.StartPreviewChecks(store.WithWorkflowReceipt(ctx, store.WorkflowReceipt{Key: "preview-comment:" + trigger.ID + ":" + event.SourceCommentID, TriggerID: trigger.ID, CommentID: event.SourceCommentID}), trigger.ResourceID, event.SourceCommentID)
 		if err != nil {
 			return a.previewTestStartError(ctx, target, event, trigger, err.Error())
 		}

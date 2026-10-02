@@ -3802,6 +3802,22 @@ paths:
                       $ref: '#/components/schemas/EventActivity'
         '401':
           $ref: '#/components/responses/Problem'
+  /events/deliveries:
+    get:
+      operationId: listWebhookDeliveries
+      description: Owner-only durable delivery inventory. Private payloads, digests, and lease tokens are never returned. Terminal payloads are erased immediately; the retry window is seven days. Activity expires after thirty days; compact replay receipts remain.
+      parameters:
+        - in: query
+          name: before
+          schema: { type: string, maxLength: 64 }
+      responses:
+        "200":
+          description: Up to fifty receipts, newest first. Use the last receipt ID as the next before cursor.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/WebhookDelivery" } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
   /events/activity:
     get:
       operationId: listEventActivity
@@ -3961,22 +3977,86 @@ paths:
     post:
       operationId: receiveGitHubEvent
       security: []
-      description: Receives signed issue comment and pull request lifecycle events.
+      description: Verifies the signature before parsing. Supported events are durably encrypted before acknowledgement; effects run in the background. The shared receiver accepts preview events only.
+      parameters:
+        - in: header
+          name: X-Hub-Signature-256
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-GitHub-Event
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-GitHub-Delivery
+          required: true
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
       responses:
-        "202": { description: Event accepted. }
+        "202":
+          description: Encrypted receipt committed; processing is asynchronous.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookAcceptance" }
+        "200":
+          description: Original receipt returned for a repeated delivery or signed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookAcceptance" }
+        "204": { description: Unsupported event ignored without mutation. }
+        "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+
   /events/github/apps/{githubAppId}:
+    parameters:
+      - $ref: "#/components/parameters/GitHubAppID"
     post:
       operationId: receiveGitHubAppEvent
       security: []
-      description: Receives signed events for one stored GitHub App connection.
+      description: Per-App signed receiver for push, issue_comment, pull_request, repository, installation, and installation_repositories events. Requires an installation ID. Installation access is checked by the durable worker before any build, command, or cleanup. Repository deletion uses a previously pinned App and repository identity.
       parameters:
-        - $ref: "#/components/parameters/GitHubAppID"
+        - in: header
+          name: X-Hub-Signature-256
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-GitHub-Event
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-GitHub-Delivery
+          required: true
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
       responses:
-        "202": { description: Event accepted. }
+        "202":
+          description: Encrypted receipt committed; processing is asynchronous.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookAcceptance" }
+        "200":
+          description: Original receipt returned without new work.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookAcceptance" }
+        "204": { description: Unsupported event ignored without mutation. }
+        "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
   /apps/{appId}/cleanup:
     post:
       operationId: cleanupApplication
@@ -4382,11 +4462,38 @@ components:
               service: { type: string }
               port: { type: integer, minimum: 1, maximum: 65535 }
               path: { type: string, description: Absolute HTTP path without credentials, query or fragment. }
+    WebhookDelivery:
+      type: object
+      required: [id, connectionId, deliveryId, event, state, attempts, receivedAt, expiresAt]
+      properties:
+        id: { type: string }
+        connectionId: { type: string }
+        deliveryId: { type: string }
+        event: { type: string }
+        repository: { type: string }
+        installationId: { type: integer }
+        state: { type: string, enum: [queued, running, retry, processed, rejected, expired] }
+        attempts: { type: integer, minimum: 0 }
+        error: { type: string, description: Safe failure summary. }
+        receivedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        result: { type: string, description: JSON-encoded action IDs or a lifecycle outcome; no comment arguments or provider bodies. }
+    WebhookAcceptance:
+      type: object
+      required: [receipt, duplicate]
+      properties:
+        receipt: { $ref: "#/components/schemas/WebhookDelivery" }
+        duplicate: { type: boolean }
     EventActivity:
       type: object
       description: Delivery metadata without raw payloads or credentials. Processed describes event handling, not the outcome of the linked run.
       required: [id, projectId, ruleId, name, transport, kind, repository, state, createdAt]
       properties:
+        deliveryId: { type: string, description: Durable receipt ID for a webhook delivery activity row. }
+        attempts: { type: integer, minimum: 0 }
+        nextAttemptAt: { type: string, format: date-time }
         id: {type: string}
         projectId: {type: string}
         ruleId: {type: string}

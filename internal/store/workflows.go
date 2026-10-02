@@ -74,6 +74,27 @@ func scanConfigSource(row scanner) (core.ConfigSource, error) {
 }
 
 func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.WorkflowResource) error {
+	trigger, withTrigger := ctx.Value(workflowPreviewTriggerKey{}).(core.WorkflowPreviewTrigger)
+	if withTrigger {
+		if !item.Temporary || item.Kind != "Application" || trigger.TemplateID == "" {
+			return errors.New("preview trigger requires a generated application")
+		}
+		template, err := s.GetWorkflowPreviewTemplate(ctx, trigger.TemplateID)
+		if err != nil {
+			return err
+		}
+		if template.ConfigSourceID != item.ConfigSourceID || template.GitHubAppID != trigger.GitHubAppID {
+			return errors.New("preview template does not own this resource")
+		}
+		trigger.ResourceID = item.ID
+		trigger.SourceTrustPolicy = template.SourceTrustPolicy
+		if trigger.SourceTrustPolicy == "" {
+			trigger.SourceTrustPolicy = "same_repository"
+		}
+		if trigger.TTL == "" {
+			trigger.TTL = "0"
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -87,6 +108,11 @@ func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.Workflo
 	}
 	for _, serviceID := range item.ServiceIDs {
 		if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_service_references(resource_id,service_id) VALUES(?,?)`), item.ID, serviceID); err != nil {
+			return err
+		}
+	}
+	if withTrigger {
+		if err := s.createWorkflowPreviewTrigger(ctx, tx, trigger); err != nil {
 			return err
 		}
 	}
@@ -254,7 +280,7 @@ func (s *SQLStore) UpdateWorkflowEvent(ctx context.Context, item core.WorkflowEv
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_events SET state=?,error=?,processed_at=? WHERE id=?`), item.State, item.Error, nullTime(item.ProcessedAt), item.ID)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_events SET state=?,error=?,processed_at=?,revision_ids=? WHERE id=?`), item.State, item.Error, nullTime(item.ProcessedAt), jsonText(nonNilRevisionIDs(item.RevisionIDs)), item.ID)
 	if err := changed(result, err); err != nil {
 		return err
 	}
@@ -281,10 +307,30 @@ func workflowEventActivity(item core.WorkflowEvent, source core.ConfigSource) co
 }
 
 func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.WorkflowRevision) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending,source_trust) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	receipt := WorkflowReceiptFromContext(ctx)
+	if receipt.Key != "" {
+		if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO workflow_command_receipts(resource_id,command_key,revision_id) VALUES(?,?,?)`), item.ResourceID, receipt.Key, item.ID); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending,source_trust) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.ResourceID, item.ConfigSHA, item.SpecDigest, item.State, item.Trigger, jsonText(item.Sources), jsonText(item.Outputs), item.Error,
 		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.PullRequests), jsonText(item.Feedback), item.Feedback != nil && !item.Feedback.Complete, jsonText(item.SourceTrust))
-	return err
+	if err != nil {
+		return err
+	}
+	if receipt.TriggerID != "" {
+		result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_preview_comments SET revision_id=? WHERE trigger_id=? AND comment_id=? AND revision_id IS NULL AND EXISTS(SELECT 1 FROM workflow_preview_triggers WHERE id=? AND resource_id=?)`), item.ID, receipt.TriggerID, receipt.CommentID, receipt.TriggerID, item.ResourceID)
+		if err := changed(result, err); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Source trust is updated independently so a runtime holding an older revision

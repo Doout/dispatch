@@ -361,6 +361,7 @@ export type DeploymentLog = {
   createdAt: string;
 };
 export type EventActivity = {
+ deliveryId?: string; attempts?: number; nextAttemptAt?: string;
  id: string; projectId: string; ruleId: string; name: string;
  transport: "poll" | "webhook" | "history"; kind: string; repository: string;
  branch?: string; commitSha?: string; pullRequest?: number; command?: string;

@@ -26,7 +26,11 @@ func (s *SQLStore) CreateWorkflowPreviewTrigger(ctx context.Context, item core.W
 	if item.TTL == "" {
 		item.TTL = "0"
 	}
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,live_reload,source_trust_policy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+	return s.createWorkflowPreviewTrigger(ctx, s.db, item)
+}
+
+func (s *SQLStore) createWorkflowPreviewTrigger(ctx context.Context, writer eventActivityWriter, item core.WorkflowPreviewTrigger) error {
+	_, err := writer.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,live_reload,source_trust_policy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour, jsonText(item.SourceDefaults), item.TTL, nullTime(item.ExpiresAt), nullTime(item.CleanupLeaseUntil), item.LiveReload, item.SourceTrustPolicy)
 	return err
 }
@@ -169,7 +173,14 @@ func (s *SQLStore) ReserveWorkflowPreviewComment(ctx context.Context, triggerID,
 		return false, err
 	}
 	count, err := result.RowsAffected()
-	return count > 0, err
+	if err != nil || count > 0 {
+		return count > 0, err
+	}
+	// Callers serialize preview commands with temporaryPreviewMu. A reservation
+	// without a revision or a completed reply is unfinished work after a crash.
+	var pending int
+	err = s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workflow_preview_comments WHERE trigger_id=? AND comment_id=? AND revision_id IS NULL AND lifetime_handled_at IS NULL AND status_comment_id=''`), triggerID, commentID).Scan(&pending)
+	return pending > 0, err
 }
 
 func (s *SQLStore) CompleteWorkflowPreviewComment(ctx context.Context, triggerID, commentID, revisionID string) error {
