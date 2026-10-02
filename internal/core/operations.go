@@ -3,6 +3,9 @@ package core
 import "time"
 
 type AuditEvent struct {
+	OperationID      string    `json:"operationId,omitempty"`
+	ActorType        string    `json:"actorType,omitempty"`
+	CredentialID     string    `json:"credentialId,omitempty"`
 	ID               string    `json:"id"`
 	ActorID          string    `json:"actorId"`
 	ActorName        string    `json:"actorName"`

@@ -53,7 +53,7 @@ func (a *API) startApplicationRuntime(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Runtime capability unavailable", err.Error())
 		return
 	}
-	digest := sha256.Sum256([]byte(app.ID + ":" + key))
+	digest := sha256.Sum256([]byte(currentIdentity(r.Context()).Kind + ":" + currentIdentity(r.Context()).ID + ":" + app.ID + ":" + key))
 	id := "runtime-" + hex.EncodeToString(digest[:])
 	request := remoteruntime.NewRequest(op, core.Deployment{}, app, server)
 	var input struct {

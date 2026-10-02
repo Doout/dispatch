@@ -82,11 +82,13 @@ type RoleAssignment struct {
 }
 
 type Identity struct {
-	ID          string       `json:"id"`
-	Username    string       `json:"username"`
-	DisplayName string       `json:"displayName"`
-	SystemRole  string       `json:"systemRole"`
-	Permissions []Permission `json:"permissions"`
+	Kind         string       `json:"kind,omitempty"`
+	CredentialID string       `json:"credentialId,omitempty"`
+	ID           string       `json:"id"`
+	Username     string       `json:"username"`
+	DisplayName  string       `json:"displayName"`
+	SystemRole   string       `json:"systemRole"`
+	Permissions  []Permission `json:"permissions"`
 }
 
 type RoleDefinition struct {

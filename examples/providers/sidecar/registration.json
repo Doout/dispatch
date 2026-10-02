@@ -1,0 +1,8 @@
+{
+  "name": "Local mock provider",
+  "endpoint": "http://127.0.0.1:8091",
+  "privateNetworkId": "",
+  "credentialSecretId": "",
+  "enabled": true,
+  "capabilities": ["server.inspect", "server.create", "server.delete"]
+}

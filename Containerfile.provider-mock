@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm AS build
+ARG TARGETOS=linux
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY internal/provider ./internal/provider
+COPY cmd/dispatch-provider-mock ./cmd/dispatch-provider-mock
+COPY cmd/dispatch-provider-conformance ./cmd/dispatch-provider-conformance
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=readonly -trimpath -ldflags="-s -w" -o /out/dispatch-provider-mock ./cmd/dispatch-provider-mock && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=readonly -trimpath -ldflags="-s -w" -o /out/dispatch-provider-conformance ./cmd/dispatch-provider-conformance && \
+    mkdir -m 0700 /out/state
+
+FROM scratch
+LABEL org.opencontainers.image.source="https://github.com/Doout/dispatch"
+LABEL org.opencontainers.image.description="Public Dispatch provider API mock and conformance runner. Creates no infrastructure."
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /out/dispatch-provider-mock /usr/local/bin/dispatch-provider-mock
+COPY --from=build /out/dispatch-provider-conformance /usr/local/bin/dispatch-provider-conformance
+COPY --from=build --chown=65532:65532 /out/state /data
+COPY LICENSE /LICENSE
+USER 65532:65532
+EXPOSE 8091
+VOLUME ["/data"]
+ENTRYPOINT ["/usr/local/bin/dispatch-provider-mock"]
+CMD ["--listen", "0.0.0.0:8091", "--state", "/data/mock-state.json"]

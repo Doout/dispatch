@@ -106,6 +106,15 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	if !a.requireProject(w, r, core.PermissionProjectConfigure, input.ProjectID) {
 		return
 	}
+	assigned, err := a.assignedInfrastructure(r.Context(), input.ProjectID, "target", input.ServerID)
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Server")
+		return
+	}
+	if !assigned {
+		problem(w, 403, "Target unavailable", "A controller owner must assign this target to your project before you create applications on it.")
+		return
+	}
 	if !a.requireCredentialOwner(w, r, input.SourceCredentialID != "") {
 		return
 	}

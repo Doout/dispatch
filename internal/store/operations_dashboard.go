@@ -88,14 +88,14 @@ func (s *SQLStore) GetOperationsSummary(ctx context.Context, projects []string, 
 	if err = tx.QueryRowContext(ctx, s.q(`SELECT count(*),coalesce(sum(CASE WHEN outcome='rejected' THEN 1 ELSE 0 END),0) FROM audit_events WHERE `+where), args...).Scan(&out.Audit.Total, &out.Audit.Rejected); err != nil {
 		return out, err
 	}
-	rows, err := tx.QueryContext(ctx, s.q(`SELECT id,actor_id,actor_name,impersonator_id,project_id,app_id,action,resource_id,outcome,created_at FROM audit_events WHERE `+where+` ORDER BY `+operationsTimeOrder("created_at")+` DESC,id DESC LIMIT 5`), args...)
+	rows, err := tx.QueryContext(ctx, s.q(`SELECT id,actor_id,actor_name,impersonator_id,project_id,app_id,action,resource_id,outcome,created_at,operation_id FROM audit_events WHERE `+where+` ORDER BY `+operationsTimeOrder("created_at")+` DESC,id DESC LIMIT 5`), args...)
 	if err != nil {
 		return out, err
 	}
 	for rows.Next() {
 		var e core.AuditEvent
 		var at string
-		if err = rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.ImpersonatorID, &e.ProjectID, &e.AppID, &e.Action, &e.ResourceID, &e.Outcome, &at); err != nil {
+		if err = rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.ImpersonatorID, &e.ProjectID, &e.AppID, &e.Action, &e.ResourceID, &e.Outcome, &at, &e.OperationID); err != nil {
 			rows.Close()
 			return out, err
 		}

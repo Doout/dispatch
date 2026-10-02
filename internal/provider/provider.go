@@ -28,14 +28,15 @@ type Option struct {
 }
 
 type CreateServerRequest struct {
-	Name           string         `json:"name"`
-	Region         string         `json:"region"`
-	Size           string         `json:"size"`
-	Image          string         `json:"image"`
-	Network        string         `json:"network"`
-	SSHKey         string         `json:"sshKey"`
-	Bootstrap      string         `json:"bootstrap,omitempty"`
-	ProviderConfig map[string]any `json:"providerConfig"`
+	Name           string            `json:"name"`
+	Region         string            `json:"region"`
+	Size           string            `json:"size"`
+	Image          string            `json:"image"`
+	Network        string            `json:"network"`
+	SSHKey         string            `json:"sshKey"`
+	Bootstrap      string            `json:"bootstrap,omitempty"`
+	ProviderConfig map[string]any    `json:"providerConfig"`
+	Labels         map[string]string `json:"labels,omitempty"`
 }
 
 type Operation struct {

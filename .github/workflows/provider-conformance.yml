@@ -1,0 +1,87 @@
+name: Provider conformance
+
+on:
+  pull_request:
+    paths: ['internal/provider/**', 'internal/provision/**', 'internal/store/infrastructure*', 'internal/store/migrations/**', 'cmd/dispatch-provider-*/**', 'Containerfile.provider-mock', 'examples/providers/**', 'docs/provider-api.md', 'docs/provider-packaging.md', 'scripts/test-provider-sidecar.sh', 'scripts/check-provider-fixtures.py', '.github/workflows/provider-conformance.yml', 'go.mod', 'go.sum']
+  push:
+    branches: [main]
+    paths: ['internal/provider/**', 'internal/provision/**', 'internal/store/infrastructure*', 'internal/store/migrations/**', 'cmd/dispatch-provider-*/**', 'Containerfile.provider-mock', 'examples/providers/**', 'docs/provider-api.md', 'docs/provider-packaging.md', 'scripts/test-provider-sidecar.sh', 'scripts/check-provider-fixtures.py', '.github/workflows/provider-conformance.yml', 'go.mod', 'go.sum']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: python3 scripts/check-provider-fixtures.py
+      - run: go test -race -p 2 ./internal/provider/... ./internal/provision ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
+      - run: go vet ./internal/provider/... ./internal/provision ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile.provider-mock
+          load: true
+          push: false
+          tags: dispatch-provider-mock:test
+          cache-from: type=gha,scope=dispatch-provider-mock
+          cache-to: type=gha,mode=max,scope=dispatch-provider-mock
+      - name: Run packaged conformance without provider credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mock_container=$(docker run -d --rm -p 127.0.0.1:8091:8091 dispatch-provider-mock:test)
+          trap 'docker rm -f "$mock_container" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8091/v1/manifest >/dev/null; then break; fi
+            sleep 1
+          done
+          docker run --rm --network host --entrypoint /usr/local/bin/dispatch-provider-conformance dispatch-provider-mock:test --allow-mutations
+
+      - name: Validate sidecar upgrades and rollback
+        run: scripts/test-provider-sidecar.sh
+
+  publish:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'Doout/dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile.provider-mock
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/doout/dispatch-provider-mock:main
+            ghcr.io/doout/dispatch-provider-mock:sha-${{ github.sha }}
+          cache-from: type=gha,scope=dispatch-provider-mock
+          cache-to: type=gha,mode=max,scope=dispatch-provider-mock
+      - name: Verify public image access
+        shell: bash
+        run: |
+          set -euo pipefail
+          anonymous_config=$(mktemp -d)
+          trap 'rm -rf "$anonymous_config"' EXIT
+          if ! docker --config "$anonymous_config" manifest inspect ghcr.io/doout/dispatch-provider-mock:sha-${GITHUB_SHA} >/dev/null; then
+            echo 'The mock image must allow anonymous pulls. On first publication, set the GHCR package visibility to Public, then rerun this job.' >&2
+            exit 1
+          fi

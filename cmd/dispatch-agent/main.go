@@ -166,6 +166,15 @@ func runEdge(logger *slog.Logger, controllerURL, nodeID, token string) error {
 			runtimeToken = session.Token
 		}
 		if worker != nil {
+			if err := agentruntime.CheckPrerequisites(ctx); err != nil {
+				logger.Warn("runtime prerequisites are not ready")
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(5 * time.Second):
+				}
+				continue
+			}
 			runtimeJob, runtimeErr := leaseRuntime(ctx, control, controllerURL, nodeID, runtimeToken)
 			if runtimeErr == nil && runtimeJob != nil {
 				runtimeErr = executeRuntime(ctx, control, controllerURL, nodeID, func(authCtx context.Context) (string, error) {

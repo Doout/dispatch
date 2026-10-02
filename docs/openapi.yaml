@@ -9,6 +9,141 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /infrastructure/bootstrap:
+    get:
+      operationId: listTargetBootstraps
+      description: Controller-owner inventory of sanitized installation plans and separate installation, enrollment and runtime states. SSH credentials and installer claims are never returned.
+      parameters:
+        - {name: serverId, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Installation receipts}
+  /infrastructure/bootstrap/review:
+    post:
+      operationId: reviewTargetBootstrap
+      description: Creates an inert verified SSH installation review. Optional serverId selects an existing target; omission imports a machine. The plan requires method ssh, platform, imageFamily, sshHost, sshPort, sshUser, a trusted sshHostKey and sshVerified true. Credentials are write-only, encrypted and operation-scoped. No SSH connection or allocation occurs before approval.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan, credentials]
+              properties:
+                serverId: {type: string}
+                plan: {type: object}
+                credentials:
+                  type: object
+                  writeOnly: true
+                  properties:
+                    password: {type: string, writeOnly: true}
+                    privateKey: {type: string, writeOnly: true}
+                    privateKeyPassword: {type: string, writeOnly: true}
+      responses:
+        '201': {description: Normalized host, fingerprint, pinned artifact, actions, digest and expiry}
+        '422': {description: Missing trusted key, configured HTTPS origin, artifact or prerequisites}
+  /infrastructure/bootstrap/{id}:
+    get:
+      operationId: getTargetBootstrap
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Sanitized installation receipt and refreshed runtime evidence}
+  /infrastructure/bootstrap/{id}/accept:
+    post:
+      operationId: acceptTargetBootstrap
+      description: A human controller owner approves the saved SSH digest and exact target name. The worker executes only the generated installer after pinned host-key verification. Upgrades preserve identity unless replacement was explicitly reviewed.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [digest, confirmName]
+              properties:
+                digest: {type: string}
+                confirmName: {type: string}
+      responses:
+        '202': {description: Durable accepted installation; repeat acceptance returns the same receipt}
+        '409': {description: Review expired or target identity changed}
+  /infrastructure/bootstrap/{id}/retry:
+    post:
+      operationId: retryTargetBootstrap
+      description: Retries the approved SSH installer with its same digest, encrypted credentials and target. Never allocates another machine. An expired claim requires a new review.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [digest]
+              properties:
+                digest: {type: string}
+      responses:
+        '202': {description: Same installation scheduled for retry}
+        '409': {description: Changed review, expired claim or active lease}
+  /bootstrap/claims/{id}:
+    post:
+      operationId: claimTargetBootstrapEnrollment
+      description: Installer-only scoped bearer capability. Requires an accepted review and its allocated provider resource or imported target. Delivers a fresh one-use enrollment credential, replays it after a lost response, and refreshes expired unused tokens without allocation. Responses use Cache-Control no-store.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Intended node and enrollment credential, or already-enrolled state}
+        '401': {description: Invalid, superseded or expired claim}
+        '409': {description: Resource not allocated or identity changed}
+  /bootstrap/claims/{id}/progress:
+    post:
+      operationId: reportTargetBootstrapProgress
+      description: Authenticates the installer claim and accepts only fixed non-secret downloading, installing, installed or failed phases.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Sanitized phase recorded}
+  /projects/{id}/infrastructure/quota:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      summary: Inspect project infrastructure limits and durable reservations
+      description: Requires infrastructure.inspect. Reserved, allocated and unknown servers count toward the limit.
+      responses:
+        '200': { description: Policy, usage and original operation references, including released history }
+    put:
+      summary: Replace project infrastructure policy (controller owner)
+      description: A stale revision conflicts. Zero blocks new allocation; -1 explicitly means unlimited. Existing resources remain intact when a limit is reduced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, maxServers, providers]
+              properties:
+                revision: { type: integer, minimum: 0 }
+                maxServers: { type: integer, minimum: -1 }
+                maxTemporaryEnvironments: { type: integer, minimum: -1 }
+                maxSnapshots: { type: integer, minimum: -1 }
+                maxTemporaryLifetimeSeconds: { type: integer, minimum: 0, maximum: 31536000 }
+                providers:
+                  type: array
+                  items:
+                    type: object
+                    required: [providerId, regions, sizes, anyRegion, anySize]
+                    properties:
+                      providerId: { type: string }
+                      regions: { type: array, items: { type: string } }
+                      sizes: { type: array, items: { type: string } }
+                      anyRegion: { type: boolean }
+                      anySize: { type: boolean }
+      responses:
+        '200': { description: Updated policy and revision }
+        '409': { description: Policy changed since it was loaded }
+        '422': { description: Invalid provider, allocation choices, limit or temporary-resource lifetime }
   /apps/{id}/runtime/{operation}:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
@@ -115,6 +250,73 @@ paths:
       responses:
         '204': { description: Result persisted and queued credentials cleared }
         '409': { description: Lease or resource ownership changed }
+  /infrastructure/servers:
+    post:
+      operationId: createManagedServer
+      description: Accepts a reviewed server creation. Requires infrastructure.create and access to the provider. Idempotency-Key reserves one durable provisioning operation; identical retries return its receipt for seven days. Changed inputs or expired keys return 409 without creating another machine.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InfrastructureAcceptance' }
+      responses:
+        '202':
+          description: With Idempotency-Key, returns the original mutation receipt. Without it, returns the legacy server and operation records.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/MutationReceipt' }
+                  - { type: object, required: [server, operation], properties: {server: {type: object}, operation: {type: object}} }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}/delete:
+    post:
+      operationId: deleteManagedServer
+      description: Accepts reviewed deletion of the owned server after data protection checks. Requires infrastructure.delete and access to the provider. Idempotency-Key replays the original operation, including after the machine has been deleted.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InfrastructureAcceptance' }
+      responses:
+        '202':
+          description: With Idempotency-Key, returns the original mutation receipt. Without it, returns the legacy server and operation records.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/MutationReceipt' }
+                  - { type: object, required: [server, operation], properties: {server: {type: object}, operation: {type: object}} }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /mutation-receipts/{receiptId}:
+    get:
+      operationId: getMutationReceipt
+      description: Returns only this stable caller's receipt after checking current authentication and project access. Credential rotation preserves caller identity; revoked credentials are rejected.
+      parameters:
+        - in: path
+          name: receiptId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Original operation reference, current or retained outcome, retry deadline and supported recovery actions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /servers/{id}/routing:
     parameters:
       - name: id
@@ -2761,9 +2963,143 @@ paths:
         "204": { description: Project deleted. }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /automation-accounts:
+    get:
+      summary: List automation accounts (controller owner)
+      responses:
+        '200': { description: Account metadata without credentials }
+    post:
+      summary: Create an automation account (controller owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                description: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Active account with stable identity }
+  /automation-accounts/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    put:
+      summary: Rename, enable or disable an automation account (controller owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, state]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                state: { type: string, enum: [active, disabled] }
+      responses:
+        '200': { description: Updated account; disabled accounts fail subsequent authentication }
+  /automation-accounts/{id}/credentials:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      summary: List nonsecret credential metadata (controller owner)
+      responses:
+        '200': { description: Expiry, revocation and last-use metadata; no token or hash }
+    post:
+      summary: Issue an expiring token once (controller owner)
+      requestBody: { $ref: '#/components/requestBodies/AutomationCredentialInput' }
+      responses:
+        '201': { description: Credential metadata and plaintext token; Cache-Control no-store }
+        '409': { description: Account inactive }
+  /automation-accounts/{id}/credentials/{credentialId}/rotate:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: credentialId, required: true, schema: { type: string } }
+    post:
+      summary: Atomically retire a credential and issue its replacement (controller owner)
+      requestBody: { $ref: '#/components/requestBodies/AutomationCredentialInput' }
+      responses:
+        '201': { description: Replacement metadata and write-once token; account identity is unchanged }
+        '409': { description: Account or credential inactive }
+  /automation-accounts/{id}/credentials/{credentialId}/revoke:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: credentialId, required: true, schema: { type: string } }
+    post:
+      summary: Revoke a credential (controller owner)
+      responses:
+        '204': { description: Subsequent requests using the credential fail authentication }
+  /infrastructure/grants:
+    get:
+      summary: List explicit principal grants (controller owner)
+      responses:
+        '200': { description: Principal, project, permission and expiry metadata }
+    put:
+      summary: Replace a principal's direct project permissions (controller owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [principalType, principalId, projectId, permissions]
+              properties:
+                principalType: { type: string, enum: [user, service_account] }
+                principalId: { type: string }
+                projectId: { type: string }
+                permissions: { type: array, uniqueItems: true, items: { type: string } }
+                expiresAt: { type: string, format: date-time }
+      responses:
+        '200': { description: Saved grant }
+        '422': { description: Unknown principal or project, unsupported permission, or invalid expiry }
+  /infrastructure/grants/{kind}/{principalId}/{projectId}:
+    parameters:
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [user, service_account] } }
+      - { in: path, name: principalId, required: true, schema: { type: string } }
+      - { in: path, name: projectId, required: true, schema: { type: string } }
+    delete:
+      summary: Remove a direct grant (controller owner)
+      responses:
+        '204': { description: Grant removed }
+  /infrastructure/assignments/{projectId}:
+    parameters:
+      - { in: path, name: projectId, required: true, schema: { type: string } }
+    get:
+      summary: List project resource assignments (infrastructure.inspect)
+      responses:
+        '200': { description: Assigned provider and target references }
+    put:
+      summary: Assign an existing provider or target (controller owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, resourceId]
+              properties:
+                kind: { type: string, enum: [provider, target, ssh_key] }
+                resourceId: { type: string }
+      responses:
+        '200': { description: Resource assigned }
+        '422': { description: Resource missing or owned by another project }
+  /infrastructure/assignments/{projectId}/{kind}/{resourceId}:
+    parameters:
+      - { in: path, name: projectId, required: true, schema: { type: string } }
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [provider, target, ssh_key] } }
+      - { in: path, name: resourceId, required: true, schema: { type: string } }
+    delete:
+      summary: Remove an explicit resource assignment (controller owner)
+      responses:
+        '204': { description: Assignment removed; immutable project ownership is preserved }
   /servers:
     get:
       operationId: listServers
+      description: Owners can list all targets. Other callers need infrastructure.inspect for the specified project and receive its assigned targets.
+      parameters:
+        - { in: query, name: projectId, schema: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
     post:
@@ -3342,8 +3678,13 @@ paths:
   /apps/{appId}/deployments:
     post:
       operationId: startDeployment
-      description: Requires deployment.run. When review is supplied, project membership, application settings, binding mappings, and service revisions must still match the preview at atomic acceptance; changes return 409 and require another preview.
+      description: Requires deployment.run. When review is supplied, project membership, application settings, binding mappings, and service revisions must still match the preview at atomic acceptance; changes return 409 and require another preview. With Idempotency-Key, atomically accepts one operation and returns its durable mutation receipt. Same caller/project/action and identical input replay the original operation for seven days; changed input or an expired key returns 409 without repeating work. Without a key, returns the deployment record.
       parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, minLength: 8, maxLength: 128 }
+          description: Printable ASCII without spaces. Never reuse a key for another intended operation.
         - $ref: "#/components/parameters/AppID"
       requestBody:
         content:
@@ -3355,10 +3696,13 @@ paths:
                 review: { $ref: "#/components/schemas/DeploymentReview" }
       responses:
         "202":
-          description: Deployment accepted.
+          description: Deployment accepted, or original acceptance replayed. Location points to the mutation receipt when a key is supplied.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Deployment" }
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/Deployment' }
+                  - { $ref: '#/components/schemas/MutationReceipt' }
         "409": { $ref: "#/components/responses/Problem" }
   /deployments:
     get:
@@ -3410,6 +3754,17 @@ paths:
         "204": { description: Cancellation requested. }
         "409": { $ref: "#/components/responses/Problem" }
 components:
+  requestBodies:
+    AutomationCredentialInput:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name, expiresAt]
+            properties:
+              name: { type: string, maxLength: 120 }
+              expiresAt: { type: string, format: date-time, description: Future expiry within 365 days }
   securitySchemes:
     basicAuth:
       type: http
@@ -3418,6 +3773,12 @@ components:
       type: http
       scheme: bearer
   parameters:
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: Printable ASCII without spaces. Generate once for the intended request and reuse only for identical retries.
     ProjectID:
       in: path
       name: projectId
@@ -4137,9 +4498,38 @@ components:
         updatedAt:
           type: string
           format: date-time
+    InfrastructureAcceptance:
+      type: object
+      required: [digest, confirmName]
+      properties:
+        reviewId: { type: string, description: Required for server creation. }
+        digest: { type: string, description: Exact digest returned by the current creation or deletion review. }
+        confirmName: { type: string, description: Exact reviewed server name. }
+        requestKey: { type: string, description: Legacy retry key, required only when Idempotency-Key is omitted. }
+    MutationReceipt:
+      type: object
+      required: [id, projectId, action, operationKind, operationId, state, retryUntil, recoveryActions]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        action: { type: string }
+        operationKind: { type: string, enum: [deployment, infrastructure_operation] }
+        operationId: { type: string }
+        operationUrl: { type: string }
+        resourceId: { type: string }
+        state: { type: string, enum: [accepted, running, succeeded, failed, unresolved, cancelled] }
+        message: { type: string, description: Bounded sanitized outcome; raw runtime/provider responses are excluded. }
+        cancellation: { type: string, description: Actual cancellation status; cancellation does not undo external effects. }
+        retryUntil: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        recoveryActions:
+          type: array
+          items: { type: string, enum: [retry_same_request, inspect_operation, inspect_runtime] }
     AuditEvent:
       type: object
       properties:
+        operationId: { type: string, description: Original accepted operation, including idempotent request replays. }
         id:
           type: string
         actorId:

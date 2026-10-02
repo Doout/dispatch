@@ -14,6 +14,7 @@ import (
 
 	"github.com/doout/dispatch/internal/analytics"
 	"github.com/doout/dispatch/internal/api"
+	"github.com/doout/dispatch/internal/bootstrap"
 	"github.com/doout/dispatch/internal/config"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
@@ -21,6 +22,7 @@ import (
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/installation"
+	"github.com/doout/dispatch/internal/provision"
 	"github.com/doout/dispatch/internal/remoteruntime"
 	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/secretvalue"
@@ -110,6 +112,10 @@ func run(logger *slog.Logger) error {
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go runtimeBroker.RunExpiration(shutdownCtx, logger)
+	bootstraps := bootstrap.Configured(data, vault, cfg.PublicURL)
+	go bootstraps.Run(shutdownCtx, logger)
+	infrastructure := &provision.Manager{Bootstrap: bootstraps, Store: data, Secrets: secretResolver, Edge: edgeBroker, Vault: vault, Admission: data.InfrastructureQuotaAdmission}
+	go infrastructure.Run(shutdownCtx, logger)
 	var history analytics.Reader
 	if cfg.AnalyticsEnabled {
 		worker := analytics.New(data, cfg.AnalyticsDirectory, logger)
@@ -121,7 +127,7 @@ func run(logger *slog.Logger) error {
 	}
 	controller := api.New(data, deployments, cfg.Demo, api.AuthConfig{
 		AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword, PublicURL: cfg.PublicURL, TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
-	}, logger, api.EventConfig{WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
+	}, logger, api.EventConfig{Bootstrap: bootstraps, WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
 		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps, SecretResolver: secretResolver,
 		BackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "backups"), MasterKeyFile: cfg.MasterKeyFile, DatabaseURL: cfg.DatabaseURL,
 		Edge: edgeBroker, RepositoryCache: cfg.RepositoryCache, Analytics: history})
