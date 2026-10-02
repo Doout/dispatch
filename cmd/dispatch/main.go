@@ -94,6 +94,7 @@ func run(logger *slog.Logger) error {
 	deployments := deploy.NewService(data, executor)
 	if cfg.Executor == "docker" {
 		deployments.ConfigureHelmComparison(sourceAuth)
+		deployments.ConfigureSourceResolution(sourceAuth)
 		deployments.ConfigureRuntimeRollback(dockerExecutor)
 	}
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
