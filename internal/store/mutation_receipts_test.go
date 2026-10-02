@@ -183,13 +183,20 @@ func testAtomicMutationAcceptance(t *testing.T, path string) {
 	if err != nil || won || replay.State != "accepted" {
 		t.Fatalf("restart repeated acceptance: %#v %t %v", replay, won, err)
 	}
-	deployments, err := s.ListDeployments(ctx, 20)
+	deployments, err := s.ListApplicationHistory(ctx, r.ResourceID, "", 20)
 	if err != nil || len(deployments) != 1 || deployments[0].ID != d.ID {
 		t.Fatalf("operation not atomic: %#v %v", deployments, err)
 	}
 	recovered, err := s.RecoverInterruptedDeployments(ctx, now.Add(2*time.Second), now.Add(time.Second))
-	if err != nil || len(recovered) != 1 {
-		t.Fatalf("accepted execution recovery: %#v %v", recovered, err)
+	// A shared PostgreSQL database can contain other recoverable executions.
+	owned := []core.Deployment{}
+	for _, candidate := range recovered {
+		if candidate.AppID == r.ResourceID {
+			owned = append(owned, candidate)
+		}
+	}
+	if err != nil || len(owned) != 1 || owned[0].ID != d.ID || owned[0].State != core.DeploymentFailed {
+		t.Fatalf("accepted execution recovery: %#v %v", owned, err)
 	}
 	unresolved, won, err := s.ReserveMutationReceipt(ctx, r, now.Add(3*time.Second))
 	if err != nil || won || unresolved.State != "unresolved" {
