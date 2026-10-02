@@ -7,6 +7,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/remoteruntime"
 	"github.com/doout/dispatch/internal/runtimecontract"
+	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -43,7 +44,24 @@ func (e RemoteExecutor) Cleanup(ctx context.Context, app core.App, server core.S
 		}
 		return cleaner.Cleanup(ctx, app, server, progress)
 	}
-	_, err := e.ExecuteRemote(ctx, "cleanup-"+ulid.Make().String(), runtimecontract.Destroy, core.Deployment{}, app, server, progress)
+	id, _ := ctx.Value(cleanupOperationKey{}).(string)
+	if id != "" {
+		existing, err := e.Broker.Store.GetRuntimeJob(ctx, id)
+		if err == nil {
+			if existing.AppID != app.ID || existing.ProjectID != app.ProjectID || existing.ServerID != server.ID || existing.Operation != string(runtimecontract.Destroy) {
+				return errors.New("cleanup runtime ownership changed")
+			}
+			_, err = e.Broker.Wait(ctx, id, progress)
+			return err
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	if id == "" {
+		id = "cleanup-" + ulid.Make().String()
+	}
+	_, err := e.ExecuteRemote(ctx, id, runtimecontract.Destroy, core.Deployment{}, app, server, progress)
 	return err
 }
 

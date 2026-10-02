@@ -101,6 +101,7 @@ import { ConnectionsPage } from "./ConnectionsPage";
 import { InfrastructureProviders } from "./InfrastructureProviders";
 import { InfrastructureQuotas } from "./InfrastructureQuotas";
 import { ManagedServers } from "./ManagedServers";
+import { TemporaryEnvironments } from "./TemporaryEnvironments";
 import { TargetBootstraps } from "./TargetBootstraps";
 import { HookCredentialBindings, HookFields } from "./HookEditorFields";
 import { PageHeader, pageTitles } from "./PageHeader";
@@ -1867,6 +1868,7 @@ export function ServersPage({
       />
       {canManage && <InfrastructureProviders overview={overview} />}
       <InfrastructureQuotas overview={overview} canManage={canManage} />
+      <TemporaryEnvironments overview={overview} canManage={canManage} />
       {canManage && <><ManagedServers overview={overview} /><TargetBootstraps overview={overview} /></>}
       <section className="server-section">
         <div className="section-title">

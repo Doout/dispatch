@@ -11,6 +11,7 @@ func (a *API) projectsRoutes(r chi.Router) {
 		r.With(a.ownerOnly).Post("/", a.createProject)
 		r.Route("/{id}", func(r chi.Router) {
 			a.infrastructureQuotaRoutes(r)
+			a.temporaryEnvironmentProjectRoutes(r)
 			r.Group(func(r chi.Router) {
 				r.Use(a.projectPermission(core.PermissionProjectManage))
 				r.Put("/", a.updateProject)

@@ -1474,6 +1474,19 @@ CREATE INDEX runtime_retention_project ON runtime_retention_reviews(project_id);
 CREATE TABLE runtime_artifact_retirements(deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,review_id TEXT NOT NULL REFERENCES runtime_retention_reviews(id),state TEXT NOT NULL);
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','retention_inspect');
+-- dispatch:migration 086_temporary_environments
+CREATE TABLE temporary_environment_reviews (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), state TEXT NOT NULL, payload TEXT NOT NULL
+);
+CREATE TABLE temporary_environments (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), app_id TEXT NOT NULL UNIQUE REFERENCES apps(id),
+ deployment_id TEXT NOT NULL UNIQUE REFERENCES deployments(id), state TEXT NOT NULL, revision BIGINT NOT NULL,
+ expires_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, lease_token TEXT NOT NULL DEFAULT '',
+ lease_until TEXT NOT NULL DEFAULT '', cleanup_operation_id TEXT NOT NULL, cleanup_job_id TEXT NOT NULL, payload TEXT NOT NULL
+);
+CREATE INDEX temporary_environments_due ON temporary_environments(state,expires_at);
+CREATE INDEX temporary_environments_project ON temporary_environments(project_id,state);
+
 
 -- dispatch:migration 088_repository_identity
 ALTER TABLE config_sources ADD COLUMN repository_id BIGINT NOT NULL DEFAULT 0;

@@ -4064,6 +4064,110 @@ paths:
       responses:
         "204": { description: Cancellation requested. }
         "409": { $ref: "#/components/responses/Problem" }
+  /projects/{id}/temporary-environments:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: List owned temporary environments and lifecycle operations
+      description: Requires project.view. Reads never extend a deadline.
+      responses:
+        '200':
+          description: Environments, including failed and cleanup-blocked ownership
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/TemporaryEnvironment' } }
+  /projects/{id}/temporary-environments/options:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: List eligible templates and assigned ready outbound Docker targets
+      description: Requires project.view, project.configure and deployment.run. Local Docker, Compose and Helm are not offered by the initial path.
+      responses:
+        '200': { description: Same-project Dockerfile Application templates, supported targets and explicit omitted bindings }
+  /temporary-environments/review:
+    post:
+      summary: Review a pinned Application template clone and finite lifetime
+      description: Captures the full source SHA, template digest and current enrolled target identity. Omits hooks, hook variables, service bindings, data and production routing; rejects route or certificate health policies. Requires project.view, project.configure and deployment.run plus target assignment. Templates with global source credentials require an owner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TemporaryEnvironmentInput' }
+      responses:
+        '201': { description: Saved review with digest, pinned clone, explicit omissions and 15-minute review deadline }
+        '422': { description: Unsupported template, unavailable target, invalid source SHA or disallowed lifetime }
+  /temporary-environments:
+    post:
+      summary: Atomically accept a reviewed temporary environment
+      description: Requires current project permissions and target assignment. Atomically records quota ownership, generated app, fixed deployment and public receipt. Same-key retries replay before checking the consumed review. Receipt resourceId is the environment ID and operationKind is deployment.
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InfrastructureAcceptance' }
+      responses:
+        '202':
+          description: Original deployment receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
+        '409': { description: Changed or consumed review, target binding, idempotency key or quota }
+  /temporary-environments/{environmentId}:
+    parameters:
+      - { name: environmentId, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Inspect environment ownership, deadline and lifecycle state
+      description: Requires project.view. Unknown work and cleanup failures remain visible and count toward quota.
+      responses:
+        '200':
+          description: Durable environment record
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemporaryEnvironment' }
+  /temporary-environments/{environmentId}/extend:
+    parameters:
+      - { name: environmentId, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Extend an active environment within its maximum total lifetime
+      description: Requires current project configuration and deployment permissions plus target assignment. Revision-checked; expired or stopping environments cannot be revived. The policy bound is measured from original acceptance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TemporaryEnvironmentExtension' }
+      responses:
+        '200': { description: Updated environment and revision }
+        '409': { description: Stale revision, expired environment, unavailable target or exceeded lifetime }
+  /temporary-environments/{environmentId}/cleanup-review:
+    parameters:
+      - { name: environmentId, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Review owned workload cleanup and retained resources
+      responses:
+        '200': { description: Environment name, revision, digest, owned application and retained storage/shared server consequences }
+  /temporary-environments/{environmentId}/destroy:
+    parameters:
+      - { name: environmentId, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Accept reviewed cleanup with a durable replay identity
+      description: Requires project.view, project.configure, deployment.run and deployment.cancel. Stops new work, fences old leases and settles or requires inspection of uncertain mutations before cleanup. Shared targets, volumes, backups and execution history are retained. Same-key retry returns the same cleanup operation even after the revision changes. A new reviewed key may retry only known failed, cancelled or inspected and acknowledged cleanup; it cannot replace pending or unknown work.
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TemporaryEnvironmentCleanup' }
+      responses:
+        '202':
+          description: Cleanup receipt with operationKind temporary_environment and environment resourceId
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
+        '409': { description: Stale review or an existing operation still requires recovery }
+
 components:
   requestBodies:
     AutomationCredentialInput:
@@ -4163,6 +4267,64 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    TemporaryEnvironmentInput:
+      type: object
+      additionalProperties: false
+      required: [projectId, templateId, serverId, name, sourceSha, lifetimeSeconds]
+      properties:
+        projectId: { type: string }
+        templateId: { type: string }
+        serverId: { type: string }
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{1,39}$' }
+        sourceSha: { type: string, pattern: '^([a-f0-9]{40}|[a-f0-9]{64})$' }
+        lifetimeSeconds: { type: integer, minimum: 1, maximum: 31536000 }
+    TemporaryEnvironmentExtension:
+      type: object
+      additionalProperties: false
+      required: [revision, expiresAt]
+      properties:
+        revision: { type: integer, minimum: 1 }
+        expiresAt: { type: string, format: date-time }
+    TemporaryEnvironmentCleanup:
+      type: object
+      additionalProperties: false
+      required: [revision, digest, confirmName]
+      properties:
+        revision: { type: integer, minimum: 1 }
+        digest: { type: string }
+        confirmName: { type: string }
+    TemporaryEnvironment:
+      type: object
+      required: [id, projectId, name, state, revision, expiresAt, appId, deploymentId, cleanupOperationId, resources]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        name: { type: string }
+        templateId: { type: string }
+        templateDigest: { type: string }
+        sourceSha: { type: string }
+        appId: { type: string }
+        deploymentId: { type: string }
+        serverId: { type: string }
+        targetNodeId: { type: string }
+        targetGeneration: { type: integer }
+        cleanupOperationId: { type: string }
+        cleanupJobId: { type: string }
+        state: { type: string, enum: [accepted, deploying, ready, failed, closing, cleanup_blocked, closed] }
+        message: { type: string }
+        revision: { type: integer }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        resources:
+          type: array
+          items:
+            type: object
+            required: [kind, id, ownership]
+            properties:
+              kind: { type: string }
+              id: { type: string }
+              ownership: { type: string, enum: [owned, shared, retained] }
     RoutingConfig:
       type: object
       required: [baseDomain]
@@ -4908,7 +5070,7 @@ components:
         id: { type: string }
         projectId: { type: string }
         action: { type: string }
-        operationKind: { type: string, enum: [deployment, infrastructure_operation, service_provision, service_resource] }
+        operationKind: { type: string, enum: [deployment, infrastructure_operation, service_provision, service_resource, temporary_environment] }
         operationId: { type: string }
         operationUrl: { type: string }
         resourceId: { type: string }
