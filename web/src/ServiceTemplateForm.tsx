@@ -21,7 +21,7 @@ export function ServiceTemplateForm({ template, overview, onBack, onSaved }: { t
  }, [run?.id, run?.state, onSaved]);
  async function submit(e: FormEvent) {
   e.preventDefault(); setBusy(true); setError("");
-  try { setRun(await api.startServiceProvision(template.id, { name, description, inputs, confirmDataCopy })); setInputs({}); }
+  try { setRun(await api.startServiceProvision(template.id, { name, description, inputs, ...(template.neon?.dataMode === "parent-data" ? { confirmDataCopy } : {}) })); setInputs({}); }
   catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   finally { setBusy(false); }
  }
