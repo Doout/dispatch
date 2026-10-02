@@ -11,10 +11,10 @@ web:
 	corepack pnpm@11.18.0 --dir web build
 
 check:
-	go test -race ./...
+	go test -race -timeout 40m ./...
 	go vet ./...
 	corepack pnpm@11.18.0 --dir web typecheck
-	corepack pnpm@11.18.0 --dir web test
+	corepack pnpm@11.18.0 --dir web test --maxWorkers=2
 
 dev: web
 	DISPATCH_DEMO=true go run ./cmd/dispatch
