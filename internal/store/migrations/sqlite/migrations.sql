@@ -1548,3 +1548,14 @@ INSERT INTO workflow_command_receipts(resource_id,command_key,revision_id)
  SELECT t.resource_id,'preview-comment:' || c.trigger_id || ':' || c.comment_id,c.revision_id
  FROM workflow_preview_comments c JOIN workflow_preview_triggers t ON t.id=c.trigger_id
  WHERE c.revision_id IS NOT NULL;
+-- dispatch:migration 088_repository_identity
+ALTER TABLE config_sources ADD COLUMN repository_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE config_sources ADD COLUMN repository_status TEXT NOT NULL DEFAULT 'null';
+CREATE TABLE repository_deletions (
+  github_app_id TEXT NOT NULL,
+  repository_id BIGINT NOT NULL,
+  full_name TEXT NOT NULL,
+  delivery_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  PRIMARY KEY(github_app_id, repository_id)
+);

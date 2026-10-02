@@ -375,6 +375,8 @@ export type EventRule = {
  intervalSeconds?: number; enabled: boolean; pullRequest?: number; error?: string; check?: EventActivity;
 };
 export type EventActivityPage = { items: EventActivity[]; next?: string; total: number };
+export type RepositoryStatus = { state: "accessible" | "renamed" | "archived" | "disabled" | "inaccessible" | "deleted" | "identity_changed" | "unavailable"; repositoryId?: number; fullName?: string; detail: string; recovery: string; checkedAt: string };
+export type GitHubBranch = { name: string; sha: string; protected: boolean };
 export type ConfigSource = {
   id: string;
   projectId: string;
@@ -382,6 +384,8 @@ export type ConfigSource = {
   credentialSecretId?: string;
   name: string;
   repository: string;
+  repositoryId?: number;
+  repositoryStatus?: RepositoryStatus;
   branch: string;
   path: string;
   syncMode: "webhook_poll" | "webhook" | "poll";
@@ -695,6 +699,8 @@ export type GitHubRepository = {
   owner: string;
   defaultBranch: string;
   private: boolean;
+  archived?: boolean;
+  disabled?: boolean;
   webUrl: string;
 };
 export type GitHubAppVerification = {
@@ -1292,6 +1298,10 @@ export const api = {
     request<GitHubAppInstallation[]>(`/api/v1/github-apps/${id}/installations`),
   githubAppRepositories: (id: string) =>
     request<GitHubRepository[]>(`/api/v1/github-apps/${id}/repositories`),
+  githubAppBranches: (id: string, repository: string, repositoryId: number) => request<GitHubBranch[]>(`/api/v1/github-apps/${id}/branches?${new URLSearchParams({repository, repositoryId: String(repositoryId)})}`),
+  configSourceRepositories: (id: string) => request<GitHubRepository[]>(`/api/v1/config-sources/${id}/repositories`),
+  configSourceBranches: (id: string, repository: string, repositoryId: number) => request<GitHubBranch[]>(`/api/v1/config-sources/${id}/branches?${new URLSearchParams({repository, repositoryId: String(repositoryId)})}`),
+  checkConfigSourceRepository: (id: string) => request<ConfigSource>(`/api/v1/config-sources/${id}/repository-check`, {method: "POST"}),
   startGitHubAppManifest: (body: {
     name: string;
     webUrl: string;
@@ -1312,6 +1322,7 @@ export const api = {
     credentialSecretId?: string;
     name: string;
     repository: string;
+    repositoryId?: number;
     branch: string;
     path: string;
     syncMode: ConfigSource["syncMode"];
@@ -1329,6 +1340,7 @@ export const api = {
       credentialSecretId?: string;
       name: string;
       repository: string;
+      repositoryId?: number;
       branch: string;
       path: string;
       syncMode: ConfigSource["syncMode"];

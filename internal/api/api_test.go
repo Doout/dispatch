@@ -1951,7 +1951,9 @@ func testHandlerWithDemo(t *testing.T, auth AuthConfig, seedDemo bool) (http.Han
 
 func testHandlerWithEventConfig(t *testing.T, auth AuthConfig, seedDemo bool, eventConfig EventConfig) (http.Handler, func()) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Creating a fresh database runs every migration. Allow disk contention from
+	// concurrent race suites without changing request or operation deadlines.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	data, err := store.Open(ctx, filepath.Join(t.TempDir(), "dispatch.db"))
 	if err != nil {
 		cancel()

@@ -2,6 +2,8 @@ import { WarningCircle } from "@phosphor-icons/react";
 import type { ConfigSource } from "../api";
 
 export function ConfigSourceError({ source }: { source: ConfigSource }) {
+  const repository = source.repositoryStatus;
+  if (repository && repository.state !== "accessible") return <div className="configuration-sync-error" role="alert"><WarningCircle size={18} weight="fill" aria-hidden="true" /><div><strong>Repository {repository.state.replaceAll("_", " ")} · {source.name}</strong><p>{repository.detail}</p><p className="configuration-sync-hint">{repository.recovery}</p>{source.lastSyncedAt && <p className="configuration-sync-context">Applications keep their last accepted configuration.</p>}</div></div>;
   if (!source.lastError && !["invalid", "degraded"].includes(source.state)) return null;
   const detail = source.lastError?.trim() || "The sync did not return an error detail. Retry the sync to get the current cause.";
   const duplicate = /both define (Application|Pipeline)\//.exec(detail);
