@@ -5,6 +5,8 @@ Send `Idempotency-Key` with these mutations:
 - `POST /api/v1/apps/{appId}/deployments`
 - `POST /api/v1/infrastructure/servers` after reviewing creation
 - `POST /api/v1/infrastructure/servers/{id}/delete` after reviewing deletion
+- `POST /api/v1/service-templates/{id}/runs`
+- `POST /api/v1/service-provision-runs/{id}/resource/delete` after reviewing deletion
 
 Use 8–128 printable ASCII characters
 without spaces, generated once for the intended request. An identical retry by

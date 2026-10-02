@@ -49,6 +49,19 @@ func (a *API) getInfrastructureQuota(w http.ResponseWriter, r *http.Request) {
 			usage[v.State]++
 		}
 	}
+	if snapshots, ok := a.store.(store.InfrastructureSnapshotStore); ok {
+		items, e := snapshots.ListInfrastructureSnapshots(r.Context(), project)
+		if e != nil {
+			a.internal(w, e)
+			return
+		}
+		usage["snapshots"] = 0
+		for _, item := range items {
+			if item.State != "deleted" && item.State != "cancelled" {
+				usage["snapshots"]++
+			}
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, map[string]any{"policy": policy, "usage": usage, "reservations": reservations})
 }

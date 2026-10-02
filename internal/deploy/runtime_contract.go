@@ -28,7 +28,19 @@ func executorCapabilities(e Executor, app core.App, server core.Server) runtimec
 }
 
 func (s *Service) RuntimeCapabilities(app core.App, server core.Server) runtimecontract.Manifest {
-	return executorCapabilities(s.executor, app, server)
+	manifest := executorCapabilities(s.executor, app, server)
+	supported := s.Retention != nil && (app.BuildType == core.BuildTypeDockerfile || app.BuildType == core.BuildTypeCompose) && server.Runtime == core.ServerRuntimeDocker
+	if _, simulation := s.Retention.(SimulationRetention); simulation {
+		supported = true
+	}
+	for _, op := range []runtimecontract.Operation{"retention_inspect", "retention_prune"} {
+		capability := runtimecontract.Capability{Operation: op, Supported: supported}
+		if !supported {
+			capability.Reason = "Runtime artifact retention is unavailable for this driver and target."
+		}
+		manifest.Capabilities = append(manifest.Capabilities, capability)
+	}
+	return manifest
 }
 
 func (e RuntimeExecutor) selected(app core.App) Executor {

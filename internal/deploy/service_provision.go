@@ -57,10 +57,23 @@ func ProvisionReferences(value string, inputs map[string]bool) error {
 	return nil
 }
 
+// PrepareServiceRequest freezes generated credentials before any provider mutation.
+func PrepareServiceRequest(req core.ServiceProvisionRequest) (core.ServiceProvisionRequest, error) {
+	if req.Password == "" {
+		bytes := make([]byte, 24)
+		if _, err := rand.Read(bytes); err != nil {
+			return req, errors.New("cannot generate service credentials")
+		}
+		req.Password = hex.EncodeToString(bytes)
+	}
+	return req, nil
+}
+
 func provisionVariables(req core.ServiceProvisionRequest, namespace string) (map[string]string, error) {
-	bytes := make([]byte, 24)
-	if _, err := rand.Read(bytes); err != nil {
-		return nil, errors.New("cannot generate service credentials")
+	var err error
+	req, err = PrepareServiceRequest(req)
+	if err != nil {
+		return nil, err
 	}
 	database, username := req.Inputs["database"], req.Inputs["username"]
 	if database == "" {
@@ -72,7 +85,7 @@ func provisionVariables(req core.ServiceProvisionRequest, namespace string) (map
 	if req.ServiceType == "postgresql" && (len(database) > 63 || len(username) > 63 || strings.ContainsRune(database, 0) || strings.ContainsRune(username, 0)) {
 		return nil, errors.New("PostgreSQL database and username inputs must be at most 63 bytes and contain no NUL")
 	}
-	values := map[string]string{"service.name": req.Run.ServiceName, "service.resource": ServiceResourceName(req.Run.ID), "service.namespace": namespace, "service.database": database, "service.username": username, "service.password": hex.EncodeToString(bytes)}
+	values := map[string]string{"service.name": req.Run.ServiceName, "service.resource": ServiceResourceName(req.Run.ID), "service.namespace": namespace, "service.database": database, "service.username": username, "service.password": req.Password}
 	for key, value := range req.Inputs {
 		values["inputs."+key] = value
 	}
@@ -151,4 +164,29 @@ func provisionOutputs(req core.ServiceProvisionRequest, configured map[string]st
 
 func provisionLabels(req core.ServiceProvisionRequest) map[string]string {
 	return map[string]string{"dispatch.managed-by": "dispatch", "dispatch.project": req.Run.ProjectID, "dispatch.service-template": req.Run.TemplateID, "dispatch.service-provision": req.Run.ID}
+}
+
+// ServiceResourceOutputs reconstructs the binding from the accepted encrypted
+// request after ownership and readiness have been independently inspected.
+func ServiceResourceOutputs(req core.ServiceProvisionRequest, d *core.DockerServiceProvision, h *core.HelmServiceProvision) (map[string]string, error) {
+	if req.Password == "" {
+		return nil, errors.New("original service credentials are required")
+	}
+	namespace := ""
+	configured := map[string]string{}
+	host := ServiceResourceName(req.Run.ID)
+	if d != nil {
+		configured = d.Connection
+	} else if h != nil {
+		namespace = h.Namespace
+		configured = h.Connection
+		host += "." + namespace + ".svc"
+	} else {
+		return nil, errors.New("unsupported service provisioner")
+	}
+	variables, err := provisionVariables(req, namespace)
+	if err != nil {
+		return nil, err
+	}
+	return provisionOutputs(req, configured, variables, host)
 }

@@ -6,17 +6,20 @@ import (
 )
 
 type InfrastructureAcceptance struct {
-	ActorID       string
-	ProjectID     string
-	ProviderID    string
-	OperationID   string
-	ServerID      string
-	Action        string
-	ResourceID    string
-	DesiredConfig json.RawMessage
+	SnapshotID       string
+	SourceSnapshotID string
+	ActorID          string
+	ProjectID        string
+	ProviderID       string
+	OperationID      string
+	ServerID         string
+	Action           string
+	ResourceID       string
+	DesiredConfig    json.RawMessage
 }
 
 type InfrastructureReview struct {
+	SourceSnapshotID string          `json:"sourceSnapshotId,omitempty"`
 	BootstrapID      string          `json:"bootstrapId,omitempty"`
 	ID               string          `json:"id"`
 	ServerID         string          `json:"serverId"`
@@ -34,21 +37,22 @@ type InfrastructureReview struct {
 }
 
 type ManagedServer struct {
-	BootstrapID     string    `json:"bootstrapId,omitempty"`
-	ID              string    `json:"id"`
-	ReviewID        string    `json:"reviewId"`
-	ProjectID       string    `json:"projectId"`
-	ProviderID      string    `json:"providerId"`
-	Name            string    `json:"name"`
-	NodeID          string    `json:"nodeId"`
-	ResourceID      string    `json:"resourceId,omitempty"`
-	Address         string    `json:"address,omitempty"`
-	AllocationState string    `json:"allocationState"`
-	EnrollmentState string    `json:"enrollmentState"`
-	RuntimeState    string    `json:"runtimeState"`
-	Revision        int64     `json:"revision"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	SourceSnapshotID string    `json:"sourceSnapshotId,omitempty"`
+	BootstrapID      string    `json:"bootstrapId,omitempty"`
+	ID               string    `json:"id"`
+	ReviewID         string    `json:"reviewId"`
+	ProjectID        string    `json:"projectId"`
+	ProviderID       string    `json:"providerId"`
+	Name             string    `json:"name"`
+	NodeID           string    `json:"nodeId"`
+	ResourceID       string    `json:"resourceId,omitempty"`
+	Address          string    `json:"address,omitempty"`
+	AllocationState  string    `json:"allocationState"`
+	EnrollmentState  string    `json:"enrollmentState"`
+	RuntimeState     string    `json:"runtimeState"`
+	Revision         int64     `json:"revision"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 type InfrastructureOperation struct {

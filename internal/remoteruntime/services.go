@@ -8,8 +8,9 @@ import (
 )
 
 type ServiceRequest struct {
-	Request core.ServiceProvisionRequest `json:"request"`
-	Docker  core.DockerServiceProvision  `json:"docker"`
+	ExpectedResourceID string                       `json:"expectedResourceId,omitempty"`
+	Request            core.ServiceProvisionRequest `json:"request"`
+	Docker             core.DockerServiceProvision  `json:"docker"`
 }
 
 func ServiceSubject(project, server, name string) string {
@@ -44,6 +45,7 @@ func (r Request) SecretValues() []string {
 		}
 	}
 	if r.Service != nil {
+		secrets = append(secrets, r.Service.Request.Password)
 		for _, v := range r.Service.Request.Inputs {
 			secrets = append(secrets, v)
 		}
@@ -52,4 +54,24 @@ func (r Request) SecretValues() []string {
 		}
 	}
 	return secrets
+}
+
+func (r Request) ValidateServiceResult(result Result) error {
+	if r.Operation != ProvisionService && len(result.ServiceOutputs) != 0 {
+		return errors.New("unexpected service credentials in runtime result")
+	}
+	if r.Operation != ServiceInspect {
+		if result.ServiceResource != nil {
+			return errors.New("unexpected service inspection result")
+		}
+		return nil
+	}
+	if result.State != "succeeded" && result.ServiceResource == nil {
+		return nil
+	}
+	item := result.ServiceResource
+	if item == nil || r.Service == nil || item.RunID != r.Service.Request.Run.ID || item.ProjectID != r.Application.ProjectID || item.ServerID != r.Server.ID || item.Provider != "docker" || item.State != "ready" && item.State != "absent" && item.State != "unready" || item.State != "absent" && item.ResourceID == "" || !item.StorageRetained {
+		return errors.New("service inspection does not match the owned resource")
+	}
+	return nil
 }

@@ -107,6 +107,7 @@ func Handler(adapter Provider, bearerToken string) http.Handler {
 		value, err := adapter.DeleteServer(r.Context(), key, r.PathValue("id"))
 		respond(w, http.StatusAccepted, value, err)
 	})
+	registerSnapshotRoutes(mux, adapter, respond)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, NewProblem(http.StatusNotFound, "Provider endpoint not found", "Use a documented v1 endpoint."))
 	})

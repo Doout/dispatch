@@ -46,7 +46,7 @@ func TestProviderUpgradeRollbackRetainsOwnedResources(t *testing.T) {
 				manifest.APIVersion = "dispatch.provider/v999"
 			}
 			if mode == "upgrade" {
-				manifest.Version = "2.0.0"
+				manifest.Version += "-upgrade"
 			}
 			raw, _ = json.Marshal(manifest)
 		}

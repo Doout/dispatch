@@ -256,6 +256,41 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 			out.BlockedReason = "Managed server cannot be deleted. The controller target is reconciled automatically."
 		}
 		out.Summary = "Remove this target registration. The server and its stored application data remain. Applications must be detached first."
+	case "service-resource":
+		data := a.store.(store.ServiceResourceStore)
+		var item core.ServiceResource
+		item, err = data.GetServiceResource(ctx, id)
+		if err != nil {
+			break
+		}
+		record, out.Name, out.ProjectID, out.StoragePolicy = item, item.Name, item.ProjectID, "retain"
+		accepted, server, e := a.loadAcceptedServiceResource(ctx, item)
+		if e != nil {
+			return out, e
+		}
+		inspected, e := a.serviceResourceExecutor().Inspect(ctx, accepted, server)
+		if e != nil {
+			return out, e
+		}
+		extra = inspected
+		if !inspected.StorageRetained {
+			out.BlockedReason = "The provisioner cannot preserve protected storage; migrate the data before deleting this resource."
+		}
+		busy, e := data.ServiceResourceConsumers(ctx, item.ServiceID)
+		if e != nil {
+			return out, e
+		}
+		out.Summary = "Delete the owned service workload and remove its connection registration. Storage, backups and encrypted recovery history remain. Detach all consumers first."
+		out.Resources = append(out.Resources, "Owned "+item.Target.Provider+" resource: "+item.Target.ResourceName, "Retain all named volumes and persistent volume claims")
+		for _, id := range item.Dependencies {
+			out.Resources = append(out.Resources, "External dependency retained: "+id)
+		}
+		if busy {
+			out.BlockedReason = "Detach and redeploy application consumers, and remove workflow and provisioned-service references before deleting this resource."
+		}
+		if item.LeaseUntil.After(time.Now()) {
+			out.BlockedReason = "The original operation is still active; inspect it before deletion."
+		}
 	case "service":
 		var item core.Service
 		item, err = a.store.GetService(ctx, id)

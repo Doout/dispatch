@@ -4,8 +4,9 @@ import { request, type Overview } from "../api";
 import { canManageProject } from "../permissions";
 import { relative } from "../presentation";
 import "./Maintenance.css";
+import { RuntimeRetentionPanel, sameRetentionPolicy, type RetentionPolicy } from "./RuntimeRetentionPanel";
 
-type Policy = { projectId: string; logDays: number; runDays: number; keepRuns: number };
+type Policy = RetentionPolicy;
 type RetentionResult = { logs: number; runs: number; protectedRuns: number; applied: boolean };
 type Review = { policy: Policy; result: RetentionResult; checkedAt: string };
 type Backup = { id: string; engine: string; state: string; bytes: number; createdAt: string; verifiedAt?: string; message: string };
@@ -14,7 +15,7 @@ type Draft = Record<"logDays" | "runDays" | "keepRuns", string>;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 const count = (value: number) => new Intl.NumberFormat("en").format(value);
 const policyDraft = (policy: Policy): Draft => ({ logDays: String(policy.logDays), runDays: String(policy.runDays), keepRuns: String(policy.keepRuns) });
-const samePolicy = (left: Policy, right: Policy) => left.projectId === right.projectId && left.logDays === right.logDays && left.runDays === right.runDays && left.keepRuns === right.keepRuns;
+const samePolicy = sameRetentionPolicy;
 const fullDate = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Time unavailable";
 const ago = (value: string) => Number.isFinite(Date.parse(value)) ? relative(value) : "Time unavailable";
 
@@ -22,10 +23,10 @@ export function RetentionControls({ overview, projectId, onChanged }: { overview
   const project = overview.projects.find(item => item.id === projectId);
   if (!projectId) return <section className="maintenance-panel" aria-label="History retention"><div className="maintenance-empty"><Archive size={22} /><h2>Select a project to manage retention</h2><p>Choose a project in the filter above to review its cleanup policy.</p></div></section>;
   if (!project || !canManageProject(overview, projectId, "project.manage")) return <section className="maintenance-panel" aria-label="History retention"><div className="maintenance-empty"><ShieldCheck size={22} /><h2>Project admin access required</h2><p>You need project management permission to review or remove retained history.</p></div></section>;
-  return <ProjectRetention key={`${overview.identity?.id}:${project.id}`} projectId={project.id} projectName={project.name} onChanged={onChanged} />;
+  return <ProjectRetention key={`${overview.identity?.id}:${project.id}`} projectId={project.id} projectName={project.name} overview={overview} onChanged={onChanged} />;
 }
 
-function ProjectRetention({ projectId, projectName, onChanged }: { projectId: string; projectName: string; onChanged?: () => void }) {
+function ProjectRetention({ projectId, projectName, overview, onChanged }: { projectId: string; projectName: string; overview: Overview; onChanged?: () => void }) {
   const [policy, setPolicy] = useState<Policy>();
   const [draft, setDraft] = useState<Draft>({ logDays: "", runDays: "", keepRuns: "" });
   const [editing, setEditing] = useState(false);
@@ -66,11 +67,11 @@ function ProjectRetention({ projectId, projectName, onChanged }: { projectId: st
       }
     } finally { if (alive.current) { locked.current = false; setBusy(""); } }
   }
-  const draftPolicy: Policy = { projectId, logDays: Number(draft.logDays), runDays: Number(draft.runDays), keepRuns: Number(draft.keepRuns) };
+  const draftPolicy: Policy = { ...policy, projectId, logDays: Number(draft.logDays), runDays: Number(draft.runDays), keepRuns: Number(draft.keepRuns) };
   const valid = (["logDays", "runDays", "keepRuns"] as const).every(key => /^\d+$/.test(draft[key]) && Number.isSafeInteger(draftPolicy[key]) && draftPolicy[key] >= (key === "keepRuns" ? 5 : 1) && draftPolicy[key] <= (key === "keepRuns" ? 10000 : 36500));
   const changed = policy && !samePolicy(draftPolicy, policy);
 
-  return <section className="maintenance-panel retention-controls" aria-label="History retention">
+  return <><section className="maintenance-panel retention-controls" aria-label="History retention">
     <header className="maintenance-heading"><div><h2>History retention</h2><p>{projectName} · Cleanup runs only when you apply it.</p></div>{policy && !editing && <button type="button" className="quiet-button" disabled={Boolean(busy)} onClick={() => { clearReview(); setError(""); setNotice(""); setDraft(policyDraft(policy)); setEditing(true); }}><PencilSimple size={14} />Edit policy</button>}</header>
     {loading && <p className="maintenance-loading" role="status"><Clock size={15} />Loading retention policy…</p>}
     {error && <div className="maintenance-feedback danger" role="alert"><WarningCircle size={16} /><span>{error}</span>{!policy && !loading && <button type="button" className="maintenance-text-button" onClick={() => { setError(""); setReload(value => value + 1); }}>Retry</button>}</div>}
@@ -109,7 +110,7 @@ function ProjectRetention({ projectId, projectName, onChanged }: { projectId: st
       {applied && <div className="maintenance-feedback success" role="status"><CheckCircle size={16} /><span>Removed {count(applied.logs)} old log lines and {count(applied.runs)} failed or cancelled runs. {count(applied.protectedRuns)} runs stayed protected.</span></div>}
       <details className="maintenance-details"><summary><Info size={14} /><span>What cleanup keeps</span><CaretDown size={14} /></summary><p>Successful deployment records, active runs, runtime baselines, workflow and preview references, and the minimum number of recent runs stay retained. The latest successful deployment keeps its logs. Old logs from other completed runs can be removed even when the run record is protected.</p><p>Cleanup removes controller history. It does not delete applications, external services, or running workloads.</p></details>
     </>}
-  </section>;
+  </section>{policy && <RuntimeRetentionPanel key={projectId} policy={policy} overview={overview} busyElsewhere={Boolean(busy) || editing} onPolicyChanged={saved => { setPolicy(saved); setDraft(policyDraft(saved)); clearReview(); }} onChanged={onChanged} onConflict={() => { clearReview(); setReload(value => value + 1); }} />}</>;
 }
 
 function backupStatus(backup: Backup) {

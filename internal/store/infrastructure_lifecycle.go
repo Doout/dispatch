@@ -35,16 +35,16 @@ type InfrastructureLifecycleStore interface {
 	AdoptInfrastructureServer(context.Context, core.ManagedServer, string, string, time.Time) (core.ManagedServer, error)
 }
 
-const reviewColumns = `id,server_id,project_id,provider_id,provider_revision,manifest_digest,name,input,encrypted_request,digest,state,expires_at,created_at,bootstrap_id`
+const reviewColumns = `id,server_id,project_id,provider_id,provider_revision,manifest_digest,name,input,encrypted_request,digest,state,expires_at,created_at,bootstrap_id,source_snapshot_id`
 
 func (s *SQLStore) CreateInfrastructureReview(ctx context.Context, r core.InfrastructureReview) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO infrastructure_reviews(`+reviewColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), r.ID, r.ServerID, r.ProjectID, r.ProviderID, r.ProviderRevision, r.ManifestDigest, r.Name, string(r.Input), r.EncryptedRequest, r.Digest, r.State, stamp(r.ExpiresAt), stamp(r.CreatedAt), r.BootstrapID)
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO infrastructure_reviews(`+reviewColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), r.ID, r.ServerID, r.ProjectID, r.ProviderID, r.ProviderRevision, r.ManifestDigest, r.Name, string(r.Input), r.EncryptedRequest, r.Digest, r.State, stamp(r.ExpiresAt), stamp(r.CreatedAt), r.BootstrapID, r.SourceSnapshotID)
 	return err
 }
 func scanInfrastructureReview(row scanner) (core.InfrastructureReview, error) {
 	var r core.InfrastructureReview
 	var input, expires, created string
-	err := row.Scan(&r.ID, &r.ServerID, &r.ProjectID, &r.ProviderID, &r.ProviderRevision, &r.ManifestDigest, &r.Name, &input, &r.EncryptedRequest, &r.Digest, &r.State, &expires, &created, &r.BootstrapID)
+	err := row.Scan(&r.ID, &r.ServerID, &r.ProjectID, &r.ProviderID, &r.ProviderRevision, &r.ManifestDigest, &r.Name, &input, &r.EncryptedRequest, &r.Digest, &r.State, &expires, &created, &r.BootstrapID, &r.SourceSnapshotID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -57,12 +57,12 @@ func (s *SQLStore) GetInfrastructureReview(ctx context.Context, id string) (core
 	return scanInfrastructureReview(s.db.QueryRowContext(ctx, s.q(`SELECT `+reviewColumns+` FROM infrastructure_reviews WHERE id=?`), id))
 }
 
-const managedServerColumns = `id,review_id,project_id,provider_id,name,node_id,resource_id,address,allocation_state,enrollment_state,runtime_state,revision,created_at,updated_at,bootstrap_id`
+const managedServerColumns = `id,review_id,project_id,provider_id,name,node_id,resource_id,address,allocation_state,enrollment_state,runtime_state,revision,created_at,updated_at,bootstrap_id,source_snapshot_id`
 
 func scanManagedServer(row scanner) (core.ManagedServer, error) {
 	var m core.ManagedServer
 	var created, updated string
-	err := row.Scan(&m.ID, &m.ReviewID, &m.ProjectID, &m.ProviderID, &m.Name, &m.NodeID, &m.ResourceID, &m.Address, &m.AllocationState, &m.EnrollmentState, &m.RuntimeState, &m.Revision, &created, &updated, &m.BootstrapID)
+	err := row.Scan(&m.ID, &m.ReviewID, &m.ProjectID, &m.ProviderID, &m.Name, &m.NodeID, &m.ResourceID, &m.Address, &m.AllocationState, &m.EnrollmentState, &m.RuntimeState, &m.Revision, &created, &updated, &m.BootstrapID, &m.SourceSnapshotID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -175,7 +175,7 @@ func (s *SQLStore) AcceptInfrastructureReview(ctx context.Context, reviewID, dig
 	if err != nil {
 		return core.ManagedServer{}, core.InfrastructureOperation{}, err
 	}
-	m := core.ManagedServer{BootstrapID: r.BootstrapID, ID: r.ServerID, ReviewID: r.ID, ProjectID: r.ProjectID, ProviderID: r.ProviderID, Name: r.Name, NodeID: "node-" + r.ServerID, AllocationState: "pending", EnrollmentState: "waiting", RuntimeState: "waiting", Revision: 1, CreatedAt: now, UpdatedAt: now}
+	m := core.ManagedServer{SourceSnapshotID: r.SourceSnapshotID, BootstrapID: r.BootstrapID, ID: r.ServerID, ReviewID: r.ID, ProjectID: r.ProjectID, ProviderID: r.ProviderID, Name: r.Name, NodeID: "node-" + r.ServerID, AllocationState: "pending", EnrollmentState: "waiting", RuntimeState: "waiting", Revision: 1, CreatedAt: now, UpdatedAt: now}
 	o := core.InfrastructureOperation{ID: operationID, ServerID: m.ID, ProviderID: m.ProviderID, ActorID: actor, Action: "create", State: "pending", Stage: "submit", ExpiresAt: now.Add(30 * time.Minute), NextAttemptAt: now, RequestDigest: digest, CreatedAt: now, UpdatedAt: now}
 	if r.Digest != digest || r.State != "open" || !r.ExpiresAt.After(now) {
 		return m, o, ErrInfrastructureChanged
@@ -188,12 +188,20 @@ func (s *SQLStore) AcceptInfrastructureReview(ctx context.Context, reviewID, dig
 	if err != nil || n != 1 {
 		return m, o, ErrInfrastructureChanged
 	}
-	if admission != nil {
-		if err = admission(ctx, tx.Tx, core.InfrastructureAcceptance{ActorID: actor, ProjectID: m.ProjectID, ProviderID: m.ProviderID, OperationID: o.ID, ServerID: m.ID, Action: "server.create", DesiredConfig: r.Input}); err != nil {
+	if r.SourceSnapshotID != "" {
+		if r.BootstrapID == "" {
+			return m, o, ErrInfrastructureChanged
+		}
+		if err = s.lockRestorableSnapshot(ctx, tx.Tx, r.SourceSnapshotID, r.ProjectID, r.ProviderID); err != nil {
 			return m, o, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO managed_servers(`+managedServerColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), m.ID, m.ReviewID, m.ProjectID, m.ProviderID, m.Name, m.NodeID, "", "", m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(now), stamp(now), m.BootstrapID)
+	if admission != nil {
+		if err = admission(ctx, tx.Tx, core.InfrastructureAcceptance{ActorID: actor, ProjectID: m.ProjectID, ProviderID: m.ProviderID, OperationID: o.ID, ServerID: m.ID, Action: "server.create", SourceSnapshotID: r.SourceSnapshotID, DesiredConfig: r.Input}); err != nil {
+			return m, o, err
+		}
+	}
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO managed_servers(`+managedServerColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), m.ID, m.ReviewID, m.ProjectID, m.ProviderID, m.Name, m.NodeID, "", "", m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(now), stamp(now), m.BootstrapID, m.SourceSnapshotID)
 	if err != nil {
 		return m, o, err
 	}
@@ -263,7 +271,7 @@ func (s *SQLStore) CheckpointInfrastructureOperation(ctx context.Context, o core
 	return err
 }
 func (s *SQLStore) CancelInfrastructureOperation(ctx context.Context, id string, now time.Time) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE infrastructure_operations SET cancel_requested=TRUE,state=CASE WHEN state='paused' THEN 'pending' ELSE state END,next_attempt_at=?,updated_at=? WHERE id=? AND action='create' AND state IN ('pending','running','paused','unknown')`), stamp(now), stamp(now), id)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE infrastructure_operations SET cancel_requested=TRUE,state=CASE WHEN state='paused' THEN 'pending' ELSE state END,next_attempt_at=?,updated_at=? WHERE id=? AND action IN ('create','snapshot.create') AND state IN ('pending','running','paused','unknown')`), stamp(now), stamp(now), id)
 	if err != nil {
 		return err
 	}
@@ -351,6 +359,12 @@ func (s *SQLStore) infrastructureDeletionBlocked(ctx context.Context, tx *sql.Tx
 		return err
 	}
 	rows.Close()
+	if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM service_resources WHERE server_id=? AND state<>'deleted'`), id).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrInfrastructureProtected
+	}
 	if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM runtime_jobs WHERE server_id=? AND state IN ('pending','running','unknown')`), id).Scan(&count); err != nil {
 		return err
 	}
@@ -413,7 +427,7 @@ func (s *SQLStore) AdoptInfrastructureServer(ctx context.Context, m core.Managed
 		return m, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE infrastructure_operations SET state='adopted',message='Owned resource inspected and adopted.',updated_at=? WHERE server_id=? AND state='unknown' AND lease_until<=? AND (resource_id='' OR resource_id=?)`), stamp(now), m.ID, stamp(now), resource)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE infrastructure_operations SET state='adopted',message='Owned resource inspected and adopted.',updated_at=? WHERE server_id=? AND action='create' AND state='unknown' AND lease_until<=? AND (resource_id='' OR resource_id=?)`), stamp(now), m.ID, stamp(now), resource)
 	if err != nil {
 		return m, err
 	}

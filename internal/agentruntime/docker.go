@@ -90,6 +90,16 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 	var err error
 	var result remoteruntime.Result
 	switch request.Operation {
+	case remoteruntime.RetentionInspect:
+		var items []core.RuntimeRetentionItem
+		items, err = e.executor.InspectRetention(ctx, app, server)
+		if err == nil {
+			result.Retention = &remoteruntime.RetentionResult{Items: items}
+		}
+	case remoteruntime.RetentionPrune:
+		var outcome core.RuntimeRetentionOutcome
+		outcome, err = e.executor.PruneRetention(ctx, app, server, request.Retention.Item)
+		result.Retention = &remoteruntime.RetentionResult{Outcome: &outcome}
 	case remoteruntime.StorageInspect, remoteruntime.StorageDelete:
 		backend := deploy.RuntimeStorage{Run: func(ctx context.Context, _ io.Reader, out io.Writer, name string, args ...string) error {
 			if name != "docker" {
@@ -104,7 +114,19 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 		} else {
 			err = backend.Delete(ctx, server, *request.Storage)
 		}
+	case remoteruntime.ServiceInspect:
+		var inspected core.ServiceResourceInspection
+		inspected, err = e.executor.InspectServiceResource(ctx, request.Service.Request, server)
+		if err == nil {
+			result.ServiceResource = &inspected
+		}
+	case remoteruntime.ServiceDelete:
+		err = e.executor.DeleteServiceResource(ctx, request.Service.Request, server, request.Service.ExpectedResourceID)
 	case remoteruntime.ProvisionService:
+		if request.Service.Request.Password != "" {
+			result.ServiceOutputs, err = e.executor.Provision(ctx, request.Service.Request, request.Service.Docker, server)
+			break
+		}
 		name := deploy.ServiceResourceName(request.Service.Request.Run.ID)
 		var existing string
 		existing, err = e.command(ctx, "ps", "--all", "--filter", "name=^/"+name+"$", "--format", "{{.ID}}")
@@ -182,7 +204,7 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 	default:
 		return failure(runtimecontract.Unsupported, "This agent does not implement the requested operation.")
 	}
-	mutating := request.Operation != runtimecontract.Inspect && request.Operation != runtimecontract.Logs && request.Operation != remoteruntime.StorageInspect
+	mutating := request.Operation != runtimecontract.Inspect && request.Operation != runtimecontract.Logs && request.Operation != remoteruntime.StorageInspect && request.Operation != remoteruntime.RetentionInspect
 	// Stopping the Docker CLI does not prove that the daemon stopped its
 	// mutation. Keep the application locked until a later inspection reconciles
 	// the outcome, including when the CLI returns an ordinary killed-process error.
@@ -197,7 +219,9 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 		if mutating && (classified.Code == runtimecontract.Cancelled || classified.Code == runtimecontract.DeadlineExceeded) {
 			return failure(runtimecontract.Uncertain, "Runtime execution was interrupted; inspect the workload before retrying.")
 		}
-		return failure(classified.Code, request.Redact(classified.Message))
+		failed := failure(classified.Code, request.Redact(classified.Message))
+		failed.Retention = result.Retention
+		return failed
 	}
 	if request.Operation == runtimecontract.Deploy || request.Operation == runtimecontract.Destroy || request.Operation == runtimecontract.Rollback {
 		result.Resources, err = e.resources(ctx, request)

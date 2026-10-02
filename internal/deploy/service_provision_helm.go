@@ -103,6 +103,19 @@ func (e HelmExecutor) Provision(ctx context.Context, req core.ServiceProvisionRe
 	if err != nil {
 		return nil, errors.New("cannot initialize Helm for the service target")
 	}
+	if req.Password != "" {
+		current, err := inspectServiceRelease(ctx, client, req, server, namespace)
+		if err != nil {
+			return nil, err
+		}
+		if current.State == "ready" {
+			return outputs, nil
+		}
+		if current.State != "absent" {
+			return nil, errors.New("owned service release exists but is not ready; inspect it before recovery")
+		}
+		ctx = context.WithValue(ctx, serviceInstallOnlyKey{}, true)
+	}
 	if err := client.UpgradeInstall(ctx, name, app, deployment, values); err != nil {
 		// Helm errors can contain rendered values or credentials. Keep the API error
 		// useful without persisting the provider's raw response.

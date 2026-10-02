@@ -12,6 +12,8 @@ import (
 
 const (
 	ProvisionService runtimecontract.Operation = "provision_service"
+	ServiceInspect   runtimecontract.Operation = "service_inspect"
+	ServiceDelete    runtimecontract.Operation = "service_delete"
 	APIVersion                                 = "dispatch.agent.runtime/v1"
 	MaxPayload                                 = 2 << 20
 	MaxResult                                  = 1 << 20
@@ -24,6 +26,7 @@ var commitPattern = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 var identityPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Request struct {
+	Retention          *RetentionRequest         `json:"retention,omitempty"`
 	Storage            *core.StorageResource     `json:"storage,omitempty"`
 	APIVersion         string                    `json:"apiVersion"`
 	Operation          runtimecontract.Operation `json:"operation"`
@@ -57,7 +60,9 @@ type LeasedJob struct {
 }
 
 type Result struct {
-	Route *core.ApplicationRoute `json:"route,omitempty"`
+	ServiceResource *core.ServiceResourceInspection `json:"serviceResource,omitempty"`
+	Retention       *RetentionResult                `json:"retention,omitempty"`
+	Route           *core.ApplicationRoute          `json:"route,omitempty"`
 
 	Health         *core.DeploymentHealth       `json:"health,omitempty"`
 	Storage        []core.StorageObservation    `json:"storage"`
@@ -119,8 +124,13 @@ func (r Request) Validate() error {
 	if r.Application.BuildType != core.BuildTypeDockerfile && r.Application.BuildType != core.BuildTypeCompose {
 		return errors.New("remote runtime supports Dockerfile and Compose workloads")
 	}
+	if r.Operation != RetentionInspect && r.Operation != RetentionPrune && r.Retention != nil {
+		return errors.New("unexpected retention inputs")
+	}
 	switch r.Operation {
-	case ProvisionService:
+	case RetentionInspect, RetentionPrune:
+		return r.validateRetention()
+	case ProvisionService, ServiceInspect, ServiceDelete:
 		if err := r.validateService(); err != nil {
 			return err
 		}

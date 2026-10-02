@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
@@ -209,6 +210,9 @@ func (s *SQLStore) ApplyInfrastructureQuota(ctx context.Context, tx *sql.Tx, c c
 // InfrastructureQuotaAdmission is shared by API acceptance and the controller's
 // reconciler so terminal evidence and reservation accounting commit together.
 func (s *SQLStore) InfrastructureQuotaAdmission(ctx context.Context, tx *sql.Tx, in core.InfrastructureAcceptance) error {
+	if strings.HasPrefix(in.Action, "snapshot.") {
+		return s.applySnapshotQuota(ctx, tx, in)
+	}
 	var desired struct {
 		Region string `json:"region"`
 		Size   string `json:"size"`

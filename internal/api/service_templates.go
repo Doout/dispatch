@@ -138,6 +138,19 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Invalid provisioner target", err.Error())
 		return
 	}
+	r, receipt, proceed := a.reserveMutation(w, r, projectID, "service.provision", struct {
+		TemplateID string
+		Input      serviceProvisionRequest
+	}{resource.ID, input}, "service_provision", resource.ID)
+	if !proceed {
+		return
+	}
+	acceptedReceipt := false
+	defer func() {
+		if !acceptedReceipt {
+			a.failMutationAcceptance(r.Context(), 422, "Service acceptance was rejected. Inspect the template, inputs and original run before retrying.")
+		}
+	}()
 	services, err := a.store.ListServices(r.Context(), projectID)
 	if err != nil {
 		a.internal(w, err)
@@ -160,6 +173,7 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	dependencies := []string{}
 	values := map[string]string{}
 	for name := range input.Inputs {
 		if _, ok := spec.Inputs[name]; !ok {
@@ -183,6 +197,7 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 				problem(w, 400, "Invalid service input", "Choose an available service in this project.")
 				return
 			}
+			dependencies = append(dependencies, item.ID)
 			resolved, err := (serviceconn.Resolver{Vault: a.eventConfig.Vault, Secrets: a.secretResolver}).Resolve(r.Context(), item)
 			if err != nil {
 				problem(w, 400, "Service unavailable", "The selected service credentials could not be resolved.")
@@ -193,8 +208,31 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		values[name] = value
 	}
 	run := core.ServiceProvisionRun{ID: ulid.Make().String(), TemplateID: resource.ID, ProjectID: projectID, ServiceName: input.Name, State: "queued", Target: target, CreatedAt: time.Now().UTC()}
+	if receipt != nil {
+		run.ID = receipt.OperationID
+	}
 	if run.Target != nil {
 		run.Target.ResourceName = deploy.ServiceResourceName(run.ID)
+	}
+	if run.Target != nil {
+		if err := a.captureServiceResource(r.Context(), resource, *spec, input.Description, values, run, dependencies); err != nil {
+			problem(w, 409, "Service acceptance unavailable", "The service name or dependencies changed, or encrypted recovery storage is unavailable.")
+			return
+		}
+		acceptedReceipt = true
+		core.RecordAcceptedOperation(r.Context(), run.ID)
+		go a.executeOwnedServiceResource(run.ID, true)
+		if receipt != nil {
+			saved, err := a.store.(store.MutationReceiptStore).GetMutationReceipt(r.Context(), receipt.ID)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			a.writeMutationReceipt(w, r, saved, 202)
+		} else {
+			writeJSON(w, 202, run)
+		}
+		return
 	}
 	if err := a.store.CreateServiceProvisionRun(r.Context(), run); err != nil {
 		activeRuns, lookupErr := a.store.ListServiceProvisionRuns(r.Context(), projectID)
@@ -209,8 +247,19 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	acceptedReceipt = true
+	core.RecordAcceptedOperation(r.Context(), run.ID)
 	go a.executeServiceProvision(resource, *spec, input.Description, values, run)
-	writeJSON(w, http.StatusAccepted, run)
+	if receipt != nil {
+		saved, err := a.store.(store.MutationReceiptStore).GetMutationReceipt(r.Context(), receipt.ID)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		a.writeMutationReceipt(w, r, saved, 202)
+	} else {
+		writeJSON(w, http.StatusAccepted, run)
+	}
 }
 
 func (a *API) executeServiceProvision(resource core.WorkflowResource, spec workflow.ServiceTemplateSpec, description string, inputs map[string]string, run core.ServiceProvisionRun) {
