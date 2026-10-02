@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,8 +17,12 @@ import (
 	"github.com/doout/dispatch/internal/runtimecontract/conformance"
 	"github.com/oklog/ulid/v2"
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/release"
+	"helm.sh/helm/v3/pkg/storage/driver"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -71,59 +76,9 @@ func TestKubernetesLifecycleIntegration(t *testing.T) {
 	}
 	t.Cleanup(cleanup)
 	t.Logf("Validated isolated Kubernetes %s", evidence.Version)
-	const image = "busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
 	fixture := func(t *testing.T) (core.App, core.Deployment, func() *sdkHelmClient) {
 		name := "workload-" + strings.ToLower(ulid.Make().String())
-		chartPath := t.TempDir()
-		if err := os.Mkdir(filepath.Join(chartPath, "templates"), 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: lifecycle\nversion: 1.0.0\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		manifest := `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ .Release.Name }}
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: {{ .Release.Name }}}
-  template:
-    metadata:
-      labels: {app: {{ .Release.Name }}}
-      annotations:
-        test-revision: {{ .Values.revision | default "first" | quote }}
-    spec:
-      containers:
-      - name: app
-        image: ` + image + `
-        command: [sh, -c, "mkdir -p /www; echo ready > /www/index.html; echo deployment-ready; exec httpd -f -p 8080 -h /www"]
-        readinessProbe:
-          httpGet: {path: /, port: 8080}
-          periodSeconds: 1
-        {{- if .Values.retainedData }}
-        volumeMounts:
-        - {name: retained, mountPath: /data}
-      volumes:
-      - name: retained
-        persistentVolumeClaim: {claimName: {{ .Release.Name }}-data}
-        {{- end }}
-{{- if .Values.retainedData }}
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ .Release.Name }}-data
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests: {storage: 1Mi}
-{{- end }}
-`
-		if err := os.WriteFile(filepath.Join(chartPath, "templates", "workload.yaml"), []byte(manifest), 0600); err != nil {
-			t.Fatal(err)
-		}
+		chartPath := writeKubernetesIntegrationChart(t)
 		app := core.App{ID: name, ProjectID: "integration", BuildType: core.BuildTypeHelm, HelmRelease: name, HelmNamespace: namespace, HelmChart: chartPath}
 		deployment := core.Deployment{ID: "accepted-" + name, CommitSHA: strings.Repeat("a", 40), SpecDigest: strings.Repeat("b", 64)}
 		deployment.Health.Policy.TimeoutSeconds = 90
@@ -170,7 +125,7 @@ spec:
 			t.Fatal(err)
 		}
 		observed, err := admin.AppsV1().Deployments(namespace).Get(ctx, app.HelmRelease, metav1.GetOptions{})
-		if err != nil || observed.Status.ReadyReplicas != 1 || observed.Spec.Template.Spec.Containers[0].Image != image {
+		if err != nil || observed.Status.ReadyReplicas != 1 || observed.Spec.Template.Spec.Containers[0].Image != kubernetesIntegrationImage {
 			t.Fatal("ready immutable workload missing", err)
 		}
 		var provenance helmDeploymentMetadata
@@ -211,6 +166,187 @@ spec:
 			t.Fatal(err)
 		}
 	})
+	t.Run("cancellation after partial apply recovers retained release", func(t *testing.T) {
+		app, deployment, client := fixture(t)
+		if err := client().UpgradeInstall(ctx, app.HelmRelease, app, deployment, nil); err != nil {
+			t.Fatal(err)
+		}
+		interrupted := deployment
+		interrupted.ID = "interrupted-" + app.ID
+		interrupted.Health.Policy.TimeoutSeconds = 20
+		started := time.Now()
+		operation, stop := context.WithCancel(ctx)
+		defer stop()
+		result := make(chan error, 1)
+		candidate := client()
+		go func() {
+			result <- candidate.UpgradeInstall(operation, app.HelmRelease, app, interrupted, map[string]interface{}{
+				"revision": "interrupted", "readinessPath": "/not-ready", "partialResource": true, "partialPod": true,
+			})
+		}()
+		// Observe both writes before cancellation, so this exercises partial apply,
+		// rather than only rejecting an already-cancelled request.
+		err := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, 45*time.Second, true, func(ctx context.Context) (bool, error) {
+			observed, err := admin.AppsV1().Deployments(namespace).Get(ctx, app.HelmRelease, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			_, err = admin.CoreV1().ConfigMaps(namespace).Get(ctx, app.HelmRelease+"-partial", metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			_, err = admin.CoreV1().Pods(namespace).Get(ctx, app.HelmRelease+"-partial", metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return observed.Spec.Template.Annotations["test-revision"] == "interrupted" && err == nil, err
+		})
+		stop()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatal("candidate did not report the requested cancellation", err)
+			}
+		case <-time.After(2 * time.Minute):
+			t.Fatal("cancelled upgrade did not complete atomic rollback")
+		}
+		if err != nil {
+			t.Fatal("candidate never reached partial apply", err)
+		}
+		observed, err := admin.AppsV1().Deployments(namespace).Get(ctx, app.HelmRelease, metav1.GetOptions{})
+		if err != nil || observed.Spec.Template.Annotations["test-revision"] != "first" || observed.Status.ReadyReplicas != 1 {
+			t.Fatal("healthy retained revision was not restored", err)
+		}
+		if _, err := admin.CoreV1().ConfigMaps(namespace).Get(ctx, app.HelmRelease+"-partial", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatal("partial candidate resource survived rollback", err)
+		}
+		if _, err := admin.CoreV1().Pods(namespace).Get(ctx, app.HelmRelease+"-partial", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatal("partial candidate pod survived rollback", err)
+		}
+		history, err := action.NewHistory(client().configuration).Run(app.HelmRelease)
+		if err != nil || len(history) != 3 || history[len(history)-1].Info.Status != release.StatusDeployed {
+			t.Fatal("retained history did not record recovery", err)
+		}
+		failed := false
+		for _, revision := range history {
+			failed = failed || revision.Info.Status == release.StatusFailed
+		}
+		if !failed {
+			t.Fatal("interrupted revision missing from retained history")
+		}
+		deployment.ID = "recovered-" + app.ID
+		if err := client().UpgradeInstall(ctx, app.HelmRelease, app, deployment, map[string]interface{}{"revision": "recovered"}); err != nil {
+			t.Fatal("fresh client could not continue after interrupted upgrade", err)
+		}
+		recoveredHistory, err := action.NewHistory(client().configuration).Run(app.HelmRelease)
+		if err != nil || len(recoveredHistory) != 4 {
+			t.Fatalf("unexpected recovered history: revisions=%d err=%v", len(recoveredHistory), err)
+		}
+		// Wait past the cancelled attempt's original readiness deadline. A late
+		// SDK worker must not add another rollback after recovery has succeeded.
+		settled := time.NewTimer(time.Until(started.Add(35 * time.Second)))
+		defer settled.Stop()
+		select {
+		case <-settled.C:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		history, err = action.NewHistory(client().configuration).Run(app.HelmRelease)
+		if err != nil || len(history) != len(recoveredHistory) {
+			t.Fatalf("cancelled attempt changed recovered history after returning: before=%d after=%d err=%v", len(recoveredHistory), len(history), err)
+		}
+		observed, err = admin.AppsV1().Deployments(namespace).Get(ctx, app.HelmRelease, metav1.GetOptions{})
+		if err != nil || observed.Spec.Template.Annotations["test-revision"] != "recovered" || observed.Status.ReadyReplicas != 1 {
+			t.Fatal("late cancelled work changed the recovered deployment", err)
+		}
+		if err := client().Uninstall(ctx, app.HelmRelease, app); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("cancelled partial installation leaves no late work", func(t *testing.T) {
+		app, deployment, client := fixture(t)
+		deployment.Health.Policy.TimeoutSeconds = 20
+		started := time.Now()
+		operation, stop := context.WithCancel(ctx)
+		defer stop()
+		result := make(chan error, 1)
+		candidate := client()
+		go func() {
+			result <- candidate.UpgradeInstall(operation, app.HelmRelease, app, deployment, map[string]interface{}{
+				"readinessPath": "/not-ready", "partialResource": true, "partialPod": true,
+			})
+		}()
+		applied := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, 45*time.Second, true, func(ctx context.Context) (bool, error) {
+			_, err := admin.AppsV1().Deployments(namespace).Get(ctx, app.HelmRelease, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			_, err = admin.CoreV1().Pods(namespace).Get(ctx, app.HelmRelease+"-partial", metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return err == nil, err
+		})
+		stop()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatal("partial install did not report the requested cancellation", err)
+			}
+		case <-time.After(2 * time.Minute):
+			t.Fatal("partial install did not finish atomic cleanup")
+		}
+		if applied != nil {
+			t.Fatal("initial install never reached partial apply", applied)
+		}
+		if _, err := action.NewHistory(client().configuration).Run(app.HelmRelease); !errors.Is(err, driver.ErrReleaseNotFound) {
+			t.Fatal("cancelled initial release was retained", err)
+		}
+		if _, err := admin.AppsV1().Deployments(namespace).Get(ctx, app.HelmRelease, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatal("partial initial deployment survived cancellation", err)
+		}
+		if _, err := admin.CoreV1().Pods(namespace).Get(ctx, app.HelmRelease+"-partial", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatal("partial initial pod survived cancellation", err)
+		}
+		if _, err := admin.CoreV1().ConfigMaps(namespace).Get(ctx, app.HelmRelease+"-partial", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatal("partial initial configmap survived cancellation", err)
+		}
+		deployment.ID = "after-cancelled-install-" + app.ID
+		deployment.Health.Policy.TimeoutSeconds = 90
+		if err := client().UpgradeInstall(ctx, app.HelmRelease, app, deployment, nil); err != nil {
+			t.Fatal("fresh client could not install after cancellation", err)
+		}
+		settled := time.NewTimer(time.Until(started.Add(35 * time.Second)))
+		defer settled.Stop()
+		select {
+		case <-settled.C:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		history, err := action.NewHistory(client().configuration).Run(app.HelmRelease)
+		if err != nil || len(history) != 1 || history[0].Info.Status != release.StatusDeployed {
+			t.Fatal("cancelled install changed replacement history after returning", err)
+		}
+		observed, err := admin.AppsV1().Deployments(namespace).Get(ctx, app.HelmRelease, metav1.GetOptions{})
+		if err != nil || observed.Status.ReadyReplicas != 1 {
+			t.Fatal("cancelled install removed the replacement workload", err)
+		}
+		var provenance helmDeploymentMetadata
+		if err := json.Unmarshal([]byte(observed.Annotations[helmProvenanceAnnotation]), &provenance); err != nil || provenance.DeploymentID != deployment.ID {
+			t.Fatal("replacement deployment provenance changed", err)
+		}
+		if err := client().Uninstall(ctx, app.HelmRelease, app); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("cleanup retains persistent volume claim", func(t *testing.T) {
 		app, deployment, client := fixture(t)
 		if err := client().UpgradeInstall(ctx, app.HelmRelease, app, deployment, map[string]interface{}{"retainedData": true}); err != nil {
@@ -224,4 +360,86 @@ spec:
 			t.Fatal("protected data disappeared", err)
 		}
 	})
+}
+
+const kubernetesIntegrationImage = "busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
+
+func writeKubernetesIntegrationChart(t *testing.T) string {
+	t.Helper()
+	chartPath := t.TempDir()
+	if err := os.Mkdir(filepath.Join(chartPath, "templates"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: lifecycle\nversion: 1.0.0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {app: {{ .Release.Name }}}
+      annotations:
+        test-revision: {{ .Values.revision | default "first" | quote }}
+    spec:
+      containers:
+      - name: app
+        image: ` + kubernetesIntegrationImage + `
+        command: [sh, -c, "mkdir -p /www; echo ready > /www/index.html; if [ -d /data ]; then test -f /data/proof || echo {{ .Values.dataProof | default "retained-proof" }} > /data/proof; cat /data/proof; fi; echo deployment-ready; exec httpd -f -p 8080 -h /www"]
+        readinessProbe:
+          httpGet: {path: {{ .Values.readinessPath | default "/" | quote }}, port: 8080}
+          periodSeconds: 1
+        {{- if .Values.retainedData }}
+        volumeMounts:
+        - {name: retained, mountPath: /data}
+      volumes:
+      - name: retained
+        persistentVolumeClaim: {claimName: {{ .Release.Name }}-data}
+        {{- end }}
+{{- if .Values.retainedData }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Mi}
+{{- end }}
+{{- if .Values.partialResource }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-partial
+data:
+  revision: interrupted
+{{- end }}
+{{- if .Values.partialPod }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-partial
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: partial
+    image: ` + kubernetesIntegrationImage + `
+    command: [sh, -c, "sleep 300"]
+    readinessProbe:
+      exec: {command: [sh, -c, "exit 1"]}
+      periodSeconds: 1
+{{- end }}
+`
+	if err := os.WriteFile(filepath.Join(chartPath, "templates", "workload.yaml"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return chartPath
 }
