@@ -285,3 +285,21 @@ func TestWorkflowChecksRejectChangedAppAndForeignSavedCheck(t *testing.T) {
 		t.Fatalf("reconfigured App got old report: %+v", r)
 	}
 }
+
+func TestWorkflowChecksRetryUpdateOnSameSavedID(t *testing.T) {
+	f := newCheckFixture(t)
+	first := f.step(t)
+	f.revision.State = "cancelled"
+	if err := f.a.store.UpdateWorkflowRevision(context.Background(), f.revision); err != nil {
+		t.Fatal(err)
+	}
+	f.lost = true
+	pending := f.step(t)
+	if pending.Complete || pending.CheckID != first.CheckID || pending.State != "retrying" || f.posts != 1 {
+		t.Fatalf("lost update reset identity: %+v", pending)
+	}
+	done := f.step(t)
+	if !done.Complete || done.Conclusion != "cancelled" || done.CheckID != first.CheckID || f.posts != 1 || f.patches != 2 {
+		t.Fatalf("terminal update not recovered: %+v", done)
+	}
+}

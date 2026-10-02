@@ -65,6 +65,15 @@ func checkRunFailure(err error, creating bool) error {
 	return &CheckRunError{Message: "GitHub check reporting is unavailable. Dispatch will retry reconciliation without changing the workflow outcome.", CreateUncertain: creating}
 }
 
+func (m *Manager) checkRunRequestFailure(r core.WorkflowCheckReport, err error, creating bool) error {
+	var response *responseError
+	if errors.As(err, &response) && (response.StatusCode == 401 || response.StatusCode == 403) {
+		// A repaired App grant needs a newly issued installation token.
+		m.Invalidate(r.GitHubAppID)
+	}
+	return checkRunFailure(err, creating)
+}
+
 func (m *Manager) checkRunAccess(ctx context.Context, r core.WorkflowCheckReport) (core.GitHubAppConnection, string, string, error) {
 	connection, err := m.Store.GetGitHubApp(ctx, r.GitHubAppID)
 	if err != nil {
@@ -82,7 +91,7 @@ func (m *Manager) checkRunAccess(ctx context.Context, r core.WorkflowCheckReport
 	}
 	token, err := m.RepositoryToken(ctx, r.GitHubAppID, repository)
 	if err != nil {
-		return connection, "", "", checkRunFailure(err, false)
+		return connection, "", "", m.checkRunRequestFailure(r, err, false)
 	}
 	return connection, repository, token, nil
 }
@@ -102,7 +111,7 @@ func (m *Manager) FindCheckRun(ctx context.Context, r core.WorkflowCheckReport) 
 	if r.CheckID > 0 {
 		var found CheckRun
 		if err := m.request(ctx, http.MethodGet, fmt.Sprintf("%s/check-runs/%d", base, r.CheckID), token, nil, &found, connection.PrivateNetworkID); err != nil {
-			return found, checkRunFailure(err, false)
+			return found, m.checkRunRequestFailure(r, err, false)
 		}
 		if !checkRunMatches(found, r) {
 			return CheckRun{}, &CheckRunError{Message: "The saved GitHub check no longer matches its accepted App, commit or context."}
@@ -116,7 +125,7 @@ func (m *Manager) FindCheckRun(ctx context.Context, r core.WorkflowCheckReport) 
 		query := url.Values{"filter": {"all"}, "per_page": {"100"}, "page": {fmt.Sprint(page)}, "check_name": {r.Name}, "app_id": {fmt.Sprint(r.AppID)}}
 		endpoint := fmt.Sprintf("%s/commits/%s/check-runs?%s", base, url.PathEscape(r.CommitSHA), query.Encode())
 		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
-			return CheckRun{}, checkRunFailure(err, false)
+			return CheckRun{}, m.checkRunRequestFailure(r, err, false)
 		}
 		for _, run := range response.Runs {
 			if checkRunMatches(run, r) {
@@ -146,7 +155,7 @@ func (m *Manager) PublishCheckRun(ctx context.Context, r core.WorkflowCheckRepor
 	}
 	var response CheckRun
 	if err := m.request(ctx, method, endpoint, token, payload, &response, connection.PrivateNetworkID); err != nil {
-		return response, checkRunFailure(err, create)
+		return response, m.checkRunRequestFailure(r, err, create)
 	}
 	if !checkRunMatches(response, r) {
 		return CheckRun{}, &CheckRunError{Message: "GitHub returned a check with a different identity. Dispatch will reconcile the accepted check before continuing.", CreateUncertain: create}
