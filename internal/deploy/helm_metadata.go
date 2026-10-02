@@ -21,15 +21,17 @@ import (
 const helmProvenanceAnnotation = "dispatch.app/provenance"
 
 type helmDeploymentMetadata struct {
-	HealthPolicy   core.HealthPolicy   `json:"-"`
-	HealthPort     int                 `json:"-"`
-	HealthDomain   string              `json:"-"`
-	ProjectID      string              `json:"projectId,omitempty"`
-	AppID          string              `json:"appId"`
-	DeploymentID   string              `json:"deploymentId"`
-	ChartCommitSHA string              `json:"chartCommitSha,omitempty"`
-	SourceRepo     string              `json:"sourceRepo,omitempty"`
-	Provenance     core.HelmProvenance `json:"provenance"`
+	TargetNamespace string              `json:"-"`
+	HealthPolicy    core.HealthPolicy   `json:"-"`
+	HealthPort      int                 `json:"-"`
+	HealthDomain    string              `json:"-"`
+	ProjectID       string              `json:"projectId,omitempty"`
+	AppID           string              `json:"appId"`
+	DeploymentID    string              `json:"deploymentId"`
+	SpecDigest      string              `json:"specDigest,omitempty"`
+	ChartCommitSHA  string              `json:"chartCommitSha,omitempty"`
+	SourceRepo      string              `json:"sourceRepo,omitempty"`
+	Provenance      core.HelmProvenance `json:"provenance"`
 }
 
 func newHelmDeploymentMetadata(app core.App, deployment core.Deployment) helmDeploymentMetadata {
@@ -43,7 +45,7 @@ func newHelmDeploymentMetadata(app core.App, deployment core.Deployment) helmDep
 		policy = app.HealthPolicy
 	}
 	policy, _ = core.NormalizeHealthPolicy(policy)
-	return helmDeploymentMetadata{HealthPolicy: policy, HealthPort: app.ContainerPort, HealthDomain: app.Domain, ProjectID: app.ProjectID, AppID: app.ID, DeploymentID: deployment.ID, ChartCommitSHA: deployment.CommitSHA,
+	return helmDeploymentMetadata{HealthPolicy: policy, HealthPort: app.ContainerPort, HealthDomain: app.Domain, ProjectID: app.ProjectID, AppID: app.ID, DeploymentID: deployment.ID, SpecDigest: deployment.SpecDigest, ChartCommitSHA: deployment.CommitSHA,
 		SourceRepo: repository, Provenance: app.HelmProvenance}
 }
 
@@ -99,6 +101,11 @@ func (m helmDeploymentMetadata) Run(rendered *bytes.Buffer) (*bytes.Buffer, erro
 		if object == nil {
 			object = map[string]any{}
 			document["metadata"] = object
+		}
+		if m.TargetNamespace != "" {
+			if err := enforceHelmNamespace(document, object, m.TargetNamespace); err != nil {
+				return nil, err
+			}
 		}
 		labels, _ := object["labels"].(map[string]any)
 		if labels == nil {

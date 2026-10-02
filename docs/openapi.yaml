@@ -6109,6 +6109,15 @@ components:
     KubernetesServerConfig:
       type: object
       properties:
+        validation:
+          type: object
+          readOnly: true
+          description: Identity and version checked at registration. Updating credentials must preserve the cluster and namespace identities.
+          properties:
+            clusterUid: { type: string }
+            namespaceUid: { type: string }
+            version: { type: string }
+            checkedAt: { type: string, format: date-time }
         source:
           type: string
           enum: [stored, path, openshift]

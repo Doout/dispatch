@@ -12,6 +12,8 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 const (
@@ -159,6 +161,13 @@ func validPEMCertificates(contents []byte) bool {
 // credentials are materialized to a private temporary directory for the
 // duration of one operation; mounted kubeconfig paths pass through unchanged.
 func Prepare(config core.KubernetesServerConfig) (core.KubernetesServerConfig, func(), error) {
+	if config.Validation != nil {
+		var err error
+		config, err = freezeTargetInputs(config)
+		if err != nil {
+			return config, func() {}, err
+		}
+	}
 	if strings.TrimSpace(config.KubeconfigData) == "" {
 		return config, func() {}, nil
 	}
@@ -187,6 +196,55 @@ func Prepare(config core.KubernetesServerConfig) (core.KubernetesServerConfig, f
 	}
 	config.KubeconfigPath = path
 	return config, cleanup, nil
+}
+
+func freezeTargetInputs(config core.KubernetesServerConfig) (core.KubernetesServerConfig, error) {
+	fail := errors.New("cannot read the selected Kubernetes credentials")
+	contents := []byte(config.KubeconfigData)
+	if len(contents) == 0 {
+		file, err := os.Open(config.KubeconfigPath)
+		if err != nil {
+			return config, fail
+		}
+		defer file.Close()
+		contents, err = io.ReadAll(io.LimitReader(file, MaxKubeconfigBytes+1))
+		if err != nil {
+			return config, fail
+		}
+	}
+	if len(contents) > MaxKubeconfigBytes {
+		return config, fail
+	}
+	document, err := clientcmd.Load(contents)
+	if err != nil {
+		return config, fail
+	}
+	document.CurrentContext = config.Context
+	if err := clientcmdapi.MinifyConfig(document); err != nil {
+		return config, fail
+	}
+	for _, user := range document.AuthInfos {
+		if user.Exec != nil || user.AuthProvider != nil || user.TokenFile != "" {
+			return config, errors.New("registered targets require embedded credentials without plugins or token files")
+		}
+		user.LocationOfOrigin = config.KubeconfigPath
+	}
+	for _, cluster := range document.Clusters {
+		cluster.LocationOfOrigin = config.KubeconfigPath
+		if config.CertificateAuthorityData != "" {
+			cluster.CertificateAuthority, cluster.InsecureSkipTLSVerify = "", false
+			cluster.CertificateAuthorityData = []byte(config.CertificateAuthorityData)
+		}
+	}
+	if err := clientcmdapi.FlattenConfig(document); err != nil {
+		return config, fail
+	}
+	contents, err = clientcmd.Write(*document)
+	if err != nil || len(contents) > MaxKubeconfigBytes {
+		return config, fail
+	}
+	config.KubeconfigData = string(contents)
+	return config, nil
 }
 
 func withCertificateAuthority(contents []byte, selectedContext, caPath string) ([]byte, error) {

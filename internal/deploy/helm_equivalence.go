@@ -262,7 +262,7 @@ func currentComparedRelease(history []*helmrelease.Release, app core.App, server
 }
 
 func renderHelmEquivalent(ctx context.Context, app core.App, server core.Server, revision string, previous core.Deployment) (bool, error) {
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return false, errors.New("comparison target unavailable")
 	}
@@ -310,7 +310,7 @@ func renderHelmEquivalent(ctx context.Context, app core.App, server core.Server,
 		return false, errors.New("comparison target unavailable")
 	}
 	sdk := client.(*sdkHelmClient)
-	getter := driftRESTGetter{RESTClientGetter: sdk.settings.RESTClientGetter(), ctx: ctx}
+	getter := driftRESTGetter{RESTClientGetter: scopedHelmGetter(sdk.settings.RESTClientGetter(), sdk.server), ctx: ctx}
 	if sdk.configuration.Init(getter, helmNamespace(app, server), os.Getenv("HELM_DRIVER"), func(string, ...any) {}) != nil {
 		return false, errors.New("comparison target unavailable")
 	}

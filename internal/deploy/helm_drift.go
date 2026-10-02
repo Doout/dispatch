@@ -24,16 +24,16 @@ type HelmDriftRelease struct {
 }
 
 func ReadHelmDriftRelease(ctx context.Context, server core.Server, namespace, name string, deployment core.Deployment) (HelmDriftRelease, error) {
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return HelmDriftRelease{}, errors.New("The deployment target credentials are unavailable.")
 	}
 	defer cleanup()
 	settings := cli.New()
-	settings.KubeConfig = prepared.Kubernetes.KubeconfigPath
-	settings.KubeContext = prepared.Kubernetes.Context
+	selectHelmCredentials(settings, prepared)
+	settings.SetNamespace(namespace)
 	cfg := new(action.Configuration)
-	getter := driftRESTGetter{RESTClientGetter: settings.RESTClientGetter(), ctx: ctx}
+	getter := driftRESTGetter{RESTClientGetter: scopedHelmGetter(settings.RESTClientGetter(), prepared), ctx: ctx}
 	if err = cfg.Init(getter, namespace, os.Getenv("HELM_DRIVER"), func(string, ...any) {}); err != nil {
 		return HelmDriftRelease{}, errors.New("Cannot initialize the Helm release reader.")
 	}

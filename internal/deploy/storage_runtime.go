@@ -121,12 +121,12 @@ func (r RuntimeStorage) Inspect(ctx context.Context, server core.Server) ([]core
 	return items, nil
 }
 
-func (r RuntimeStorage) kube(server core.Server) (kubernetes.Interface, func(), error) {
+func (r RuntimeStorage) kube(ctx context.Context, server core.Server) (kubernetes.Interface, func(), error) {
 	if r.Kubernetes != nil {
 		client, err := r.Kubernetes(server)
 		return client, func() {}, err
 	}
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -139,7 +139,7 @@ func (r RuntimeStorage) kube(server core.Server) (kubernetes.Interface, func(), 
 }
 
 func (r RuntimeStorage) inspectKubernetes(ctx context.Context, server core.Server) ([]core.StorageObservation, error) {
-	client, cleanup, err := r.kube(server)
+	client, cleanup, err := r.kube(ctx, server)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func (r RuntimeStorage) Delete(ctx context.Context, server core.Server, item cor
 		_, err = r.docker(ctx, "volume", "rm", item.Name)
 		return err // Never force removal of in-use data.
 	case "kubernetes_pvc":
-		client, cleanup, err := r.kube(server)
+		client, cleanup, err := r.kube(ctx, server)
 		if err != nil {
 			return err
 		}

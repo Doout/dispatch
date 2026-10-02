@@ -1588,3 +1588,5 @@ CREATE TABLE workflow_check_reports (
 );
 CREATE INDEX workflow_check_pending ON workflow_check_reports(complete,next_attempt_at,lease_until);
 CREATE INDEX workflow_check_revision ON workflow_check_reports(revision_id);
+-- dispatch:migration 092_kubernetes_validation
+ALTER TABLE servers ADD COLUMN kube_validation TEXT NOT NULL DEFAULT 'null';

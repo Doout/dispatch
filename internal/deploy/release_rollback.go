@@ -74,7 +74,7 @@ func (s *Service) prepareRollback(ctx context.Context, id string) (rollbackPrepa
 	if helmNamespace(app, server) != d.Snapshot.Namespace || helmReleaseName(app) != d.Snapshot.Release {
 		return out, errors.New("The application's release name or namespace changed. Historical rollback cannot change targets.")
 	}
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return out, errors.New("Target credentials are unavailable.")
 	}
@@ -89,7 +89,7 @@ func (s *Service) prepareRollback(ctx context.Context, id string) (rollbackPrepa
 		return out, errors.New("Cannot initialize retained release access.")
 	}
 	client := genericClient.(*sdkHelmClient)
-	getter := driftRESTGetter{RESTClientGetter: client.settings.RESTClientGetter(), ctx: ctx}
+	getter := driftRESTGetter{RESTClientGetter: scopedHelmGetter(client.settings.RESTClientGetter(), client.server), ctx: ctx}
 	if client.configuration.Init(getter, d.Snapshot.Namespace, os.Getenv("HELM_DRIVER"), func(string, ...any) {}) != nil {
 		return out, errors.New("Cannot read retained Helm releases.")
 	}
@@ -98,11 +98,16 @@ func (s *Service) prepareRollback(ctx context.Context, id string) (rollbackPrepa
 		return out, errors.New("Retained Helm history is unavailable. Check target access and retention.")
 	}
 	latestRevision := 0
+	var latestRelease *helmrelease.Release
 	for _, item := range history {
 		if item != nil && item.Info != nil && item.Version > latestRevision {
 			latestRevision = item.Version
+			latestRelease = item
 			out.runtimeDigest = fmt.Sprintf("helm:%d:%s", item.Version, item.Info.Status)
 		}
+	}
+	if err := requireHelmReleaseOwner(latestRelease, app, d.Snapshot.Namespace); err != nil {
+		return out, err
 	}
 	bindings, err := s.store.GetDeploymentServiceBindings(ctx, d.ID)
 	if err != nil {
@@ -121,6 +126,16 @@ func (s *Service) prepareRollback(ctx context.Context, id string) (rollbackPrepa
 	}
 	if selected == nil || selected.Chart == nil {
 		return out, errors.New("The original chart artifact is no longer retained.")
+	}
+	if err := requireHelmReleaseOwner(selected, app, d.Snapshot.Namespace); err != nil {
+		return out, err
+	}
+	if server.Kubernetes.Validation != nil {
+		for _, retained := range []*helmrelease.Release{latestRelease, selected} {
+			if _, err := (helmDeploymentMetadata{TargetNamespace: server.Kubernetes.Namespace}).Run(bytes.NewBufferString(retained.Manifest)); err != nil {
+				return out, err
+			}
+		}
 	}
 	if len(bindings) != len(d.Snapshot.ServiceBindings) {
 		return out, errors.New("Captured service binding inputs are incomplete.")
