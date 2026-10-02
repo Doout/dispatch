@@ -37,6 +37,9 @@ func (s *SQLStore) CreateRuntimeJob(ctx context.Context, j core.RuntimeJob) erro
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.checkPreviewRuntime(ctx, tx, &j); err != nil {
+		return err
+	}
 	if err = s.checkTemporaryRuntime(ctx, tx, &j); err != nil {
 		return err
 	}
@@ -100,11 +103,11 @@ func (s *SQLStore) LeaseRuntimeJob(ctx context.Context, node string, now time.Ti
 			return nil, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state=CASE WHEN state='pending' AND attempt=0 AND EXISTS (SELECT 1 FROM temporary_environments e WHERE e.app_id=runtime_jobs.app_id) THEN 'cancelled' ELSE 'unknown' END,encrypted_request='',lease_token='',message='The runtime deadline expired; inspect the target before retrying.',updated_at=? WHERE node_id=? AND state IN ('pending','running') AND expires_at<=?`), stamp(now), node, stamp(now))
+	_, err = tx.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state=CASE WHEN state='pending' AND attempt=0 AND (EXISTS (SELECT 1 FROM temporary_environments e WHERE e.app_id=runtime_jobs.app_id) OR EXISTS(SELECT 1 FROM workflow_preview_apps p WHERE p.app_id=runtime_jobs.app_id)) THEN 'cancelled' ELSE 'unknown' END,encrypted_request='',lease_token='',message='The runtime deadline expired; inspect the target before retrying.',updated_at=? WHERE node_id=? AND state IN ('pending','running') AND expires_at<=?`), stamp(now), node, stamp(now))
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT ` + runtimeJobColumns + ` FROM runtime_jobs WHERE node_id=? AND NOT EXISTS (SELECT 1 FROM runtime_jobs active WHERE active.node_id=runtime_jobs.node_id AND active.state='running' AND active.lease_until>?) AND state IN ('pending','running') AND (state='pending' OR lease_until<=?) AND expires_at>? AND EXISTS (SELECT 1 FROM servers WHERE servers.id=runtime_jobs.server_id AND servers.agent_node_id=runtime_jobs.node_id) AND (EXISTS (SELECT 1 FROM apps WHERE apps.id=runtime_jobs.app_id AND apps.project_id=runtime_jobs.project_id AND apps.server_id=runtime_jobs.server_id) OR (runtime_jobs.operation IN ('provision_service','service_inspect','service_delete') AND EXISTS (SELECT 1 FROM service_provision_runs WHERE id=runtime_jobs.service_run_id AND project_id=runtime_jobs.project_id)) OR runtime_jobs.operation='storage_inspect' OR (runtime_jobs.operation='storage_delete' AND EXISTS (SELECT 1 FROM storage_resources WHERE id=runtime_jobs.app_id AND server_id=runtime_jobs.server_id))) AND EXISTS (SELECT 1 FROM edge_node_credentials WHERE network_id=runtime_jobs.node_id AND generation=runtime_jobs.node_generation AND revoked=FALSE AND public_key<>'') AND ` + temporaryRuntimeGuard + ` ORDER BY created_at LIMIT 1`
+	query := `SELECT ` + runtimeJobColumns + ` FROM runtime_jobs WHERE node_id=? AND NOT EXISTS (SELECT 1 FROM runtime_jobs active WHERE active.node_id=runtime_jobs.node_id AND active.state='running' AND active.lease_until>?) AND state IN ('pending','running') AND (state='pending' OR lease_until<=?) AND expires_at>? AND EXISTS (SELECT 1 FROM servers WHERE servers.id=runtime_jobs.server_id AND servers.agent_node_id=runtime_jobs.node_id) AND (EXISTS (SELECT 1 FROM apps WHERE apps.id=runtime_jobs.app_id AND apps.project_id=runtime_jobs.project_id AND apps.server_id=runtime_jobs.server_id) OR (runtime_jobs.operation IN ('provision_service','service_inspect','service_delete') AND EXISTS (SELECT 1 FROM service_provision_runs WHERE id=runtime_jobs.service_run_id AND project_id=runtime_jobs.project_id)) OR runtime_jobs.operation='storage_inspect' OR (runtime_jobs.operation='storage_delete' AND EXISTS (SELECT 1 FROM storage_resources WHERE id=runtime_jobs.app_id AND server_id=runtime_jobs.server_id))) AND EXISTS (SELECT 1 FROM edge_node_credentials WHERE network_id=runtime_jobs.node_id AND generation=runtime_jobs.node_generation AND revoked=FALSE AND public_key<>'') AND ` + temporaryRuntimeGuard + ` AND ` + previewRuntimeGuard + ` ORDER BY created_at LIMIT 1`
 	if s.postgres {
 		query += ` FOR UPDATE SKIP LOCKED`
 	}
@@ -120,7 +123,7 @@ func (s *SQLStore) LeaseRuntimeJob(ctx context.Context, node string, now time.Ti
 	if j.ExpiresAt.Before(j.LeaseUntil) {
 		j.LeaseUntil = j.ExpiresAt
 	}
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state='running',attempt=attempt+1,lease_token=?,lease_until=?,updated_at=? WHERE id=? AND state IN ('pending','running') AND (state='pending' OR lease_until<=?) AND `+temporaryRuntimeGuard), j.LeaseToken, stamp(j.LeaseUntil), stamp(now), j.ID, stamp(now), stamp(now))
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state='running',attempt=attempt+1,lease_token=?,lease_until=?,updated_at=? WHERE id=? AND state IN ('pending','running') AND (state='pending' OR lease_until<=?) AND `+temporaryRuntimeGuard+` AND `+previewRuntimeGuard), j.LeaseToken, stamp(j.LeaseUntil), stamp(now), j.ID, stamp(now), stamp(now))
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +141,7 @@ func (s *SQLStore) LeaseRuntimeJob(ctx context.Context, node string, now time.Ti
 }
 
 func (s *SQLStore) RenewRuntimeJob(ctx context.Context, node, id, token, phase, message string, now time.Time, duration time.Duration) (bool, error) {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET lease_until=CASE WHEN expires_at<? THEN expires_at ELSE ? END,phase=?,message=?,updated_at=? WHERE id=? AND node_id=? AND lease_token=? AND state='running' AND lease_until>? AND expires_at>? AND EXISTS (SELECT 1 FROM servers WHERE servers.id=runtime_jobs.server_id AND servers.agent_node_id=runtime_jobs.node_id) AND (EXISTS (SELECT 1 FROM apps WHERE apps.id=runtime_jobs.app_id AND apps.project_id=runtime_jobs.project_id AND apps.server_id=runtime_jobs.server_id) OR (runtime_jobs.operation IN ('provision_service','service_inspect','service_delete') AND EXISTS (SELECT 1 FROM service_provision_runs WHERE id=runtime_jobs.service_run_id AND project_id=runtime_jobs.project_id)) OR runtime_jobs.operation='storage_inspect' OR (runtime_jobs.operation='storage_delete' AND EXISTS (SELECT 1 FROM storage_resources WHERE id=runtime_jobs.app_id AND server_id=runtime_jobs.server_id))) AND EXISTS (SELECT 1 FROM edge_node_credentials WHERE network_id=runtime_jobs.node_id AND generation=runtime_jobs.node_generation AND revoked=FALSE AND public_key<>'') AND `+temporaryRuntimeGuard), stamp(now.Add(duration)), stamp(now.Add(duration)), phase, message, stamp(now), id, node, token, stamp(now), stamp(now), stamp(now))
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET lease_until=CASE WHEN expires_at<? THEN expires_at ELSE ? END,phase=?,message=?,updated_at=? WHERE id=? AND node_id=? AND lease_token=? AND state='running' AND lease_until>? AND expires_at>? AND EXISTS (SELECT 1 FROM servers WHERE servers.id=runtime_jobs.server_id AND servers.agent_node_id=runtime_jobs.node_id) AND (EXISTS (SELECT 1 FROM apps WHERE apps.id=runtime_jobs.app_id AND apps.project_id=runtime_jobs.project_id AND apps.server_id=runtime_jobs.server_id) OR (runtime_jobs.operation IN ('provision_service','service_inspect','service_delete') AND EXISTS (SELECT 1 FROM service_provision_runs WHERE id=runtime_jobs.service_run_id AND project_id=runtime_jobs.project_id)) OR runtime_jobs.operation='storage_inspect' OR (runtime_jobs.operation='storage_delete' AND EXISTS (SELECT 1 FROM storage_resources WHERE id=runtime_jobs.app_id AND server_id=runtime_jobs.server_id))) AND EXISTS (SELECT 1 FROM edge_node_credentials WHERE network_id=runtime_jobs.node_id AND generation=runtime_jobs.node_generation AND revoked=FALSE AND public_key<>'') AND `+temporaryRuntimeGuard+` AND `+previewRuntimeGuard), stamp(now.Add(duration)), stamp(now.Add(duration)), phase, message, stamp(now), id, node, token, stamp(now), stamp(now), stamp(now))
 	if err != nil {
 		return false, err
 	}
@@ -157,7 +160,7 @@ func (s *SQLStore) CompleteRuntimeJob(ctx context.Context, node, id, token, stat
 	if state != "succeeded" && state != "failed" && state != "cancelled" && state != "unknown" {
 		return ErrRuntimeJobConflict
 	}
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state=?,encrypted_result=?,encrypted_request='',lease_token='',updated_at=? WHERE id=? AND node_id=? AND lease_token=? AND state='running' AND lease_until>? AND expires_at>? AND EXISTS (SELECT 1 FROM servers WHERE servers.id=runtime_jobs.server_id AND servers.agent_node_id=runtime_jobs.node_id) AND (EXISTS (SELECT 1 FROM apps WHERE apps.id=runtime_jobs.app_id AND apps.project_id=runtime_jobs.project_id AND apps.server_id=runtime_jobs.server_id) OR (runtime_jobs.operation IN ('provision_service','service_inspect','service_delete') AND EXISTS (SELECT 1 FROM service_provision_runs WHERE id=runtime_jobs.service_run_id AND project_id=runtime_jobs.project_id)) OR runtime_jobs.operation='storage_inspect' OR (runtime_jobs.operation='storage_delete' AND EXISTS (SELECT 1 FROM storage_resources WHERE id=runtime_jobs.app_id AND server_id=runtime_jobs.server_id))) AND EXISTS (SELECT 1 FROM edge_node_credentials WHERE network_id=runtime_jobs.node_id AND generation=runtime_jobs.node_generation AND revoked=FALSE AND public_key<>'') AND `+temporaryRuntimeGuard), state, encrypted, stamp(now), id, node, token, stamp(now), stamp(now), stamp(now))
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state=?,encrypted_result=?,encrypted_request='',lease_token='',updated_at=? WHERE id=? AND node_id=? AND lease_token=? AND state='running' AND lease_until>? AND expires_at>? AND EXISTS (SELECT 1 FROM servers WHERE servers.id=runtime_jobs.server_id AND servers.agent_node_id=runtime_jobs.node_id) AND (EXISTS (SELECT 1 FROM apps WHERE apps.id=runtime_jobs.app_id AND apps.project_id=runtime_jobs.project_id AND apps.server_id=runtime_jobs.server_id) OR (runtime_jobs.operation IN ('provision_service','service_inspect','service_delete') AND EXISTS (SELECT 1 FROM service_provision_runs WHERE id=runtime_jobs.service_run_id AND project_id=runtime_jobs.project_id)) OR runtime_jobs.operation='storage_inspect' OR (runtime_jobs.operation='storage_delete' AND EXISTS (SELECT 1 FROM storage_resources WHERE id=runtime_jobs.app_id AND server_id=runtime_jobs.server_id))) AND EXISTS (SELECT 1 FROM edge_node_credentials WHERE network_id=runtime_jobs.node_id AND generation=runtime_jobs.node_generation AND revoked=FALSE AND public_key<>'') AND `+temporaryRuntimeGuard+` AND `+previewRuntimeGuard), state, encrypted, stamp(now), id, node, token, stamp(now), stamp(now), stamp(now))
 	if err != nil {
 		return err
 	}
@@ -179,7 +182,7 @@ func (s *SQLStore) CancelRuntimeJob(ctx context.Context, id string, now time.Tim
 // ExpireRuntimeJobs removes credentials even when a disconnected agent never
 // polls again. An expired lease alone does not establish a mutation's outcome.
 func (s *SQLStore) ExpireRuntimeJobs(ctx context.Context, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state=CASE WHEN state='pending' AND attempt=0 AND EXISTS (SELECT 1 FROM temporary_environments e WHERE e.app_id=runtime_jobs.app_id) THEN 'cancelled' ELSE 'unknown' END,encrypted_request='',lease_token='',cancel_requested=TRUE,message='The runtime deadline expired; inspect the target before retrying.',updated_at=? WHERE state IN ('pending','running') AND expires_at<=?`), stamp(now), stamp(now))
+	_, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state=CASE WHEN state='pending' AND attempt=0 AND (EXISTS (SELECT 1 FROM temporary_environments e WHERE e.app_id=runtime_jobs.app_id) OR EXISTS(SELECT 1 FROM workflow_preview_apps p WHERE p.app_id=runtime_jobs.app_id)) THEN 'cancelled' ELSE 'unknown' END,encrypted_request='',lease_token='',cancel_requested=TRUE,message='The runtime deadline expired; inspect the target before retrying.',updated_at=? WHERE state IN ('pending','running') AND expires_at<=?`), stamp(now), stamp(now))
 	return err
 }
 

@@ -32,7 +32,7 @@ func TestSupersedeWorkflowRevisionsCancelsActiveWork(t *testing.T) {
 			return data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", CredentialSecretID: "credential", Name: "Source", Repository: "example/repo", CreatedAt: now, UpdatedAt: now})
 		},
 		func() error {
-			return data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "preview", ConfigSourceID: "source", Kind: "Application", Name: "preview", Temporary: true, CreatedAt: now, UpdatedAt: now})
+			return data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "preview", ConfigSourceID: "source", Kind: "Application", Name: "preview", Temporary: true, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now})
 		},
 		func() error {
 			return data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: "old", ResourceID: "preview", State: "running", Trigger: "pull request update", CreatedAt: now})

@@ -181,6 +181,14 @@ func (s *Service) Cleanup(ctx context.Context, appID string, progress Progress) 
 func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func() error, remove bool, progress Progress) error {
 	unlock := s.lockApp(appID)
 	defer unlock()
+	if data, ok := s.store.(interface {
+		CheckWorkflowPreviewCleanup(context.Context, string, string) error
+	}); ok {
+		operation, _ := ctx.Value(cleanupOperationKey{}).(string)
+		if err := data.CheckWorkflowPreviewCleanup(ctx, appID, operation); err != nil {
+			return err
+		}
+	}
 	if err := s.checkRemoteMutation(ctx, appID); err != nil {
 		return err
 	}

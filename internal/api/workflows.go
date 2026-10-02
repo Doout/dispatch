@@ -222,6 +222,10 @@ func (a *API) syncConfigSource(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteConfigSource(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.DeleteConfigSource(r.Context(), chi.URLParam(r, "id")); err != nil {
+		if errors.Is(err, store.ErrPreviewHistory) {
+			problem(w, http.StatusConflict, "Preview history retained", err.Error())
+			return
+		}
 		a.notFoundOrInternal(w, err, "Configuration source")
 		return
 	}

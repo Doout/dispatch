@@ -39,7 +39,7 @@ func (a *API) RunPreviewExpirer(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
-		if err := a.expireWorkflowPreviews(ctx, time.Now().UTC()); err != nil && a.logger != nil {
+		if err := errors.Join(a.expireWorkflowPreviews(ctx, time.Now().UTC()), a.reconcileRemovedWorkflowPreviews(ctx)); err != nil && a.logger != nil {
 			a.logger.Error("preview expiry cleanup failed", "error", err)
 		}
 		select {
@@ -62,29 +62,17 @@ func (a *API) expireWorkflowPreviews(ctx context.Context, now time.Time) error {
 		if trigger.ClosedAt != nil || trigger.ExpiresAt == nil || trigger.ExpiresAt.After(now) {
 			continue
 		}
-		leaseUntil := time.Now().UTC().Add(10 * time.Minute)
-		claimed, err := a.store.ClaimWorkflowPreviewExpiry(ctx, trigger.ID, now, leaseUntil)
-		if err != nil || !claimed {
+		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
+		if err != nil {
 			joined = errors.Join(joined, err)
 			continue
 		}
-		cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		resource, cleanupErr := a.store.GetWorkflowResource(cleanupCtx, trigger.ResourceID)
-		if cleanupErr == nil {
-			cleanupErr = a.workflows.CancelPreviewRuns(cleanupCtx, resource.ID)
+		_, err = a.beginWorkflowPreviewCleanup(ctx, resource, "expired", now)
+		if err != nil && !previewCleanupAlreadyEnded(err) {
+			joined = errors.Join(joined, err)
 		}
-		if cleanupErr == nil {
-			cleanupErr = a.cleanupWorkflowPreviewResource(cleanupCtx, resource)
-		}
-		cancel()
-		detail := ""
-		if cleanupErr != nil {
-			detail = "Preview lifetime ended; cleanup will retry: " + cleanupErr.Error()
-			joined = errors.Join(joined, fmt.Errorf("expire preview %s: %w", trigger.ResourceID, cleanupErr))
-		}
-		joined = errors.Join(joined, a.store.FinishWorkflowPreviewExpiry(ctx, trigger.ID, leaseUntil, detail, time.Now().UTC()))
 	}
-	return joined
+	return errors.Join(joined, a.resumeWorkflowPreviewCleanups(ctx))
 }
 
 func (a *API) processWorkflowPreviewLifetimeComment(ctx context.Context, target *previewPollTarget, event core.IncomingEvent) error {

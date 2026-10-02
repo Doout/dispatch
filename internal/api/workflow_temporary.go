@@ -179,47 +179,22 @@ func (a *API) deleteTemporaryWorkflowResource(w http.ResponseWriter, r *http.Req
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	activeRun := func() (bool, error) {
-		revisions, err := a.store.ListWorkflowRevisions(r.Context(), resource.ID, 0)
-		if err != nil {
-			return false, err
-		}
-		for _, revision := range revisions {
-			if revision.State == "queued" || revision.State == "running" || revision.State == "awaiting_approval" {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-	active, err := activeRun()
+	cleanup, err := a.beginWorkflowPreviewCleanup(r.Context(), resource, "removed", time.Now().UTC())
 	if err != nil {
 		a.internal(w, err)
 		return
 	}
-	if active {
-		problem(w, http.StatusConflict, "Preview run in progress", "Wait for the current workflow run to finish before deleting this preview.")
-		return
-	}
-	if _, err := a.workflows.Deactivate(r.Context(), resource.ID); err != nil {
-		a.workflowProblem(w, err)
-		return
-	}
-	active, err = activeRun()
+	_ = a.reconcileWorkflowPreviewCleanup(r.Context(), cleanup.ID)
+	history, err := a.store.ListWorkflowPreviewCleanups(r.Context(), resource.ID)
 	if err != nil {
 		a.internal(w, err)
 		return
 	}
-	if active {
-		problem(w, http.StatusConflict, "Preview run in progress", "The preview is paused. Wait for its current run to finish, then delete it.")
-		return
-	}
-	if err := a.cleanupWorkflowPreviewResource(r.Context(), resource); err != nil {
-		a.internal(w, err)
-		return
-	}
-	if err := a.store.RemoveWorkflowPreviewResource(r.Context(), resource.ID, time.Now().UTC()); err != nil {
-		a.internal(w, err)
-		return
+	for _, current := range history {
+		if current.ID == cleanup.ID && current.State != "succeeded" {
+			writeJSON(w, http.StatusAccepted, current)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -251,6 +226,10 @@ func (a *API) enrichWorkflowPreviewPullRequests(ctx context.Context, resources [
 		resource := &resources[index]
 		if !resource.Temporary {
 			continue
+		}
+		resource.PreviewCleanups, err = a.store.ListWorkflowPreviewCleanups(ctx, resource.ID)
+		if err != nil {
+			return err
 		}
 		trigger, ok := byResource[resource.ID]
 		if !ok {

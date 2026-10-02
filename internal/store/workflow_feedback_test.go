@@ -25,7 +25,7 @@ func TestWorkflowFeedbackLeaseAndIndependentProgress(t *testing.T) {
 		data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now}),
 		data.CreateSecret(ctx, core.Secret{ID: "credential", Name: "Credential", Type: core.SecretTypeGitHubToken, EncryptedValue: "fixture", CreatedAt: now}),
 		data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", CredentialSecretID: "credential", Name: "Source", Repository: "example/repo", CreatedAt: now, UpdatedAt: now}),
-		data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: resource, ConfigSourceID: "source", Kind: "Application", Name: "preview", Temporary: true, CreatedAt: now, UpdatedAt: now}),
+		data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: resource, ConfigSourceID: "source", Kind: "Application", Name: "preview", Temporary: true, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now}),
 	} {
 		if err != nil {
 			t.Fatal(err)

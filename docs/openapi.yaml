@@ -2926,8 +2926,15 @@ paths:
       description: >-
         Stops an inline PR preview, cleans its deployed resources, closes its comment
         triggers, and removes it from the active inventory. History is retained.
-        A queued, running, or approval-pending workflow blocks deletion. Owner access is required.
+        Queued, running, and approval-pending work is cancelled after durable cleanup acceptance.
+        Repeated DELETE calls resume the same cleanup. Uncertain runtime effects need inspection;
+        target enrollment replacement is never adopted automatically. Owner access is required.
       responses:
+        "202":
+          description: Cleanup accepted and retained for retry after partial failure or restart.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkflowPreviewCleanup" }
         "204": { description: Preview deleted. }
         "409": { $ref: "#/components/responses/Problem" }
   /workflow/preview-templates:
@@ -5611,7 +5618,11 @@ components:
         specDigest: { type: string }
         configSha: { type: string }
         active: { type: boolean }
-        state: { type: string, enum: [ready, paused, invalid] }
+        temporary: { type: boolean }
+        previewTTL: { type: string, description: Zero means no time limit. }
+        previewExpiresAt: { type: string, format: date-time }
+        previewCleanups: { type: array, items: { $ref: "#/components/schemas/WorkflowPreviewCleanup" } }
+        state: { type: string, enum: [ready, paused, invalid, expiring, expired, removed] }
         lastError: { type: string }
         sourceCount: { type: integer }
         jobCount: { type: integer }
@@ -5619,6 +5630,33 @@ components:
         targetRefs: { type: array, items: { type: string } }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    WorkflowPreviewCleanup:
+      type: object
+      required: [id, resourceId, reason, finalState, state, attempts, createdAt, updatedAt, apps]
+      properties:
+        id: { type: string }
+        resourceId: { type: string }
+        reason: { type: string, enum: [expired, removed, closed] }
+        finalState: { type: string, enum: [expired, removed] }
+        state: { type: string, enum: [pending, blocked, succeeded] }
+        error: { type: string }
+        attempts: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        apps:
+          type: array
+          items:
+            type: object
+            properties:
+              appId: { type: string }
+              serverId: { type: string }
+              specDigest: { type: string }
+              nodeId: { type: string }
+              nodeGeneration: { type: integer }
+              jobId: { type: string }
+              previousJobIds: { type: array, items: { type: string } }
+              state: { type: string, enum: [pending, blocked, succeeded] }
+              error: { type: string }
     WorkflowTopology:
       type: object
       required: [columns, nodes, edges]
