@@ -141,7 +141,8 @@ func TestInterruptedDockerMutationKeepsUnknownReceiptAcrossRestart(t *testing.T)
 				job.Digest = hex.EncodeToString(digest[:])
 				ctx, cancel := context.WithCancel(context.Background())
 				if interruption == "deadline" {
-					ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
+					// Leave time for the durable pre-execution journal on loaded hosts.
+					ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
 				}
 				defer cancel()
 				container := strings.Repeat("a", 64)

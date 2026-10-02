@@ -113,6 +113,8 @@ type mutationReceiptResponse struct {
 func (a *API) writeMutationReceipt(w http.ResponseWriter, r *http.Request, receipt core.MutationReceipt, status int) {
 	response := mutationReceiptResponse{MutationReceipt: receipt, RecoveryActions: []string{}}
 	switch receipt.OperationKind {
+	case "workload_backup":
+		response.OperationURL = "/api/v1/workload-backup-operations/" + receipt.OperationID
 	case "service_provision":
 		response.OperationURL = "/api/v1/service-provision-runs/" + receipt.OperationID
 	case "service_resource":

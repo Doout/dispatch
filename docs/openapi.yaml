@@ -9,6 +9,157 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /workload-backups:
+    get:
+      operationId: listWorkloadBackups
+      description: Returns backups visible through project.view. Archive keys, credentials and integrity assertions are never returned.
+      parameters:
+        - { in: query, name: projectId, schema: { type: string } }
+      responses:
+        '200':
+          description: Retained backup inventory.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/WorkloadBackup' } }
+    post:
+      operationId: createWorkloadBackup
+      description: Requires project.configure and deployment.run. Accepts a native encrypted backup of an owned PostgreSQL 17+ Docker service. Target-local archives retain by default and protect target deletion.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceRunId]
+              properties:
+                sourceRunId: { type: string }
+                verificationIntervalHours: { type: integer, minimum: 0, maximum: 8760, default: 0, description: Zero disables scheduled isolated verification. }
+                checks:
+                  type: array
+                  maxItems: 16
+                  writeOnly: true
+                  items:
+                    type: object
+                    required: [query, expected]
+                    properties:
+                      query: { type: string, maxLength: 4096, writeOnly: true, description: One SELECT statement executed in a read-only transaction. }
+                      expected: { type: string, maxLength: 4096, writeOnly: true }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}:
+    get:
+      operationId: getWorkloadBackup
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Project-scoped backup metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkloadBackup' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/operations:
+    get:
+      operationId: listWorkloadBackupOperations
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Backup operation history, including safe recovery timing and cleanup outcome.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/WorkloadBackupOperation' } }
+  /workload-backup-operations/{operationId}:
+    get:
+      operationId: getWorkloadBackupOperation
+      parameters:
+        - { in: path, name: operationId, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Project-scoped operation evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkloadBackupOperation' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/verify:
+    post:
+      operationId: verifyWorkloadBackup
+      description: Requires project.configure and deployment.run. Authenticates and restores into isolated temporary storage without connecting to the source. Success requires integrity checks and owned temporary-resource cleanup.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/operations/{operationId}/reconcile:
+    post:
+      operationId: reconcileWorkloadBackup
+      description: Requires project.configure and deployment.run. After recoveryAfter, inspect retained evidence and clean only owned interrupted verification resources. Never repeats a restore with an unknown outcome.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: operationId, required: true, schema: { type: string } }
+      responses:
+        '202':
+          description: Original operation claimed for reconciliation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkloadBackupOperation' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/delete-preview:
+    post:
+      operationId: reviewWorkloadBackupDeletion
+      description: Requires project.configure. Reviews permanent archive-byte deletion. Confirmation name is the backup ID.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Common destructive review including version, confirmation name and active-operation blockers. }
+  /workload-backups/{id}/delete:
+    post:
+      operationId: deleteWorkloadBackup
+      description: Requires project.configure and deployment.run. Deletes retained archive bytes only after current typed confirmation; encrypted operation history remains.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkloadBackupConfirmation' }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/restore/{destinationId}/preview:
+    post:
+      operationId: reviewWorkloadBackupRestore
+      description: Requires project.configure. Binds a same-project, same-target owned destination's container and volume identity. Confirmation name is the destination service name. Active consumers block overwrite.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: destinationId, required: true, schema: { type: string }, description: Owned service provision run ID. }
+      responses:
+        '200': { description: Common destructive review including current version and exact destination name. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/restore/{destinationId}:
+    post:
+      operationId: restoreWorkloadBackup
+      description: Requires project.configure and deployment.run. Authenticates the full archive before restoring its objects in one transaction. Objects absent from the archive remain. Assertions run after commit; an unknown result requires inspection before a new reviewed restore.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: destinationId, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkloadBackupConfirmation' }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /service-templates/{id}/runs:
     post:
       operationId: provisionServiceTemplate
@@ -4317,11 +4468,25 @@ components:
       required: true
       schema: { type: string }
   responses:
+    WorkloadBackupAccepted:
+      description: Durable operation accepted, or the original shared mutation receipt when Idempotency-Key is supplied. Acceptance does not imply completion.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - { $ref: '#/components/schemas/WorkloadBackupOperation' }
+              - { $ref: '#/components/schemas/MutationReceipt' }
     JSONList:
       description: JSON array.
       content:
         application/json:
           schema: { type: array, items: {} }
+    Problem:
+      description: RFC 9457-style problem response.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
     PreviewSourceTrustDecision:
       type: object
       required: [policy, digest, allowed, reason, sources, credentialScope, environments, checkedAt]
@@ -4348,12 +4513,6 @@ components:
               pullRequest: { type: integer }
               commitSha: { type: string }
               githubAppId: { type: string }
-    Problem:
-      description: RFC 9457-style problem response.
-      content:
-        application/problem+json:
-          schema: { $ref: "#/components/schemas/Problem" }
-  schemas:
     TemporaryEnvironmentInput:
       type: object
       additionalProperties: false
@@ -4412,6 +4571,69 @@ components:
               kind: { type: string }
               id: { type: string }
               ownership: { type: string, enum: [owned, shared, retained] }
+    WorkloadBackupConfirmation:
+      type: object
+      required: [confirmation]
+      properties:
+        confirmation:
+          type: object
+          required: [resourceId, action, expectedVersion, confirmName]
+          properties:
+            resourceId: { type: string, description: Backup ID. }
+            action: { type: string, enum: [restore, delete] }
+            expectedVersion: { type: string }
+            confirmName: { type: string }
+    WorkloadBackup:
+      type: object
+      required: [id, projectId, sourceRunId, storageId, serverId, sourceResourceId, state, revision, artifactId, consistency, format, bytes, encryption, keyId, location, policy, verificationState, cleanupState, verificationIntervalHours, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        sourceRunId: { type: string }
+        storageId: { type: string }
+        serverId: { type: string }
+        nodeId: { type: string }
+        sourceResourceId: { type: string }
+        state: { type: string, enum: [creating, ready, failed, unknown, deleted] }
+        revision: { type: integer }
+        artifactId: { type: string }
+        consistency: { type: string, const: database-native }
+        format: { type: string, const: postgresql-custom }
+        checksum: { type: string }
+        plaintextChecksum: { type: string }
+        bytes: { type: integer, minimum: 0 }
+        encryption: { type: string }
+        keyId: { type: string }
+        location: { type: string, const: target-local }
+        imageId: { type: string }
+        policy: { type: string, const: retain }
+        checkCount: { type: integer }
+        verificationState: { type: string }
+        cleanupState: { type: string, enum: [complete, pending, failed] }
+        verificationIntervalHours: { type: integer, minimum: 0, maximum: 8760 }
+        nextVerificationAt: { type: string, format: date-time }
+        verifiedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        message: { type: string }
+    WorkloadBackupOperation:
+      type: object
+      required: [id, backupId, projectId, action, state, revision, recoveryAfter, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        backupId: { type: string }
+        projectId: { type: string }
+        action: { type: string, enum: [backup, verify, restore, delete] }
+        state: { type: string, enum: [running, succeeded, failed, unknown, unresolved] }
+        targetRunId: { type: string }
+        targetName: { type: string }
+        targetResourceId: { type: string }
+        revision: { type: integer }
+        recoveryAfter: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        message: { type: string }
+        cleanupState: { type: string, enum: [complete, pending, failed] }
     RoutingConfig:
       type: object
       required: [baseDomain]
@@ -5184,7 +5406,7 @@ components:
         id: { type: string }
         projectId: { type: string }
         action: { type: string }
-        operationKind: { type: string, enum: [deployment, infrastructure_operation, service_provision, service_resource, temporary_environment] }
+        operationKind: { type: string, enum: [deployment, infrastructure_operation, service_provision, service_resource, temporary_environment, workload_backup] }
         operationId: { type: string }
         operationUrl: { type: string }
         resourceId: { type: string }
