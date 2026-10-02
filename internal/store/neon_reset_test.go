@@ -33,7 +33,7 @@ func testNeonReplacement(t *testing.T, dsn string) {
 	if err := s.CreateNeonProvider(ctx, provider); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateSecret(ctx, core.Secret{ID: id + "credential", Name: "fixture", EncryptedValue: "cipher", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := s.CreateSecret(ctx, core.Secret{ID: id + "credential", Name: "neon-fixture-" + id, EnvironmentVariable: "NEON_FIXTURE_" + id, EncryptedValue: "cipher", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	source := core.ConfigSource{CredentialSecretID: id + "credential", ID: id + "source", ProjectID: project.ID, Name: "fixture", Repository: "example/app", CreatedAt: now, UpdatedAt: now}

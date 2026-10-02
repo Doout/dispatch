@@ -35,7 +35,7 @@ func testWorkflowCheckReceipt(t *testing.T, dsn string) {
 	}
 	project, source, resource, revision := "project-"+suffix, "source-"+suffix, "resource-"+suffix, "run-"+suffix
 	must(s.CreateProject(ctx, core.Project{ID: project, Name: project, CreatedAt: now}))
-	must(s.CreateSecret(ctx, core.Secret{ID: "secret-" + suffix, Name: "Fixture", Type: core.SecretTypeGitHubToken, EncryptedValue: "fixture", CreatedAt: now}))
+	must(s.CreateSecret(ctx, core.Secret{ID: "secret-" + suffix, Name: "workflow-check-fixture-" + suffix, EnvironmentVariable: "WORKFLOW_CHECK_" + suffix, Type: core.SecretTypeGitHubToken, EncryptedValue: "fixture", CreatedAt: now}))
 	must(s.CreateConfigSource(ctx, core.ConfigSource{ID: source, ProjectID: project, CredentialSecretID: "secret-" + suffix, Name: "Fixture", Repository: "example/repo", CreatedAt: now, UpdatedAt: now}))
 	must(s.CreateWorkflowResource(ctx, core.WorkflowResource{ID: resource, ConfigSourceID: source, Kind: "Application", Name: "Fixture", CreatedAt: now, UpdatedAt: now}))
 	report := core.WorkflowCheckReport{ID: "report-" + suffix, RevisionID: revision, ResourceID: resource, ProjectID: project, GitHubAppID: "github", AppID: 42, APIURL: "https://api.github.com", ExternalID: "dispatch-check:" + suffix}
