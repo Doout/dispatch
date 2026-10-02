@@ -1,6 +1,6 @@
 # Dispatch
 
-Dispatch is a self-hosted deployment controller for private infrastructure. It connects repositories to Docker, Kubernetes, and OpenShift targets. The controller stores each deployment revision, configuration snapshot, log, output, and runtime resource.
+Dispatch is a self-hosted deployment and infrastructure controller. It connects repositories to Docker, Kubernetes, and OpenShift targets and manages server operations through provider adapters. The controller stores each deployment revision, configuration snapshot, log, output, and runtime resource.
 
 > Dispatch is under active development. Keep the controller and its agents on a trusted network.
 
@@ -15,12 +15,21 @@ Dispatch is a self-hosted deployment controller for private infrastructure. It c
 - GitHub Apps for GitHub.com and GitHub Enterprise Server
 - Repository polling, signed webhooks, and a durable webhook relay
 - Pull request previews across one or more repositories
+- Finite-lifetime Docker environments with reviewed creation and resumable cleanup
 - Project-scoped PostgreSQL and generic services with application connection bindings
+- Owned service recovery and encrypted PostgreSQL backups with restore verification
+- Reviewed server allocation, agent installation, machine snapshots and isolated clone workflows
 - Encrypted local secrets and IBM Cloud Secrets Manager references
-- Outbound edge nodes for private provider endpoints
+- Enrolled outbound agents for Docker workloads and private provider endpoints
 - Laneway application and private-network connections
 - Users, teams, project roles, external sign-in, account linking, and impersonation
+- Expiring automation credentials, infrastructure grants and project quotas
+- A DevOps CLI and stdio MCP server using the same reviews and operation receipts
 - Deployment, application, server, and runtime topology views
+
+The bundled infrastructure provider is a mock. Real VM allocation and safe snapshot
+clones require an external adapter and live validation. See the
+[roadmap](docs/roadmap.md) for supported paths and remaining release gates.
 
 ## Install and upgrade
 
@@ -81,7 +90,7 @@ See [repository configuration](docs/application-config.md) for the schema and a 
 
 Register an existing PostgreSQL database or generic dependency under **Services**. Connect it to an application through environment mappings for Docker and Compose, or Kubernetes Secret references for Helm. Each deployment captures its bindings. Connection changes show which applications need redeployment.
 
-Service credentials are encrypted and write-only. Manual connection checks run from the controller. Dispatch does not provision or delete the external service.
+Service credentials are encrypted and write-only. Manual connection checks run from the controller. Registering a connection leaves the external service under your control. ServiceTemplates can provision owned workloads with separate inspection, recovery and reviewed deletion actions.
 
 See [services and application bindings](docs/services.md) for setup, stage overrides, APIs, and integration tests.
 
@@ -111,7 +120,7 @@ Dispatch passes resolved secrets to the job process. Job scripts can print those
 
 The GitHub App manifest flow creates an App with the required callback, setup, repository permissions, and event subscriptions. Existing Apps can connect with an App ID, RSA private key, webhook secret, and optional installation ID.
 
-The manifest requests Contents read, Pull requests write for PR comments, Issues write, Commit statuses write, and Metadata read. In Connections, **Verify** compares the App registration, installation, and issued token with those requirements. If the App registration lacks access, edit its permissions in GitHub first. Then approve the updated installation permissions or reinstall the App, select its repositories, and verify again.
+The manifest requests Contents read, Pull requests write for PR comments, Issues write, Commit statuses write, Checks write, and Metadata read. In Connections, **Verify** compares the App registration, installation, and issued token with those requirements. If the App registration lacks access, edit its permissions in GitHub first. Then approve the updated installation permissions or reinstall the App, select its repositories, and verify again.
 
 A GitHub App uses one installation webhook. It does not require a webhook for each repository. Polling can run alone or alongside webhooks.
 
@@ -234,6 +243,12 @@ Use `make check` for the race detector, `go vet`, TypeScript checks, and fronten
 - [Release previews and rollback](docs/release-tools.md)
 - [Observations and notifications](docs/observations.md)
 - [Controller operations](docs/operations.md)
+- [On-demand servers](docs/on-demand-servers.md)
+- [Target agent installation](docs/target-bootstrap.md)
+- [Machine snapshots and isolated clones](docs/machine-snapshots.md)
+- [Temporary environments](docs/temporary-environments.md)
+- [Preview lifecycle](docs/preview-lifecycle.md)
+- [Repository recovery](docs/repository-recovery.md)
 - [Storage ownership and deletion](docs/storage.md)
 - [Deployment health policies](docs/deployment-health.md)
 - [Managed application routes](docs/application-routing.md)
