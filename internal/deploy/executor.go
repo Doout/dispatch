@@ -121,11 +121,12 @@ func routeMessage(app core.App) string {
 type commandFunc func(context.Context, io.Reader, io.Writer, string, ...string) error
 
 type DockerExecutor struct {
-	Routes            *routing.FilePublisher
-	run               commandFunc
-	Artifacts         store.RuntimeArtifactStore
-	Vault             *secretcrypto.Vault
-	ArtifactDirectory string
+	Routes                  *routing.FilePublisher
+	run                     commandFunc
+	Artifacts               store.RuntimeArtifactStore
+	Vault                   *secretcrypto.Vault
+	ArtifactDirectory       string
+	WorkloadBackupDirectory string
 }
 
 var safeID = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)

@@ -555,12 +555,8 @@ func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.
 		return err
 	}
 	for _, app := range apps {
-		if err := a.deploy.Cleanup(ctx, app.ID, nil); err != nil {
+		if err := a.deploy.CleanupOwnedApplication(ctx, app, ""); err != nil {
 			return fmt.Errorf("clean preview app %s: %w", app.ID, err)
-		}
-		app.State = "closed"
-		if err := a.store.UpdateApp(ctx, app); err != nil {
-			return err
 		}
 	}
 	if resource.State == "expiring" {

@@ -1,0 +1,55 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { Overview } from "./api";
+import { EnvironmentReview, TemporaryEnvironment, TemporaryEnvironments, temporaryEnvironmentApi } from "./TemporaryEnvironments";
+const overview = { projects: [{ id: "project", name: "Project" }], projectPermissions: {} } as Overview;
+const review: EnvironmentReview = { id: "review", environmentId: "environment", digest: "digest", templateDigest: "template-digest", input: { projectId: "project", templateId: "template", serverId: "ready-target", name: "investigation", sourceSha: "a".repeat(40), lifetimeSeconds: 3600 }, expiresAt: "2099-01-01T00:00:00Z", omissions: ["Production domains and hooks are not copied."] };
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+it("offers only approved targets and retains the key after a lost create response", async () => {
+  vi.spyOn(temporaryEnvironmentApi, "list").mockResolvedValue([]);
+  vi.spyOn(temporaryEnvironmentApi, "options").mockResolvedValue({ templates: [{ id: "template", name: "Application template" }], targets: [{ id: "ready-target", name: "Ready target" }], omissions: [] });
+  vi.spyOn(temporaryEnvironmentApi, "review").mockResolvedValue(review);
+  const create = vi.spyOn(temporaryEnvironmentApi, "create").mockRejectedValueOnce(new Error("Response unavailable")).mockResolvedValue({});
+  render(<TemporaryEnvironments overview={overview} canManage />);
+  fireEvent.click(screen.getByRole("button", { name: "Create environment" }));
+  await screen.findByRole("option", { name: "Ready target" });
+  fireEvent.change(screen.getByLabelText("Application template"), { target: { value: "template" } });
+  fireEvent.change(screen.getByLabelText("Assigned runtime target"), { target: { value: "ready-target" } });
+  fireEvent.change(screen.getByLabelText("Environment name"), { target: { value: "investigation" } });
+  fireEvent.change(screen.getByLabelText("Full source commit SHA"), { target: { value: "a".repeat(40) } });
+  fireEvent.submit(screen.getByRole("form", { name: "Create temporary environment" }));
+  await screen.findByText("Production domains and hooks are not copied.");
+  expect((screen.getByRole("button", { name: "Create reviewed environment" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Type investigation to confirm"), { target: { value: "investigation" } });
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm temporary environment" }));
+  await screen.findByRole("alert");
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm temporary environment" }));
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+  expect(create.mock.calls[0][2]).toBe(create.mock.calls[1][2]);
+});
+it("shows retained resources before cleanup and preserves its retry identity", async () => {
+  const environment = { id: "environment", projectId: "project", name: "investigation", state: "cleanup_blocked", revision: 4, sourceSha: "a".repeat(40), deploymentId: "deployment", cleanupOperationId: "cleanup", expiresAt: "2099-01-01T00:00:00Z", resources: [{ id: "target", kind: "server", ownership: "shared" }] } as TemporaryEnvironment;
+  vi.spyOn(temporaryEnvironmentApi, "list").mockResolvedValue([environment]);
+  vi.spyOn(temporaryEnvironmentApi, "options").mockResolvedValue({ templates: [], targets: [], omissions: [] });
+  vi.spyOn(temporaryEnvironmentApi, "cleanup").mockResolvedValue({ environmentId: environment.id, revision: 4, name: environment.name, digest: "cleanup-digest", summary: "Retain shared targets and data.", resources: [{ id: "volume", kind: "volume", ownership: "retained" }] });
+  const destroy = vi.spyOn(temporaryEnvironmentApi, "destroy").mockRejectedValueOnce(new Error("Response unavailable")).mockResolvedValue({});
+  render(<TemporaryEnvironments overview={overview} canManage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Review cleanup" }));
+  await screen.findByText("Retain shared targets and data.");
+  expect(screen.getByText(/volume · retained/)).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Type investigation to confirm"), { target: { value: "investigation" } });
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm environment cleanup" }));
+  await screen.findByRole("alert");
+  fireEvent.submit(screen.getByRole("form", { name: "Confirm environment cleanup" }));
+  await waitFor(() => expect(destroy).toHaveBeenCalledTimes(2));
+  expect(destroy.mock.calls[0][2]).toBe(destroy.mock.calls[1][2]);
+});
+it("does not offer mutations to project readers", async () => {
+  vi.spyOn(temporaryEnvironmentApi, "list").mockResolvedValue([]);
+  const options = vi.spyOn(temporaryEnvironmentApi, "options");
+  render(<TemporaryEnvironments overview={{ ...overview, projectPermissions: { project: ["project.view"] } }} canManage={false} />);
+  await screen.findByText("No temporary environments in this project.");
+  expect(screen.queryByRole("button", { name: "Create environment" })).toBeNull();
+  expect(options).not.toHaveBeenCalled();
+});

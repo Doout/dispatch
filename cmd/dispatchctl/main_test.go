@@ -48,3 +48,23 @@ func TestMCPConfigurationFailureKeepsStdoutProtocolOnly(t *testing.T) {
 		t.Fatal("MCP config wrote non-protocol output")
 	}
 }
+
+func TestCLIEnvironmentCleanupReviewUsesSelectedEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential")
+	if err := os.WriteFile(path, []byte("dsa_cli_fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/temporary-environments/environment-1/cleanup-review" {
+			t.Error("incorrect cleanup review", r.Method, r.URL.Path)
+		}
+		io.WriteString(w, `{"environmentId":"environment-1","revision":7,"digest":"review-digest"}`)
+	}))
+	defer server.Close()
+	var out, errout bytes.Buffer
+	code := run(context.Background(), []string{"--url", server.URL, "--token-file", path, "environment", "cleanup", "review", "--environment", "environment-1"}, strings.NewReader(""), &out, &errout)
+	var result automationclient.Result
+	if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK {
+		t.Fatal("cleanup review command failed", code, out.String(), errout.String())
+	}
+}

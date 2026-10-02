@@ -399,6 +399,9 @@ func (s *Service) checkRemoteMutation(ctx context.Context, app string) error {
 			return err
 		}
 		if job != nil {
+			if id, _ := ctx.Value(cleanupOperationKey{}).(string); id != "" && id == job.ID && job.State != "unknown" {
+				return nil
+			}
 			return ErrDeploymentActive
 		}
 	}

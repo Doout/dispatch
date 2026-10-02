@@ -62,6 +62,19 @@ func (a *API) getInfrastructureQuota(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if environments, ok := a.store.(*store.SQLStore); ok {
+		items, err := environments.ListTemporaryEnvironments(r.Context(), project)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		usage["temporaryEnvironments"] = 0
+		for _, e := range items {
+			if e.State != "closed" {
+				usage["temporaryEnvironments"]++
+			}
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, map[string]any{"policy": policy, "usage": usage, "reservations": reservations})
 }
