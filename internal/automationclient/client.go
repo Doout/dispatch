@@ -39,9 +39,12 @@ type Problem struct {
 	Evidence json.RawMessage `json:"evidence,omitempty"`
 }
 type Continuation struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
-	Key  string `json:"idempotencyKey,omitempty"`
+	ProjectID   string `json:"projectId,omitempty"`
+	ResourceID  string `json:"resourceId,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
+	Kind        string `json:"kind"`
+	ID          string `json:"id"`
+	Key         string `json:"idempotencyKey,omitempty"`
 }
 
 func Failure(code, title string) Result {

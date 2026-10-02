@@ -74,6 +74,11 @@ type ServerCreateReview struct {
 	SourceSnapshotID string          `json:"sourceSnapshotId,omitempty"`
 }
 type Arguments struct {
+	RunID          string          `json:"runId,omitempty"`
+	BackupID       string          `json:"backupId,omitempty"`
+	OperationID    string          `json:"operationId,omitempty"`
+	DestinationID  string          `json:"destinationId,omitempty"`
+	ReviewID       string          `json:"reviewId,omitempty"`
 	ProjectID      string          `json:"projectId,omitempty"`
 	ProviderID     string          `json:"providerId,omitempty"`
 	SnapshotID     string          `json:"snapshotId,omitempty"`
@@ -90,13 +95,15 @@ type Arguments struct {
 	TimeoutSeconds int             `json:"timeoutSeconds,omitempty"`
 }
 type Operation struct {
-	Name, Method, Path, Description string
-	Fields, Required                []string
-	Mutation                        bool
-	InputSchema                     string
+	Response                                  string
+	CreatesReview, Destructive, NonIdempotent bool
+	Name, Method, Path, Description           string
+	Fields, Required                          []string
+	Mutation                                  bool
+	InputSchema                               string
 }
 
-var Operations = []Operation{
+var Operations = append([]Operation{
 	{Name: "projects_list", Method: "GET", Path: "/projects", Description: "List projects visible to the current scoped identity."},
 	{Name: "apps_list", Method: "GET", Path: "/apps", Description: "List visible applications, optionally filtered by project.", Fields: []string{"projectId"}},
 	{Name: "deployment_preview", Method: "POST", Path: "/apps/{appId}/release-preview", Description: "Inspect release inputs and obtain the server's point-in-time deployment review.", Fields: []string{"appId", "revision"}, Required: []string{"appId"}},
@@ -129,7 +136,7 @@ var Operations = []Operation{
 	{Name: "environment_extend", Method: "POST", Path: "/temporary-environments/{environmentId}/extend", Description: "Set an explicit expiration using the current environment revision. If the response is lost, inspect the environment before another edit. Does not extend beyond project policy.", Fields: []string{"environmentId", "input"}, Required: []string{"environmentId", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentExtension"},
 	{Name: "environment_cleanup_review", Method: "POST", Path: "/temporary-environments/{environmentId}/cleanup-review", Description: "Review removal of owned workload resources and retention of shared infrastructure and data.", Fields: []string{"environmentId"}, Required: []string{"environmentId"}},
 	{Name: "environment_destroy", Method: "POST", Path: "/temporary-environments/{environmentId}/destroy", Description: "Submit the reviewed revision, digest and exact name with a stable cleanup key. Uncertain operations require inspection; shared servers and protected data remain.", Fields: []string{"environmentId", "key", "input"}, Required: []string{"environmentId", "key", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentCleanup"},
-}
+}, recoveryOperations...)
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$`)
 var fullCommit = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 var environmentName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,39}$`)
@@ -194,7 +201,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 	}
 	path := op.Path
-	for f, v := range map[string]string{"projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
+	for f, v := range map[string]string{"runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
 		if v != "" && !identifier.MatchString(v) {
 			return Failure("invalid_input", "Invalid resource identifier")
 		}
@@ -203,7 +210,10 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	if args.Key != "" && (len(args.Key) < 8 || len(args.Key) > 128 || strings.ContainsFunc(args.Key, func(r rune) bool { return r < 33 || r > 126 })) {
 		return Failure("invalid_input", "Use a stable retry key of 8 to 128 printable ASCII characters without spaces")
 	}
-	var body any
+	body, inputErr := recoveryInput(op, args)
+	if inputErr != nil {
+		return Failure("invalid_input", inputErr.Error())
+	}
 	switch op.InputSchema {
 	case "DeploymentStart":
 		var input DeploymentStart
@@ -262,7 +272,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 		body = input
 	default:
-		if op.Method == "POST" {
+		if op.Method == "POST" && body == nil && op.Response == "" {
 			body = map[string]any{}
 		}
 	}
@@ -271,6 +281,9 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	}
 	if args.Limit < 0 || args.Limit > 500 || args.After < 0 {
 		return Failure("invalid_input", "Log limit must be 1 to 500 and the cursor must not be negative")
+	}
+	if name == "backups_list" && args.ProjectID != "" {
+		path += "?projectId=" + url.QueryEscape(args.ProjectID)
 	}
 	if name == "deployment_logs" {
 		if args.Limit == 0 {
@@ -298,7 +311,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	}
 	for {
 		out := c.request(ctx, op.Method, path, args.Key, body)
-		if op.Mutation {
+		if op.Mutation && op.Response == "" {
 			out.Continuation = &Continuation{Kind: name, ID: args.AppID + args.ServerID + args.EnvironmentID, Key: args.Key}
 			if name == "environment_extend" {
 				out.Continuation.Kind = "environment"
@@ -307,7 +320,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		if wait {
 			out.Continuation = continuation
 		}
-		if op.Mutation && out.OK && name != "environment_extend" {
+		if op.Mutation && op.Response == "" && out.OK && name != "environment_extend" {
 			var accepted struct {
 				ID string `json:"id"`
 			}
@@ -315,6 +328,8 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 				out.Continuation = &Continuation{Kind: "receipt", ID: accepted.ID, Key: args.Key}
 			}
 		}
+
+		out = recoveryContinuation(op, args, out)
 
 		if !out.OK {
 			return out

@@ -199,6 +199,172 @@ block cleanup until inspected. The shared server, named volumes, backups and
 execution history remain. The client exposes no arbitrary command execution,
 secret administration or human-approval tool.
 
+## Recover an owned service
+
+Use the service provision run ID, which identifies the owned workload even if
+its connection registration or template has been removed:
+
+```sh
+dispatchctl service get --run SERVICE_RUN_ID
+dispatchctl service inspect --run SERVICE_RUN_ID
+```
+
+Inspection requires `project.configure`. Recovery also requires `deployment.run`.
+After inspecting the resource and its `recoveryAfter` deadline, choose the action
+that matches the recorded outcome:
+
+```sh
+dispatchctl service reconcile --run SERVICE_RUN_ID
+dispatchctl service get --run SERVICE_RUN_ID
+```
+
+Reconcile recovers the original binding or resumes its original cleanup. A
+confirmed-absent built-in resource can be recreated with `service retry --run
+SERVICE_RUN_ID`, using its accepted credentials and ownership. These commands
+have no idempotency-key API. If a reply is lost, inspect the same run before
+submitting another request. Their continuation identifies the service resource
+and original operation, not a new mutation receipt.
+
+For deletion, obtain a current review:
+
+```sh
+dispatchctl service delete review --run SERVICE_RUN_ID > service-delete-review.json
+```
+
+Read the consumers, retained storage and blockers. Write `delete-service.json`
+with the returned resource ID and version, and type the exact reviewed name:
+
+```json
+{
+  "confirmation": {
+    "resourceId": "SERVICE_RUN_ID",
+    "action": "delete",
+    "expectedVersion": "RETURNED_VERSION",
+    "confirmName": "EXACT_SERVICE_NAME"
+  }
+}
+```
+
+```sh
+dispatchctl service delete --run SERVICE_RUN_ID --key service-cleanup-001 --input delete-service.json
+dispatchctl receipt get --receipt RECEIPT_ID
+dispatchctl service get --run SERVICE_RUN_ID
+```
+
+Keep the same request and key across retries. Protected storage, credentials and
+history remain. New service-template provisioning remains a direct-user API;
+this client exposes recovery of existing owned resources and does not bypass
+that restriction. Custom scripts without an owned recovery adapter remain manual.
+
+## Review runtime artifact retention
+
+These commands require `project.manage` and Operations enabled. Read the saved
+policy and prepare a runtime review without changing that policy:
+
+```sh
+dispatchctl retention policy --project PROJECT_ID > policy.json
+jq '{scope: "runtime", expectedPolicy: .data}' policy.json > runtime-review-input.json
+dispatchctl retention review --project PROJECT_ID --input runtime-review-input.json > runtime-review.json
+```
+
+Inspect `.data.runtime`, including its exact candidates, protection reasons,
+expiration and policy. Write `runtime-apply.json` with `scope: "runtime"`, the
+unchanged complete `expectedPolicy`, `runtimeReviewId` from `.data.runtime.id`,
+`runtimeReviewDigest` from `.data.runtime.digest`, and `confirm` explicitly set
+to the selected project ID.
+The client requires every saved policy field, including zero-valued runtime
+ages. It never substitutes the current policy or invents confirmation.
+
+```sh
+dispatchctl retention apply --project PROJECT_ID --input runtime-apply.json
+dispatchctl retention get --project PROJECT_ID --review REVIEW_ID
+```
+
+The review ID and digest are the server's retry identity; this API has no
+`Idempotency-Key`. After a timeout, inspect the original review. An accepted
+partial review can be retried with its unchanged request, within its original
+candidate set. Follow a `supersededBy` reference instead of resuming an older
+review. Storage and workload backups are excluded. History cleanup and retention
+policy edits remain outside these commands.
+
+## Capture, verify and restore a workload backup
+
+The current native adapter supports owned PostgreSQL 17+ services on Docker.
+Archives stay encrypted on their original target and retain by default. This is
+separate from machine snapshots and controller database backups. Mutations
+require the server's `project.configure` and `deployment.run` grants.
+
+Prepare `backup.json` with the source service provision run ID:
+
+```json
+{
+  "sourceRunId": "SERVICE_RUN_ID",
+  "verificationIntervalHours": 24,
+  "checks": [{ "query": "SELECT count(*) FROM expected_table", "expected": "10" }]
+}
+```
+
+The interval is `0` for manual verification or `1` to `8760` hours. Integrity
+checks are optional; at most 16 queries and expected values of 4096 bytes each
+are accepted. The server validates read-only SQL and keeps assertions encrypted.
+
+```sh
+dispatchctl backup create --key database-backup-001 --input backup.json
+dispatchctl receipt get --receipt RECEIPT_ID
+dispatchctl backups list --project PROJECT_ID
+dispatchctl backup get --backup BACKUP_ID
+dispatchctl backup verify --backup BACKUP_ID --key database-verify-001
+dispatchctl backup operations --backup BACKUP_ID
+dispatchctl backup operation get --operation OPERATION_ID
+```
+
+Verification restores into isolated temporary storage and requires integrity
+checks and owned-resource cleanup. Inspect verification freshness and cleanup
+state; a retained archive alone does not establish a successful restore.
+
+After an interrupted operation's `recoveryAfter` deadline:
+
+```sh
+dispatchctl backup reconcile --backup BACKUP_ID --operation ORIGINAL_OPERATION_ID
+```
+
+Reconciliation inspects the original evidence and cleans owned interrupted
+verification resources. It does not repeat a restore whose outcome is unknown.
+It has no idempotency-key API and returns the original backup operation. Inspect
+that operation again if the response is lost.
+
+To restore, explicitly select a ready owned destination service on the same
+project and original target. Resolve its active consumers first:
+
+```sh
+dispatchctl backup restore review --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID > restore-review.json
+```
+
+Read the overwrite consequences. Write `restore.json` using the same
+`confirmation` object shown for service deletion, with `resourceId` set to the
+backup ID, `action` set to `restore`, `expectedVersion` copied from the review's `version`, and the exact destination
+service name as `confirmName`:
+
+```sh
+dispatchctl backup restore --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID --key database-restore-001 --input restore.json
+```
+
+Save the destination, input file and key. If the response is lost, recover the
+same receipt and inspect its operation; a new key would request another restore.
+An unresolved result requires inspection before any new reviewed restore.
+
+To remove retained archive bytes, run `backup delete review --backup BACKUP_ID`.
+After reviewing blockers, supply its version and backup ID confirmation in
+`delete-backup.json`, with `action: "delete"`, then run:
+
+```sh
+dispatchctl backup delete --backup BACKUP_ID --key database-archive-delete-001 --input delete-backup.json
+```
+
+The server retains encrypted operation history. An unsupported provider,
+protected target, changed review or active lease remains an explicit error;
+these commands provide no force, approval or arbitrary execution option.
+
 ## MCP
 
 Launch `dispatchctl mcp` as a stdio server with the same scoped credential configuration. For clients using an `mcpServers` configuration:
@@ -222,7 +388,7 @@ The transport follows the MCP [stdio](https://modelcontextprotocol.io/specificat
 
 ## JSON and exit codes
 
-Every command returns `version: "dispatch.client/v1"`, `ok`, HTTP `status` when available, and `data` or a structured `error`. Receipts preserve resource and operation IDs, replay status, the retry deadline, recovery actions and server review references. Server problem details remain available in `error.evidence`.
+Every command returns `version: "dispatch.client/v1"`, `ok`, HTTP `status` when available, and `data` or a structured `error`. Receipts preserve resource and operation IDs, replay status, the retry deadline, recovery actions and server review references. Server problem details remain available in `error.evidence`. Recovery continuations distinguish `receipt`, `service_resource`, `runtime_retention_review`, `workload_backup` and `workload_backup_operation`. They carry the actual returned ID and, when available, its project, resource and operation IDs. Use the matching inspect command; an accepted HTTP response does not establish successful recovery.
 
 | Exit | Meaning |
 | --- | --- |
