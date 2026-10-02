@@ -5,6 +5,7 @@ import "time"
 // RuntimeArtifact contains encrypted execution inputs. Only rollback execution
 // opens them; API responses must never include this record.
 type RuntimeArtifact struct {
+	Metadata     RuntimeArtifactMetadata
 	DeploymentID string
 	AppID        string
 	ServerID     string

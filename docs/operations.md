@@ -135,7 +135,7 @@ Cleanup preserves:
 
 - Active and successful deployments, including historical rollback candidates.
 - Encrypted drift baselines and the runs they belong to.
-- Runs referenced by workflow stages or preview groups.
+- Runs referenced by workflow stages, preview groups, or retained runtime artifact indexes.
 - The configured minimum number of recent runs for each application.
 - Logs from the latest successful release and active runs.
 
@@ -144,6 +144,59 @@ Successful snapshots and their service credentials remain retained because Helm
 history may still reference them. This controller cleanup does not uninstall Helm
 releases or delete runtime resources. Audit events and analytics archives have
 independent retention and are not pruned by this action.
+
+### Runtime artifacts
+
+The same project policy also stores `imageDays`, `stoppedRevisionDays` and
+`keepRollbackRevisions`. An age of zero preserves that artifact kind indefinitely.
+A zero rollback count uses the default of five; an explicit count must be at least
+two. Saving history edits preserves these runtime limits, and saving runtime limits
+preserves history settings. Cleanup is always explicit.
+
+Choose **Preview runtime cleanup** to inspect owned images and stopped revisions.
+The saved review lists exact resource identities, target and application names,
+and readable protection reasons. Active releases, current and retained rollback
+revisions, shared images, and workflow or baseline references stay protected.
+Runtime cleanup never deletes volumes, networks or backup artifacts. It supports
+simulation and Docker/Compose targets, including enrolled agents. Kubernetes
+artifacts and objects without retained ownership evidence are not cleanup candidates.
+Images shared across applications, external tags, build-cache tags and images with
+multiple tags stay protected. Retire revision inputs first, then create a new image
+review once their final retained reference is gone.
+
+The existing retention preview and apply endpoints accept `scope: "runtime"`.
+Preview requires `expectedPolicy` and returns `runtime` with a durable review ID,
+digest, policy, expiry, candidate items and per-item results. Each review contains
+at most 50 deletion candidates. Apply requires the same `expectedPolicy`,
+`runtimeReviewId`, `runtimeReviewDigest` and `confirm` equal to the project ID.
+The operator must confirm the displayed consequences before removal. Removing a
+stopped container can discard its writable container layer, even though mounted
+volumes remain retained.
+
+The controller rechecks the policy, ownership and current references before
+mutation. A stale planned review must be replaced. Once cleanup is accepted,
+a partial or blocked receipt can be retried after its original review expiry,
+subject to the same policy and fresh runtime checks. Retry stays within the
+original candidate list. Confirmed absence counts as completed removal; failed
+items keep their diagnostics and can be retried after resolving the cause.
+
+Save the receipt ID to resume after a disconnect. Use **Reopen a cleanup receipt**
+or `GET /api/v1/projects/{id}/retention/runtime-reviews/{reviewId}` to inspect it.
+The UI keeps older-policy receipts readable and requires a fresh preview before
+further deletion under a changed policy. A successful cleanup receipt records
+what was removed or already absent; it does not imply application data was backed
+up or restored.
+
+A runtime cleanup attempt has a 35-minute lease and a 30-minute execution limit.
+After a controller interruption, an expired running receipt reopens as partial;
+retrying uses its original candidates. An unresolved agent mutation also requires
+a newer successful target inspection before another cleanup operation can run.
+Refreshing or retrying does not authorize newly discovered objects. Captured
+credentials are erased only after their reviewed revision has been retired;
+nonsecret image metadata remains for the independent image retention policy.
+After changing policy, approve a new review for remaining artifacts. It may adopt
+an inactive cleanup fence only for the same immutable revision and target; an
+active attempt remains exclusive.
 
 ## Interrupted work
 

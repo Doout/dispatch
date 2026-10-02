@@ -455,16 +455,40 @@ func scanWorkflowJobResult(row scanner) (core.WorkflowJobResult, error) {
 }
 
 func (s *SQLStore) CreateWorkflowStageRun(ctx context.Context, item core.WorkflowStageRun) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_stage_runs(id,revision_id,stage_name,target_ref,state,approval,deployment_ids,check_runs,error,created_at,started_at,finished_at,deployment_results) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.checkRuntimeReferences(ctx, tx, item.DeploymentIDs); err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_stage_runs(id,revision_id,stage_name,target_ref,state,approval,deployment_ids,check_runs,error,created_at,started_at,finished_at,deployment_results) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.RevisionID, item.StageName, item.TargetRef, item.State, item.Approval, jsonText(item.DeploymentIDs), jsonText(item.CheckRuns), item.Error,
 		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.DeploymentResults))
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) UpdateWorkflowStageRun(ctx context.Context, item core.WorkflowStageRun) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_stage_runs SET state=?,approval=?,deployment_ids=?,check_runs=?,error=?,started_at=?,finished_at=?,deployment_results=? WHERE id=? AND state!='cancelled'`),
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.checkRuntimeReferences(ctx, tx, item.DeploymentIDs); err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_stage_runs SET state=?,approval=?,deployment_ids=?,check_runs=?,error=?,started_at=?,finished_at=?,deployment_results=? WHERE id=? AND state!='cancelled'`),
 		item.State, item.Approval, jsonText(item.DeploymentIDs), jsonText(item.CheckRuns), item.Error, nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.DeploymentResults), item.ID)
-	return changed(result, err)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 const workflowStageRunSelect = `SELECT id,revision_id,stage_name,target_ref,state,approval,deployment_ids,check_runs,error,created_at,started_at,finished_at,deployment_results FROM workflow_stage_runs`

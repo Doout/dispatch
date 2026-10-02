@@ -105,6 +105,9 @@ func (s *SQLStore) CreateRollbackDeployment(ctx context.Context, d, source core.
 	if err = s.checkDeploymentApp(ctx, tx, d); err != nil {
 		return err
 	}
+	if err = s.checkRuntimeReferences(ctx, tx, []string{source.ID}); err != nil {
+		return err
+	}
 	if d.RollbackCurrentID != "" {
 		var current string
 		if err = tx.QueryRowContext(ctx, s.q(`SELECT id FROM deployments WHERE app_id=? AND state='succeeded' ORDER BY created_at DESC,id DESC LIMIT 1`), d.AppID).Scan(&current); err != nil {
@@ -135,7 +138,7 @@ func (s *SQLStore) CreateRollbackDeployment(ctx context.Context, d, source core.
 	if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployment_service_bindings(deployment_id,alias,service_id,payload) SELECT ?,alias,service_id,payload FROM deployment_service_bindings WHERE deployment_id=?`), d.ID, source.ID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployment_runtime_artifacts(deployment_id,app_id,server_id,scope_id,ciphertext) SELECT ?,app_id,server_id,scope_id,ciphertext FROM deployment_runtime_artifacts WHERE deployment_id=?`), d.ID, source.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployment_runtime_artifacts(deployment_id,app_id,server_id,scope_id,ciphertext,metadata) SELECT ?,app_id,server_id,scope_id,ciphertext,metadata FROM deployment_runtime_artifacts WHERE deployment_id=?`), d.ID, source.ID); err != nil {
 		return err
 	}
 	if err = s.insertReleaseAction(ctx, tx, action); err != nil {
