@@ -129,12 +129,16 @@ func TestClosedWorkflowPreviewCleansCurrentAndOlderHelmApps(t *testing.T) {
 	}
 	blocked := httptest.NewRecorder()
 	a.deleteTemporaryWorkflowResource(blocked, request)
-	if blocked.Code != http.StatusConflict || executor.cleaned["manual-app"] {
-		t.Fatalf("active run deletion returned %d and cleanup %v", blocked.Code, executor.cleaned["manual-app"])
+	if blocked.Code != http.StatusNoContent || !executor.cleaned["manual-app"] {
+		t.Fatalf("accepted deletion returned %d and cleanup %v", blocked.Code, executor.cleaned["manual-app"])
+	}
+	pending, err = data.GetWorkflowRevision(ctx, pending.ID)
+	if err != nil || pending.State != "cancelled" {
+		t.Fatalf("queued work survived deletion: %+v %v", pending, err)
 	}
 	pending.State = "succeeded"
-	if err := data.UpdateWorkflowRevision(ctx, pending); err != nil {
-		t.Fatal(err)
+	if err = data.UpdateWorkflowRevision(ctx, pending); err == nil {
+		t.Fatal("late completion revived cancelled preview")
 	}
 	response := httptest.NewRecorder()
 	a.deleteTemporaryWorkflowResource(response, request)

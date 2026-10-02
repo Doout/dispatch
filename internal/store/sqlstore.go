@@ -873,14 +873,21 @@ func scanRelayWebhook(row scanner) (core.RelayWebhook, error) {
 	return item, err
 }
 
-type statementExecutor interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}
-
 func (s *SQLStore) CreateApp(ctx context.Context, app core.App) error {
-	return s.insertApp(ctx, s.db, app)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.insertApp(ctx, tx, app); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
-func (s *SQLStore) insertApp(ctx context.Context, target statementExecutor, app core.App) error {
+func (s *SQLStore) insertApp(ctx context.Context, target *changeTx, app core.App) error {
+	if err := s.checkPreviewApp(ctx, target, app); err != nil {
+		return err
+	}
 	hookEnvironment, _ := json.Marshal(app.HookEnvironment)
 	_, err := target.ExecContext(ctx, s.q(`INSERT INTO apps(
         id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,dockerfile_path,compose_path,
@@ -891,7 +898,10 @@ func (s *SQLStore) insertApp(ctx context.Context, target statementExecutor, app 
 		app.ContextPath, app.DockerfilePath, app.ComposePath, app.ComposeContent, app.HelmChart, app.HelmVersion,
 		app.HelmRepository, app.HelmValues, app.HelmNamespace, app.HelmRelease, app.PreDeployHook, app.PostDeployHook,
 		app.ContainerPort, app.Domain, app.State, stamp(app.CreatedAt), app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, jsonText(app.HelmProvenance), jsonText(app.HealthPolicy))
-	return err
+	if err != nil {
+		return err
+	}
+	return s.recordPreviewApp(ctx, target, app)
 }
 
 func (s *SQLStore) UpdateApp(ctx context.Context, app core.App) error {
@@ -907,8 +917,16 @@ func (s *SQLStore) UpdateApp(ctx context.Context, app core.App) error {
 		return err
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.checkPreviewApp(ctx, tx, app); err != nil {
+		return err
+	}
 	hookEnvironment, _ := json.Marshal(app.HookEnvironment)
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE apps SET project_id=?,server_id=?,name=?,source_repo=?,branch=?,source_auth_type=?,source_credential_id=?,build_type=?,
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE apps SET project_id=?,server_id=?,name=?,source_repo=?,branch=?,source_auth_type=?,source_credential_id=?,build_type=?,
         context_path=?,dockerfile_path=?,compose_path=?,compose_content=?,helm_chart=?,helm_version=?,helm_repository=?,
         helm_values=?,helm_namespace=?,helm_release=?,pre_deploy_hook=?,post_deploy_hook=?,container_port=?,domain=?,state=?,
         helm_group_values=?,hook_environment=?,generated=?,template=?,helm_provenance=?,health_policy=? WHERE id=?`),
@@ -916,7 +934,13 @@ func (s *SQLStore) UpdateApp(ctx context.Context, app core.App) error {
 		app.ComposePath, app.ComposeContent, app.HelmChart, app.HelmVersion, app.HelmRepository, app.HelmValues, app.HelmNamespace,
 		app.HelmRelease, app.PreDeployHook, app.PostDeployHook, app.ContainerPort, app.Domain, app.State,
 		app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, jsonText(app.HelmProvenance), jsonText(app.HealthPolicy), app.ID)
-	return changed(result, err)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	if err = s.recordPreviewApp(ctx, tx, app); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) AppHasDeployments(ctx context.Context, appID string) (bool, error) {
@@ -1009,10 +1033,12 @@ func (s *SQLStore) listApps(ctx context.Context, includeGenerated, includeClosed
 	return items, rows.Err()
 }
 
-func (s *SQLStore) GetApp(ctx context.Context, id string) (core.App, error) {
-	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
+const appSelect = `SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
         dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
-        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance,health_policy FROM apps WHERE id=?`), id)
+        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance,health_policy FROM apps`
+
+func (s *SQLStore) GetApp(ctx context.Context, id string) (core.App, error) {
+	row := s.db.QueryRowContext(ctx, s.q(appSelect+` WHERE id=?`), id)
 	app, err := scanApp(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return app, ErrNotFound
@@ -1056,6 +1082,9 @@ func (s *SQLStore) CreateDeployment(ctx context.Context, deployment core.Deploym
 	return tx.Commit()
 }
 func (s *SQLStore) insertDeployment(ctx context.Context, tx *changeTx, deployment core.Deployment) error {
+	if err := s.checkPreviewDeployment(ctx, tx, deployment.AppID); err != nil {
+		return err
+	}
 	if err := s.checkTemporaryDeployment(ctx, tx, deployment.AppID, time.Now().UTC()); err != nil {
 		return err
 	}
@@ -1084,9 +1113,9 @@ func (s *SQLStore) UpdateDeployment(ctx context.Context, deployment core.Deploym
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE deployments SET state=?,message=?,started_at=?,finished_at=?,lease_until=? WHERE id=? AND (? IN ('failed','cancelled') OR NOT EXISTS (SELECT 1 FROM temporary_environments e WHERE e.app_id=deployments.app_id AND (e.state IN ('closing','cleanup_blocked','closed') OR e.expires_at<=?)))`),
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE deployments SET state=?,message=?,started_at=?,finished_at=?,lease_until=? WHERE id=? AND (state!='cancelled' OR ?='cancelled') AND (? IN ('failed','cancelled') OR NOT EXISTS (SELECT 1 FROM temporary_environments e WHERE e.app_id=deployments.app_id AND (e.state IN ('closing','cleanup_blocked','closed') OR e.expires_at<=?)))`),
 		string(deployment.State), deployment.Message, nullTime(deployment.StartedAt), nullTime(deployment.FinishedAt),
-		nullTime(deployment.LeaseUntil), deployment.ID, string(deployment.State), stamp(time.Now().UTC()))
+		nullTime(deployment.LeaseUntil), deployment.ID, string(deployment.State), string(deployment.State), stamp(time.Now().UTC()))
 	if err != nil {
 		return err
 	}

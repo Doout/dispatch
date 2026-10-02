@@ -64,7 +64,7 @@ func previewLifetimeFixture(t *testing.T, ttl string, deadline *time.Time) (*API
 			return data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "resource", ConfigSourceID: "config", Kind: "Application", Name: "preview-42", Path: "temporary.yaml", Document: "apiVersion: dispatch/v1alpha1\nkind: Application\nmetadata:\n  name: preview-42\nspec:\n  sources:\n    service:\n      repository: example/service\n      ref: " + strings.Repeat("a", 40) + "\n", Temporary: true, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now})
 		},
 		func() error {
-			return data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "resource", GitHubAppID: "github", Repository: "example/service", PullRequestNumber: 42, Command: "/preview", TTL: ttl, ExpiresAt: deadline, CreatedAt: now})
+			return data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "resource", GitHubAppID: "github", Repository: "example/service", PullRequestNumber: 42, Command: "/preview", TTL: ttl, CreatedAt: now})
 		},
 		func() error {
 			return data.CreateApp(ctx, core.App{ID: "current", ProjectID: "project", ServerID: "server", Name: "Current", BuildType: core.BuildTypeHelm, State: "ready", Generated: true, HelmProvenance: core.HelmProvenance{WorkflowResourceID: "resource"}, CreatedAt: now})
@@ -80,6 +80,17 @@ func previewLifetimeFixture(t *testing.T, ttl string, deadline *time.Time) (*API
 		},
 	} {
 		if err := create(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if deadline != nil {
+		triggers, err := data.ListWorkflowPreviewTriggers(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		previous, next := triggers[0], triggers[0]
+		next.ExpiresAt = deadline
+		if _, err = data.SaveWorkflowPreviewLifetime(ctx, previous, next, "fixture-lifetime", now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -363,6 +374,10 @@ func TestPRCloseKeepsPreviewUntilLinkedPullRequestsClose(t *testing.T) {
 	var open atomic.Bool
 	open.Store(true)
 	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/example/service/pulls/42" {
+			_, _ = io.WriteString(w, `{"state":"closed","head":{"sha":"abc","ref":"feature"}}`)
+			return
+		}
 		if r.URL.Path != "/repos/example/ui/pulls/21" {
 			t.Errorf("unexpected GitHub endpoint %s", r.URL.Path)
 			http.NotFound(w, r)

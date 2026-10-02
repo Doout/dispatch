@@ -351,6 +351,34 @@ func (a *API) updateWorkflowPreviewHead(ctx context.Context, trigger core.Workfl
 	if err != nil || len(documents) != 1 || documents[0].Spec == nil {
 		return errors.New("temporary preview document is invalid")
 	}
+	// Delivery order is not source order. Pin the current PR head, including
+	// when the event contains a stale commit from before a force-push.
+	number := trigger.PullRequestNumber
+	if repository != events.NormalizeRepository(trigger.Repository) {
+		number = 0
+		for alias, n := range trigger.LinkedPullRequests {
+			if source, ok := documents[0].Spec.Sources[alias]; ok && events.NormalizeRepository(source.Repository) == repository {
+				number = n
+				break
+			}
+		}
+	}
+	if number == 0 {
+		return nil
+	}
+	if a.workflows.ResolvePreviewSource != nil {
+		current, err := a.workflows.ResolvePreviewSource(ctx, trigger.GitHubAppID, repository, number)
+		if err != nil {
+			return err
+		}
+		headSHA = current.Head.SHA
+	} else {
+		current, err := resolver.ResolvePullRequest(ctx, repository, number)
+		if err != nil {
+			return err
+		}
+		headSHA = current.HeadSHA
+	}
 	refs := map[string]string{}
 	if repository != events.NormalizeRepository(trigger.Repository) {
 		primary, err := resolver.ResolvePullRequest(ctx, trigger.Repository, trigger.PullRequestNumber)
@@ -493,13 +521,14 @@ func (a *API) closeWorkflowPreview(ctx context.Context, trigger core.WorkflowPre
 			return a.store.CloseWorkflowPreviewTrigger(ctx, trigger.ID, time.Now().UTC())
 		}
 	}
-	if err := a.workflows.CancelPreviewRuns(ctx, resource.ID); err != nil {
+	cleanup, err := a.beginWorkflowPreviewCleanup(ctx, resource, "closed", time.Now().UTC())
+	if err != nil {
+		if previewCleanupAlreadyEnded(err) {
+			return nil
+		}
 		return err
 	}
-	if err := a.cleanupWorkflowPreviewResource(ctx, resource); err != nil {
-		return err
-	}
-	return a.store.RemoveWorkflowPreviewResource(ctx, resource.ID, time.Now().UTC())
+	return a.reconcileWorkflowPreviewCleanup(ctx, cleanup.ID)
 }
 
 func (a *API) workflowPreviewCleanupApps(ctx context.Context, resource core.WorkflowResource) ([]core.App, error) {
@@ -540,32 +569,10 @@ func (a *API) workflowPreviewCleanupApps(ctx context.Context, resource core.Work
 		if err != nil {
 			return nil, err
 		}
-		if app.State == "closed" {
-			continue
-		}
 		result = append(result, app)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
-}
-
-func (a *API) cleanupWorkflowPreviewResource(ctx context.Context, resource core.WorkflowResource) error {
-	apps, err := a.workflowPreviewCleanupApps(ctx, resource)
-	if err != nil {
-		return err
-	}
-	for _, app := range apps {
-		if err := a.deploy.CleanupOwnedApplication(ctx, app, ""); err != nil {
-			return fmt.Errorf("clean preview app %s: %w", app.ID, err)
-		}
-	}
-	if resource.State == "expiring" {
-		return nil
-	}
-	if _, err := a.workflows.Deactivate(ctx, resource.ID); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (a *API) processWorkflowPreviewComment(ctx context.Context, target *previewPollTarget, event core.IncomingEvent, resolver events.GitHubResolver) error {
@@ -606,6 +613,21 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		}
 		bound := false
 		for _, trigger := range triggers {
+			if trigger.ClosedAt != nil && trigger.GitHubAppID == template.GitHubAppID && events.NormalizeRepository(trigger.Repository) == target.repository && trigger.PullRequestNumber == event.PullRequestNumber && trigger.Command == event.Command {
+				previous, err := a.store.WorkflowPreviewCommentRevision(ctx, trigger.ID, event.SourceCommentID)
+				if err != nil {
+					return err
+				}
+				latest, err := a.store.LatestWorkflowPreviewDeployComment(ctx, trigger.ID)
+				if err != nil {
+					return err
+				}
+				commentID, _ := strconv.ParseUint(event.SourceCommentID, 10, 64)
+				lastID, _ := strconv.ParseUint(latest, 10, 64)
+				if previous != "" || event.SourceCommentID == trigger.LifetimeStartCommentID || commentID > 0 && commentID <= lastID {
+					return nil
+				}
+			}
 			if trigger.ClosedAt == nil && trigger.GitHubAppID == template.GitHubAppID && events.NormalizeRepository(trigger.Repository) == target.repository && trigger.PullRequestNumber == event.PullRequestNumber && trigger.Command == event.Command {
 				bound = true
 				present := false
@@ -652,11 +674,27 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if err != nil {
 			return err
 		}
-		trigger := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), TemplateID: template.ID, TemplateSource: template.GitSource,
+		trigger := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), TemplateID: template.ID, TemplateSource: template.GitSource, LifetimeStartCommentID: event.SourceCommentID,
 			GitHubAppID: template.GitHubAppID, Repository: target.repository, PullRequestNumber: event.PullRequestNumber,
 			Command: template.Command, PreviewURL: previewURL, AutoDeploy: template.AutoDeploy, LiveReload: template.LiveReload,
 			MaxAutoRunsPerHour: template.MaxAutoRunsPerHour, TTL: template.TTL, SourceDefaults: defaults, CreatedAt: time.Now().UTC()}
 		resource, err := a.workflows.CreateTemporaryApplication(store.WithWorkflowPreviewTrigger(ctx, trigger), template.ConfigSourceID, []byte(rendered))
+		if errors.Is(err, store.ErrPreviewCommandRetired) {
+			return nil
+		}
+		if errors.Is(err, store.ErrPreviewBindingExists) {
+			fresh, e := a.store.ListWorkflowPreviewTriggers(ctx)
+			if e != nil {
+				return e
+			}
+			for _, bound := range fresh {
+				if bound.ClosedAt == nil && bound.GitHubAppID == template.GitHubAppID && events.NormalizeRepository(bound.Repository) == target.repository && bound.PullRequestNumber == event.PullRequestNumber && bound.Command == event.Command {
+					target.workflowTriggers = append(target.workflowTriggers, bound)
+					break
+				}
+			}
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("create preview from template %s: %w", template.Name, err)
 		}

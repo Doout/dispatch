@@ -30,8 +30,8 @@ func (s *SQLStore) CreateWorkflowPreviewTrigger(ctx context.Context, item core.W
 }
 
 func (s *SQLStore) createWorkflowPreviewTrigger(ctx context.Context, writer eventActivityWriter, item core.WorkflowPreviewTrigger) error {
-	_, err := writer.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,live_reload,source_trust_policy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour, jsonText(item.SourceDefaults), item.TTL, nullTime(item.ExpiresAt), nullTime(item.CleanupLeaseUntil), item.LiveReload, item.SourceTrustPolicy)
+	_, err := writer.ExecContext(ctx, s.q(`INSERT INTO workflow_preview_triggers(id,resource_id,github_app_id,repository,pull_request_number,command,preview_url,linked_pull_requests,template_id,created_at,template_source,auto_deploy,max_auto_runs_per_hour,source_defaults,ttl,expires_at,cleanup_lease_until,live_reload,source_trust_policy,lifetime_start_comment_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		item.ID, item.ResourceID, item.GitHubAppID, item.Repository, item.PullRequestNumber, item.Command, item.PreviewURL, jsonText(item.LinkedPullRequests), nullString(item.TemplateID), stamp(item.CreatedAt), jsonText(item.TemplateSource), item.AutoDeploy, item.MaxAutoRunsPerHour, jsonText(item.SourceDefaults), item.TTL, nullTime(item.ExpiresAt), nullTime(item.CleanupLeaseUntil), item.LiveReload, item.SourceTrustPolicy, item.LifetimeStartCommentID)
 	return err
 }
 
@@ -92,7 +92,7 @@ func (s *SQLStore) UpdateWorkflowPreviewLiveReload(ctx context.Context, id, comm
 }
 
 func (s *SQLStore) UpdateWorkflowPreviewTriggerLinks(ctx context.Context, id string, links map[string]int) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET linked_pull_requests=? WHERE id=? AND closed_at IS NULL`), jsonText(links), id)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_preview_triggers SET linked_pull_requests=? WHERE id=? AND closed_at IS NULL AND EXISTS(SELECT 1 FROM workflow_resources r WHERE r.id=workflow_preview_triggers.resource_id AND r.active=TRUE AND r.state NOT IN ('expiring','expired','removed'))`), jsonText(links), id)
 	return changed(result, err)
 }
 

@@ -172,7 +172,7 @@ func TestWorkflowReceiptAtomicallyBindsCommentAndProtectsRetainedRun(t *testing.
 	must(s.CreateProject(ctx, core.Project{ID: "project", Name: "project", CreatedAt: now}))
 	must(s.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "github", CreatedAt: now, UpdatedAt: now}))
 	must(s.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", GitHubAppID: "github", Name: "source", Repository: "acme/app", CreatedAt: now, UpdatedAt: now}))
-	must(s.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "resource", ConfigSourceID: "source", Name: "preview", Kind: "Application", Temporary: true, CreatedAt: now, UpdatedAt: now}))
+	must(s.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "resource", ConfigSourceID: "source", Name: "preview", Kind: "Application", Temporary: true, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now}))
 	must(s.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "resource", GitHubAppID: "github", Repository: "acme/app", PullRequestNumber: 1, Command: "/preview", CreatedAt: now}))
 	for i := 0; i < 2; i++ {
 		reserved, err := s.ReserveWorkflowPreviewComment(ctx, "trigger", "42")

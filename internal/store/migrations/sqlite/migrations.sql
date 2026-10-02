@@ -1616,6 +1616,27 @@ CREATE TABLE repository_deletions (
   PRIMARY KEY(github_app_id, repository_id)
 );
 
+-- dispatch:migration 089_preview_cleanup
+CREATE TABLE workflow_preview_apps (
+ app_id TEXT PRIMARY KEY REFERENCES apps(id), resource_id TEXT NOT NULL REFERENCES workflow_resources(id)
+);
+INSERT INTO workflow_preview_apps(app_id,resource_id)
+ SELECT a.id,r.id FROM apps a JOIN workflow_resources r ON r.id=json_extract(a.helm_provenance,'$.workflowResourceId')
+ JOIN config_sources c ON c.id=r.config_source_id
+ WHERE a.generated=TRUE AND r.temporary=TRUE AND a.project_id=c.project_id;
+CREATE INDEX workflow_preview_apps_resource ON workflow_preview_apps(resource_id);
+CREATE TABLE workflow_preview_cleanups (
+ id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES workflow_resources(id), reason TEXT NOT NULL,
+ final_state TEXT NOT NULL, state TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL, lease_token TEXT NOT NULL DEFAULT '', lease_until TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX workflow_preview_cleanup_active ON workflow_preview_cleanups(resource_id) WHERE state<>'succeeded';
+CREATE TABLE workflow_preview_cleanup_apps (
+ cleanup_id TEXT NOT NULL REFERENCES workflow_preview_cleanups(id), app_id TEXT NOT NULL REFERENCES apps(id),
+ server_id TEXT NOT NULL, spec_digest TEXT NOT NULL, job_id TEXT NOT NULL UNIQUE, state TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
+ node_id TEXT NOT NULL DEFAULT '', node_generation BIGINT NOT NULL DEFAULT 0, previous_job_ids TEXT NOT NULL DEFAULT '[]',
+ PRIMARY KEY(cleanup_id,app_id)
+);
 -- dispatch:migration 090_neon_services
 CREATE TABLE neon_providers (
   id TEXT PRIMARY KEY,

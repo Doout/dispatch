@@ -490,8 +490,8 @@ function TemporaryPreviewDeleteDialog({ resource, busy, error, onClose, onDelete
   const dialogRef = useDialogFocus(onClose);
   return <div className="dialog-layer confirm-layer" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
     <section ref={dialogRef} className="resource-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-preview-title" aria-describedby="delete-preview-description">
-      <header><div><h2 id="delete-preview-title">Delete PR preview</h2><p>Stops the comment command and removes its deployed resources.</p></div><button aria-label="Close dialog" disabled={busy} onClick={onClose}><X size={19} weight="bold" /></button></header>
-      <div className="dialog-body"><p className="confirm-copy" id="delete-preview-description">Delete <strong>{resource.name}</strong>? The pull request stays open.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions confirm-actions"><button className="quiet-button" disabled={busy} onClick={onClose}>Cancel</button><button className="danger-button" disabled={busy} onClick={onDelete}>{busy ? "Deleting..." : "Delete preview"}</button></div></div>
+      <header><div><h2 id="delete-preview-title">Delete PR preview</h2><p>Cancels pending work and removes this preview’s owned resources.</p></div><button aria-label="Close dialog" disabled={busy} onClick={onClose}><X size={19} weight="bold" /></button></header>
+      <div className="dialog-body"><p className="confirm-copy" id="delete-preview-description">Delete <strong>{resource.name}</strong>? The pull request stays open. Cleanup resumes automatically if a target is unavailable. Retained storage and shared services keep their policies.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions confirm-actions"><button className="quiet-button" disabled={busy} onClick={onClose}>Cancel</button><button className="danger-button" disabled={busy} onClick={onDelete}>{busy ? "Deleting..." : "Delete preview"}</button></div></div>
     </section>
   </div>;
 }
