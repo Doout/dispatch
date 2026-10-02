@@ -91,7 +91,9 @@ func (m *StorageManager) CheckApplicationCleanup(ctx context.Context, app core.A
 		return err
 	}
 	for _, item := range items {
-		if item.State == "absent" || item.Namespace != helmNamespace(app, server) || item.OwnerID != app.ID && item.Ownership == "verified" {
+		// Unverified claims in a shared namespace can belong to unrelated pods.
+		// Helm checks their live owner chains against its actual release manifest.
+		if item.State == "absent" || item.Namespace != helmNamespace(app, server) || item.OwnerID != app.ID || item.Ownership != "verified" {
 			continue
 		}
 		for _, consumer := range item.Consumers {
