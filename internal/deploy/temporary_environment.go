@@ -84,3 +84,45 @@ func (s *Service) CleanupOwnedApplication(ctx context.Context, app core.App, ope
 	app.State = "closed"
 	return s.store.UpdateApp(ctx, app)
 }
+
+// Cleanup waits for this controller's cancelled executor to settle. The store
+// separately fences new acceptance and remote leases before this is called.
+func (s *Service) CancelAndWaitOwnedApplication(ctx context.Context, appID string) error {
+	s.mu.Lock()
+	ids := []string{}
+	for id := range s.cancels {
+		ids = append(ids, id)
+	}
+	s.mu.Unlock()
+	deployments := []core.Deployment{}
+	for _, id := range ids {
+		d, err := s.store.GetDeployment(ctx, id)
+		if err != nil {
+			return err
+		}
+		if d.AppID == appID {
+			deployments = append(deployments, d)
+		}
+	}
+	for {
+		waiting := false
+		s.mu.Lock()
+		for _, deployment := range deployments {
+			if cancel := s.cancels[deployment.ID]; cancel != nil {
+				waiting = true
+				cancel()
+			}
+		}
+		s.mu.Unlock()
+		if !waiting {
+			return nil
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}

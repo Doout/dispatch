@@ -142,11 +142,15 @@ func previewPanelFixture(t *testing.T) (*API, *panelGitHubFixture, core.Workflow
 	if err := data.RemoveWorkflowPreviewResource(ctx, "resource", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := data.DeleteApp(ctx, "current"); err != nil {
-		t.Fatal(err)
-	}
-	if err := data.DeleteApp(ctx, "older"); err != nil {
-		t.Fatal(err)
+	for _, id := range []string{"current", "older"} {
+		app, err := data.GetApp(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app.State = "closed"
+		if err = data.UpdateApp(ctx, app); err != nil {
+			t.Fatal(err)
+		}
 	}
 	fake := &panelGitHubFixture{comments: map[string]events.GitHubComment{}, permissions: map[string]string{"maintainer": "write", "reader": "read"}, editors: map[string]string{}, next: 100, open: true, created: time.Now().UTC()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fake.serve(t, w, r) }))

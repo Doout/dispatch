@@ -399,7 +399,14 @@ export type ConfigSource = {
   createdAt: string;
   updatedAt: string;
 };
+export type WorkflowPreviewCleanup = {
+ id: string; resourceId: string; reason: "expired" | "removed" | "closed";
+ finalState: string; state: "pending" | "blocked" | "succeeded"; error?: string;
+ attempts: number; createdAt: string; updatedAt: string;
+ apps: { appId: string; serverId: string; jobId: string; previousJobIds?: string[]; state: string; error?: string }[];
+};
 export type WorkflowResource = {
+ previewCleanups?: WorkflowPreviewCleanup[];
   previewTTL?: string;
   previewExpiresAt?: string;
   id: string;
