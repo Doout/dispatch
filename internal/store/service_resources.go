@@ -271,6 +271,11 @@ func (s *SQLStore) SaveServiceResource(ctx context.Context, r core.ServiceResour
 			return err
 		}
 	}
+	if r.ReplacesRunID != "" && r.State == "deleted" && run.State == "failed" {
+		if err = s.UpdateMutationOutcome(ctx, tx.Tx, "service_provision", r.RunID, "failed"); err != nil {
+			return err
+		}
+	}
 	if r.OperationID != r.RunID {
 		if err = s.UpdateMutationOutcome(ctx, tx.Tx, "service_resource", r.OperationID, state); err != nil {
 			return err

@@ -473,6 +473,10 @@ func (a *API) executeServiceResourceDelete(record core.ServiceResource) {
 			record.State = "deleting"
 		}
 	}
+	if record.ReplacesRunID != "" && record.State == "deleted" && run.State != "succeeded" {
+		finished := time.Now().UTC()
+		run.State, run.Phase, run.Error, run.FinishedAt = "failed", "Replacement cancelled", "Candidate removed by explicit review; original branch retained.", &finished
+	}
 	if e := a.store.(store.ServiceResourceStore).SaveServiceResource(context.WithoutCancel(ctx), record, run, nil); e != nil {
 		a.logger.Error("Service cleanup evidence could not be saved", "run", record.RunID)
 	}

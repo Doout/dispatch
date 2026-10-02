@@ -5570,6 +5570,7 @@ components:
       type: object
       required: [runId, projectId, serviceId, name, target, state, policy, revision, operationId]
       properties:
+        replacedByRunId: { type: string }
         replacesRunId: { type: string }
         previewId: { type: string }
         previewAlias: { type: string }
@@ -6103,6 +6104,19 @@ components:
         attempts: { type: integer }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        services:
+          type: array
+          items:
+            type: object
+            properties:
+              runId: {type: string}
+              alias: {type: string}
+              policy: {type: string, enum: [retain, suspend, delete]}
+              resourceId: {type: string}
+              operationId: {type: string}
+              actionStarted: {type: boolean}
+              state: {type: string}
+              error: {type: string}
         apps:
           type: array
           items:
