@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"time"
 
 	"helm.sh/helm/v3/pkg/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/cli-runtime/pkg/resource"
 )
@@ -22,7 +25,7 @@ type helmReadinessChecker interface {
 // runs. A later failure can then roll back a newer operation. Keep one failure
 // path: the candidate wait observes cancellation synchronously, and Helm finishes
 // its bounded atomic recovery before the action returns.
-func (c *sdkHelmClient) actionContext(ctx context.Context) (context.Context, func(), error) {
+func (c *sdkHelmClient) actionContext(ctx context.Context, deploymentID string) (context.Context, func(), error) {
 	client, ok := c.configuration.KubeClient.(*kube.Client)
 	if !ok {
 		// Injected clients supply their own action behavior in contract fixtures.
@@ -35,7 +38,7 @@ func (c *sdkHelmClient) actionContext(ctx context.Context) (context.Context, fun
 	if err != nil {
 		return nil, nil, fmt.Errorf("initialize Kubernetes readiness client: %w", err)
 	}
-	wrapped := &helmActionWaiter{Client: client, ctx: ctx, interval: 2 * time.Second}
+	wrapped := &helmActionWaiter{Client: client, ctx: ctx, deploymentID: deploymentID, interval: 2 * time.Second, apply: client.Update}
 	wrapped.checker = func(jobs bool) helmReadinessChecker {
 		checker := kube.NewReadyChecker(clientset, client.Log, kube.PausedAsReady(true), kube.CheckJobs(jobs))
 		return &checker
@@ -59,6 +62,73 @@ type helmActionWaiter struct {
 	waited       atomic.Bool
 	checker      func(bool) helmReadinessChecker
 	recoveryWait func(kube.ResourceList, time.Duration, bool) error
+	deploymentID string
+	applies      atomic.Int32
+	apply        func(kube.ResourceList, kube.ResourceList, bool) (*kube.Result, error)
+}
+
+// A partial apply failure can enter atomic rollback before readiness starts.
+func (w *helmActionWaiter) Update(original, target kube.ResourceList, force bool) (*kube.Result, error) {
+	if w.applies.Add(1) > 1 || w.previousRevision(target) {
+		w.waited.Store(true)
+	}
+	result, err := w.apply(original, target, force)
+	if err != nil {
+		w.waited.Store(true)
+	}
+	return result, err
+}
+
+// Legacy targets can run chart hooks before candidate apply. Hook failures also
+// enter atomic recovery before the first readiness call, including retries of
+// the same accepted deployment whose provenance ID has not changed.
+func (w *helmActionWaiter) Create(resources kube.ResourceList) (*kube.Result, error) {
+	result, err := w.Client.Create(resources)
+	if err != nil {
+		w.waited.Store(true)
+	}
+	return result, err
+}
+func (w *helmActionWaiter) Build(reader io.Reader, validate bool) (kube.ResourceList, error) {
+	resources, err := w.Client.Build(reader, validate)
+	if err != nil {
+		w.waited.Store(true)
+	}
+	return resources, err
+}
+func (w *helmActionWaiter) WatchUntilReady(resources kube.ResourceList, timeout time.Duration) error {
+	err := w.Client.WatchUntilReady(resources, timeout)
+	if err != nil {
+		w.waited.Store(true)
+	}
+	return err
+}
+func (w *helmActionWaiter) Delete(resources kube.ResourceList) (*kube.Result, []error) {
+	result, errs := w.Client.Delete(resources)
+	if len(errs) > 0 {
+		w.waited.Store(true)
+	}
+	return result, errs
+}
+func (w *helmActionWaiter) DeleteWithPropagationPolicy(resources kube.ResourceList, policy metav1.DeletionPropagation) (*kube.Result, []error) {
+	result, errs := w.Client.DeleteWithPropagationPolicy(resources, policy)
+	if len(errs) > 0 {
+		w.waited.Store(true)
+	}
+	return result, errs
+}
+
+func (w *helmActionWaiter) previousRevision(resources kube.ResourceList) bool {
+	if w.deploymentID == "" || len(resources) == 0 {
+		return false
+	}
+	for _, info := range resources {
+		object, err := meta.Accessor(info.Object)
+		if err == nil && object.GetLabels()["dispatch.app/deployment-id"] == w.deploymentID {
+			return false
+		}
+	}
+	return true
 }
 
 func (w *helmActionWaiter) Wait(resources kube.ResourceList, timeout time.Duration) error {
@@ -68,6 +138,9 @@ func (w *helmActionWaiter) WaitWithJobs(resources kube.ResourceList, timeout tim
 	return w.wait(resources, timeout, true)
 }
 func (w *helmActionWaiter) wait(resources kube.ResourceList, timeout time.Duration, jobs bool) error {
+	if w.previousRevision(resources) {
+		w.waited.Store(true)
+	}
 	if !w.waited.CompareAndSwap(false, true) {
 		// Recovery must remain able to restore the prior healthy release after the
 		// caller cancels. Helm bounds this wait with the accepted operation timeout.

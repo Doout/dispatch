@@ -80,7 +80,7 @@ users:
 		t.Fatal(err)
 	}
 	connection, err := client.(*sdkHelmClient).configuration.RESTClientGetter.ToRESTConfig()
-	if err != nil || connection.Host != "https://selected.invalid" || connection.BearerToken != "selected-token" || connection.Insecure || connection.Impersonate.UserName != "" || len(connection.Impersonate.Groups) != 0 {
+	if err != nil || connection.Host != "https://selected.invalid" || connection.BearerToken != "selected-token" || connection.Insecure || connection.Timeout != helmAPIRequestTimeout || connection.Impersonate.UserName != "" || len(connection.Impersonate.Groups) != 0 {
 		t.Fatal("target used controller credentials or TLS overrides", err)
 	}
 }
