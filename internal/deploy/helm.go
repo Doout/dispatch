@@ -24,6 +24,7 @@ import (
 	"helm.sh/helm/v3/pkg/registry"
 	helmrelease "helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -578,6 +579,26 @@ func (c *sdkHelmClient) Uninstall(ctx context.Context, release string, app core.
 	}
 	if err := checkHelmStorageCleanup(retained.Manifest); err != nil {
 		return err
+	}
+	if strings.TrimSpace(retained.Manifest) != "" {
+		if c.configuration.RESTClientGetter == nil {
+			return errors.New("cannot inspect storage owners before cleanup")
+		}
+		config, err := c.configuration.RESTClientGetter.ToRESTConfig()
+		if err != nil {
+			return errors.New("cannot inspect storage owners before cleanup")
+		}
+		client, err := dynamic.NewForConfig(config)
+		if err != nil {
+			return errors.New("cannot inspect storage owners before cleanup")
+		}
+		mapper, err := c.configuration.RESTClientGetter.ToRESTMapper()
+		if err != nil {
+			return errors.New("cannot inspect storage owners before cleanup")
+		}
+		if err := checkHelmStorageOwnerReferences(ctx, client, mapper, c.settings.Namespace(), retained.Manifest); err != nil {
+			return err
+		}
 	}
 	uninstall := action.NewUninstall(c.configuration)
 	uninstall.DisableHooks = true // Arbitrary chart hooks cannot bypass data protection.

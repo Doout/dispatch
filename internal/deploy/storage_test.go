@@ -86,6 +86,13 @@ func TestStorageReconciliationPreservesOwnershipAndUnknownOutcomes(t *testing.T)
 	if err = m.CheckApplicationCleanup(ctx, helmApp, server); err == nil {
 		t.Fatal("live garbage-collection owner bypassed retained-data cleanup guard")
 	}
+	claim.OwnerID, claim.OwnerKind, claim.ProjectID, claim.Ownership = "", "", "", "unverified"
+	if err = data.ObserveStorage(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.CheckApplicationCleanup(ctx, helmApp, server); err != nil {
+		t.Fatal("unowned namespace storage blocked release-scoped cleanup", err)
+	}
 
 	external, _ := data.GetStorage(ctx, StorageID("s", "docker_volume", "", "external"))
 	if external.Ownership != "unverified" || external.ProjectID != "" || external.DeleteBlockedReason() == "" {
