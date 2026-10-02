@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	"helm.sh/helm/v3/pkg/cli"
@@ -21,12 +22,33 @@ func selectHelmCredentials(settings *cli.EnvSettings, server core.Server) {
 	settings.KubeInsecureSkipTLSVerify = false
 }
 
+// Some Helm readiness helpers make internal calls without the caller context.
+// Bound those requests while allowing an accepted atomic rollback to finish.
+const helmAPIRequestTimeout = 30 * time.Second
+
+type boundedHelmRESTGetter struct {
+	genericclioptions.RESTClientGetter
+}
+
+func (g boundedHelmRESTGetter) ToRESTConfig() (*rest.Config, error) {
+	config, err := g.RESTClientGetter.ToRESTConfig()
+	if err != nil {
+		return nil, err
+	}
+	config = rest.CopyConfig(config)
+	if config.Timeout <= 0 || config.Timeout > helmAPIRequestTimeout {
+		config.Timeout = helmAPIRequestTimeout
+	}
+	return config, nil
+}
+
 type namespaceRESTGetter struct {
 	genericclioptions.RESTClientGetter
 	namespace string
 }
 
 func scopedHelmGetter(getter genericclioptions.RESTClientGetter, server core.Server) genericclioptions.RESTClientGetter {
+	getter = boundedHelmRESTGetter{RESTClientGetter: getter}
 	if server.Kubernetes != nil && server.Kubernetes.Validation != nil {
 		return namespaceRESTGetter{RESTClientGetter: getter, namespace: server.Kubernetes.Namespace}
 	}

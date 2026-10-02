@@ -123,3 +123,39 @@ func TestHelmCandidateWaitRetriesAvailabilityButRejectsMissingResources(t *testi
 		})
 	}
 }
+
+func TestHelmApplyFailureAllowsRecoveryBeforeCandidateWait(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := &helmActionWaiter{ctx: ctx, interval: time.Millisecond}
+	w.apply = func(kube.ResourceList, kube.ResourceList, bool) (*kube.Result, error) {
+		cancel()
+		return &kube.Result{}, errors.New("partial apply failure")
+	}
+	recoveries := 0
+	w.recoveryWait = func(kube.ResourceList, time.Duration, bool) error { recoveries++; return nil }
+	if _, err := w.Update(nil, nil, false); err == nil {
+		t.Fatal("partial apply unexpectedly succeeded")
+	}
+	if err := w.WaitWithJobs(nil, time.Second); err != nil {
+		t.Fatal("cancelled caller prevented atomic recovery", err)
+	}
+	if recoveries != 1 {
+		t.Fatalf("recovery calls=%d", recoveries)
+	}
+}
+
+func TestHelmRecoveryIdentifiesPriorRevisionBeforeApply(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := &helmActionWaiter{ctx: ctx, deploymentID: "candidate", interval: time.Millisecond}
+	recoveries := 0
+	w.recoveryWait = func(kube.ResourceList, time.Duration, bool) error { recoveries++; return nil }
+	previous := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"dispatch.app/deployment-id": "previous"}}}
+	if err := w.Wait(kube.ResourceList{&resource.Info{Object: previous}}, time.Second); err != nil {
+		t.Fatal("prior revision did not receive bounded recovery", err)
+	}
+	if recoveries != 1 {
+		t.Fatalf("recovery calls=%d", recoveries)
+	}
+}

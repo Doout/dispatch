@@ -442,7 +442,7 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 		return errors.New("Registered namespace targets cannot install cluster custom resource definitions. Install required cluster APIs separately.")
 	}
 
-	actionCtx, restoreClient, err := c.actionContext(ctx)
+	actionCtx, restoreClient, err := c.actionContext(ctx, deployment.ID)
 	if err != nil {
 		return err
 	}
