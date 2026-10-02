@@ -90,6 +90,19 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 	var err error
 	var result remoteruntime.Result
 	switch request.Operation {
+	case remoteruntime.WorkloadBackup, remoteruntime.WorkloadBackupInspect:
+		output, backupErr := e.executor.RunWorkloadBackup(ctx, *request.WorkloadBackup, server)
+		result.WorkloadBackup = &output
+		if backupErr != nil {
+			result.State = "failed"
+			result.Code = runtimecontract.Failed
+			result.Message = backupErr.Error()
+			if output.State == "unknown" || ctx.Err() != nil {
+				result.State = "unknown"
+				result.Code = runtimecontract.Uncertain
+			}
+			return result
+		}
 	case remoteruntime.RetentionInspect:
 		var items []core.RuntimeRetentionItem
 		items, err = e.executor.InspectRetention(ctx, app, server)

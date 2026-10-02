@@ -6,6 +6,7 @@ import (
 )
 
 func (a *API) applicationsRoutes(r chi.Router) {
+	a.workloadBackupRoutes(r)
 	r.Route("/apps", func(r chi.Router) {
 		r.Get("/", a.listApps)
 		r.Post("/", a.createApp)

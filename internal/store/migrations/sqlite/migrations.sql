@@ -1501,6 +1501,49 @@ CREATE INDEX runtime_retention_project ON runtime_retention_reviews(project_id);
 CREATE TABLE runtime_artifact_retirements(deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,review_id TEXT NOT NULL REFERENCES runtime_retention_reviews(id),state TEXT NOT NULL);
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','retention_inspect');
+
+-- dispatch:migration 085_workload_backups
+CREATE TABLE workload_backups(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),server_id TEXT NOT NULL,source_run_id TEXT NOT NULL,state TEXT NOT NULL,revision BIGINT NOT NULL,input_cipher TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX workload_backups_target ON workload_backups(server_id,state);
+CREATE TABLE workload_backup_operations(id TEXT PRIMARY KEY,backup_id TEXT NOT NULL REFERENCES workload_backups(id),project_id TEXT NOT NULL,source_run_id TEXT NOT NULL,target_run_id TEXT NOT NULL,action TEXT NOT NULL,state TEXT NOT NULL,revision BIGINT NOT NULL,lease_token TEXT NOT NULL,lease_until TEXT NOT NULL,input_cipher TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE UNIQUE INDEX workload_backup_active ON workload_backup_operations(backup_id) WHERE state IN ('running','unknown');
+CREATE INDEX workload_backup_target ON workload_backup_operations(target_run_id,state);
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect','retention_inspect');
+CREATE TRIGGER protect_backup_target BEFORE DELETE ON servers
+WHEN EXISTS(SELECT 1 FROM workload_backups WHERE server_id=OLD.id AND state<>'deleted')
+BEGIN SELECT RAISE(ABORT,'server retains workload backup archives'); END;
+CREATE TRIGGER protect_backup_service BEFORE UPDATE OF state ON service_resources
+WHEN NEW.state='deleting' AND EXISTS(SELECT 1 FROM workload_backup_operations WHERE state IN ('running','unknown') AND (source_run_id=NEW.run_id OR target_run_id=NEW.run_id))
+BEGIN SELECT RAISE(ABORT,'service has an active backup or restore'); END;
+CREATE TRIGGER protect_restore_app_binding BEFORE INSERT ON app_service_bindings
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
+CREATE TRIGGER protect_restore_deployment_binding BEFORE INSERT ON deployment_service_bindings
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
+CREATE TRIGGER protect_restore_workflow_binding BEFORE INSERT ON workflow_service_references
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
+
+CREATE TRIGGER protect_restore_app_binding_update BEFORE UPDATE ON app_service_bindings
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
+
+CREATE TRIGGER protect_restore_deployment_binding_update BEFORE UPDATE ON deployment_service_bindings
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
+
+CREATE TRIGGER protect_restore_workflow_binding_update BEFORE UPDATE ON workflow_service_references
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
+CREATE TRIGGER protect_restore_service_dependency BEFORE INSERT ON service_resource_dependencies
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
+
+CREATE TRIGGER protect_restore_service_dependency_update BEFORE UPDATE ON service_resource_dependencies
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
 -- dispatch:migration 086_temporary_environments
 CREATE TABLE temporary_environment_reviews (
  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), state TEXT NOT NULL, payload TEXT NOT NULL
