@@ -278,7 +278,7 @@ func TestPollOnceDetectsRevisionsWithoutWebhooksAndReloadsConfiguration(t *testi
 		case r.URL.Path == "/app/installations":
 			_, _ = w.Write([]byte(`[{"id":73,"account":{"login":"owner"}}]`))
 		case r.URL.Path == "/installation/repositories":
-			_, _ = w.Write([]byte(`{"repositories":[{"id":100,"full_name":"owner/config","name":"config","owner":{"login":"owner"}},{"id":101,"full_name":"owner/app","name":"app","owner":{"login":"owner"}}]}`))
+			_, _ = w.Write([]byte(`{"repositories":[{"id":100,"full_name":"example/config","name":"config","owner":{"login":"example"}},{"id":101,"full_name":"example/service","name":"service","owner":{"login":"example"}},{"id":102,"full_name":"example/ui","name":"ui","owner":{"login":"example"}}]}`))
 		case strings.HasPrefix(r.URL.Path, "/repos/") && strings.HasSuffix(r.URL.Path, "/installation"):
 			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/73/access_tokens":
