@@ -43,7 +43,7 @@ func (r Request) validateStorage() error {
 	if !identityPattern.MatchString(r.Server.ID) || !identityPattern.MatchString(r.Server.AgentNodeID) || r.Server.Runtime != core.ServerRuntimeDocker || r.Application.ServerID != r.Server.ID {
 		return errors.New("storage request does not match an enrolled Docker target")
 	}
-	if r.Service != nil || r.Deployment.ID != "" || r.Inputs.ComposeContent != "" || r.Inputs.SourceCredential != "" || len(r.Inputs.Services) > 0 {
+	if r.Retention != nil || r.Service != nil || r.Deployment.ID != "" || r.Inputs.ComposeContent != "" || r.Inputs.SourceCredential != "" || len(r.Inputs.Services) > 0 {
 		return errors.New("storage requests cannot carry workload execution inputs")
 	}
 	if r.Operation == StorageInspect {

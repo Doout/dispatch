@@ -40,16 +40,20 @@ type IdentityTeamMapping struct {
 	TeamID        string `json:"teamId"`
 }
 type RetentionPolicy struct {
-	ProjectID string `json:"projectId"`
-	LogDays   int    `json:"logDays"`
-	RunDays   int    `json:"runDays"`
-	KeepRuns  int    `json:"keepRuns"`
+	ImageDays             int    `json:"imageDays"`
+	StoppedRevisionDays   int    `json:"stoppedRevisionDays"`
+	KeepRollbackRevisions int    `json:"keepRollbackRevisions"`
+	ProjectID             string `json:"projectId"`
+	LogDays               int    `json:"logDays"`
+	RunDays               int    `json:"runDays"`
+	KeepRuns              int    `json:"keepRuns"`
 }
 type RetentionResult struct {
-	Logs          int64 `json:"logs"`
-	Runs          int64 `json:"runs"`
-	ProtectedRuns int64 `json:"protectedRuns"`
-	Applied       bool  `json:"applied"`
+	Runtime       *RuntimeRetentionReview `json:"runtime,omitempty"`
+	Logs          int64                   `json:"logs"`
+	Runs          int64                   `json:"runs"`
+	ProtectedRuns int64                   `json:"protectedRuns"`
+	Applied       bool                    `json:"applied"`
 }
 type BackupRecord struct {
 	ID         string     `json:"id"`

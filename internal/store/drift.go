@@ -9,8 +9,19 @@ import (
 )
 
 func (s *SQLStore) SaveDriftBaseline(ctx context.Context, b core.DriftBaseline) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO deployment_drift_baselines(deployment_id,app_id,server_id,namespace,release_name,ciphertext) VALUES(?,?,?,?,?,?)`), b.DeploymentID, b.AppID, b.ServerID, b.Namespace, b.Release, b.Ciphertext)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.checkRuntimeReferences(ctx, tx, []string{b.DeploymentID}); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployment_drift_baselines(deployment_id,app_id,server_id,namespace,release_name,ciphertext) VALUES(?,?,?,?,?,?)`), b.DeploymentID, b.AppID, b.ServerID, b.Namespace, b.Release, b.Ciphertext)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *SQLStore) GetDriftBaseline(ctx context.Context, id string) (core.DriftBaseline, error) {
 	var b core.DriftBaseline

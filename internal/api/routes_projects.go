@@ -23,6 +23,7 @@ func (a *API) projectsRoutes(r chi.Router) {
 				r.Put("/retention", a.saveRetention)
 				r.Post("/retention/preview", a.previewRetention)
 				r.Post("/retention/apply", a.applyRetention)
+				r.Get("/retention/runtime-reviews/{reviewId}", a.getRuntimeRetentionReview)
 			})
 		})
 	})
