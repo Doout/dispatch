@@ -60,7 +60,7 @@ func (b RemoteRetentionBackend) PruneRetention(ctx context.Context, app core.App
 	if !ok || b.Broker == nil {
 		return core.RuntimeRetentionOutcome{}, errors.New("Remote cleanup requires an accepted review")
 	}
-	job, err := b.Broker.Submit(ctx, "retention-prune-"+ulid.Make().String(), remoteruntime.NewRetentionRequest(app, server, &remoteruntime.RetentionRequest{ReviewID: review.ID, Digest: review.Digest, Item: item}))
+	job, err := b.Broker.Submit(ctx, "retention-prune-"+ulid.Make().String(), remoteruntime.NewRetentionRequest(app, server, &remoteruntime.RetentionRequest{Attempt: review.Attempt, ReviewID: review.ID, Digest: review.Digest, Item: item}))
 	if err != nil {
 		return core.RuntimeRetentionOutcome{}, err
 	}

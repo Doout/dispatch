@@ -24,7 +24,7 @@ func retentionRequestFixture(t *testing.T) (*Broker, Request, core.RuntimeRetent
 		t.Fatal(err)
 	}
 	item := core.RuntimeRetentionItem{Key: "revision:" + r.Server.ID + ":" + d.ID, Kind: "revision", AppID: r.Application.ID, ServerID: r.Server.ID, DeploymentID: d.ID, Identity: strings.Repeat("a", 64), Protected: []string{}}
-	review := core.RuntimeRetentionReview{ID: "retention-review", ProjectID: p.ProjectID, Digest: strings.Repeat("b", 64), State: "planned", CreatedAt: now, ExpiresAt: now.Add(time.Minute), Policy: p, Items: []core.RuntimeRetentionItem{item}, Results: []core.RuntimeRetentionOutcome{}}
+	review := core.RuntimeRetentionReview{Attempt: "retention-attempt", ID: "retention-review", ProjectID: p.ProjectID, Digest: strings.Repeat("b", 64), State: "planned", CreatedAt: now, ExpiresAt: now.Add(time.Minute), Policy: p, Items: []core.RuntimeRetentionItem{item}, Results: []core.RuntimeRetentionOutcome{}}
 	if err := data.SaveRuntimeRetentionReview(ctx, review); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func retentionRequestFixture(t *testing.T) (*Broker, Request, core.RuntimeRetent
 	if err := data.BeginRuntimeArtifactRetirement(ctx, review, item); err != nil {
 		t.Fatal(err)
 	}
-	return b, NewRetentionRequest(r.Application, r.Server, &RetentionRequest{ReviewID: review.ID, Digest: review.Digest, Item: item}), review
+	return b, NewRetentionRequest(r.Application, r.Server, &RetentionRequest{Attempt: review.Attempt, ReviewID: review.ID, Digest: review.Digest, Item: item}), review
 }
 func TestRemoteRetentionRequiresExactAcceptedReviewAtEveryBoundary(t *testing.T) {
 	b, r, review := retentionRequestFixture(t)

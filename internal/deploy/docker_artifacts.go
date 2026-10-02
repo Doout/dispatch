@@ -72,7 +72,7 @@ func (e DockerExecutor) saveArtifact(ctx context.Context, d core.Deployment, app
 		return errors.New("Runtime inputs exceed the retained artifact limit or cannot be encoded.")
 	}
 	defer clear(raw)
-	artifact := core.RuntimeArtifact{DeploymentID: d.ID, AppID: app.ID, ServerID: server.ID, ScopeID: d.ID, Metadata: core.RuntimeArtifactMetadata{CreatedAt: d.CreatedAt, Images: inputs.Images}}
+	artifact := core.RuntimeArtifact{DeploymentID: d.ID, AppID: app.ID, ServerID: server.ID, ScopeID: d.ID, Metadata: core.RuntimeArtifactMetadata{ProjectID: app.ProjectID, CreatedAt: d.CreatedAt, Images: inputs.Images}}
 	artifact.Ciphertext, err = e.Vault.Encrypt(runtimeArtifactScope(artifact), raw)
 	if err != nil {
 		return errors.New("Cannot encrypt retained runtime inputs.")

@@ -240,7 +240,7 @@ func TestDockerRuntimeRetentionProtectsSharedImagesAndRemovesOnlyReviewedObjects
 	if err := e.saveArtifact(ctx, d, app, server, dockerArtifact{Version: 1, BuildType: app.BuildType, Images: map[string]string{"application": id}, Bindings: []core.ServiceRuntimeBinding{{Values: map[string]string{"password": "retained-secret"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	f := &retentionDockerFixture{containers: map[string]retentionContainer{container: {ID: container, App: app.ID, Deployment: d.ID, Image: id}}, images: map[string]retentionImage{id: {ID: id, Created: at, Tags: []string{"dispatch/app:old"}}}}
+	f := &retentionDockerFixture{containers: map[string]retentionContainer{container: {ID: container, App: app.ID, Deployment: d.ID, Image: id}}, images: map[string]retentionImage{id: {ID: id, Created: at, Tags: []string{"dispatch/app:" + strings.ToLower(d.ID)}}}}
 	e.run = f.run
 	items, err := e.InspectRetention(ctx, app, server)
 	if err != nil {
@@ -310,7 +310,7 @@ func TestDockerRuntimeRetentionRechecksRunningAndAddedContainers(t *testing.T) {
 	if err := e.saveArtifact(ctx, d, app, server, dockerArtifact{Version: 1, BuildType: app.BuildType, Images: map[string]string{"application": id}}); err != nil {
 		t.Fatal(err)
 	}
-	f := &retentionDockerFixture{containers: map[string]retentionContainer{container: {ID: container, App: app.ID, Deployment: d.ID, Image: id}}, images: map[string]retentionImage{id: {ID: id, Tags: []string{"dispatch/app:old"}}}}
+	f := &retentionDockerFixture{containers: map[string]retentionContainer{container: {ID: container, App: app.ID, Deployment: d.ID, Image: id}}, images: map[string]retentionImage{id: {ID: id, Tags: []string{"dispatch/app:" + strings.ToLower(d.ID)}}}}
 	e.run = f.run
 	items, err := e.InspectRetention(ctx, app, server)
 	if err != nil {
@@ -337,5 +337,89 @@ func TestDockerRuntimeRetentionRechecksRunningAndAddedContainers(t *testing.T) {
 	result, err = e.PruneRetention(ctx, app, server, item)
 	if err != nil || result.State != "protected" {
 		t.Fatalf("expanded revision removed %+v %v", result, err)
+	}
+}
+
+func TestDockerRuntimeRetentionRespectsOtherApplicationImageOwnership(t *testing.T) {
+	ctx := context.Background()
+	data, e, app, server, d := runtimeFixture(t, core.BuildTypeDockerfile)
+	id := "sha256:" + strings.Repeat("a", 64)
+	inputs := dockerArtifact{Version: 1, BuildType: app.BuildType, Images: map[string]string{"application": id}}
+	if err := e.saveArtifact(ctx, d, app, server, inputs); err != nil {
+		t.Fatal(err)
+	}
+	other := app
+	other.ID = "another-app"
+	other.Name = "Other application"
+	if err := data.CreateApp(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	otherD := d
+	otherD.ID = "another-revision"
+	otherD.AppID = other.ID
+	if err := data.CreateDeployment(ctx, otherD); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.saveArtifact(ctx, otherD, other, server, inputs); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := e.retentionArtifacts(ctx, server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range artifacts {
+		if err = data.RetireRuntimeArtifact(ctx, artifact); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := &retentionDockerFixture{containers: map[string]retentionContainer{}, images: map[string]retentionImage{id: {ID: id, Tags: []string{"dispatch/app:" + strings.ToLower(d.ID)}}}}
+	e.run = f.run
+	items, err := e.InspectRetention(ctx, app, server)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("inventory %+v %v", items, err)
+	}
+	if !strings.Contains(strings.Join(items[0].Protected, ";"), "Shared with another application") {
+		t.Fatalf("another application's retained image was offered: %+v", items)
+	}
+}
+
+func TestRuntimeRetentionChangedPolicyCanReviewRemainingPartialArtifacts(t *testing.T) {
+	ctx := context.Background()
+	data, svc, _, _, _, p := retentionFixture(t)
+	backend := &interruptedRetention{RuntimeRetentionBackend: svc.Retention, fail: ":retained-1"}
+	svc.Retention = backend
+	r, err := svc.PreviewRuntimeRetention(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.ApplyRuntimeRetention(ctx, p, r.ID, r.Digest)
+	if err != nil || first.State != "partial" {
+		t.Fatalf("partial %+v %v", first, err)
+	}
+	changed := p
+	changed.StoppedRevisionDays = 8
+	if err = data.SaveRetentionPolicy(ctx, changed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.ApplyRuntimeRetention(ctx, p, r.ID, r.Digest); !errors.Is(err, store.ErrRetentionPolicyChanged) {
+		t.Fatalf("old policy authorized retry: %v", err)
+	}
+	next, err := svc.PreviewRuntimeRetention(ctx, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := svc.ApplyRuntimeRetention(ctx, changed, next.ID, next.Digest)
+	if err != nil || finished.State != "succeeded" {
+		t.Fatalf("fresh review could not adopt unchanged remaining artifact: %+v %v", finished, err)
+	}
+	old, err := svc.GetRuntimeRetentionReview(ctx, p.ProjectID, r.ID)
+	if err != nil || old.SupersededBy != next.ID || old.State != "blocked" {
+		t.Fatalf("superseded receipt lost evidence %+v %v", old, err)
+	}
+	if err = data.SaveRetentionPolicy(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.ApplyRuntimeRetention(ctx, p, r.ID, r.Digest); !errors.Is(err, store.ErrRuntimeRetentionChanged) {
+		t.Fatalf("superseded receipt resumed: %v", err)
 	}
 }

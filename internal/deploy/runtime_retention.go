@@ -153,6 +153,7 @@ func (s *Service) ApplyRuntimeRetention(ctx context.Context, p core.RetentionPol
 	if r.State == "succeeded" {
 		return r, nil
 	}
+	r.Attempt = ulid.Make().String()
 	if err = data.ClaimRuntimeRetentionReview(ctx, r, time.Now().UTC()); err != nil {
 		return r, err
 	}

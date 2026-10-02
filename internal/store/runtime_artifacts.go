@@ -41,11 +41,16 @@ func (s *SQLStore) ListRuntimeArtifacts(ctx context.Context, server string) ([]c
 	}
 	defer rows.Close()
 	out := []core.RuntimeArtifact{}
+	bytes := 0
 	for rows.Next() {
 		var a core.RuntimeArtifact
 		var metadata string
 		if err = rows.Scan(&a.DeploymentID, &a.AppID, &a.ServerID, &a.ScopeID, &a.Ciphertext, &metadata); err != nil {
 			return nil, err
+		}
+		bytes += len(a.Ciphertext) + len(metadata)
+		if bytes > 64<<20 {
+			return nil, errors.New("runtime artifact inventory exceeds its byte limit")
 		}
 		if err = json.Unmarshal([]byte(metadata), &a.Metadata); err != nil {
 			return nil, err

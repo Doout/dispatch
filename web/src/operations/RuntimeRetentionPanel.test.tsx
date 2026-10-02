@@ -63,3 +63,16 @@ it("ignores a review that arrives after project access is removed", async () => 
   view.rerender(<RetentionControls overview={{ ...overview, identity: { ...overview.identity!, systemRole: "member" }, projectPermissions: { p: ["project.view"] } }} projectId="p" />);
   finish({ runtime: review }); await screen.findByText("Project admin access required"); expect(screen.queryByLabelText("Runtime cleanup review")).toBeNull();
 });
+
+it("retries newly protected outcomes through the original accepted receipt", async () => {
+ const partial = { ...review, state: "partial", expiresAt: "2000-01-01T00:00:00Z", results: [{ key: "old", state: "protected", message: "A container acquired this image after review" }] };
+ const request = vi.spyOn(api, "request").mockResolvedValue({ applied: false, runtime: partial }); panel(); await preview();
+ expect(screen.getByText("A container acquired this image after review")).toBeTruthy();
+ fireEvent.click(screen.getByRole("checkbox")); request.mockResolvedValue({ applied: true, runtime: { ...partial, state: "succeeded", results: [{ key: "old", state: "absent", message: "Already absent" }] } });
+ fireEvent.click(screen.getByRole("button", { name: "Retry reviewed items" })); await screen.findByText("Reviewed cleanup completed");
+ const body=JSON.parse(String(request.mock.calls.at(-1)?.[1]?.body)); expect(body.runtimeReviewId).toBe(review.id); expect(body.runtimeReviewDigest).toBe(review.digest);
+});
+it("keeps superseded receipts readable without resuming their retired claim", async () => {
+ vi.spyOn(api,"request").mockResolvedValue({applied:false,runtime:{...review,state:"blocked",supersededBy:"replacement-review",results:[{key:"old",state:"protected",message:"Continued in cleanup review replacement-review"}]}});panel();await preview();
+ expect(screen.getByText(/This receipt was superseded by cleanup replacement-review/)).toBeTruthy();expect(screen.queryByRole("checkbox")).toBeNull();expect(screen.queryByRole("button",{name:"Remove reviewed artifacts"})).toBeNull();
+});

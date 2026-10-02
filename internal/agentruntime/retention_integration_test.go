@@ -27,7 +27,7 @@ func TestRemoteRuntimeRetentionIntegration(t *testing.T) {
 	app := core.App{ID: "retention-" + unique, ProjectID: "project", ServerID: "server", BuildType: core.BuildTypeDockerfile}
 	server := core.Server{ID: "server", AgentNodeID: "node", Runtime: core.ServerRuntimeDocker, Address: "agent:node"}
 	deployment := "revision-" + unique
-	tag := "dispatch/retention-" + unique + ":old"
+	tag := "dispatch/retention-" + unique + ":" + deployment
 	volume := "retention-data-" + unique
 	network := "retention-net-" + unique
 	docker := func(args ...string) string {
@@ -103,7 +103,7 @@ func TestRemoteRuntimeRetentionIntegration(t *testing.T) {
 	if revision.Key == "" || len(revision.Protected) > 0 {
 		t.Fatalf("stopped revision unavailable: %+v", inventory)
 	}
-	review := &remoteruntime.RetentionRequest{ReviewID: "review", Digest: strings.Repeat("a", 64), Item: revision}
+	review := &remoteruntime.RetentionRequest{Attempt: "attempt", ReviewID: "review", Digest: strings.Repeat("a", 64), Item: revision}
 	removed, job := execute(review)
 	if removed.Retention.Outcome.State != "removed" {
 		t.Fatalf("revision not retired %+v", removed)

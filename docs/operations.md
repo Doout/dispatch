@@ -135,7 +135,7 @@ Cleanup preserves:
 
 - Active and successful deployments, including historical rollback candidates.
 - Encrypted drift baselines and the runs they belong to.
-- Runs referenced by workflow stages or preview groups.
+- Runs referenced by workflow stages, preview groups, or retained runtime artifact indexes.
 - The configured minimum number of recent runs for each application.
 - Logs from the latest successful release and active runs.
 
@@ -157,7 +157,12 @@ Choose **Preview runtime cleanup** to inspect owned images and stopped revisions
 The saved review lists exact resource identities, target and application names,
 and readable protection reasons. Active releases, current and retained rollback
 revisions, shared images, and workflow or baseline references stay protected.
-Runtime cleanup never deletes volumes, networks or backup artifacts.
+Runtime cleanup never deletes volumes, networks or backup artifacts. It supports
+simulation and Docker/Compose targets, including enrolled agents. Kubernetes
+artifacts and objects without retained ownership evidence are not cleanup candidates.
+Images shared across applications, external tags, build-cache tags and images with
+multiple tags stay protected. Retire revision inputs first, then create a new image
+review once their final retained reference is gone.
 
 The existing retention preview and apply endpoints accept `scope: "runtime"`.
 Preview requires `expectedPolicy` and returns `runtime` with a durable review ID,
@@ -181,6 +186,17 @@ The UI keeps older-policy receipts readable and requires a fresh preview before
 further deletion under a changed policy. A successful cleanup receipt records
 what was removed or already absent; it does not imply application data was backed
 up or restored.
+
+A runtime cleanup attempt has a 35-minute lease and a 30-minute execution limit.
+After a controller interruption, an expired running receipt reopens as partial;
+retrying uses its original candidates. An unresolved agent mutation also requires
+a newer successful target inspection before another cleanup operation can run.
+Refreshing or retrying does not authorize newly discovered objects. Captured
+credentials are erased only after their reviewed revision has been retired;
+nonsecret image metadata remains for the independent image retention policy.
+After changing policy, approve a new review for remaining artifacts. It may adopt
+an inactive cleanup fence only for the same immutable revision and target; an
+active attempt remains exclusive.
 
 ## Interrupted work
 

@@ -308,7 +308,7 @@ func (a *API) saveRetention(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ProjectID = chi.URLParam(r, "id")
 	if !validRetentionPolicy(p) {
-		problem(w, 400, "Invalid retention", "Keep at least five runs and at least one day of history and logs.")
+		problem(w, 400, "Invalid retention", "Keep at least five history runs and one day of logs and history. Runtime ages may be zero to preserve indefinitely; protect at least two rollback revisions, or use zero for the default of five.")
 		return
 	}
 	if err := data.SaveRetentionPolicy(r.Context(), p); err != nil {
@@ -322,7 +322,7 @@ func (a *API) saveRetention(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, p)
 }
 func validRetentionPolicy(p core.RetentionPolicy) bool {
-	return p.LogDays >= 1 && p.LogDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000 && p.ImageDays >= 0 && p.ImageDays <= 36500 && p.StoppedRevisionDays >= 0 && p.StoppedRevisionDays <= 36500 && (p.KeepRollbackRevisions == 0 || p.KeepRollbackRevisions >= 2 && p.KeepRollbackRevisions <= 1000)
+	return p.LogDays >= 1 && p.LogDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000 && p.ImageDays >= 0 && p.ImageDays <= 36500 && p.StoppedRevisionDays >= 0 && p.StoppedRevisionDays <= 36500 && (p.KeepRollbackRevisions == 0 || p.KeepRollbackRevisions >= 2 && p.KeepRollbackRevisions <= 10000)
 }
 func (a *API) previewRetention(w http.ResponseWriter, r *http.Request) { a.runRetention(w, r, false) }
 func (a *API) applyRetention(w http.ResponseWriter, r *http.Request)   { a.runRetention(w, r, true) }
@@ -360,7 +360,7 @@ func (a *API) runRetention(w http.ResponseWriter, r *http.Request, apply bool) {
 		return
 	}
 	if input.ExpectedPolicy != nil && !validRetentionPolicy(*input.ExpectedPolicy) {
-		problem(w, 400, "Invalid retention", "Keep at least five runs and at least one day of history and logs.")
+		problem(w, 400, "Invalid retention", "Keep at least five history runs and one day of logs and history. Runtime ages may be zero to preserve indefinitely; protect at least two rollback revisions, or use zero for the default of five.")
 		return
 	}
 	if input.Scope == "runtime" {

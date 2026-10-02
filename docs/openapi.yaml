@@ -4697,6 +4697,7 @@ components:
         id: { type: string }
         projectId: { type: string }
         digest: { type: string }
+        supersededBy: { type: string, description: Replacement cleanup review. A superseded receipt cannot resume its former claim. }
         policy: { $ref: '#/components/schemas/RetentionPolicy' }
         state: { type: string, enum: [planned, running, partial, succeeded, blocked] }
         createdAt: { type: string, format: date-time }

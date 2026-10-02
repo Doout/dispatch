@@ -23,15 +23,17 @@ type RuntimeRetentionOutcome struct {
 	Message string `json:"message"`
 }
 type RuntimeRetentionReview struct {
-	ID        string                    `json:"id"`
-	ProjectID string                    `json:"projectId"`
-	Digest    string                    `json:"digest"`
-	Policy    RetentionPolicy           `json:"policy"`
-	State     string                    `json:"state"`
-	CreatedAt time.Time                 `json:"createdAt"`
-	ExpiresAt time.Time                 `json:"expiresAt"`
-	Items     []RuntimeRetentionItem    `json:"items"`
-	Results   []RuntimeRetentionOutcome `json:"results"`
+	SupersededBy string                    `json:"supersededBy,omitempty"`
+	Attempt      string                    `json:"-"`
+	ID           string                    `json:"id"`
+	ProjectID    string                    `json:"projectId"`
+	Digest       string                    `json:"digest"`
+	Policy       RetentionPolicy           `json:"policy"`
+	State        string                    `json:"state"`
+	CreatedAt    time.Time                 `json:"createdAt"`
+	ExpiresAt    time.Time                 `json:"expiresAt"`
+	Items        []RuntimeRetentionItem    `json:"items"`
+	Results      []RuntimeRetentionOutcome `json:"results"`
 }
 type RuntimeRetentionReference struct {
 	DeploymentID, AppID string
@@ -42,9 +44,11 @@ type RuntimeRetentionReference struct {
 // RuntimeArtifactMetadata remains after encrypted inputs are retired, so image
 // and revision policies can have different ages without losing the inventory.
 type RuntimeArtifactMetadata struct {
-	CreatedAt time.Time         `json:"createdAt"`
-	Images    map[string]string `json:"images"`
-	Retired   bool              `json:"retired"`
+	ProjectID   string            `json:"projectId,omitempty"`
+	InputDigest string            `json:"inputDigest,omitempty"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	Images      map[string]string `json:"images"`
+	Retired     bool              `json:"retired"`
 }
 
 func (p RetentionPolicy) RollbackRetentionCount() int {

@@ -106,9 +106,11 @@ func (e DockerExecutor) retentionArtifacts(ctx context.Context, server core.Serv
 			if !valid {
 				return nil, errors.New("Retained runtime inputs are invalid")
 			}
+			a.Metadata.ProjectID = inputs.ProjectID
 			a.Metadata.Images = inputs.Images
+			a.Metadata.InputDigest = fmt.Sprintf("%x", sha256.Sum256([]byte(a.Ciphertext)))
 		}
-		if len(a.Metadata.Images) == 0 {
+		if len(a.Metadata.Images) == 0 || len(a.Metadata.Images) > 1000 {
 			return nil, errors.New("Retained image inventory is unavailable")
 		}
 		for _, id := range a.Metadata.Images {
@@ -121,9 +123,9 @@ func (e DockerExecutor) retentionArtifacts(ctx context.Context, server core.Serv
 }
 func artifactRetentionIdentity(a core.RuntimeArtifact) string {
 	raw, _ := json.Marshal(struct {
-		Deployment, App, Server, Scope string
-		Images                         map[string]string
-	}{a.DeploymentID, a.AppID, a.ServerID, a.ScopeID, a.Metadata.Images})
+		Deployment, App, Server, Scope, InputDigest string
+		Images                                      map[string]string
+	}{a.DeploymentID, a.AppID, a.ServerID, a.ScopeID, a.Metadata.InputDigest, a.Metadata.Images})
 	return fmt.Sprintf("%x", sha256.Sum256(raw))
 }
 func (e DockerExecutor) InspectRetention(ctx context.Context, app core.App, server core.Server) ([]core.RuntimeRetentionItem, error) {
@@ -151,6 +153,12 @@ func (e DockerExecutor) InspectRetention(ctx context.Context, app core.App, serv
 			if a.Metadata.CreatedAt.After(item.CreatedAt) {
 				item.CreatedAt = a.Metadata.CreatedAt
 			}
+			if a.Metadata.ProjectID != app.ProjectID {
+				item.Protected = appendUnique(item.Protected, "Retained image belongs to another project")
+			}
+			if a.AppID != app.ID {
+				item.Protected = appendUnique(item.Protected, "Shared with another application")
+			}
 			if !a.Metadata.Retired {
 				item.Protected = appendUnique(item.Protected, "Referenced by retained runtime inputs")
 			}
@@ -163,6 +171,9 @@ func (e DockerExecutor) InspectRetention(ctx context.Context, app core.App, serv
 			continue
 		}
 		item := core.RuntimeRetentionItem{Key: "revision:" + server.ID + ":" + a.DeploymentID, Kind: "revision", ServerID: server.ID, AppID: app.ID, DeploymentID: a.DeploymentID, Name: a.DeploymentID, Identity: artifactRetentionIdentity(a), CreatedAt: a.Metadata.CreatedAt, Protected: []string{}, Containers: []string{}}
+		if a.Metadata.ProjectID != app.ProjectID {
+			item.Protected = appendUnique(item.Protected, "Retained runtime inputs belong to another project")
+		}
 		dir := e.artifactDirectory(app.ID, a.DeploymentID)
 		for _, c := range containers {
 			own := c.App == app.ID && c.Deployment == a.DeploymentID
@@ -235,11 +246,26 @@ func (e DockerExecutor) InspectRetention(ctx context.Context, app core.App, serv
 			if evidence.Created.After(item.CreatedAt) {
 				item.CreatedAt = evidence.Created
 			}
+			if len(evidence.Tags) == 0 {
+				item.Protected = appendUnique(item.Protected, "No owned deployment image tag")
+			}
 			if len(evidence.Tags) > 1 {
 				item.Protected = appendUnique(item.Protected, "Image has multiple tags")
 			}
 			for _, tag := range evidence.Tags {
-				if !strings.HasPrefix(tag, "dispatch/") || strings.HasPrefix(tag, "dispatch/build-cache:") {
+				ownedTag := false
+				for _, artifact := range artifacts {
+					for _, image := range artifact.Metadata.Images {
+						if image != id {
+							continue
+						}
+						scope := strings.ToLower(artifact.ScopeID)
+						if strings.HasPrefix(tag, "dispatch/") && !strings.HasPrefix(tag, "dispatch/build-cache:") && (strings.HasSuffix(tag, ":"+scope) || strings.HasPrefix(tag, "dispatch/compose-"+strings.ToLower(artifact.AppID)+":"+scope+"-")) {
+							ownedTag = true
+						}
+					}
+				}
+				if !ownedTag {
 					item.Protected = appendUnique(item.Protected, "External or build-cache image tag")
 				}
 			}
@@ -352,6 +378,9 @@ func (e DockerExecutor) PruneRetention(ctx context.Context, app core.App, server
 		}
 		if artifactRetentionIdentity(a) != item.Identity {
 			return outcome, errors.New("Runtime inputs changed during cleanup")
+		}
+		if a.Metadata.CreatedAt.IsZero() || item.CreatedAt.After(a.Metadata.CreatedAt) {
+			a.Metadata.CreatedAt = item.CreatedAt
 		}
 		err = e.Artifacts.(runtimeArtifactInventory).RetireRuntimeArtifact(ctx, a)
 	} else {

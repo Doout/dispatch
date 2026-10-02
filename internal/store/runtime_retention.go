@@ -24,6 +24,11 @@ func (s *SQLStore) checkRuntimeReferences(ctx context.Context, tx *changeTx, ids
 		}
 		var found string
 		if err := tx.QueryRowContext(ctx, s.q(query), id).Scan(&found); err != nil {
+			// Workflow recovery can record an unresolved deployment reference. There
+			// are no retained inputs to fence until that deployment exists.
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
 			return err
 		}
 		var n int
@@ -100,13 +105,17 @@ func (s *SQLStore) SaveRuntimeRetentionReview(ctx context.Context, r core.Runtim
 }
 func (s *SQLStore) GetRuntimeRetentionReview(ctx context.Context, id string) (core.RuntimeRetentionReview, error) {
 	var r core.RuntimeRetentionReview
-	var raw string
-	err := s.db.QueryRowContext(ctx, s.q(`SELECT payload FROM runtime_retention_reviews WHERE id=?`), id).Scan(&raw)
+	var raw, lease, token string
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT payload,lease_until,lease_token FROM runtime_retention_reviews WHERE id=?`), id).Scan(&raw, &lease, &token)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &r)
+	}
+	r.Attempt = token
+	if err == nil && r.State == "running" && !parseTime(lease).After(time.Now().UTC()) {
+		r.State = "partial"
 	}
 	return r, err
 }
@@ -127,11 +136,20 @@ func (s *SQLStore) ClaimRuntimeRetentionReview(ctx context.Context, r core.Runti
 		return err
 	}
 	var saved core.RuntimeRetentionReview
-	if json.Unmarshal([]byte(raw), &saved) != nil || saved.Digest != r.Digest || lease != "" && parseTime(lease).After(now) || saved.State == "planned" && !saved.ExpiresAt.After(now) {
+	if json.Unmarshal([]byte(raw), &saved) != nil {
+		return ErrRuntimeRetentionChanged
+	}
+	if saved.State == "running" && !parseTime(lease).After(now) {
+		saved.State = "partial"
+	}
+	if saved.SupersededBy != "" || saved.Digest != r.Digest || jsonText(saved) != jsonText(r) || lease != "" && parseTime(lease).After(now) || saved.State == "planned" && !saved.ExpiresAt.After(now) {
+		return ErrRuntimeRetentionChanged
+	}
+	if r.Attempt == "" {
 		return ErrRuntimeRetentionChanged
 	}
 	r.State = "running"
-	_, err = tx.ExecContext(ctx, s.q(`UPDATE runtime_retention_reviews SET payload=?,lease_until=? WHERE id=?`), jsonText(r), stamp(now.Add(35*time.Minute)), r.ID)
+	_, err = tx.ExecContext(ctx, s.q(`UPDATE runtime_retention_reviews SET payload=?,lease_until=?,lease_token=? WHERE id=?`), jsonText(r), stamp(now.Add(35*time.Minute)), r.Attempt, r.ID)
 	if err != nil {
 		return err
 	}
@@ -157,7 +175,7 @@ func (s *SQLStore) UpdateRuntimeRetentionReview(ctx context.Context, r core.Runt
 	if !finished {
 		lease = stamp(time.Now().UTC().Add(35 * time.Minute))
 	}
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_retention_reviews SET payload=?,lease_until=? WHERE id=? AND project_id=?`), jsonText(r), lease, r.ID, r.ProjectID)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_retention_reviews SET payload=?,lease_until=? WHERE id=? AND project_id=? AND lease_token=?`), jsonText(r), lease, r.ID, r.ProjectID, r.Attempt)
 	return changed(result, err)
 }
 func (s *SQLStore) BeginRuntimeArtifactRetirement(ctx context.Context, r core.RuntimeRetentionReview, item core.RuntimeRetentionItem) error {
@@ -171,6 +189,17 @@ func (s *SQLStore) BeginRuntimeArtifactRetirement(ctx context.Context, r core.Ru
 	}
 	if err = s.checkRuntimeRetentionPolicy(ctx, tx, r.Policy); err != nil {
 		return err
+	}
+	ownershipQuery := `SELECT project_id,server_id FROM apps WHERE id=?`
+	if s.postgres {
+		ownershipQuery += ` FOR UPDATE`
+	}
+	var project, server string
+	if err = tx.QueryRowContext(ctx, s.q(ownershipQuery), item.AppID).Scan(&project, &server); err != nil {
+		return err
+	}
+	if project != r.ProjectID || server != item.ServerID {
+		return ErrRuntimeRetentionChanged
 	}
 	query := `SELECT id FROM deployments WHERE id=? AND app_id=?`
 	if s.postgres {
@@ -189,11 +218,56 @@ func (s *SQLStore) BeginRuntimeArtifactRetirement(ctx context.Context, r core.Ru
 			return ErrRuntimeRetentionChanged
 		}
 	}
-	var review string
-	err = tx.QueryRowContext(ctx, s.q(`SELECT review_id FROM runtime_artifact_retirements WHERE deployment_id=?`), item.DeploymentID).Scan(&review)
+	var review, state string
+	err = tx.QueryRowContext(ctx, s.q(`SELECT review_id,state FROM runtime_artifact_retirements WHERE deployment_id=?`), item.DeploymentID).Scan(&review, &state)
 	if err == nil {
+		if state == "retired" {
+			return tx.Commit()
+		}
 		if review != r.ID {
-			return ErrRuntimeRetentionChanged
+			// A new explicit review may adopt only this same immutable revision after
+			// the previous attempt stopped. Policy edits cannot strand partial work.
+			var previousRaw, lease string
+			if err = tx.QueryRowContext(ctx, s.q(`SELECT payload,lease_until FROM runtime_retention_reviews WHERE id=?`), review).Scan(&previousRaw, &lease); err != nil {
+				return err
+			}
+			if parseTime(lease).After(time.Now().UTC()) {
+				return ErrRuntimeRetentionChanged
+			}
+			var previous core.RuntimeRetentionReview
+			if json.Unmarshal([]byte(previousRaw), &previous) != nil || previous.ProjectID != r.ProjectID {
+				return ErrRuntimeRetentionChanged
+			}
+			match := false
+			for _, old := range previous.Items {
+				if old.Key == item.Key && old.Identity == item.Identity && old.AppID == item.AppID && old.ServerID == item.ServerID && old.TargetBinding == item.TargetBinding && len(old.Protected) == 0 {
+					match = true
+				}
+			}
+			if !match {
+				return ErrRuntimeRetentionChanged
+			}
+			previous.SupersededBy = r.ID
+			previous.State = "blocked"
+			outcome := core.RuntimeRetentionOutcome{Key: item.Key, State: "protected", Message: "Continued in cleanup review " + r.ID}
+			recorded := false
+			for index, old := range previous.Results {
+				if old.Key == item.Key {
+					previous.Results[index] = outcome
+					recorded = true
+				}
+			}
+			if !recorded {
+				previous.Results = append(previous.Results, outcome)
+			}
+			result, updateErr := tx.ExecContext(ctx, s.q(`UPDATE runtime_retention_reviews SET payload=?,lease_until='',lease_token='' WHERE id=? AND lease_until<=?`), jsonText(previous), previous.ID, stamp(time.Now().UTC()))
+			if err = changed(result, updateErr); err != nil {
+				return err
+			}
+			result, updateErr = tx.ExecContext(ctx, s.q(`UPDATE runtime_artifact_retirements SET review_id=? WHERE deployment_id=? AND review_id=?`), r.ID, item.DeploymentID, review)
+			if err = changed(result, updateErr); err != nil {
+				return err
+			}
 		}
 		return tx.Commit()
 	}
@@ -212,7 +286,7 @@ func (s *SQLStore) FinishRuntimeArtifactRetirement(ctx context.Context, review, 
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE runtime_artifact_retirements SET state='retired' WHERE deployment_id=? AND review_id=?`), deployment, review)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE runtime_artifact_retirements SET state='retired' WHERE deployment_id=? AND (review_id=? OR state='retired')`), deployment, review)
 	if err = changed(result, err); err != nil {
 		return err
 	}
@@ -240,12 +314,12 @@ func (s *SQLStore) RetiredRuntimeDeployments(ctx context.Context, app string) (m
 
 // ValidateRuntimeRetentionMutation is repeated at remote submission, lease,
 // renewal and completion. A node cannot apply an unaccepted or altered candidate.
-func (s *SQLStore) ValidateRuntimeRetentionMutation(ctx context.Context, id, digest string, item core.RuntimeRetentionItem, now time.Time) error {
+func (s *SQLStore) ValidateRuntimeRetentionMutation(ctx context.Context, id, digest, attempt string, item core.RuntimeRetentionItem, now time.Time) error {
 	r, err := s.GetRuntimeRetentionReview(ctx, id)
 	if err != nil {
 		return err
 	}
-	if r.Digest != digest || r.State != "running" {
+	if r.Digest != digest || r.State != "running" || r.Attempt != attempt {
 		return ErrRuntimeRetentionChanged
 	}
 	p, err := s.GetRetentionPolicy(ctx, r.ProjectID)

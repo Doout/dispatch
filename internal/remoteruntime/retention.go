@@ -16,6 +16,7 @@ const (
 )
 
 type RetentionRequest struct {
+	Attempt  string                    `json:"attempt"`
 	ReviewID string                    `json:"reviewId"`
 	Digest   string                    `json:"digest"`
 	Item     core.RuntimeRetentionItem `json:"item"`
@@ -49,7 +50,7 @@ func (r Request) validateRetention() error {
 		return nil
 	}
 	input := r.Retention
-	if input == nil || !identityPattern.MatchString(input.ReviewID) || !retentionHash.MatchString(input.Digest) {
+	if input == nil || !identityPattern.MatchString(input.Attempt) || !identityPattern.MatchString(input.ReviewID) || !retentionHash.MatchString(input.Digest) {
 		return errors.New("runtime cleanup requires an accepted immutable review")
 	}
 	item := input.Item
@@ -79,12 +80,12 @@ func (b *Broker) validateRetentionOwner(ctx context.Context, j core.RuntimeJob, 
 		return nil
 	}
 	data, ok := b.Store.(interface {
-		ValidateRuntimeRetentionMutation(context.Context, string, string, core.RuntimeRetentionItem, time.Time) error
+		ValidateRuntimeRetentionMutation(context.Context, string, string, string, core.RuntimeRetentionItem, time.Time) error
 	})
 	if !ok {
 		return errors.New("runtime retention review storage is unavailable")
 	}
-	return data.ValidateRuntimeRetentionMutation(ctx, r.Retention.ReviewID, r.Retention.Digest, r.Retention.Item, time.Now().UTC())
+	return data.ValidateRuntimeRetentionMutation(ctx, r.Retention.ReviewID, r.Retention.Digest, r.Retention.Attempt, r.Retention.Item, time.Now().UTC())
 }
 func (r Request) ValidateRetentionResult(result Result) error {
 	if r.Operation != RetentionInspect && r.Operation != RetentionPrune {
