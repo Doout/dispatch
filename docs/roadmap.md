@@ -18,7 +18,7 @@ an untested provider. Feature documents describe the supported paths; the
 | Workload backups | [Encrypted PostgreSQL backups](workload-backups.md) support owned PostgreSQL 17+ services on Docker, scheduled restore verification, reviewed same-target restore and archive deletion. Generic volume archives, other engines, Helm and offsite recovery are not part of this first path. |
 | Temporary environments | [Finite-lifetime environments](temporary-environments.md) clone a same-project Dockerfile template onto an assigned outbound Docker target. Acceptance pins source, template and agent identity; expiry resumes durable cleanup while retaining shared servers and data. |
 | PR previews and source automation | [Durable webhook receipts](events.md), [repository recovery](repository-recovery.md), [preview cleanup](preview-lifecycle.md), scoped source approval and [GitHub Check Runs](application-config.md#github-check-runs) are implemented. Previews deploy on comments by default; automatic updates remain opt-in. |
-| Neon preview databases | [Project-scoped Neon connections](neon-preview-databases.md) create schema-only branches and retain a preview's database across commits. Source trust runs before provisioning or releasing connection values. The initial cleanup policy retains the branch. |
+| Neon preview databases | [Project-scoped Neon connections](neon-preview-databases.md) create schema-only branches and retain a preview's database across commits. Source trust runs before provisioning or releasing connection values. Reviewed policies can retain, suspend or delete the branch after preview cleanup. A reviewed schema-only reset switches to a new generation while retaining the old branch. |
 | Kubernetes targets | [Namespace-scoped registration and validation](kubernetes-targets.md) cover Kubernetes 1.35/1.36 capabilities and target identity. K3s 1.35.5 and external Kind 1.36.4 passed lifecycle, cancellation, partial-apply recovery, rollback and PVC checks. A K3s 1.35-to-1.36 upgrade preserved cluster/namespace identities, deployment history, PVC identity and data. |
 
 ## Release gates, in order
@@ -42,10 +42,10 @@ an untested provider. Feature documents describe the supported paths; the
 4. Exercise public routing with an operator-controlled domain, #5. Local Traefik
    tests cover candidate health, switching and rollback. Public DNS, ACME
    issuance and certificate renewal need their own live checks.
-5. Complete Neon lifecycle work and live validation, #1. Reviewed retain,
-   suspend/delete policies and schema-only replacement are in progress. Verify
-   the supported workflow in an isolated Neon project, including interrupted
-   operations and retained consumers, before claiming live provider support.
+5. Validate the Neon lifecycle in an isolated project, #1. Reviewed retention,
+   suspension, deletion and schema-only replacement pass local API fixtures.
+   Verify interrupted operations and retained consumers against a live Neon
+   account before claiming live provider support.
 
 ## Remaining feature work
 

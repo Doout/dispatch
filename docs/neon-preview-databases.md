@@ -108,7 +108,7 @@ migration job prevents all deployment stages, leaving the prior deployment in
 place. Use expand-and-contract migrations: deployment rollback reuses the branch
 and does not undo database schema or data changes.
 
-One durable link connects each preview resource and alias to its original
+One durable link connects each preview resource and alias to its current
 ServiceRun. New commits and controller restarts reuse that branch and its rows.
 Changing the referenced template configuration requires a reviewed replacement;
 Dispatch does not silently recreate or change an existing preview database.
@@ -125,21 +125,21 @@ annotations. It completes missing compute and role setup on that branch. It
 never repeats branch creation after an uncertain create whose branch cannot be
 found. Inspect the original run and provider; do not repeatedly submit new runs.
 
-Source/default/protected branches and branches with changed ownership are refused.
+Dispatch refuses source, default and protected branches, and branches whose
+ownership changed.
 Active preview references and application consumers block deletion. Retain is the
 default cleanup policy. In the owned resource panel, review and select retain,
 suspend or delete for this branch. Every change requires current project
 configuration and deployment permissions plus the shared typed confirmation.
 Delete explicitly approves permanent loss of this branch's data when the preview
-closes or expires. The selected policy and approving actor are saved before cleanup.
+closes or expires. Dispatch saves the selected policy and approving actor before cleanup.
 
 Preview close and expiry capture each linked branch, its policy and a stable
 operation ID in the existing preview cleanup intent. Database cleanup runs only
 after its owned workloads stop. Retain preserves its reference. Suspend stops
 compute and retains data, but a new connection can wake it. Delete removes the
-branch and its connection registration after checking all consumers. Only the
-captured preview's closed application bindings are detached; other consumers block
-suspend and delete. Ownership changes block both operations.
+branch and its connection registration after checking all consumers. Cleanup detaches only the captured preview's closed application bindings.
+Other consumers block suspend and delete. Ownership changes block both operations.
 
 A lost delete or suspend response remains unresolved. Reconciliation inspects the
 captured branch ID and never reposts the uncertain action. A renamed branch is an
