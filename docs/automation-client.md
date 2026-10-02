@@ -137,7 +137,67 @@ To restore, add `sourceSnapshotId` to the server review request, use the provide
 
 After retention expires and all restore operations settle, `snapshot delete review --snapshot SNAPSHOT_ID` returns the deletion consequences. Supply that review's confirmation fields to `snapshot accept` with its own deletion key. A protected or uncertain snapshot stays owned and continues to consume quota; inspect the original receipt and snapshot before retrying.
 
-Temporary-environment commands follow their controller API. The client exposes no arbitrary command execution, secret administration or human-approval tool.
+## Create and clean up a temporary environment
+
+The project needs a finite lifetime policy, available environment quota and an
+assigned ready outbound Docker target. The initial path accepts Dockerfile
+Application templates. Inspection requires `project.view`; creation and extension
+also require `project.configure` and `deployment.run`. Cleanup additionally needs
+`deployment.cancel`.
+
+```sh
+dispatchctl environment options --project PROJECT_ID
+dispatchctl environments list --project PROJECT_ID
+```
+
+Choose a listed template and target. Write `environment.json` with `projectId`,
+`templateId`, `serverId`, a lowercase `name`, the full `sourceSha`, and finite
+`lifetimeSeconds`. For example, use `3600` for one hour.
+
+```sh
+dispatchctl environment review --input environment.json > environment-review.json
+```
+
+Read the clone settings and omissions in the review. Production routes, service
+bindings and hooks are not copied. Supply its `reviewId`, `digest` and exact
+`confirmName` in `accept-environment.json`:
+
+```sh
+dispatchctl environment create --key agent-environment-001 --input accept-environment.json
+dispatchctl receipt wait --receipt CREATE_RECEIPT_ID --timeout 120
+dispatchctl environment get --environment ENVIRONMENT_ID
+```
+
+The environment records its deployment ID and expiration. Use the deployment
+commands above for logs, diagnosis and completion. Reuse the same creation file
+and key if the response is lost.
+
+To extend the lifetime, inspect the environment and write `extension.json` with
+its current numeric `revision` and an explicit RFC3339 `expiresAt`. Then run
+`environment extend --environment ENVIRONMENT_ID --input extension.json`. The
+server checks the maximum total lifetime. If the response is lost, inspect the
+environment before trying another edit. This command returns the environment,
+not a mutation receipt.
+
+Expiry starts cleanup under the accepted policy. To request it earlier:
+
+```sh
+dispatchctl environment cleanup review --environment ENVIRONMENT_ID > cleanup-review.json
+```
+
+Read the owned and retained resource list. Supply the reviewed `revision`,
+`digest` and exact `confirmName` in `cleanup.json`:
+
+```sh
+dispatchctl environment destroy --environment ENVIRONMENT_ID --key cleanup-environment-001 --input cleanup.json
+dispatchctl receipt wait --receipt CLEANUP_RECEIPT_ID --timeout 120
+dispatchctl environment get --environment ENVIRONMENT_ID
+```
+
+Preserve the cleanup request and key across retries. Unknown runtime outcomes
+block cleanup until inspected. The shared server, named volumes, backups and
+execution history remain. The client exposes no arbitrary command execution,
+secret administration or human-approval tool.
 
 ## MCP
 
