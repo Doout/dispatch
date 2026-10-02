@@ -19,15 +19,16 @@ an untested provider. Feature documents describe the supported paths; the
 | Temporary environments | [Finite-lifetime environments](temporary-environments.md) clone a same-project Dockerfile template onto an assigned outbound Docker target. Acceptance pins source, template and agent identity; expiry resumes durable cleanup while retaining shared servers and data. |
 | PR previews and source automation | [Durable webhook receipts](events.md), [repository recovery](repository-recovery.md), [preview cleanup](preview-lifecycle.md), scoped source approval and [GitHub Check Runs](application-config.md#github-check-runs) are implemented. Previews deploy on comments by default; automatic updates remain opt-in. |
 | Neon preview databases | [Project-scoped Neon connections](neon-preview-databases.md) create schema-only branches and retain a preview's database across commits. Source trust runs before provisioning or releasing connection values. Reviewed policies can retain, suspend or delete the branch after preview cleanup. A reviewed schema-only reset switches to a new generation while retaining the old branch. |
-| Kubernetes targets | [Namespace-scoped registration and validation](kubernetes-targets.md) cover Kubernetes 1.35/1.36 capabilities and target identity. K3s 1.35.5 and external Kind 1.36.4 passed lifecycle, cancellation, partial-apply recovery, rollback and PVC checks. A K3s 1.35-to-1.36 upgrade preserved cluster/namespace identities, deployment history, PVC identity and data. |
+| Kubernetes targets | [Namespace-scoped registration and validation](kubernetes-targets.md) cover Kubernetes 1.35/1.36 capabilities and target identity. The repeatable live matrix passed lifecycle, cancellation, partial-apply recovery, rollback and PVC checks on K3s 1.35.5, K3s 1.36.2 and Kind 1.36.4. An in-place K3s 1.35.5-to-1.36.2 upgrade preserved cluster/namespace identities, deployment history, PVC identity and data. These checks used disposable local clusters. |
 
 ## Release gates, in order
 
 1. Validate the combined changes. Run the required race, vet, UI and installer
    checks on the final integrated revision. Preserve the focused SQLite,
    PostgreSQL, Docker and K3s evidence alongside the release. A passing component
-   test does not replace the combined checks. Finish the repeatable Kubernetes
-   matrix runner and retain its results with the [cluster evidence](kubernetes-targets.md).
+   test does not replace the combined checks. The repeatable Kubernetes matrix
+   and in-place upgrade passed; retain their [cluster evidence](kubernetes-targets.md)
+   with the release.
 2. Choose and validate the first real infrastructure adapter, #74. The choice of
    provider and isolated account is still pending. Complete allocation, lost-reply
    recovery, pinned bootstrap, enrolled workload execution and reviewed deletion
