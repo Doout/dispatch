@@ -442,6 +442,12 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 		return errors.New("Registered namespace targets cannot install cluster custom resource definitions. Install required cluster APIs separately.")
 	}
 
+	actionCtx, restoreClient, err := c.actionContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer restoreClient()
+
 	history := action.NewHistory(c.configuration)
 	history.Max = 1
 	retained, err := history.Run(release)
@@ -461,7 +467,10 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 		install.Labels = metadata.labels()
 		install.PostRenderer = metadata
 		var installed *helmrelease.Release
-		installed, err = install.RunWithContext(ctx, chart, values)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		installed, err = install.RunWithContext(actionCtx, chart, values)
 		if err == nil && installed != nil {
 			c.lastManifest = installed.Manifest
 			err = c.labelRelease(ctx, installed, metadata)
@@ -523,7 +532,10 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	upgrade.Labels = metadata.labels()
 	upgrade.PostRenderer = metadata
 	var installed *helmrelease.Release
-	installed, err = upgrade.RunWithContext(ctx, release, chart, values)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	installed, err = upgrade.RunWithContext(actionCtx, release, chart, values)
 	if err == nil && installed != nil {
 		c.lastManifest = installed.Manifest
 		err = c.labelRelease(ctx, installed, metadata)
