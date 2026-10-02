@@ -79,6 +79,8 @@ type Repository struct {
 	Owner         string `json:"owner"`
 	DefaultBranch string `json:"defaultBranch"`
 	Private       bool   `json:"private"`
+	Archived      bool   `json:"archived"`
+	Disabled      bool   `json:"disabled"`
 	WebURL        string `json:"webUrl"`
 }
 
@@ -375,6 +377,8 @@ func (m *Manager) ListRepositories(ctx context.Context, id string) ([]Repository
 					Name          string `json:"name"`
 					DefaultBranch string `json:"default_branch"`
 					Private       bool   `json:"private"`
+					Archived      bool   `json:"archived"`
+					Disabled      bool   `json:"disabled"`
 					HTMLURL       string `json:"html_url"`
 					Owner         struct {
 						Login string `json:"login"`
@@ -387,7 +391,7 @@ func (m *Manager) ListRepositories(ctx context.Context, id string) ([]Repository
 			}
 			for _, repository := range response.Repositories {
 				items = append(items, Repository{ID: repository.ID, FullName: repository.FullName, Name: repository.Name,
-					Owner: repository.Owner.Login, DefaultBranch: repository.DefaultBranch, Private: repository.Private, WebURL: repository.HTMLURL})
+					Owner: repository.Owner.Login, DefaultBranch: repository.DefaultBranch, Private: repository.Private, Archived: repository.Archived, Disabled: repository.Disabled, WebURL: repository.HTMLURL})
 			}
 			if len(response.Repositories) < 100 {
 				break

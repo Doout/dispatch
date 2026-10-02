@@ -80,6 +80,10 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 			name += "_review"
 			used = 3
 		}
+		if name == "environment_cleanup" && len(rest) > 2 && rest[2] == "review" {
+			name += "_review"
+			used = 3
+		}
 	}
 	if _, ok := automationclient.Find(name); !ok {
 		return emit(automationclient.Failure("invalid_input", "Unknown command; use --help for supported operations"))
@@ -90,6 +94,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	flags.StringVar(&a.ProjectID, "project", "", "Project ID")
 	flags.StringVar(&a.ProviderID, "provider", "", "Assigned provider ID")
 	flags.StringVar(&a.SnapshotID, "snapshot", "", "Owned machine snapshot ID")
+	flags.StringVar(&a.EnvironmentID, "environment", "", "Temporary environment ID")
 	flags.StringVar(&a.AppID, "app", "", "Application ID")
 	flags.StringVar(&a.DeploymentID, "deployment", "", "Deployment ID")
 	flags.StringVar(&a.ReceiptID, "receipt", "", "Mutation receipt ID")

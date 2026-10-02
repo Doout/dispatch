@@ -43,6 +43,23 @@ type SnapshotReviewInput struct {
 	} `json:"encryption"`
 	RetainUntil string `json:"retainUntil,omitempty"`
 }
+type TemporaryEnvironmentInput struct {
+	ProjectID       string `json:"projectId"`
+	TemplateID      string `json:"templateId"`
+	ServerID        string `json:"serverId"`
+	Name            string `json:"name"`
+	SourceSHA       string `json:"sourceSha"`
+	LifetimeSeconds int64  `json:"lifetimeSeconds"`
+}
+type TemporaryEnvironmentExtension struct {
+	Revision  int64  `json:"revision"`
+	ExpiresAt string `json:"expiresAt"`
+}
+type TemporaryEnvironmentCleanup struct {
+	Revision    int64  `json:"revision"`
+	Digest      string `json:"digest"`
+	ConfirmName string `json:"confirmName"`
+}
 type ServerCreateReview struct {
 	ProjectID        string          `json:"projectId"`
 	ProviderID       string          `json:"providerId"`
@@ -60,6 +77,7 @@ type Arguments struct {
 	ProjectID      string          `json:"projectId,omitempty"`
 	ProviderID     string          `json:"providerId,omitempty"`
 	SnapshotID     string          `json:"snapshotId,omitempty"`
+	EnvironmentID  string          `json:"environmentId,omitempty"`
 	AppID          string          `json:"appId,omitempty"`
 	DeploymentID   string          `json:"deploymentId,omitempty"`
 	ReceiptID      string          `json:"receiptId,omitempty"`
@@ -103,8 +121,18 @@ var Operations = []Operation{
 	{Name: "snapshot_delete_review", Method: "POST", Path: "/infrastructure/snapshots/{snapshotId}/delete-review", Description: "Review snapshot deletion, including retention and active restore protection.", Fields: []string{"snapshotId"}, Required: []string{"snapshotId"}},
 	{Name: "snapshot_accept", Method: "POST", Path: "/infrastructure/snapshots/accept", Description: "Accept a supplied snapshot capture or deletion review with an explicit retry key and confirmation. Server grants, quota and retention still apply.", Fields: []string{"key", "input"}, Required: []string{"key", "input"}, Mutation: true, InputSchema: "InfrastructureAcceptance"},
 	{Name: "quota_get", Method: "GET", Path: "/projects/{projectId}/infrastructure/quota", Description: "Inspect project allocation limits and reservations.", Fields: []string{"projectId"}, Required: []string{"projectId"}},
+	{Name: "environments_list", Method: "GET", Path: "/projects/{projectId}/temporary-environments", Description: "List temporary environments and their lifecycle state in an authorized project.", Fields: []string{"projectId"}, Required: []string{"projectId"}},
+	{Name: "environment_options", Method: "GET", Path: "/projects/{projectId}/temporary-environments/options", Description: "Inspect available templates, assigned ready targets and omitted template settings.", Fields: []string{"projectId"}, Required: []string{"projectId"}},
+	{Name: "environment_review", Method: "POST", Path: "/temporary-environments/review", Description: "Prepare a temporary environment review for a full source commit and finite lifetime. Inspect the copied settings and omissions before acceptance.", Fields: []string{"input"}, Required: []string{"input"}, InputSchema: "TemporaryEnvironmentInput"},
+	{Name: "environment_create", Method: "POST", Path: "/temporary-environments", Description: "Accept a supplied temporary environment review with a stable key. Current permissions, target assignments and quota still apply.", Fields: []string{"key", "input"}, Required: []string{"key", "input"}, Mutation: true, InputSchema: "InfrastructureAcceptance"},
+	{Name: "environment_get", Method: "GET", Path: "/temporary-environments/{environmentId}", Description: "Inspect a temporary environment, its deployment, expiration and owned resources.", Fields: []string{"environmentId"}, Required: []string{"environmentId"}},
+	{Name: "environment_extend", Method: "POST", Path: "/temporary-environments/{environmentId}/extend", Description: "Set an explicit expiration using the current environment revision. If the response is lost, inspect the environment before another edit. Does not extend beyond project policy.", Fields: []string{"environmentId", "input"}, Required: []string{"environmentId", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentExtension"},
+	{Name: "environment_cleanup_review", Method: "POST", Path: "/temporary-environments/{environmentId}/cleanup-review", Description: "Review removal of owned workload resources and retention of shared infrastructure and data.", Fields: []string{"environmentId"}, Required: []string{"environmentId"}},
+	{Name: "environment_destroy", Method: "POST", Path: "/temporary-environments/{environmentId}/destroy", Description: "Submit the reviewed revision, digest and exact name with a stable cleanup key. Uncertain operations require inspection; shared servers and protected data remain.", Fields: []string{"environmentId", "key", "input"}, Required: []string{"environmentId", "key", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentCleanup"},
 }
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$`)
+var fullCommit = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
+var environmentName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,39}$`)
 
 func DecodeArguments(raw []byte) (Arguments, error) {
 	var a Arguments
@@ -166,7 +194,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 	}
 	path := op.Path
-	for f, v := range map[string]string{"projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
+	for f, v := range map[string]string{"projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
 		if v != "" && !identifier.MatchString(v) {
 			return Failure("invalid_input", "Invalid resource identifier")
 		}
@@ -185,8 +213,29 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		body = input
 	case "InfrastructureAcceptance":
 		var input InfrastructureAcceptance
-		if decodeStrict(args.Input, &input) != nil || input.Digest == "" || input.ConfirmName == "" || (name == "server_create" || name == "snapshot_accept") && input.ReviewID == "" {
+		if decodeStrict(args.Input, &input) != nil || input.Digest == "" || input.ConfirmName == "" || (name == "server_create" || name == "snapshot_accept" || name == "environment_create") && input.ReviewID == "" {
 			return Failure("invalid_input", "Supply the reviewed digest, exact confirmation name and creation review ID when creating")
+		}
+		body = input
+	case "TemporaryEnvironmentInput":
+		var input TemporaryEnvironmentInput
+		if decodeStrict(args.Input, &input) != nil || !identifier.MatchString(input.ProjectID) || !identifier.MatchString(input.TemplateID) || !identifier.MatchString(input.ServerID) || !environmentName.MatchString(input.Name) || !fullCommit.MatchString(input.SourceSHA) || input.LifetimeSeconds < 1 || input.LifetimeSeconds > 365*24*3600 {
+			return Failure("invalid_input", "Supply the project, template, target, lowercase environment name, full Git commit SHA and finite lifetime in seconds")
+		}
+		body = input
+	case "TemporaryEnvironmentExtension":
+		var input TemporaryEnvironmentExtension
+		if decodeStrict(args.Input, &input) != nil || input.Revision < 1 {
+			return Failure("invalid_input", "Supply the current environment revision and an explicit expiration")
+		}
+		if _, err := time.Parse(time.RFC3339, input.ExpiresAt); err != nil {
+			return Failure("invalid_input", "Environment expiration must be an RFC3339 timestamp")
+		}
+		body = input
+	case "TemporaryEnvironmentCleanup":
+		var input TemporaryEnvironmentCleanup
+		if decodeStrict(args.Input, &input) != nil || input.Revision < 1 || input.Digest == "" || input.ConfirmName == "" {
+			return Failure("invalid_input", "Supply the reviewed environment revision, cleanup digest and exact confirmation name")
 		}
 		body = input
 	case "ProviderOptionsInput":
@@ -250,12 +299,15 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	for {
 		out := c.request(ctx, op.Method, path, args.Key, body)
 		if op.Mutation {
-			out.Continuation = &Continuation{Kind: name, ID: args.AppID + args.ServerID, Key: args.Key}
+			out.Continuation = &Continuation{Kind: name, ID: args.AppID + args.ServerID + args.EnvironmentID, Key: args.Key}
+			if name == "environment_extend" {
+				out.Continuation.Kind = "environment"
+			}
 		}
 		if wait {
 			out.Continuation = continuation
 		}
-		if op.Mutation && out.OK {
+		if op.Mutation && out.OK && name != "environment_extend" {
 			var accepted struct {
 				ID string `json:"id"`
 			}

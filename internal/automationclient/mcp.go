@@ -28,6 +28,22 @@ func inputSchema(kind string) any {
 		props["kind"] = map[string]any{"type": "string", "enum": []string{"regions", "sizes", "images", "networks"}}
 		props["config"] = map[string]any{"type": "object"}
 		required = []string{"kind"}
+	case "TemporaryEnvironmentInput":
+		for _, key := range []string{"projectId", "templateId", "serverId", "name", "sourceSha"} {
+			props[key] = text()
+		}
+		props["name"] = map[string]any{"type": "string", "pattern": environmentName.String()}
+		props["sourceSha"] = map[string]any{"type": "string", "pattern": fullCommit.String()}
+		props["lifetimeSeconds"] = map[string]any{"type": "integer", "minimum": 1, "maximum": 365 * 24 * 3600}
+		required = []string{"projectId", "templateId", "serverId", "name", "sourceSha", "lifetimeSeconds"}
+	case "TemporaryEnvironmentExtension":
+		props["revision"] = map[string]any{"type": "integer", "minimum": 1}
+		props["expiresAt"] = map[string]any{"type": "string", "format": "date-time"}
+		required = []string{"revision", "expiresAt"}
+	case "TemporaryEnvironmentCleanup":
+		props["revision"] = map[string]any{"type": "integer", "minimum": 1}
+		props["digest"], props["confirmName"] = text(), text()
+		required = []string{"revision", "digest", "confirmName"}
 	case "SnapshotReviewInput":
 		props["name"] = text()
 		props["diskSet"] = map[string]any{"type": "string", "enum": []string{"boot", "all"}}
@@ -58,7 +74,7 @@ func toolDescription(op Operation) map[string]any {
 		switch f {
 		case "input":
 			properties[f] = inputSchema(op.InputSchema)
-			if op.Name == "server_create" || op.Name == "snapshot_accept" {
+			if op.Name == "server_create" || op.Name == "snapshot_accept" || op.Name == "environment_create" {
 				properties[f].(map[string]any)["required"] = []string{"reviewId", "digest", "confirmName"}
 			}
 			continue
@@ -78,8 +94,8 @@ func toolDescription(op Operation) map[string]any {
 	if required == nil {
 		required = []string{}
 	}
-	createsReview := op.Name == "server_review" || op.Name == "snapshot_review" || op.Name == "snapshot_delete_review"
-	return map[string]any{"name": op.Name, "description": op.Description, "inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": !op.Mutation && !createsReview, "destructiveHint": op.Name == "server_delete" || op.Name == "snapshot_accept", "idempotentHint": !createsReview, "openWorldHint": true}}
+	createsReview := op.Name == "server_review" || op.Name == "snapshot_review" || op.Name == "snapshot_delete_review" || op.Name == "environment_review"
+	return map[string]any{"name": op.Name, "description": op.Description, "inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": !op.Mutation && !createsReview, "destructiveHint": op.Name == "server_delete" || op.Name == "snapshot_accept" || op.Name == "environment_destroy", "idempotentHint": !createsReview && op.Name != "environment_extend", "openWorldHint": true}}
 }
 
 type rpcRequest struct {

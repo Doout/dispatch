@@ -2579,3 +2579,8 @@ code { font-family: var(--mono); }
 .managed-servers details { min-width: 0; max-width: 100%; font-size: 12px; line-height: 1.5; }
 .managed-servers details pre { max-width: 100%; margin: 10px 0; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface-subtle); border: 1px solid var(--rule); border-radius: 8px; font: 11px/1.55 var(--mono); }
 .machine-snapshots .connection-metadata { align-items: center; font-size: 12px; line-height: 1.4; }
+
+.temporary-environments code { overflow-wrap: anywhere; }
+.temporary-environments dd { min-width: 0; margin-inline-start: 0; }
+.temporary-environments .connection-identity { min-width: 0; }
+.temporary-environments .connection-row details { flex-basis: 100%; min-width: 0; }

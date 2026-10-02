@@ -361,6 +361,7 @@ export type DeploymentLog = {
   createdAt: string;
 };
 export type EventActivity = {
+ deliveryId?: string; attempts?: number; nextAttemptAt?: string;
  id: string; projectId: string; ruleId: string; name: string;
  transport: "poll" | "webhook" | "history"; kind: string; repository: string;
  branch?: string; commitSha?: string; pullRequest?: number; command?: string;
@@ -374,6 +375,8 @@ export type EventRule = {
  intervalSeconds?: number; enabled: boolean; pullRequest?: number; error?: string; check?: EventActivity;
 };
 export type EventActivityPage = { items: EventActivity[]; next?: string; total: number };
+export type RepositoryStatus = { state: "accessible" | "renamed" | "archived" | "disabled" | "inaccessible" | "deleted" | "identity_changed" | "unavailable"; repositoryId?: number; fullName?: string; detail: string; recovery: string; checkedAt: string };
+export type GitHubBranch = { name: string; sha: string; protected: boolean };
 export type ConfigSource = {
   id: string;
   projectId: string;
@@ -381,6 +384,8 @@ export type ConfigSource = {
   credentialSecretId?: string;
   name: string;
   repository: string;
+  repositoryId?: number;
+  repositoryStatus?: RepositoryStatus;
   branch: string;
   path: string;
   syncMode: "webhook_poll" | "webhook" | "poll";
@@ -694,6 +699,8 @@ export type GitHubRepository = {
   owner: string;
   defaultBranch: string;
   private: boolean;
+  archived?: boolean;
+  disabled?: boolean;
   webUrl: string;
 };
 export type GitHubAppVerification = {
@@ -929,10 +936,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return value;
 }
 
-export async function destructiveRequest<T>(path: string, init: RequestInit): Promise<T> {
+export async function destructiveRequest<T>(path: string, init: RequestInit, previewPath?: string): Promise<T> {
   const token = getToken(), impersonated = getImpersonatedUserID();
   const [pathname, query] = path.split("?");
-  const preview = init.method === "DELETE" ? `${pathname}/delete-preview` : `${pathname}-preview`;
+  const preview = previewPath ?? (init.method === "DELETE" ? `${pathname}/delete-preview` : `${pathname}-preview`);
   const review = await request<DestructiveReview>(`${preview}${query ? `?${query}` : ""}`, { method: "POST" });
   const confirmation = await requestDestructiveConfirmation(review);
   if (token !== getToken() || impersonated !== getImpersonatedUserID()) throw new Error("Your account changed. Review this action again.");
@@ -949,6 +956,14 @@ export type StorageResource = {
 };
 
 export const api = {
+ workloadBackups: (projectId = "") => request<WorkloadBackup[]>(`/api/v1/workload-backups${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`),
+ createWorkloadBackup: (input: {sourceRunId: string; checks: {query:string;expected:string}[]; verificationIntervalHours:number}) => request<WorkloadBackupOperation>("/api/v1/workload-backups", {method:"POST",body:JSON.stringify(input)}),
+ workloadBackupOperations: (id:string) => request<WorkloadBackupOperation[]>(`/api/v1/workload-backups/${id}/operations`),
+ verifyWorkloadBackup: (id:string) => request<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/verify`,{method:"POST"}),
+ reconcileWorkloadBackup: (id:string,operationId:string) => request<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/operations/${operationId}/reconcile`,{method:"POST"}),
+ deleteWorkloadBackup: (id:string) => destructiveRequest<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/delete`,{method:"POST"}),
+ restoreWorkloadBackup: (id:string,destination:string) => destructiveRequest<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/restore/${destination}`,{method:"POST"},`/api/v1/workload-backups/${id}/restore/${destination}/preview`),
+
  applicationRoute: (id: string) => request<ApplicationRoute | null>(`/api/v1/apps/${id}/route`),
  checkApplicationRoute: (id: string) => request<ApplicationRoute>(`/api/v1/apps/${id}/route/check`, { method: "POST" }),
  updateServerRouting: (id: string, routing: RoutingConfig | null) => request<Server>(`/api/v1/servers/${id}/routing`, { method: "PUT", body: JSON.stringify({ routing }) }),
@@ -1291,6 +1306,10 @@ export const api = {
     request<GitHubAppInstallation[]>(`/api/v1/github-apps/${id}/installations`),
   githubAppRepositories: (id: string) =>
     request<GitHubRepository[]>(`/api/v1/github-apps/${id}/repositories`),
+  githubAppBranches: (id: string, repository: string, repositoryId: number) => request<GitHubBranch[]>(`/api/v1/github-apps/${id}/branches?${new URLSearchParams({repository, repositoryId: String(repositoryId)})}`),
+  configSourceRepositories: (id: string) => request<GitHubRepository[]>(`/api/v1/config-sources/${id}/repositories`),
+  configSourceBranches: (id: string, repository: string, repositoryId: number) => request<GitHubBranch[]>(`/api/v1/config-sources/${id}/branches?${new URLSearchParams({repository, repositoryId: String(repositoryId)})}`),
+  checkConfigSourceRepository: (id: string) => request<ConfigSource>(`/api/v1/config-sources/${id}/repository-check`, {method: "POST"}),
   startGitHubAppManifest: (body: {
     name: string;
     webUrl: string;
@@ -1311,6 +1330,7 @@ export const api = {
     credentialSecretId?: string;
     name: string;
     repository: string;
+    repositoryId?: number;
     branch: string;
     path: string;
     syncMode: ConfigSource["syncMode"];
@@ -1328,6 +1348,7 @@ export const api = {
       credentialSecretId?: string;
       name: string;
       repository: string;
+      repositoryId?: number;
       branch: string;
       path: string;
       syncMode: ConfigSource["syncMode"];
@@ -1660,3 +1681,6 @@ export type DeploymentComparison = {
 
 export type ServiceResource = { runId: string; projectId: string; serviceId: string; name: string; target: ServiceProvisionTarget; state: "accepted" | "provisioning" | "recovering" | "ready" | "unresolved" | "deleting" | "deleted"; resourceId?: string; policy: "retain"; revision: number; operationId: string; message?: string; dependencies?: string[]; recoveryAfter?: string; createdAt: string; updatedAt: string };
 export type ServiceResourceInspection = { runId: string; projectId: string; serverId: string; provider: string; resourceId?: string; state: "ready" | "unready" | "absent"; storageRetained: boolean };
+
+export type WorkloadBackup = {id:string;projectId:string;sourceRunId:string;storageId:string;serverId:string;state:string;revision:number;artifactId:string;consistency:string;format:string;checksum?:string;bytes:number;encryption:string;location:string;policy:string;checkCount:number;verificationState:string;cleanupState:string;verificationIntervalHours:number;nextVerificationAt?:string;verifiedAt?:string;createdAt:string;updatedAt:string;message?:string};
+export type WorkloadBackupOperation = {id:string;backupId:string;projectId:string;action:string;state:string;targetRunId?:string;targetName?:string;revision:number;recoveryAfter:string;message?:string;cleanupState?:string};

@@ -54,7 +54,8 @@ func (s *SQLStore) runtimeRetentionReferences(ctx context.Context, q retentionQu
  EXISTS(SELECT 1 FROM workflow_stage_runs w WHERE w.deployment_ids LIKE '%' || d.id || '%'),
  EXISTS(SELECT 1 FROM preview_group_run_components p WHERE p.deployment_id=d.id),
  EXISTS(SELECT 1 FROM deployment_drift_baselines b WHERE b.deployment_id=d.id),
- EXISTS(SELECT 1 FROM application_routes r WHERE r.app_id=d.app_id AND r.record LIKE '%' || d.id || '%')
+ EXISTS(SELECT 1 FROM application_routes r WHERE r.app_id=d.app_id AND r.record LIKE '%' || d.id || '%'),
+ EXISTS(SELECT 1 FROM temporary_environments e WHERE e.deployment_id=d.id AND e.state<>'closed')
  FROM deployments d WHERE d.app_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT 10001`), app)
 	if err != nil {
 		return nil, err
@@ -65,8 +66,8 @@ func (s *SQLStore) runtimeRetentionReferences(ctx context.Context, q retentionQu
 	for rows.Next() {
 		var r core.RuntimeRetentionReference
 		var created, state string
-		var workflow, preview, baseline, route bool
-		if err = rows.Scan(&r.DeploymentID, &created, &state, &workflow, &preview, &baseline, &route); err != nil {
+		var workflow, preview, baseline, route, environment bool
+		if err = rows.Scan(&r.DeploymentID, &created, &state, &workflow, &preview, &baseline, &route, &environment); err != nil {
 			return nil, err
 		}
 		r.AppID = app
@@ -79,6 +80,9 @@ func (s *SQLStore) runtimeRetentionReferences(ctx context.Context, q retentionQu
 			}
 		} else if state != "failed" && state != "cancelled" {
 			r.Protected = append(r.Protected, "Deployment is active")
+		}
+		if environment {
+			r.Protected = append(r.Protected, "Owned by an active temporary environment")
 		}
 		if workflow {
 			r.Protected = append(r.Protected, "Referenced by a workflow")

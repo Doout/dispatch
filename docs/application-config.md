@@ -4,6 +4,10 @@ Dispatch loads Applications and Pipelines from YAML or JSON in a GitHub reposito
 
 Each sync reads every `.yaml`, `.yml`, and `.json` file below that path. The parser rejects unknown fields, invalid references, and duplicate resource names. A rejected sync does not replace the last valid configuration.
 
+For repository renames, archived repositories, or lost App access, see
+[repository recovery](repository-recovery.md). Recovery preserves the configured
+branch and historical commit records until you explicitly edit the source.
+
 Imported Applications start their first deployment automatically when an active configuration syncs. Subsequent changes create an immutable revision when relevant inputs or rendered Helm resources change. Pipelines are available for stage checks immediately. Pause an Application to stop automatic deployments; syncing preserves that choice.
 
 ## Automatic Helm change detection

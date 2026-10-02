@@ -47,25 +47,53 @@ func TestCompletionWaitsForDeployingStatusPersistence(t *testing.T) {
 
 func TestCompletionPersistsTerminalStateWhenNotifierFails(t *testing.T) {
 	data, _ := previewFixture(t)
-	deployments := deploy.NewService(data, deploy.SimulationExecutor{Delay: time.Millisecond})
-	lifecycle := DeploymentLifecycle{Store: data, Deployments: deployments, PollEvery: time.Millisecond}
-	notifier := &recordingNotifier{failAfter: 1}
+	lifecycle := &controlledLifecycle{store: data}
+	persisted := make(chan error, 3)
+	notifier := &recordingNotifier{failAfter: 1, observe: func(notification Notification) {
+		if notification.State != core.PreviewReady {
+			return
+		}
+		preview, err := data.GetPreviewEnvironment(context.Background(), notification.Preview.ID)
+		if err == nil && (preview.State != core.PreviewReady || preview.StatusCommentID != "status-1") {
+			err = errors.New("terminal state and initial comment must be persisted before notification")
+		}
+		persisted <- err
+	}}
 	service := New(data, nil, lifecycle, notifier)
 	result, err := service.Process(context.Background(), previewCommentEvent("delivery-notifier-failure"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview := waitForPreviewState(t, data, result.Previews[0].ID, core.PreviewReady)
-	if preview.StatusCommentID != "status-1" {
-		t.Fatalf("terminal persistence must retain initial status comment: %#v", preview)
+	// Drive the completion path directly and join it so assertions follow every
+	// notification attempt, regardless of deployment or database latency.
+	completion := make(chan Completion, 1)
+	completion <- Completion{State: core.PreviewReady, Message: "Preview ready"}
+	close(completion)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		service.awaitCompletion(result.Previews[0].ID, completion)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Minute):
+		t.Fatal("completion worker did not finish")
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for notifier.count() < 4 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	preview, err := data.GetPreviewEnvironment(context.Background(), result.Previews[0].ID)
+	if err != nil || preview.State != core.PreviewReady || preview.StatusCommentID != "status-1" {
+		t.Fatalf("terminal persistence must retain initial status comment: preview=%#v err=%v", preview, err)
 	}
-	states, _ := notifier.snapshot()
-	if len(states) != 4 {
+	states, comments := notifier.snapshot()
+	if len(states) != 4 || states[0] != core.PreviewDeploying {
 		t.Fatalf("expected one initial notification and three bounded completion attempts, got %v", states)
+	}
+	for i := 1; i < len(states); i++ {
+		if states[i] != core.PreviewReady || comments[i] != "status-1" {
+			t.Fatalf("completion retry changed state or comment identity: %v %v", states, comments)
+		}
+		if err := <-persisted; err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -192,6 +220,7 @@ type recordingNotifier struct {
 	commentIDs    []string
 	failAfter     int
 	readyRecorded chan struct{}
+	observe       func(Notification)
 }
 
 func (n *recordingNotifier) UpdatePreview(_ context.Context, notification Notification) (string, error) {
@@ -199,6 +228,9 @@ func (n *recordingNotifier) UpdatePreview(_ context.Context, notification Notifi
 	defer n.mu.Unlock()
 	n.states = append(n.states, notification.State)
 	n.commentIDs = append(n.commentIDs, notification.Preview.StatusCommentID)
+	if n.observe != nil {
+		n.observe(notification)
+	}
 	if notification.State == core.PreviewReady && n.readyRecorded != nil {
 		select {
 		case n.readyRecorded <- struct{}{}:

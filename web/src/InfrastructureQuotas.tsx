@@ -5,7 +5,7 @@ import { InfrastructureProvider, infrastructureApi } from "./InfrastructureProvi
 type Rule = { providerId: string; regions: string[]; sizes: string[]; anyRegion: boolean; anySize: boolean };
 export type QuotaPolicy = { projectId: string; configured: boolean; revision: number; maxServers: number; maxTemporaryEnvironments: number; maxSnapshots: number; maxTemporaryLifetimeSeconds: number; providers: Rule[] };
 type Reservation = { serverId: string; operationId: string; providerId: string; region: string; size: string; state: string; resourceId?: string };
-export type QuotaView = { policy: QuotaPolicy; usage: { snapshots?: number; servers: number; reserved: number; allocated: number; unknown: number }; reservations: Reservation[] };
+export type QuotaView = { policy: QuotaPolicy; usage: { temporaryEnvironments?: number; snapshots?: number; servers: number; reserved: number; allocated: number; unknown: number }; reservations: Reservation[] };
 export const infrastructureQuotaApi = {
   get: (id: string) => request<QuotaView>(`/api/v1/projects/${encodeURIComponent(id)}/infrastructure/quota`),
   save: (id: string, policy: QuotaPolicy) => request<QuotaPolicy>(`/api/v1/projects/${encodeURIComponent(id)}/infrastructure/quota`, { method: "PUT", body: JSON.stringify(policy) }),
@@ -56,9 +56,11 @@ export function InfrastructureQuotas({ overview, canManage }: { overview: Overvi
     {error && <p role="alert" className="form-error">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {view && policy && <>
-      <p><strong>{view.usage.servers}</strong> servers counted · {view.usage.reserved} reserved · {view.usage.allocated} allocated · {view.usage.unknown} unresolved · {view.usage.snapshots ?? 0} retained or pending snapshots</p>
+      <p><strong>{view.usage.servers}</strong> servers counted · {view.usage.reserved} reserved · {view.usage.allocated} allocated · {view.usage.unknown} unresolved · {view.usage.snapshots ?? 0} retained or pending snapshots · {view.usage.temporaryEnvironments ?? 0} temporary environments</p>
       {!policy.configured && <p>Self-service allocation is disabled until an owner saves a resource policy.</p>}
       {canManage ? <form className="connection-form inline-create" onSubmit={event => void save(event)} aria-label="Project resource policy">
+        <label>Maximum temporary environments<input type="number" required min={-1} step={1} value={policy.maxTemporaryEnvironments} onChange={event => setPolicy({ ...policy, maxTemporaryEnvironments: Number(event.target.value) })} /><small>Accepted, failed and cleanup-blocked environments count until cleanup completes. Use -1 for unlimited.</small></label>
+        <label>Maximum total environment lifetime (seconds)<input type="number" required min={policy.maxTemporaryEnvironments === 0 ? 0 : 1} max={31536000} step={1} value={policy.maxTemporaryLifetimeSeconds} onChange={event => setPolicy({ ...policy, maxTemporaryLifetimeSeconds: Number(event.target.value) })} /><small>Extensions cannot exceed this duration measured from initial acceptance.</small></label>
         <label>Maximum snapshots<input type="number" required min={-1} step={1} value={policy.maxSnapshots} onChange={event => setPolicy({ ...policy, maxSnapshots: Number(event.target.value) })} /><small>Pending and unresolved snapshots count until verified deletion. Use -1 for unlimited.</small></label>
         <label>Maximum servers<input type="number" required min={-1} step={1} value={policy.maxServers} onChange={event => setPolicy({ ...policy, maxServers: Number(event.target.value) })} /><small>Use 0 to block new allocations, or -1 for unlimited servers.</small></label>
         <fieldset><legend>Allowed providers and machines</legend>

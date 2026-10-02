@@ -197,7 +197,7 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 		}
 	}))
 	t.Cleanup(github.Close)
-	a := New(data, deploy.NewService(data, deploy.SimulationExecutor{Delay: time.Millisecond}), false, AuthConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)), EventConfig{GitHubAPIURL: github.URL, GitHubToken: "token"})
+	a := New(data, deploy.NewService(data, deploy.SimulationExecutor{Delay: time.Millisecond}), false, AuthConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)), EventConfig{GitHubAPIURL: github.URL, GitHubToken: "token", Vault: webhookTestVault(t)})
 	if err := a.PollPreviewsOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -231,12 +231,15 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 	request.Header.Set("X-Hub-Signature-256", fmt.Sprintf("sha256=%x", sign.Sum(nil)))
 	response := httptest.NewRecorder()
 	a.processGitHubWebhook(response, request, "webhook-secret", "", 0, a.groups, a.events)
-	if response.Code != 200 {
-		t.Fatalf("duplicate webhook: %d %s", response.Code, response.Body.String())
+	if response.Code != 202 {
+		t.Fatalf("durable webhook: %d %s", response.Code, response.Body.String())
+	}
+	if err := a.ProcessWebhooksOnce(ctx); err != nil {
+		t.Fatal(err)
 	}
 	history, err = data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}})
-	if err != nil || len(history) != 1 || history[0].Transport != "poll" {
-		t.Fatalf("duplicate webhook changed delivery history: %+v %v", history, err)
+	if err != nil || len(history) != 2 || history[0].Kind != "webhook_delivery" || history[1].Transport != "poll" {
+		t.Fatalf("delivery receipt or logical command identity lost: %+v %v", history, err)
 	}
 	cursor, err := data.PreviewPollCursor(ctx, "", "acme/service")
 	if err != nil || cursor == nil {
@@ -259,7 +262,7 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	history, err = data.SearchEventActivity(ctx, core.EventActivitySearch{ProjectIDs: []string{"project"}})
-	if err != nil || len(history) != 3 {
+	if err != nil || len(history) != 4 {
 		t.Fatalf("failure/recovery not recorded: %+v %v", history, err)
 	}
 	closed.Store(true)

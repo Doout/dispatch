@@ -255,3 +255,5 @@ Historical reporting uses embedded DuckDB with asynchronous Parquet exports. See
 [analytics](docs/analytics.md) for storage, recovery, and native build requirements.
 
 Application [sync and drift checks](docs/application-drift.md) compare saved Helm deployments with Kubernetes/OpenShift resources and support explicit reapply.
+
+Owned PostgreSQL services support [encrypted workload backups and isolated restore verification](docs/workload-backups.md).

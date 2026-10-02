@@ -164,3 +164,13 @@ it("discards an older page response after the delivery filter changes", async ()
   expect(screen.queryByText("Wrong filter")).toBeNull();
   expect(screen.queryByText("Webhook")).toBeNull();
 });
+
+it("shows durable delivery retry attempts without treating them as deployment outcomes", async () => {
+  vi.spyOn(api, "eventRules").mockResolvedValue([rule]);
+  vi.spyOn(api, "eventActivity").mockResolvedValue({ items: [{ ...event, id: "receipt", kind: "webhook_delivery", transport: "webhook", state: "retry", deliveryId: "receipt", attempts: 3, nextAttemptAt: now, revisionIds: [], message: "Repository installation lookup failed; retry scheduled." }], total: 1 });
+  page("activity");
+  expect(await screen.findByText("Webhook delivery")).toBeTruthy();
+  expect(screen.getByText(/Attempt 3 · Retry/)).toBeTruthy();
+  expect(screen.getByText("Repository installation lookup failed; retry scheduled.")).toBeTruthy();
+  expect(screen.queryByText(/View run/)).toBeNull();
+});

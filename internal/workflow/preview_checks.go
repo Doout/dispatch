@@ -17,6 +17,9 @@ import (
 func (s *Service) StartPreviewChecks(ctx context.Context, resourceID, commentID string) (core.WorkflowRevision, error) {
 	unlock := s.lock("schedule:" + resourceID)
 	defer unlock()
+	if existing, handled, err := s.receivedRevision(ctx, resourceID); handled || err != nil {
+		return existing, err
+	}
 	resource, err := s.Store.GetWorkflowResource(ctx, resourceID)
 	if err != nil {
 		return core.WorkflowRevision{}, err

@@ -284,7 +284,10 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 	}
 	must(data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now}))
 	must(data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", CreatedAt: now, UpdatedAt: now}))
-	must(data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", GitHubAppID: "github", Name: "Source", CreatedAt: now, UpdatedAt: now}))
+	// Seed the historical schema directly. Current store writes include columns
+	// added after this fixture's pre-063 migration boundary.
+	_, err = data.db.ExecContext(ctx, `INSERT INTO config_sources(id,project_id,github_app_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,created_at,updated_at) VALUES('source','project','github','Source','team/ui','main','dispatch','poll',60,TRUE,'ready',?,?)`, stamp(now), stamp(now))
+	must(err)
 	must(data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "workflow", ConfigSourceID: "source", Name: "Preview", Kind: "Application", Temporary: true, CreatedAt: now, UpdatedAt: now}))
 	_, err = data.db.ExecContext(ctx, `INSERT INTO workflow_preview_templates(id,config_source_id,github_app_id,name,repository,command,preview_url,document,active,created_at,updated_at) VALUES('template','source','github','Template','team/ui','/preview','','',TRUE,?,?)`, stamp(now), stamp(now))
 	must(err)
@@ -307,6 +310,11 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 		must(data.CompleteWorkflowPreviewComment(ctx, triggerID, triggerID, revisionID))
 	}
 	must(data.Migrate(ctx))
+	source, err := data.GetConfigSource(ctx, "source")
+	must(err)
+	if source.ProjectID != "project" || source.GitHubAppID != "github" || source.Repository != "team/ui" || source.RepositoryID != 0 || source.RepositoryStatus != nil {
+		t.Fatalf("upgrade changed the legacy source or repository identity defaults: %+v", source)
+	}
 	triggers, err := data.ListWorkflowPreviewTriggers(ctx)
 	must(err)
 	if len(triggers) != 2 || len(triggers[0].SourceDefaults) != 0 || len(triggers[1].SourceDefaults) != 0 || triggers[0].TTL != "0" || triggers[0].ExpiresAt != nil || triggers[1].TTL != "0" || triggers[1].ExpiresAt != nil {

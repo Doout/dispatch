@@ -131,7 +131,7 @@ func run(logger *slog.Logger) error {
 		AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword, PublicURL: cfg.PublicURL, TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
 	}, logger, api.EventConfig{Bootstrap: bootstraps, WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
 		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps, SecretResolver: secretResolver,
-		BackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "backups"), MasterKeyFile: cfg.MasterKeyFile, DatabaseURL: cfg.DatabaseURL,
+		WorkloadBackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "workload-backups"), BackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "backups"), MasterKeyFile: cfg.MasterKeyFile, DatabaseURL: cfg.DatabaseURL,
 		Edge: edgeBroker, RepositoryCache: cfg.RepositoryCache, Analytics: history})
 	if err := controller.RecoverWorkflowWork(ctx); err != nil {
 		return err
@@ -144,7 +144,10 @@ func run(logger *slog.Logger) error {
 	go controller.RunRelayConsumers(shutdownCtx)
 	go controller.RunWorkflowPoller(shutdownCtx)
 	go controller.RunPreviewPoller(shutdownCtx)
+	go controller.RunWebhookProcessor(shutdownCtx)
 	go controller.RunPreviewExpirer(shutdownCtx)
+	go controller.RunTemporaryEnvironments(shutdownCtx)
+	go controller.RunWorkloadBackupVerification(shutdownCtx)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: controller,
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,

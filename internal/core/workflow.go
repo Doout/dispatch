@@ -9,24 +9,26 @@ const (
 )
 
 type ConfigSource struct {
-	ID                  string     `json:"id"`
-	ProjectID           string     `json:"projectId"`
-	GitHubAppID         string     `json:"githubAppId,omitempty"`
-	CredentialSecretID  string     `json:"credentialSecretId,omitempty"`
-	Name                string     `json:"name"`
-	Repository          string     `json:"repository"`
-	Branch              string     `json:"branch"`
-	Path                string     `json:"path"`
-	SyncMode            string     `json:"syncMode"`
-	PollIntervalSeconds int        `json:"pollIntervalSeconds"`
-	Active              bool       `json:"active"`
-	State               string     `json:"state"`
-	LastSeenSHA         string     `json:"lastSeenSha,omitempty"`
-	LastSyncedAt        *time.Time `json:"lastSyncedAt,omitempty"`
-	LastPolledAt        *time.Time `json:"lastPolledAt,omitempty"`
-	LastError           string     `json:"lastError,omitempty"`
-	CreatedAt           time.Time  `json:"createdAt"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	ID                  string            `json:"id"`
+	ProjectID           string            `json:"projectId"`
+	GitHubAppID         string            `json:"githubAppId,omitempty"`
+	CredentialSecretID  string            `json:"credentialSecretId,omitempty"`
+	Name                string            `json:"name"`
+	Repository          string            `json:"repository"`
+	RepositoryID        int64             `json:"repositoryId,omitempty"`
+	RepositoryStatus    *RepositoryStatus `json:"repositoryStatus,omitempty"`
+	Branch              string            `json:"branch"`
+	Path                string            `json:"path"`
+	SyncMode            string            `json:"syncMode"`
+	PollIntervalSeconds int               `json:"pollIntervalSeconds"`
+	Active              bool              `json:"active"`
+	State               string            `json:"state"`
+	LastSeenSHA         string            `json:"lastSeenSha,omitempty"`
+	LastSyncedAt        *time.Time        `json:"lastSyncedAt,omitempty"`
+	LastPolledAt        *time.Time        `json:"lastPolledAt,omitempty"`
+	LastError           string            `json:"lastError,omitempty"`
+	CreatedAt           time.Time         `json:"createdAt"`
+	UpdatedAt           time.Time         `json:"updatedAt"`
 }
 
 type WorkflowResource struct {

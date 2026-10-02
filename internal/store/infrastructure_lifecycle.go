@@ -359,6 +359,12 @@ func (s *SQLStore) infrastructureDeletionBlocked(ctx context.Context, tx *sql.Tx
 		return err
 	}
 	rows.Close()
+	if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backups WHERE server_id=? AND state<>'deleted'`), id).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrInfrastructureProtected
+	}
 	if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM service_resources WHERE server_id=? AND state<>'deleted'`), id).Scan(&count); err != nil {
 		return err
 	}

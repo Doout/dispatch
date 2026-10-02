@@ -25,6 +25,7 @@ func (a *API) routes() http.Handler {
 			r.Use(a.authorize, a.auditMutation)
 			a.identityRoutes(r)
 			a.applicationsRoutes(r)
+			a.temporaryEnvironmentRoutes(r)
 			a.storageRoutes(r)
 			a.deploymentsRoutes(r)
 			a.workflowsRoutes(r)
