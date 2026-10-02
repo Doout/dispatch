@@ -132,6 +132,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
             <p>Attempt {entry.attempts} · <time dateTime={entry.updatedAt}>{new Date(entry.updatedAt).toLocaleString()}</time></p>
             {entry.error && <p role="status">{entry.error}</p>}
             {entry.state !== "succeeded" && <p>Cleanup resumes automatically. An uncertain target operation needs inspection before it can continue.</p>}
+            {!!entry.services?.length && <ul aria-label="Preview database cleanup">{entry.services.map(service => <li key={service.runId}>{service.alias} · {service.policy} · {service.state}{service.error && <p>{service.error}</p>}<small>Database operation <code>{service.operationId}</code></small></li>)}</ul>}
             <ul>{entry.apps.map((app) => <li key={app.appId}>{app.appId} on {app.serverId}: {app.state}{app.error && <p>{app.error}</p>}<small>Operation <code>{app.jobId}</code></small></li>)}</ul>
           </details>)}
         </section>}

@@ -231,3 +231,34 @@ func TestNeonProgressFailureStopsBeforeProviderMutation(t *testing.T) {
 		t.Fatal("provider mutation preceded durable phase", err)
 	}
 }
+
+func TestNeonPinnedBranchCannotBecomeAbsentByRenameOrReplacement(t *testing.T) {
+	client, f := newFixture(t)
+	ctx := context.Background()
+	resource, err := client.Ensure(ctx, f.spec, f.scope, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := f.scope
+	scope.ExpectedBranchID = resource.Branch.ID
+	f.branch.Name = "externally-renamed"
+	if got, err := client.Inspect(ctx, f.spec, scope); err == nil {
+		t.Fatal("renamed captured branch treated as absent", got)
+	}
+	f.branch.Name = Name(scope)
+	f.branch.ID = "br-replacement"
+	if got, err := client.Inspect(ctx, f.spec, scope); err == nil {
+		t.Fatal("different captured identity adopted", got)
+	}
+	if _, err = client.Ensure(ctx, f.spec, scope, true, nil); err == nil {
+		t.Fatal("replacement admitted")
+	}
+	if f.branchCreates != 1 {
+		t.Fatal("identity drift repeated create")
+	}
+	f.branch = nil
+	got, err := client.Inspect(ctx, f.spec, scope)
+	if err != nil || got.State != "absent" {
+		t.Fatal("authoritative captured-ID absence rejected", got, err)
+	}
+}

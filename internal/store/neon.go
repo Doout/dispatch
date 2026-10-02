@@ -5,8 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/doout/dispatch/internal/core"
 	"time"
+
+	"github.com/doout/dispatch/internal/core"
 )
 
 type NeonStore interface {
@@ -15,6 +16,39 @@ type NeonStore interface {
 	ListNeonProviders(context.Context, string) ([]core.NeonProvider, error)
 	CheckpointNeonResource(context.Context, core.ServiceResource) error
 	GetNeonPreviewService(context.Context, string, string) (string, error)
+	DeleteUnusedNeonProvider(context.Context, string) error
+}
+
+func (s *SQLStore) DeleteUnusedNeonProvider(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := `SELECT project_id FROM neon_providers WHERE id=?`
+	if s.postgres {
+		q += ` FOR UPDATE`
+	}
+	var project string
+	if err = tx.QueryRowContext(ctx, s.q(q), id).Scan(&project); err != nil {
+		return err
+	}
+	var n int
+	// IDs are generated ULIDs. Conservative document matching also protects
+	// malformed or disabled templates until their reference has been removed.
+	for _, q := range []string{`SELECT COUNT(*) FROM service_resources WHERE project_id=? AND payload LIKE ?`, `SELECT COUNT(*) FROM saved_service_templates WHERE project_id=? AND document LIKE ?`, `SELECT COUNT(*) FROM workflow_resources w JOIN config_sources c ON c.id=w.config_source_id WHERE c.project_id=? AND w.document LIKE ?`} {
+		if err = tx.QueryRowContext(ctx, s.q(q), project, "%"+id+"%").Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return ErrServiceInUse
+		}
+	}
+	_, err = tx.ExecContext(ctx, s.q(`DELETE FROM neon_providers WHERE id=?`), id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) CreateNeonProvider(ctx context.Context, p core.NeonProvider) error {
@@ -61,9 +95,26 @@ func (s *SQLStore) CheckpointNeonResource(ctx context.Context, r core.ServiceRes
 	if r.Target.Provider != "neon" || r.LeaseToken == "" || r.State != "recovering" {
 		return ErrServiceResourceChanged
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if r.PreviewID != "" && r.ProviderPhase == "Creating isolated Neon branch" {
+		if r.ReplacesRunID != "" {
+			if err = s.checkNeonReplacement(ctx, tx, r, false); err != nil {
+				return err
+			}
+		} else if err = s.lockPreviewResource(ctx, tx, r.PreviewID, false); err != nil {
+			return err
+		}
+	}
 	r.UpdatedAt = time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE service_resources SET payload=? WHERE run_id=? AND revision=? AND lease_token=? AND state='recovering' AND lease_until>?`), jsonText(r), r.RunID, r.Revision, r.LeaseToken, stamp(r.UpdatedAt))
-	return changed(result, err)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE service_resources SET payload=? WHERE run_id=? AND revision=? AND lease_token=? AND state='recovering' AND lease_until>?`), jsonText(r), r.RunID, r.Revision, r.LeaseToken, stamp(r.UpdatedAt))
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLStore) GetNeonPreviewService(ctx context.Context, preview, alias string) (string, error) {
@@ -73,4 +124,8 @@ func (s *SQLStore) GetNeonPreviewService(ctx context.Context, preview, alias str
 		return "", ErrNotFound
 	}
 	return run, err
+}
+
+func validServicePolicy(r core.ServiceResource) bool {
+	return r.Policy == "retain" || r.Target.Provider == "neon" && (r.Policy == "suspend" || r.Policy == "delete")
 }

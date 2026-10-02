@@ -25,3 +25,18 @@ it("does not offer mutations to project viewers",async()=>{
  await screen.findByText(/Recovery required/);
  expect(screen.queryByRole("button")).toBeNull();
 });
+
+it("reviews Neon cleanup policy and follows the reset candidate",async()=>{
+ const old:ServiceResource={...resource,target:{provider:"neon",serverId:"",resourceName:"branch"},state:"ready",previewId:"preview",previewAlias:"db",message:""};
+ const candidate:ServiceResource={...old,runId:"candidate",state:"accepted",replacesRunId:"run"};
+ vi.spyOn(api,"serviceResource").mockImplementation(async id=>id==="candidate"?candidate:old);
+ const lifecycle=vi.spyOn(api,"neonLifecycle").mockImplementation(async (_id,action)=>action==="reset"?candidate:{...old,policy:"delete"});
+ render(<ServiceResourcePanel runId="run" canManage canRecover onChanged={async()=>{}}/>);
+ await screen.findByText(/Preview cleanup policy: retain/);
+ await userEvent.click(screen.getByRole("button",{name:"Review delete on cleanup"}));
+ expect(lifecycle).toHaveBeenCalledWith("run","policy-delete");
+ await screen.findByText(/Preview cleanup policy: delete/);
+ await userEvent.click(screen.getByRole("button",{name:"Reset to fresh schema"}));
+ expect(lifecycle).toHaveBeenCalledWith("run","reset");
+ await screen.findByText(/previous branch remains retained/);
+});

@@ -16,7 +16,11 @@ import (
 )
 
 type neonPreviewAcceptanceKey struct{}
-type neonPreviewAcceptance struct{ ID, Alias string }
+type neonPreviewAcceptance struct {
+	ID, Alias, ReplacesRunID string
+	ReplacesRevision         int64
+	Generation               int64
+}
 
 // Prepare only after the workflow runner has checked this revision's source
 // trust. Provisioning credentials are never inserted into its document or jobs.

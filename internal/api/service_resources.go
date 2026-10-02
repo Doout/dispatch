@@ -108,7 +108,11 @@ func (a *API) captureServiceResource(ctx context.Context, resource core.Workflow
 		defer clear(token)
 		approved, _ := ctx.Value(neonDataCopyApprovalKey{}).(bool)
 		preview, _ := ctx.Value(neonPreviewAcceptanceKey{}).(neonPreviewAcceptance)
-		accepted.Neon = &acceptedNeonResource{Spec: n, Scope: neon.Scope{ProjectID: run.ProjectID, RunID: run.ID, PreviewID: preview.ID, Generation: 1, ConfigDigest: resource.ConfigSHA, ApprovedDataCopy: approved}, Token: string(token)}
+		generation := preview.Generation
+		if generation == 0 {
+			generation = 1
+		}
+		accepted.Neon = &acceptedNeonResource{Spec: n, Scope: neon.Scope{ProjectID: run.ProjectID, RunID: run.ID, PreviewID: preview.ID, Generation: generation, ConfigDigest: resource.ConfigSHA, ApprovedDataCopy: approved}, Token: string(token)}
 	}
 	if accepted.Helm != nil {
 		copy := *accepted.Helm
@@ -127,6 +131,7 @@ func (a *API) captureServiceResource(ctx context.Context, resource core.Workflow
 	record := core.ServiceResource{RunID: run.ID, ProjectID: run.ProjectID, ServiceID: ulid.Make().String(), Name: run.ServiceName, Target: *run.Target, State: "accepted", Policy: "retain", Revision: 1, OperationID: run.ID, CreatedAt: run.CreatedAt, UpdatedAt: run.CreatedAt, EncryptedRequest: cipher, Dependencies: dependencies}
 	if preview, ok := ctx.Value(neonPreviewAcceptanceKey{}).(neonPreviewAcceptance); ok {
 		record.PreviewID, record.PreviewAlias = preview.ID, preview.Alias
+		record.ReplacesRunID, record.ReplacesRevision = preview.ReplacesRunID, preview.ReplacesRevision
 	}
 	return data.CreateServiceResource(ctx, run, record)
 }
@@ -161,6 +166,7 @@ func (a *API) loadAcceptedServiceResource(ctx context.Context, record core.Servi
 		if record.Target.Provider != "neon" || record.Target.ServerID != "" || n.Scope.RunID != record.RunID || n.Scope.ProjectID != record.ProjectID || n.Scope.ConfigDigest != accepted.Request.ConfigSHA {
 			return accepted, core.Server{}, errors.New("Neon accepted ownership changed")
 		}
+		accepted.Neon.Scope.ExpectedBranchID = record.ResourceID
 		return accepted, core.Server{}, nil
 	}
 	server, err := a.store.GetServer(ctx, record.Target.ServerID)
@@ -312,7 +318,7 @@ func (a *API) inspectServiceResource(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, "Recovery unavailable", "The accepted resource identity cannot be inspected.")
 		return
 	}
-	result, err := a.serviceResourceExecutor().Inspect(r.Context(), accepted, server)
+	result, err := a.inspectServiceResourceRecord(r.Context(), record, accepted, server)
 	if err != nil {
 		problem(w, 409, "Inspection unavailable", "Inspect the original target and its owned service resource.")
 		return
@@ -332,6 +338,18 @@ func (a *API) recoverServiceResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if record.OperationID != record.RunID {
+		if record.Target.Provider == "neon" {
+			accepted, _, err := a.loadAcceptedServiceResource(r.Context(), record)
+			if err != nil {
+				problem(w, 409, "Cleanup inspection unavailable", "Inspect the captured Neon branch before recovery.")
+				return
+			}
+			observed, err := a.inspectServiceResourceRecord(r.Context(), record, accepted, core.Server{})
+			if err != nil || observed.State != "absent" {
+				problem(w, 409, "Cleanup outcome unresolved", "The captured branch is still present or cannot be verified. Reconciliation never repeats an uncertain delete; review a separate explicit deletion if needed.")
+				return
+			}
+		}
 		claimed, err := a.store.(store.ServiceResourceStore).ClaimServiceResource(r.Context(), record.RunID, record.Revision, record.OperationID, "deleting", ulid.Make().String(), time.Now().UTC(), record.ResourceID)
 		if err != nil {
 			problem(w, 409, "Cleanup recovery unavailable", "Consumers or the original operation changed. Inspect and review the owned resource.")
@@ -381,7 +399,7 @@ func (a *API) deleteServiceResourceRequest(w http.ResponseWriter, r *http.Reques
 			if e != nil {
 				return e
 			}
-			inspected, e := a.serviceResourceExecutor().Inspect(r.Context(), accepted, server)
+			inspected, e := a.inspectServiceResourceRecord(r.Context(), current, accepted, server)
 			if e != nil {
 				return e
 			}
@@ -423,7 +441,9 @@ func (a *API) executeServiceResourceDelete(record core.ServiceResource) {
 		return
 	}
 	accepted, server, err := a.loadAcceptedServiceResource(ctx, record)
-	if err == nil && accepted.Neon != nil {
+	if err == nil && neverStartedNeonReplacement(record) {
+		// The deletion claim fenced every late create checkpoint before cancellation.
+	} else if err == nil && accepted.Neon != nil {
 		err = a.serviceResourceExecutor().Delete(ctx, accepted, server, record.ResourceID, record.OperationID)
 	} else if err == nil {
 		err = a.deploy.Storage.WithTarget(ctx, server.ID, func() error {
@@ -449,6 +469,13 @@ func (a *API) executeServiceResourceDelete(record core.ServiceResource) {
 	}
 	if err != nil {
 		record.State, record.Message = "unresolved", "Cleanup is incomplete or uncertain. Inspect the same owned resource before another reviewed deletion."
+		if accepted.Neon != nil {
+			record.State = "deleting"
+		}
+	}
+	if record.ReplacesRunID != "" && record.State == "deleted" && run.State != "succeeded" {
+		finished := time.Now().UTC()
+		run.State, run.Phase, run.Error, run.FinishedAt = "failed", "Replacement cancelled", "Candidate removed by explicit review; original branch retained.", &finished
 	}
 	if e := a.store.(store.ServiceResourceStore).SaveServiceResource(context.WithoutCancel(ctx), record, run, nil); e != nil {
 		a.logger.Error("Service cleanup evidence could not be saved", "run", record.RunID)
@@ -463,4 +490,14 @@ func (a *API) serviceResourcePermission(permission core.Permission) func(http.Ha
 			}
 		})
 	}
+}
+
+func neverStartedNeonReplacement(r core.ServiceResource) bool {
+	return r.Target.Provider == "neon" && r.ReplacesRunID != "" && !r.ProviderCreateAttempted && r.ResourceID == ""
+}
+func (a *API) inspectServiceResourceRecord(ctx context.Context, record core.ServiceResource, accepted acceptedServiceResource, server core.Server) (core.ServiceResourceInspection, error) {
+	if neverStartedNeonReplacement(record) {
+		return core.ServiceResourceInspection{RunID: record.RunID, ProjectID: record.ProjectID, Provider: "neon", State: "absent"}, nil
+	}
+	return a.serviceResourceExecutor().Inspect(ctx, accepted, server)
 }

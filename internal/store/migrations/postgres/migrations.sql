@@ -1624,3 +1624,40 @@ CREATE INDEX workflow_check_pending ON workflow_check_reports(complete,next_atte
 CREATE INDEX workflow_check_revision ON workflow_check_reports(revision_id);
 -- dispatch:migration 092_kubernetes_validation
 ALTER TABLE servers ADD COLUMN kube_validation TEXT NOT NULL DEFAULT 'null';
+
+-- dispatch:migration 093_neon_lifecycle
+CREATE TABLE workflow_preview_cleanup_services (
+ cleanup_id TEXT NOT NULL REFERENCES workflow_preview_cleanups(id),
+ run_id TEXT NOT NULL REFERENCES service_resources(run_id),
+ alias TEXT NOT NULL, policy TEXT NOT NULL, resource_id TEXT NOT NULL,
+ operation_id TEXT NOT NULL UNIQUE, state TEXT NOT NULL,
+ action_started BOOLEAN NOT NULL DEFAULT FALSE, error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(cleanup_id,run_id)
+);
+CREATE TABLE neon_replacements (
+ source_run_id TEXT NOT NULL REFERENCES service_resources(run_id),
+ replacement_run_id TEXT PRIMARY KEY REFERENCES service_resources(run_id),
+ preview_id TEXT NOT NULL REFERENCES workflow_resources(id), alias TEXT NOT NULL,
+ state TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX neon_replacement_active ON neon_replacements(preview_id,alias) WHERE state IN ('accepted','unresolved');
+
+CREATE FUNCTION guard_neon_replacement_preview() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF (NEW.active=TRUE OR NEW.state IN ('expiring','expired','removed')) AND EXISTS(SELECT 1 FROM neon_replacements WHERE preview_id=NEW.id AND state IN ('accepted','unresolved')) THEN
+  RAISE EXCEPTION 'resolve the pending Neon replacement before changing preview lifecycle';
+ END IF;
+ RETURN NEW;
+END; $$;
+CREATE TRIGGER neon_replacement_preview_fence BEFORE UPDATE OF active,state ON workflow_resources FOR EACH ROW EXECUTE FUNCTION guard_neon_replacement_preview();
+
+CREATE FUNCTION guard_neon_suspension_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ PERFORM 1 FROM services WHERE id=NEW.service_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded') THEN RAISE EXCEPTION 'service compute suspension is unresolved'; END IF;
+ RETURN NEW;
+END; $$;
+CREATE TRIGGER neon_suspend_app BEFORE INSERT OR UPDATE ON app_service_bindings FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();
+CREATE TRIGGER neon_suspend_workflow BEFORE INSERT OR UPDATE ON workflow_service_references FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();
+CREATE TRIGGER neon_suspend_deployment BEFORE INSERT OR UPDATE ON deployment_service_bindings FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();
+CREATE TRIGGER neon_suspend_dependency BEFORE INSERT OR UPDATE ON service_resource_dependencies FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();

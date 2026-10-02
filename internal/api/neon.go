@@ -17,6 +17,10 @@ func (a *API) neonRoutes(r chi.Router) {
 	r.Route("/neon-providers", func(r chi.Router) {
 		r.Get("/", a.listNeonProviders)
 		r.With(a.ownerOnly).Post("/", a.createNeonProvider)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Use(a.ownerOnly)
+			a.destructiveRoute(r, "DELETE", "/", "neon-provider", "delete", a.deleteNeonProvider)
+		})
 	})
 }
 func (a *API) createNeonProvider(w http.ResponseWriter, r *http.Request) {
@@ -123,4 +127,21 @@ func (a *API) runNeonResource(ctx context.Context, record *core.ServiceResource,
 	}
 	record.ResourceID = value.Branch.ID
 	return client.Connection(ctx, r.Neon.Spec, r.Neon.Scope, value.Branch.ID)
+}
+
+func (a *API) deleteNeonProvider(w http.ResponseWriter, r *http.Request) {
+	p, err := a.store.(store.NeonStore).GetNeonProvider(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Provider")
+		return
+	}
+	if !a.requireProject(w, r, core.PermissionProjectConfigure, p.ProjectID) {
+		return
+	}
+	if err = a.store.(store.NeonStore).DeleteUnusedNeonProvider(r.Context(), p.ID); err != nil {
+		problem(w, 409, "Provider in use", "Remove template references first. Owned service history keeps its provider registration for recovery.")
+		return
+	}
+	destructiveOutcome(r, "succeeded")
+	w.WriteHeader(204)
 }

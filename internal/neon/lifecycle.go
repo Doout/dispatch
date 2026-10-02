@@ -75,6 +75,7 @@ func (c *Client) Ensure(ctx context.Context, s Spec, scope Scope, allowCreate bo
 		}
 		found = &b
 	}
+	scope.ExpectedBranchID = found.ID
 	result := Resource{Branch: *found, Role: Role(scope), State: "unready"}
 	if err = c.ensureRoleNotInherited(ctx, s, scope); err != nil {
 		return result, err

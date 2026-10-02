@@ -96,6 +96,9 @@ func (a *API) reconcileWorkflowPreviewCleanup(ctx context.Context, id string) er
 			}
 		}
 	}
+	if cleanupErr == nil {
+		cleanupErr = a.reconcileNeonPreviewCleanup(work, *cleanup)
+	}
 	detail := ""
 	if cleanupErr != nil {
 		detail = "Preview cleanup will retry: " + cleanupErr.Error()

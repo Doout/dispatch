@@ -5,6 +5,11 @@ import "time"
 // ServiceResource retains the ownership and encrypted recovery material for one
 // provision run, independently of its connection registration or template.
 type ServiceResource struct {
+	PolicyActorID           string                 `json:"policyActorId,omitempty"`
+	PolicyApprovedAt        *time.Time             `json:"policyApprovedAt,omitempty"`
+	ReplacedByRunID         string                 `json:"replacedByRunId,omitempty"`
+	ReplacesRevision        int64                  `json:"-"`
+	ReplacesRunID           string                 `json:"replacesRunId,omitempty"`
 	PreviewID               string                 `json:"previewId,omitempty"`
 	PreviewAlias            string                 `json:"previewAlias,omitempty"`
 	ProviderPhase           string                 `json:"providerPhase,omitempty"`
