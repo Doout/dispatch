@@ -137,7 +137,7 @@ func (e DockerExecutor) loadArtifact(ctx context.Context, d core.Deployment, app
 }
 
 func localDockerServer(server core.Server) bool {
-	return server.Address == "local" || server.Address == "127.0.0.1" || server.Address == "localhost"
+	return server.AgentNodeID == "" && (server.Address == "local" || server.Address == "127.0.0.1" || server.Address == "localhost")
 }
 
 func (e DockerExecutor) PreviewRuntimeRollback(ctx context.Context, d core.Deployment, app core.App, server core.Server) (RollbackPreview, error) {
@@ -185,10 +185,8 @@ func (e DockerExecutor) artifactDirectory(appID, deploymentID string) string {
 
 func (e DockerExecutor) validateDockerOwnership(ctx context.Context, app core.App) error {
 	var output strings.Builder
-	filter := "name=^/" + dockerResourceName(app.ID) + "$"
-	if app.BuildType == core.BuildTypeCompose {
-		filter = "label=com.docker.compose.project=" + dockerResourceName(app.ID)
-	}
+	filter := "label=dispatch.app=" + app.ID
+
 	if err := e.command(ctx, nil, &output, "docker", "ps", "-a", "--filter", filter, "--format", "{{.ID}}"); err != nil {
 		return errors.New("Cannot verify Docker resource ownership.")
 	}
@@ -202,10 +200,8 @@ func (e DockerExecutor) validateDockerOwnership(ctx context.Context, app core.Ap
 
 func (e DockerExecutor) dockerRuntimeDigest(ctx context.Context, app core.App) (string, error) {
 	var output strings.Builder
-	filter := "name=^/" + dockerResourceName(app.ID) + "$"
-	if app.BuildType == core.BuildTypeCompose {
-		filter = "label=com.docker.compose.project=" + dockerResourceName(app.ID)
-	}
+	filter := "label=dispatch.app=" + app.ID
+
 	if err := e.command(ctx, nil, &output, "docker", "ps", "-a", "--filter", filter, "--format", "{{.ID}}"); err != nil {
 		return "", errors.New("Cannot inspect the current runtime identity.")
 	}
@@ -241,6 +237,13 @@ func (e DockerExecutor) RollbackRuntime(ctx context.Context, d, source core.Depl
 	if err = progress(core.DeploymentStarting, "Restoring retained Docker image on "+server.Name); err != nil {
 		return err
 	}
+	route, routeErr := e.prepareManagedRoute(ctx, d, app, server)
+	if routeErr != nil {
+		return routeErr
+	}
+	if route != nil {
+		return e.startRoutedDocker(ctx, d, app, server, *route, inputs.Images["application"], env, progress)
+	}
 	name := dockerResourceName(app.ID)
 	if err = e.removeOwnedContainer(ctx, app); err != nil {
 		return err
@@ -274,7 +277,7 @@ func (e DockerExecutor) RollbackRuntime(ctx context.Context, d, source core.Depl
 	if err = progress(core.DeploymentChecking, "Checking retained container readiness"); err != nil {
 		return err
 	}
-	if err = e.waitContainer(ctx, name); err != nil {
+	if err = e.checkApplicationHealth(ctx, d, app, server, progress); err != nil {
 		return err
 	}
 	return progress(core.DeploymentRouting, routeMessage(app))
@@ -316,10 +319,8 @@ func (e DockerExecutor) cleanupOwnedDocker(ctx context.Context, app core.App, se
 	if err := progress(core.DeploymentStarting, "Removing owned Docker resources on "+server.Name); err != nil {
 		return err
 	}
-	filter := "name=^/" + dockerResourceName(app.ID) + "$"
-	if app.BuildType == core.BuildTypeCompose {
-		filter = "label=com.docker.compose.project=" + dockerResourceName(app.ID)
-	}
+	filter := "label=dispatch.app=" + app.ID
+
 	var containers strings.Builder
 	if err := e.command(ctx, nil, &containers, "docker", "ps", "-a", "--filter", filter, "--format", "{{.ID}}"); err != nil {
 		return errors.New("Cannot list owned containers for cleanup.")

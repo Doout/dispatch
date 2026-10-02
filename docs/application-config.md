@@ -457,6 +457,44 @@ spec:
 
 The template uses the Application `spec` schema for sources, jobs, deployments, and stages. `spec.triggers.pullRequestComment` declares the comment command and the source aliases whose PR comments can create instances. For a service/UI workflow, use `sources: [service, ui]`; other sources remain dependencies and can still accept explicit linked-PR overrides. The GitHub App and repository access connection are selected in Dispatch. `WorkflowTemplate` itself does not imply a PR trigger.
 
+Preview source trust is independent of the comment author's permission. The default
+`sourceTrustPolicy: same_repository` permits PR code only when GitHub reports that
+the head and base have the same repository identity. Every linked PR is checked.
+Set `sourceTrustPolicy: approval_required` under `spec.triggers.pullRequestComment`
+to require approval for all PR revisions. Saved templates without YAML trigger
+settings expose the same policy in the template editor. Policy changes apply to
+existing instances before further execution; deleting a template preserves the
+instance's last source policy.
+
+Fork code is blocked before any job, hook, check or deployment receives workload
+credentials, including production service bindings. Current runners are not
+secretless sandboxes, so a denied preview does not run even if its jobs declare no
+secrets. Controller-owned GitHub metadata requests still use repository access to
+verify the PR identities. Missing identities or unavailable access fail closed.
+
+A denied run records `sourceTrust`, including exact source commits and repository
+IDs, credential references, environments and a review digest. In the run details,
+a controller owner can refresh that review and approve the exact sources for one
+hour. The API permits an explicit expiry up to 24 hours. Approval does not start a
+run. Retry the preview after approval. Approval cannot be transferred to another
+instance, PR link, commit, configuration, credential scope or environment.
+
+Dispatch rechecks source trust when accepting a run, before each job, before
+stage checks and deployment, and when resuming an approved stage. On-demand tests
+must still match the current PR heads and saved configuration. Expiry, revocation
+or loss of the approving user's owner role blocks subsequent execution. Credentials
+already delivered to a running workload cannot be recalled by revoking approval.
+Direct runs, generated-application deploys and rollbacks use the same checks.
+Legacy event-rule and preview-group templates permit only verified same-repository
+PRs; use a WorkflowTemplate to review and approve fork code. Recreate legacy
+previews missing recorded source identities.
+
+Source review APIs:
+
+- `GET /api/v1/workflow/revisions/{id}/source-trust` requires project view access and returns the current sanitized decision.
+- `POST /api/v1/workflow/revisions/{id}/source-trust/approvals` requires controller owner access and a body containing `confirmDigest` and an RFC3339 `expiresAt`. Changed review inputs return 409.
+- `DELETE /api/v1/workflow/revisions/{id}/source-trust/approvals/{approvalId}` requires controller owner access and revokes that resource's approval.
+
 Preview lifetime defaults to `ttl: 0` (no time limit). Set `ttl: 1d` or `ttl: 24h` to shut down after one day. The timer starts when a manual deployment comment is accepted and renews on each new deployment comment. Automatic commit updates and test runs do not extend it. Template edits affect future instances.
 
 - `/preview ttl 1d` sets this instance’s deadline to one day from now without rebuilding.

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, CheckCircle, Copy, FileCode, RocketLaunch, TerminalWindow, WarningCircle, X } from "@phosphor-icons/react";
 import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun, WorkflowRevision } from "../api";
+import { SourceTrustReview } from "./SourceTrustReview";
 import { RunFeedback } from "./RunFeedback";
 import { StageProgress } from "./StageProgress";
 import { StageTests, configuredStageTests } from "./StageTests";
@@ -134,6 +135,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
           <section><div className="workflow-section-heading"><h3>Runs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setRevisionID(event.target.value)}>{revisions.map((item) => <option key={item.id} value={item.id}>{isPreviewCheckRun(item) ? "Checks · " : ""}{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
             {!revision && <p className="workflow-empty-note">No runs.</p>}
             {revision && <><dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>{revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
+              {revision.sourceTrust && <SourceTrustReview revision={revision} isOwner={isOwner} onChanged={onChanged} />}
               {revision.feedback && <RunFeedback feedback={revision.feedback} overview={overview} />}
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}
               <RunTiming revision={revision} jobs={jobs} stages={stages} />

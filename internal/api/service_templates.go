@@ -232,7 +232,21 @@ func (a *API) executeServiceProvision(resource core.WorkflowResource, spec workf
 			a.logger.Error("Update service provision run", "run", run.ID, "error", err)
 		}
 	}
-	outputs, err := a.workflows.ProvisionService(ctx, resource, run.ProjectID, inputs, run)
+	var outputs map[string]string
+	var err error
+	if run.Target != nil {
+		err = a.deploy.Storage.WithTarget(ctx, run.Target.ServerID, func() error {
+			var provisionErr error
+			outputs, provisionErr = a.workflows.ProvisionService(ctx, resource, run.ProjectID, inputs, run)
+			server, lookupErr := a.store.GetServer(ctx, run.Target.ServerID)
+			if lookupErr != nil {
+				return errors.Join(provisionErr, lookupErr)
+			}
+			return errors.Join(provisionErr, a.deploy.Storage.RefreshLocked(ctx, server))
+		})
+	} else {
+		outputs, err = a.workflows.ProvisionService(ctx, resource, run.ProjectID, inputs, run)
+	}
 	if err != nil {
 		fail(err.Error())
 		return
@@ -331,6 +345,9 @@ func (a *API) serviceProvisionTarget(ctx context.Context, spec workflow.ServiceT
 	server, err := a.store.GetServer(ctx, target.ServerID)
 	if err != nil {
 		return nil, errors.New("choose an available deployment server")
+	}
+	if server.AgentNodeID != "" && (a.runtimeBroker() == nil || spec.ServiceType != "postgresql") {
+		return nil, errors.New("this remote runtime requires encrypted storage and supports built-in PostgreSQL provisioning")
 	}
 	if err := deploy.ValidateServiceTarget(server, target.Provider); err != nil {
 		return nil, err

@@ -72,6 +72,9 @@ func TestDockerfileServiceNetworksAttachedBeforeStarting(t *testing.T) {
 			if name == "git" {
 				return command(ctx, stdin, output, name, args...)
 			}
+			if name == "docker" && len(args) > 0 && args[0] == "inspect" {
+				_, _ = io.WriteString(output, `{"running":true,"health":"none"}`)
+			}
 			if name == "docker" {
 				operations = append(operations, strings.Join(args, " "))
 			}

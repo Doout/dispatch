@@ -574,12 +574,12 @@ func (s *SQLStore) CreateServer(ctx context.Context, server core.Server) error {
 	_, err = s.db.ExecContext(ctx, s.q(`INSERT INTO servers(
         id,name,address,runtime,state,agent_mode,kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,
         openshift_service_account,openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,
-        relay_access_token,relay_pending_events,relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), server.ID, server.Name, server.Address, server.Runtime, server.State, server.AgentMode,
+        relay_access_token,relay_pending_events,relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,routing_config,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), server.ID, server.Name, server.Address, server.Runtime, server.State, server.AgentMode,
 		kubernetes.KubeconfigPath, kubernetes.Context, kubernetes.Namespace, kubernetes.KubeconfigData,
 		kubernetes.CertificateAuthorityData, openShiftServiceAccount(kubernetes), openShiftServiceAccountNamespace(kubernetes),
 		openShiftTokenSecret(kubernetes), openShiftConnectedAt(kubernetes), relay.EncryptedAccessToken, relay.PendingEvents,
-		nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, string(builder), stamp(server.CreatedAt))
+		nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, string(builder), server.AgentNodeID, jsonText(server.Routing), stamp(server.CreatedAt))
 	return err
 }
 
@@ -593,15 +593,24 @@ func (s *SQLStore) UpdateServer(ctx context.Context, server core.Server) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE servers SET name=?,address=?,runtime=?,state=?,agent_mode=?,
         kubeconfig_path=?,kube_context=?,kube_namespace=?,kubeconfig_data=?,kube_ca_data=?,openshift_service_account=?,
         openshift_service_account_namespace=?,openshift_token_secret=?,openshift_connected_at=?,relay_access_token=?,relay_pending_events=?,
-		relay_oldest_pending_at=?,relay_last_connected_at=?,relay_last_error=?,builder_config=? WHERE id=?`), server.Name, server.Address, server.Runtime,
+		relay_oldest_pending_at=?,relay_last_connected_at=?,relay_last_error=?,builder_config=?,agent_node_id=?,routing_config=? WHERE id=?`), server.Name, server.Address, server.Runtime,
 		server.State, server.AgentMode, kubernetes.KubeconfigPath, kubernetes.Context, kubernetes.Namespace,
 		kubernetes.KubeconfigData, kubernetes.CertificateAuthorityData, openShiftServiceAccount(kubernetes),
 		openShiftServiceAccountNamespace(kubernetes), openShiftTokenSecret(kubernetes), openShiftConnectedAt(kubernetes),
-		relay.EncryptedAccessToken, relay.PendingEvents, nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, string(builder), server.ID)
+		relay.EncryptedAccessToken, relay.PendingEvents, nullTime(relay.OldestPendingAt), nullTime(relay.LastConnectedAt), relay.LastError, string(builder), server.AgentNodeID, jsonText(server.Routing), server.ID)
 	return changed(result, err)
 }
 
 func (s *SQLStore) DeleteServer(ctx context.Context, id string) error {
+	storage, err := s.ListStorage(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, item := range storage {
+		if item.State != "absent" && !item.Independent {
+			return ErrStorageProtected
+		}
+	}
 	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM servers WHERE id=?`), id)
 	return changed(result, err)
 }
@@ -610,7 +619,7 @@ func (s *SQLStore) ListServers(ctx context.Context) ([]core.Server, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,address,runtime,state,agent_mode,
         kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,openshift_service_account,
         openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,relay_access_token,relay_pending_events,
-		relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,created_at FROM servers ORDER BY name`)
+		relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,routing_config,created_at FROM servers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -630,7 +639,7 @@ func (s *SQLStore) GetServer(ctx context.Context, id string) (core.Server, error
 	item, err := scanServer(s.db.QueryRowContext(ctx, s.q(`SELECT id,name,address,runtime,state,agent_mode,
         kubeconfig_path,kube_context,kube_namespace,kubeconfig_data,kube_ca_data,openshift_service_account,
         openshift_service_account_namespace,openshift_token_secret,openshift_connected_at,relay_access_token,relay_pending_events,
-		relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,created_at FROM servers WHERE id=?`), id))
+		relay_oldest_pending_at,relay_last_connected_at,relay_last_error,builder_config,agent_node_id,routing_config,created_at FROM servers WHERE id=?`), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -686,12 +695,15 @@ func scanServer(row scanner) (core.Server, error) {
 	var serviceAccount, serviceAccountNamespace, tokenSecret string
 	var connected, relayOldest, relayConnected sql.NullString
 	var relay core.RelayServerConfig
-	var builder string
+	var builder, routing string
 	err := row.Scan(&item.ID, &item.Name, &item.Address, &item.Runtime, &item.State, &item.AgentMode,
 		&kubernetes.KubeconfigPath, &kubernetes.Context, &kubernetes.Namespace, &kubernetes.KubeconfigData,
 		&kubernetes.CertificateAuthorityData, &serviceAccount, &serviceAccountNamespace, &tokenSecret, &connected,
-		&relay.EncryptedAccessToken, &relay.PendingEvents, &relayOldest, &relayConnected, &relay.LastError, &builder, &created)
+		&relay.EncryptedAccessToken, &relay.PendingEvents, &relayOldest, &relayConnected, &relay.LastError, &builder, &item.AgentNodeID, &routing, &created)
 	if err != nil {
+		return item, err
+	}
+	if err := json.Unmarshal([]byte(routing), &item.Routing); err != nil {
 		return item, err
 	}
 	if item.Runtime == core.ServerRuntimeBuilder {
@@ -863,12 +875,12 @@ func (s *SQLStore) CreateApp(ctx context.Context, app core.App) error {
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO apps(
         id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,dockerfile_path,compose_path,
         compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,helm_release,
-        pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+        pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance,health_policy)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		app.ID, app.ProjectID, app.ServerID, app.Name, app.SourceRepo, app.Branch, app.SourceAuthType, app.SourceCredentialID, string(app.BuildType),
 		app.ContextPath, app.DockerfilePath, app.ComposePath, app.ComposeContent, app.HelmChart, app.HelmVersion,
 		app.HelmRepository, app.HelmValues, app.HelmNamespace, app.HelmRelease, app.PreDeployHook, app.PostDeployHook,
-		app.ContainerPort, app.Domain, app.State, stamp(app.CreatedAt), app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, jsonText(app.HelmProvenance))
+		app.ContainerPort, app.Domain, app.State, stamp(app.CreatedAt), app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, jsonText(app.HelmProvenance), jsonText(app.HealthPolicy))
 	return err
 }
 
@@ -877,11 +889,11 @@ func (s *SQLStore) UpdateApp(ctx context.Context, app core.App) error {
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE apps SET project_id=?,server_id=?,name=?,source_repo=?,branch=?,source_auth_type=?,source_credential_id=?,build_type=?,
         context_path=?,dockerfile_path=?,compose_path=?,compose_content=?,helm_chart=?,helm_version=?,helm_repository=?,
         helm_values=?,helm_namespace=?,helm_release=?,pre_deploy_hook=?,post_deploy_hook=?,container_port=?,domain=?,state=?,
-        helm_group_values=?,hook_environment=?,generated=?,template=?,helm_provenance=? WHERE id=?`),
+        helm_group_values=?,hook_environment=?,generated=?,template=?,helm_provenance=?,health_policy=? WHERE id=?`),
 		app.ProjectID, app.ServerID, app.Name, app.SourceRepo, app.Branch, app.SourceAuthType, app.SourceCredentialID, string(app.BuildType), app.ContextPath, app.DockerfilePath,
 		app.ComposePath, app.ComposeContent, app.HelmChart, app.HelmVersion, app.HelmRepository, app.HelmValues, app.HelmNamespace,
 		app.HelmRelease, app.PreDeployHook, app.PostDeployHook, app.ContainerPort, app.Domain, app.State,
-		app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, jsonText(app.HelmProvenance), app.ID)
+		app.HelmGroupValues, string(hookEnvironment), app.Generated, app.Template, jsonText(app.HelmProvenance), jsonText(app.HealthPolicy), app.ID)
 	return changed(result, err)
 }
 
@@ -951,7 +963,7 @@ func (s *SQLStore) ListAppsForUsage(ctx context.Context) ([]core.App, error) {
 func (s *SQLStore) listApps(ctx context.Context, includeGenerated, includeClosed bool) ([]core.App, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
         dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
-        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance FROM apps
+        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance,health_policy FROM apps
         WHERE (state <> 'closed' OR ?) AND (generated=? OR ?) ORDER BY name`), includeClosed, false, includeGenerated)
 	if err != nil {
 		return nil, err
@@ -971,7 +983,7 @@ func (s *SQLStore) listApps(ctx context.Context, includeGenerated, includeClosed
 func (s *SQLStore) GetApp(ctx context.Context, id string) (core.App, error) {
 	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,
         dockerfile_path,compose_path,compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,
-        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance FROM apps WHERE id=?`), id)
+        helm_release,pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance,health_policy FROM apps WHERE id=?`), id)
 	app, err := scanApp(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return app, ErrNotFound
@@ -983,16 +995,17 @@ type scanner interface{ Scan(...any) error }
 
 func scanApp(row scanner) (core.App, error) {
 	var item core.App
-	var buildType, created, hookEnvironment, helmProvenance string
+	var buildType, created, hookEnvironment, helmProvenance, healthPolicy string
 	err := row.Scan(&item.ID, &item.ProjectID, &item.ServerID, &item.Name, &item.SourceRepo, &item.Branch, &item.SourceAuthType, &item.SourceCredentialID,
 		&buildType, &item.ContextPath, &item.DockerfilePath, &item.ComposePath, &item.ComposeContent, &item.HelmChart,
 		&item.HelmVersion, &item.HelmRepository, &item.HelmValues, &item.HelmNamespace, &item.HelmRelease,
 		&item.PreDeployHook, &item.PostDeployHook, &item.ContainerPort,
-		&item.Domain, &item.State, &created, &item.HelmGroupValues, &hookEnvironment, &item.Generated, &item.Template, &helmProvenance)
+		&item.Domain, &item.State, &created, &item.HelmGroupValues, &hookEnvironment, &item.Generated, &item.Template, &helmProvenance, &healthPolicy)
 	item.BuildType = core.BuildType(buildType)
 	item.CreatedAt = parseTime(created)
 	_ = json.Unmarshal([]byte(hookEnvironment), &item.HookEnvironment)
 	_ = json.Unmarshal([]byte(helmProvenance), &item.HelmProvenance)
+	_ = json.Unmarshal([]byte(healthPolicy), &item.HealthPolicy)
 	for key := range item.HookEnvironment {
 		if id, _, ok := core.ParseSecretEnvironmentKey(key); ok {
 			item.HookSecretIDs = append(item.HookSecretIDs, id)
@@ -1011,10 +1024,10 @@ func (s *SQLStore) CreateDeployment(ctx context.Context, deployment core.Deploym
 	outputs, _ := json.Marshal(deployment.Outputs)
 	snapshot, _ := json.Marshal(deployment.Snapshot)
 	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployments(
-        id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`), deployment.ID, deployment.AppID, deployment.CommitSHA,
+        id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot,health)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`), deployment.ID, deployment.AppID, deployment.CommitSHA,
 		deployment.SpecDigest, string(deployment.State), deployment.Message, stamp(deployment.CreatedAt),
-		nullTime(deployment.StartedAt), nullTime(deployment.FinishedAt), nullTime(deployment.LeaseUntil), string(outputs), string(snapshot))
+		nullTime(deployment.StartedAt), nullTime(deployment.FinishedAt), nullTime(deployment.LeaseUntil), string(outputs), string(snapshot), jsonText(deployment.Health))
 	if err != nil {
 		return err
 	}
@@ -1043,7 +1056,7 @@ func (s *SQLStore) UpdateDeploymentSnapshot(ctx context.Context, id string, snap
 
 func (s *SQLStore) GetDeployment(ctx context.Context, id string) (core.Deployment, error) {
 	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
-        started_at,finished_at,lease_until,outputs,spec_snapshot FROM deployments WHERE id=?`), id)
+        started_at,finished_at,lease_until,outputs,spec_snapshot,health FROM deployments WHERE id=?`), id)
 	item, err := scanDeployment(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
@@ -1072,7 +1085,7 @@ func (s *SQLStore) listDeployments(ctx context.Context, limit int, includeSnapsh
 		snapshot = "spec_snapshot"
 	}
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
- started_at,finished_at,lease_until,outputs,`+snapshot+` FROM deployments ORDER BY created_at DESC LIMIT ?`), limit)
+ started_at,finished_at,lease_until,outputs,`+snapshot+`,health FROM deployments ORDER BY created_at DESC LIMIT ?`), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1103,7 +1116,7 @@ func (s *SQLStore) listDeployments(ctx context.Context, limit int, includeSnapsh
 
 func (s *SQLStore) ActiveDeploymentForApp(ctx context.Context, appID string) (*core.Deployment, error) {
 	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
-        started_at,finished_at,lease_until,outputs,spec_snapshot FROM deployments WHERE app_id=? AND state NOT IN ('succeeded','failed','cancelled')
+        started_at,finished_at,lease_until,outputs,spec_snapshot,health FROM deployments WHERE app_id=? AND state NOT IN ('succeeded','failed','cancelled')
         ORDER BY created_at DESC LIMIT 1`), appID)
 	item, err := scanDeployment(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1132,9 +1145,9 @@ func scanDeployment(row scanner) (core.Deployment, error) {
 	var item core.Deployment
 	var state, created string
 	var started, finished, lease sql.NullString
-	var outputs, snapshot string
+	var outputs, snapshot, health string
 	err := row.Scan(&item.ID, &item.AppID, &item.CommitSHA, &item.SpecDigest, &state, &item.Message,
-		&created, &started, &finished, &lease, &outputs, &snapshot)
+		&created, &started, &finished, &lease, &outputs, &snapshot, &health)
 	item.State = core.DeploymentState(state)
 	item.CreatedAt = parseTime(created)
 	item.StartedAt = parseNullTime(started)
@@ -1142,6 +1155,7 @@ func scanDeployment(row scanner) (core.Deployment, error) {
 	item.LeaseUntil = parseNullTime(lease)
 	_ = json.Unmarshal([]byte(outputs), &item.Outputs)
 	_ = json.Unmarshal([]byte(snapshot), &item.Snapshot)
+	_ = json.Unmarshal([]byte(health), &item.Health)
 	return item, err
 }
 

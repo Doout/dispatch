@@ -163,7 +163,10 @@ export type RelayServerConfig = {
   lastConnectedAt?: string;
   lastError?: string;
 };
+export type RoutingConfig = { baseDomain: string; entryPoint: string; tlsResolver?: string; requireTls: boolean; composeService?: string };
+export type ApplicationRoute = { appId: string; projectId: string; serverId: string; hostname: string; entryPoint: string; tlsResolver?: string; requireTls: boolean; requestedDeploymentId: string; deploymentId?: string; destination?: string; previousDeploymentId?: string; previousDestination?: string; state: string; message: string; dns: string; certificate: { state: string; message: string; expiresAt?: string; checkedAt?: string }; publishedAt?: string; updatedAt: string };
 export type Server = {
+  routing?: RoutingConfig;
   id: string;
   name: string;
   address: string;
@@ -205,7 +208,11 @@ export type RelaySSHInstallInput = {
   installMode?: "systemd" | "docker";
   relayImage?: string;
 };
+export type HealthCheck = { id: string; kind: "container" | "http" | "tcp" | "tls"; scope: "workload" | "route" | "certificate"; service?: string; port?: number; path?: string };
+export type HealthPolicy = { timeoutSeconds: number; checkTimeoutSeconds: number; intervalSeconds: number; failureThreshold: number; checks: HealthCheck[] };
+export type DeploymentHealth = { state: string; simulated?: boolean; policy: HealthPolicy; checks: { check: HealthCheck; state: string; attempts: number; failures: number; message: string; httpStatus?: number }[]; startedAt?: string; finishedAt?: string };
 export type App = {
+  healthPolicy?: HealthPolicy;
   id: string;
   projectId: string;
   serverId: string;
@@ -246,6 +253,7 @@ export type DeploymentState =
   | "failed"
   | "cancelled";
 export type Deployment = {
+  health?: DeploymentHealth;
   id: string;
   appId: string;
   commitSha: string;
@@ -412,6 +420,7 @@ export type WorkflowPreviewTemplateGitSource = {
   lastError?: string;
 };
 export type WorkflowPreviewTemplate = {
+  sourceTrustPolicy?: "same_repository" | "approval_required";
   commentOnOpen?: boolean;
   ttl?: string;
   watchRepositories?: string[];
@@ -468,7 +477,13 @@ export type WorkflowFeedback = {
   reviewOnFailure?: string;
   targets: { githubAppId: string; repository: string; number: number; commitSha: string; url?: string; status?: string; review?: string; reviewId?: number; error?: string; skipReason?: string }[];
 };
+export type PreviewSourceTrustDecision = {
+  policy: string; digest: string; allowed: boolean; reason: string;
+  sources: { alias: string; repository: string; repositoryId: number; headRepository: string; headRepositoryId: number; fork: boolean; pullRequest: number; commitSha: string; githubAppId: string }[];
+  credentialScope: string[]; environments: string[]; approvalId?: string; checkedAt: string;
+};
 export type WorkflowRevision = {
+  sourceTrust?: PreviewSourceTrustDecision;
   feedback?: WorkflowFeedback;
   id: string;
   resourceId: string;
@@ -917,7 +932,25 @@ export async function destructiveRequest<T>(path: string, init: RequestInit): Pr
   return request<T>(path, { ...init, body: JSON.stringify({ ...body, confirmation }) });
 }
 
+export type StorageResource = {
+  id: string; serverId: string; kind: string; name: string; namespace?: string;
+  identity: string; projectId?: string; ownerKind?: string; ownerId?: string;
+  ownership: string; orphaned: boolean; policy: "retain" | "destroy"; state: string;
+  consumers: { id: string; mount?: string; active: boolean }[];
+  revision: number; observedAt: string; message?: string;
+};
+
 export const api = {
+ applicationRoute: (id: string) => request<ApplicationRoute | null>(`/api/v1/apps/${id}/route`),
+ checkApplicationRoute: (id: string) => request<ApplicationRoute>(`/api/v1/apps/${id}/route/check`, { method: "POST" }),
+ updateServerRouting: (id: string, routing: RoutingConfig | null) => request<Server>(`/api/v1/servers/${id}/routing`, { method: "PUT", body: JSON.stringify({ routing }) }),
+ previewSourceTrust: (id: string) => request<PreviewSourceTrustDecision>(`/api/v1/workflow/revisions/${id}/source-trust`),
+ approvePreviewSourceTrust: (id: string, confirmDigest: string, expiresAt: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals`, { method: "POST", body: JSON.stringify({ confirmDigest, expiresAt }) }),
+ revokePreviewSourceTrust: (id: string, approvalId: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals/${approvalId}`, { method: "DELETE" }),
+  storage: (serverId: string) => request<StorageResource[]>(`/api/v1/storage?serverId=${encodeURIComponent(serverId)}`),
+  reconcileStorage: (serverId: string) => request<StorageResource[]>(`/api/v1/servers/${encodeURIComponent(serverId)}/storage/reconcile`, { method: "POST" }),
+  storagePolicy: (id: string, revision: number, policy: "retain" | "destroy") => request<StorageResource>(`/api/v1/storage/${id}/policy`, { method: "PUT", body: JSON.stringify({ revision, policy }) }),
+  deleteStorage: (id: string) => destructiveRequest<void>(`/api/v1/storage/${id}`, { method: "DELETE" }),
  workflowRevision: (id: string) => request<WorkflowRevision>(`/api/v1/workflow/revisions/${id}`),
  eventRules: () => request<EventRule[]>("/api/v1/events/rules"),
  eventActivity: (transport = "", before = "") => request<EventActivityPage>(`/api/v1/events/activity?${new URLSearchParams({transport,before})}`),
@@ -1198,6 +1231,8 @@ export const api = {
       `/api/v1/apps/${id}/helm-values`,
       { method: "PUT", body: JSON.stringify({ overrides }) },
     ),
+  appHealthPolicy: (id: string) => request<HealthPolicy>(`/api/v1/apps/${id}/health-policy`),
+  updateAppHealthPolicy: (id: string, policy: HealthPolicy) => request<HealthPolicy>(`/api/v1/apps/${id}/health-policy`, {method:"PUT",body:JSON.stringify(policy)}),
   updateAppHooks: (
     id: string,
     body: {

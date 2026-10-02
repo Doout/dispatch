@@ -17,6 +17,7 @@ import (
 )
 
 type workflowPreviewTemplateRequest struct {
+	SourceTrustPolicy  string                                 `json:"sourceTrustPolicy"`
 	CommentOnOpen      bool                                   `json:"commentOnOpen"`
 	TTL                string                                 `json:"ttl"`
 	GitSource          *core.WorkflowPreviewTemplateGitSource `json:"gitSource,omitempty"`
@@ -99,7 +100,8 @@ func (a *API) deleteWorkflowPreviewTemplate(w http.ResponseWriter, r *http.Reque
 
 func (a *API) validateWorkflowPreviewTemplate(w http.ResponseWriter, r *http.Request, input workflowPreviewTemplateRequest, id string) (core.WorkflowPreviewTemplate, bool) {
 	item := core.WorkflowPreviewTemplate{
-		ConfigSourceID: strings.TrimSpace(input.ConfigSourceID), GitHubAppID: strings.TrimSpace(input.GitHubAppID),
+		SourceTrustPolicy: input.SourceTrustPolicy,
+		ConfigSourceID:    strings.TrimSpace(input.ConfigSourceID), GitHubAppID: strings.TrimSpace(input.GitHubAppID),
 		Name: strings.TrimSpace(input.Name), Repository: events.NormalizeRepository(input.Repository),
 		Command: strings.TrimSpace(input.Command), PreviewURL: strings.TrimSpace(input.PreviewURL),
 		TTL: workflowservice.NormalizePreviewTTL(input.TTL), Document: input.Document, Active: input.Active, AutoDeploy: input.AutoDeploy, LiveReload: input.LiveReload, CommentOnOpen: input.CommentOnOpen, MaxAutoRunsPerHour: input.MaxAutoRunsPerHour,
@@ -211,6 +213,7 @@ func applyPreviewTemplateTrigger(item *core.WorkflowPreviewTemplate) error {
 	item.WatchRepositories = nil
 	if trigger != nil {
 		item.Command = trigger.Command
+		item.SourceTrustPolicy = trigger.SourceTrustPolicy
 		item.CommentOnOpen = trigger.CommentOnOpen
 		item.AutoDeploy, item.LiveReload, item.MaxAutoRunsPerHour, item.TTL = trigger.AutoDeploy, trigger.LiveReload, trigger.MaxAutoRunsPerHour, trigger.TTL
 		for _, alias := range trigger.Sources {
@@ -225,6 +228,10 @@ func applyPreviewTemplateTrigger(item *core.WorkflowPreviewTemplate) error {
 		return err
 	}
 	item.TTL = workflowservice.NormalizePreviewTTL(item.TTL)
+	item.SourceTrustPolicy, err = workflowservice.NormalizeSourceTrustPolicy(item.SourceTrustPolicy)
+	if err != nil {
+		return err
+	}
 	command, arguments := events.ParseCommand(item.Command)
 	if command != item.Command || command == "" || arguments != "" {
 		return errors.New("provide one comment command such as /preview")

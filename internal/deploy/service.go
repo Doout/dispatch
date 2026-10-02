@@ -20,6 +20,9 @@ var (
 )
 
 type Service struct {
+	Storage *StorageManager
+	// CheckExecution verifies preview provenance before accepting or dispatching work.
+	CheckExecution func(context.Context, core.App, string) error
 	// OnFinished queues follow-up observations after the terminal state is saved.
 	OnFinished      func(core.Deployment)
 	services        serviceconn.Resolver
@@ -36,7 +39,7 @@ type Service struct {
 
 func NewService(data store.Store, executor Executor) *Service {
 	runtimeRollback, _ := executor.(RuntimeRollbackExecutor)
-	return &Service{store: data, executor: executor, runtimeRollback: runtimeRollback, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
+	return &Service{Storage: NewStorageManager(data), store: data, executor: executor, runtimeRollback: runtimeRollback, cancels: map[string]context.CancelFunc{}, appLocks: map[string]*sync.Mutex{}}
 }
 
 func (s *Service) ConfigureRuntimeRollback(executor RuntimeRollbackExecutor) {
@@ -60,6 +63,9 @@ func (s *Service) start(ctx context.Context, appID, commitSHA string, review *co
 
 // startLocked requires the application lock, also used by automatic comparison.
 func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, review *core.DeploymentReview) (core.Deployment, error) {
+	if err := s.checkRemoteMutation(ctx, appID); err != nil {
+		return core.Deployment{}, err
+	}
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
 	if err != nil {
 		return core.Deployment{}, err
@@ -96,17 +102,35 @@ func (s *Service) startLocked(ctx context.Context, appID, commitSHA string, revi
 			commitSHA = "HEAD"
 		}
 	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, commitSHA); err != nil {
+			return core.Deployment{}, err
+		}
+	}
 	if s.resolveRevision != nil {
 		commitSHA, err = s.resolveRevision(ctx, app, commitSHA)
 		if err != nil {
 			return core.Deployment{}, err
 		}
 	}
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, commitSHA); err != nil {
+			return core.Deployment{}, err
+		}
+	}
+	policy, err := core.NormalizeHealthPolicy(app.HealthPolicy)
+	if err != nil {
+		return core.Deployment{}, err
+	}
 	now := time.Now().UTC()
 	deployment := core.Deployment{
 		ID: ulid.Make().String(), AppID: app.ID, CommitSHA: commitSHA, SpecDigest: app.SpecDigest(),
-		State: core.DeploymentQueued, Message: "Deployment accepted", CreatedAt: now,
+		Health: core.DeploymentHealth{Policy: policy, State: "pending", Checks: []core.HealthCheckResult{}},
+		State:  core.DeploymentQueued, Message: "Deployment accepted", CreatedAt: now,
 		Acceptance: review, ExecutionAppName: app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
+	}
+	if err := s.reserveRoute(ctx, deployment, app, server); err != nil {
+		return core.Deployment{}, err
 	}
 	if err := s.store.CreateDeployment(ctx, deployment); err != nil {
 		return core.Deployment{}, err
@@ -146,17 +170,15 @@ func (s *Service) Cleanup(ctx context.Context, appID string, progress Progress) 
 func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func() error, remove bool, progress Progress) error {
 	unlock := s.lockApp(appID)
 	defer unlock()
+	if err := s.checkRemoteMutation(ctx, appID); err != nil {
+		return err
+	}
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
 	if err != nil {
 		return err
 	}
 	if active != nil {
 		return ErrDeploymentActive
-	}
-	if review != nil {
-		if err := review(); err != nil {
-			return err
-		}
 	}
 	app, err := s.store.GetApp(ctx, appID)
 	if err != nil {
@@ -166,29 +188,50 @@ func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func
 	if err != nil {
 		return err
 	}
-	cleanup := true
-	if remove {
-		cleanup, err = s.store.AppHasDeployments(ctx, appID)
-		if err != nil {
+	return s.Storage.WithTarget(ctx, server.ID, func() error {
+		if err := s.Storage.RefreshLocked(ctx, server); err != nil {
 			return err
 		}
-	}
-	if progress == nil {
-		progress = func(core.DeploymentState, string) error { return nil }
-	}
-	if cleanup {
-		cleaner, ok := s.executor.(CleanupExecutor)
-		if !ok {
-			return ErrCleanupUnsupported
+		if review != nil {
+			if err := review(); err != nil {
+				return err
+			}
 		}
-		if err := cleaner.Cleanup(ctx, app, server, progress); err != nil {
+		cleanup := true
+		if remove {
+			cleanup, err = s.store.AppHasDeployments(ctx, appID)
+			if err != nil {
+				return err
+			}
+		}
+		if progress == nil {
+			progress = func(core.DeploymentState, string) error { return nil }
+		}
+		if cleanup {
+			if err := s.Storage.CheckApplicationCleanup(ctx, app, server); err != nil {
+				return err
+			}
+			cleaner, ok := s.executor.(CleanupExecutor)
+			if !ok {
+				return ErrCleanupUnsupported
+			}
+			if err := cleaner.Cleanup(ctx, app, server, progress); err != nil {
+				return err
+			}
+		}
+		if err := s.Storage.RefreshLocked(ctx, server); err != nil {
 			return err
 		}
-	}
-	if remove {
-		return s.store.DeleteApp(ctx, appID)
-	}
-	return nil
+		if routes, ok := s.store.(store.ApplicationRouteStore); ok {
+			if err := routes.DeleteApplicationRoute(ctx, app.ID, server.ID); err != nil {
+				return err
+			}
+		}
+		if remove {
+			return s.store.DeleteApp(ctx, appID)
+		}
+		return nil
+	})
 }
 
 func (s *Service) lockApp(appID string) func() {
@@ -204,11 +247,18 @@ func (s *Service) lockApp(appID string) func() {
 }
 
 func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.App) {
+	ctx = s.routeContext(ctx)
 	defer func() {
 		s.mu.Lock()
 		delete(s.cancels, deployment.ID)
 		s.mu.Unlock()
 	}()
+	if s.CheckExecution != nil {
+		if err := s.CheckExecution(ctx, app, deployment.CommitSHA); err != nil {
+			s.fail(deployment, err)
+			return
+		}
+	}
 	server, err := s.store.GetServer(ctx, app.ServerID)
 	if err != nil {
 		s.fail(deployment, err)
@@ -236,8 +286,15 @@ func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.
 	if err := s.transition(ctx, &deployment, core.DeploymentFetching, preparing); err != nil {
 		return
 	}
-	err = s.executor.Deploy(ctx, deployment, app, server, func(state core.DeploymentState, message string) error {
-		return s.transition(ctx, &deployment, state, redactServiceMessage(message, app.ServiceRuntime))
+	ctx = WithHealthReporter(ctx, func(save context.Context, id string, result core.DeploymentHealth) error {
+		deployment.Health = result
+		return s.store.UpdateDeploymentHealth(save, id, result)
+	})
+	err = s.Storage.WithTarget(ctx, server.ID, func() error {
+		executionErr := s.executor.Deploy(ctx, deployment, app, server, func(state core.DeploymentState, message string) error {
+			return s.transition(ctx, &deployment, state, redactServiceMessage(message, app.ServiceRuntime))
+		})
+		return errors.Join(executionErr, s.Storage.RefreshLocked(ctx, server))
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -247,7 +304,7 @@ func (s *Service) run(ctx context.Context, deployment core.Deployment, app core.
 		s.fail(deployment, errors.New(redactServiceMessage(err.Error(), app.ServiceRuntime)))
 		return
 	}
-	s.finish(&deployment, core.DeploymentSucceeded, "Deployment is live")
+	s.finish(&deployment, core.DeploymentSucceeded, s.routeCompletion(ctx, app, deployment))
 }
 
 func (s *Service) transition(ctx context.Context, deployment *core.Deployment, state core.DeploymentState, message string) error {
@@ -295,6 +352,9 @@ func (s *Service) WithIdleApplication(ctx context.Context, appID string, fn func
 		return ErrDeploymentActive
 	}
 	defer lock.Unlock()
+	if err := s.checkRemoteMutation(ctx, appID); err != nil {
+		return err
+	}
 	active, err := s.store.ActiveDeploymentForApp(ctx, appID)
 	if err != nil {
 		return err
@@ -317,4 +377,19 @@ func (s *Service) CleanupRuntimeIdentity(ctx context.Context, app core.App, serv
 		return "", nil
 	}
 	return inspector.CurrentRuntimeIdentity(ctx, app, server)
+}
+
+func (s *Service) checkRemoteMutation(ctx context.Context, app string) error {
+	if data, ok := s.store.(interface {
+		ActiveRuntimeMutation(context.Context, string) (*core.RuntimeJob, error)
+	}); ok {
+		job, err := data.ActiveRuntimeMutation(ctx, app)
+		if err != nil {
+			return err
+		}
+		if job != nil {
+			return ErrDeploymentActive
+		}
+	}
+	return nil
 }

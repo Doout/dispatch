@@ -21,6 +21,8 @@ import (
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/installation"
+	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
 )
@@ -78,14 +80,19 @@ func run(logger *slog.Logger) error {
 	if local != nil {
 		logger.Info("local Docker server reconciled", "server", local.Name, "state", local.State, "socket", cfg.DockerSocket)
 	}
+	runtimeBroker := &remoteruntime.Broker{Store: data, Vault: vault}
 	var executor deploy.Executor = deploy.SimulationExecutor{}
 	dockerExecutor := deploy.DockerExecutor{Artifacts: data, Vault: vault, ArtifactDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "runtime-artifacts")}
+	if cfg.RoutingDirectory != "" {
+		dockerExecutor.Routes = &routing.FilePublisher{Directory: cfg.RoutingDirectory}
+	}
 	if cfg.Executor == "docker" {
 		helmExecutor := deploy.HelmExecutor{}
 		if vault != nil {
 			helmExecutor.Capture = drift.New(data, vault).Capture
 		}
-		runtime := deploy.RuntimeExecutor{Default: dockerExecutor, Helm: helmExecutor}
+		remote := deploy.RemoteExecutor{Local: dockerExecutor, Broker: runtimeBroker}
+		runtime := deploy.RuntimeExecutor{Default: remote, Helm: helmExecutor}
 		snapshots := deploy.SnapshotExecutor{Next: runtime, Store: data}
 		executor = deploy.HookExecutor{Next: snapshots, Outputs: data, Vault: vault, Resolver: secretResolver}
 	}
@@ -93,12 +100,16 @@ func run(logger *slog.Logger) error {
 	executor = sourceAuth
 	deployments := deploy.NewService(data, executor)
 	if cfg.Executor == "docker" {
+		deployments.Storage.Backend = deploy.RemoteStorageBackend{Local: deploy.RuntimeStorage{}, Broker: runtimeBroker}
+	}
+	if cfg.Executor == "docker" {
 		deployments.ConfigureHelmComparison(sourceAuth)
 		deployments.ConfigureSourceResolution(sourceAuth)
-		deployments.ConfigureRuntimeRollback(dockerExecutor)
+		deployments.ConfigureRuntimeRollback(deploy.RemoteExecutor{Local: dockerExecutor, Broker: runtimeBroker})
 	}
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go runtimeBroker.RunExpiration(shutdownCtx, logger)
 	var history analytics.Reader
 	if cfg.AnalyticsEnabled {
 		worker := analytics.New(data, cfg.AnalyticsDirectory, logger)
@@ -118,6 +129,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	go deployments.RunRecovery(shutdownCtx, logger)
+	go deployments.RunRouteReconciliation(shutdownCtx)
 	if cfg.Executor == "docker" {
 		go controller.RunObservations(shutdownCtx)
 	}

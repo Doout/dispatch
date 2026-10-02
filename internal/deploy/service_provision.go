@@ -21,10 +21,11 @@ func ServiceResourceName(runID string) string { return "dispatch-svc-" + strings
 func ValidateServiceTarget(server core.Server, provider string) error {
 	switch provider {
 	case "docker":
+
 		if server.Runtime != core.ServerRuntimeDocker {
 			return errors.New("Docker provisioning requires a Docker deployment server")
 		}
-		if server.Address != "local" && server.Address != "localhost" && server.Address != "127.0.0.1" {
+		if server.AgentNodeID == "" && server.Address != "local" && server.Address != "localhost" && server.Address != "127.0.0.1" {
 			return errors.New("Docker provisioning currently requires a local enrolled server")
 		}
 	case "helm":

@@ -541,7 +541,7 @@ func (s *Service) deployComponent(ctx context.Context, run core.PreviewGroupRun,
 	}
 	for _, linked := range run.Sources {
 		if linked.PullRequest > 0 {
-			app.HelmProvenance.PullRequests = append(app.HelmProvenance.PullRequests, core.HelmPullRequest{Repository: linked.Repository, Number: linked.PullRequest,
+			app.HelmProvenance.PullRequests = append(app.HelmProvenance.PullRequests, core.HelmPullRequest{Repository: linked.Repository, Number: linked.PullRequest, GitHubAppID: group.GitHubAppID, CommitSHA: linked.SHA,
 				URL: githubURL + "/" + linked.Repository + "/pull/" + strconv.Itoa(linked.PullRequest)})
 		}
 	}
@@ -807,7 +807,7 @@ func (s *Service) cleanupNamespace(ctx context.Context, group core.PreviewGroup,
 	if err != nil {
 		return err
 	}
-	return s.cleaner.CleanupNamespace(ctx, server, namespace)
+	return s.deployments.Storage.CleanupNamespace(ctx, server, namespace, func() error { return s.cleaner.CleanupNamespace(ctx, server, namespace) })
 }
 
 func (s *Service) notifyCommandError(ctx context.Context, group core.PreviewGroup, event core.IncomingEvent, cause error) error {

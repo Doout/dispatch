@@ -53,8 +53,16 @@ func (e RuntimeExecutor) Execute(ctx context.Context, op runtimecontract.Operati
 	case runtimecontract.Deploy:
 		return executor.Deploy(ctx, deployment, app, server, progress)
 	case runtimecontract.Destroy:
-		return executor.(CleanupExecutor).Cleanup(ctx, app, server, progress)
+		if cleaner, ok := executor.(CleanupExecutor); ok {
+			return cleaner.Cleanup(ctx, app, server, progress)
+		}
+		return &runtimecontract.Error{Code: runtimecontract.Unsupported, Action: op, Message: "The runtime has no cleanup implementation."}
 	default:
+		if driver, ok := executor.(interface {
+			Execute(context.Context, runtimecontract.Operation, core.Deployment, core.App, core.Server, Progress) error
+		}); ok {
+			return driver.Execute(ctx, op, deployment, app, server, progress)
+		}
 		return &runtimecontract.Error{Code: runtimecontract.Unsupported, Action: op, Message: "The runtime operation has no configured implementation."}
 	}
 }
@@ -64,6 +72,9 @@ func (SimulationExecutor) RuntimeCapabilities(core.App, core.Server) runtimecont
 }
 
 func (DockerExecutor) RuntimeCapabilities(app core.App, server core.Server) runtimecontract.Manifest {
+	if server.AgentNodeID != "" {
+		return runtimecontract.Describe("docker", "remote")
+	}
 	if server.Address != "local" && server.Address != "localhost" && server.Address != "127.0.0.1" {
 		return runtimecontract.Describe("docker", "remote")
 	}

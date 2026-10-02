@@ -67,8 +67,11 @@ func (a *API) workflowsRoutes(r chi.Router) {
 					r.Get("/jobs", a.listWorkflowJobs)
 					r.Get("/logs/watch", a.watchWorkflowLogs)
 					r.Get("/stages", a.listWorkflowStages)
+					r.Get("/source-trust", a.previewSourceTrustReview)
 				})
 				r.With(a.ownerOnly).Post("/preview-report", a.reportWorkflowPreview)
+				r.With(a.ownerOnly).Post("/source-trust/approvals", a.approvePreviewSourceTrust)
+				r.With(a.ownerOnly).Delete("/source-trust/approvals/{approvalId}", a.revokePreviewSourceTrust)
 			})
 		})
 		r.Route("/stages/{id}", func(r chi.Router) {

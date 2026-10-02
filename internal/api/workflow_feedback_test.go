@@ -110,7 +110,11 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 			if f.closed {
 				state = "closed"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "draft": f.draft, "head": map[string]string{"sha": sha, "ref": "feature"}, "base": map[string]string{"ref": "main"}})
+			repo := "example/service"
+			if strings.Contains(r.URL.Path, "/ui/") {
+				repo = "example/ui"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "draft": f.draft, "head": map[string]any{"sha": sha, "ref": "feature", "repo": map[string]any{"id": 101, "full_name": repo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"id": 101, "full_name": repo}}})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.NotFound(w, r)
@@ -369,6 +373,8 @@ spec:
 	must(err)
 	must(f.a.store.UpdateWorkflowResource(ctx, resource))
 	now := time.Now().UTC()
+	// The trust decision includes the target even when this run only executes QA.
+	must(f.a.store.CreateServer(ctx, core.Server{ID: "dev", Name: "QA development target", Runtime: core.ServerRuntimeKubernetes, State: "ready", CreatedAt: now}))
 	sources := map[string]core.WorkflowSourceRevision{}
 	prs := []core.WorkflowPullRequest{}
 	for _, target := range f.revision.Feedback.Targets {

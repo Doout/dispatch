@@ -1224,3 +1224,77 @@ CREATE TABLE deployment_runtime_artifacts (
 ALTER TABLE audit_events ADD COLUMN confirmed_action TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN confirmed_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit_events ADD COLUMN confirmed_version TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 070_storage_ownership
+CREATE TABLE storage_resources (
+ id TEXT PRIMARY KEY,
+ server_id TEXT NOT NULL,
+ revision BIGINT NOT NULL,
+ payload TEXT NOT NULL
+);
+CREATE INDEX storage_resources_server ON storage_resources(server_id);
+ALTER TABLE audit_events ADD COLUMN confirmed_policy TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 071_preview_source_trust
+ALTER TABLE workflow_preview_triggers ADD COLUMN source_trust_policy TEXT NOT NULL DEFAULT 'same_repository';
+ALTER TABLE workflow_revisions ADD COLUMN source_trust TEXT NOT NULL DEFAULT 'null';
+ALTER TABLE workflow_preview_templates ADD COLUMN source_trust_policy TEXT NOT NULL DEFAULT 'same_repository';
+CREATE TABLE preview_source_trust_approvals (
+    id TEXT PRIMARY KEY,
+    resource_id TEXT NOT NULL REFERENCES workflow_resources(id),
+    digest TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    revoked_at TEXT
+);
+CREATE INDEX preview_source_trust_approval_lookup ON preview_source_trust_approvals(resource_id,digest);
+-- dispatch:migration 072_remote_runtime
+ALTER TABLE servers ADD COLUMN agent_node_id TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX servers_agent_node ON servers(agent_node_id) WHERE agent_node_id<>'';
+CREATE TABLE runtime_jobs (
+    id TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    node_generation BIGINT NOT NULL,
+    attempt INTEGER NOT NULL DEFAULT 0,
+    project_id TEXT NOT NULL,
+    app_id TEXT NOT NULL,
+    deployment_id TEXT NOT NULL DEFAULT '',
+    service_run_id TEXT NOT NULL DEFAULT '',
+    operation TEXT NOT NULL,
+    state TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    encrypted_request TEXT NOT NULL,
+    encrypted_result TEXT NOT NULL DEFAULT '',
+    lease_token TEXT NOT NULL DEFAULT '',
+    lease_until TEXT NOT NULL,
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    phase TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX runtime_jobs_node_lease ON runtime_jobs(node_id,state,lease_until);
+CREATE INDEX runtime_jobs_app ON runtime_jobs(app_id,created_at);
+
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs');
+-- dispatch:migration 073_deployment_health
+ALTER TABLE apps ADD COLUMN health_policy TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE deployments ADD COLUMN health TEXT NOT NULL DEFAULT '{}';
+
+-- dispatch:migration 074_application_routes
+ALTER TABLE servers ADD COLUMN routing_config TEXT NOT NULL DEFAULT 'null';
+CREATE TABLE application_routes (
+ app_id TEXT PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ server_id TEXT NOT NULL REFERENCES servers(id),
+ hostname TEXT NOT NULL UNIQUE,
+ requested_deployment_id TEXT NOT NULL,
+ record TEXT NOT NULL
+);
+
+-- dispatch:migration 080_remote_storage
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect');

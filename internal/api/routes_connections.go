@@ -69,11 +69,13 @@ func (a *API) connectionsRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.ownerOnly)
 				r.Put("/", a.updateServer)
+				r.Put("/routing", a.updateServerRouting)
 				r.Post("/relay/verify", a.verifyRelayServer)
 				r.Get("/relay/webhooks", a.listRelayWebhooks)
 				r.Post("/relay/webhooks", a.createRelayWebhook)
 				a.destructiveRoute(r, "DELETE", "/relay/webhooks/{webhookId}", "relay-webhook", "delete", a.deleteRelayWebhook)
 				r.Post("/repair", a.repairOpenShiftServer)
+				r.Post("/storage/reconcile", a.reconcileStorage)
 				a.destructiveRoute(r, "DELETE", "/", "server", "delete", a.deleteServer)
 			})
 			r.With(a.serverPermission).Get("/topology", a.getServerTopology)

@@ -309,7 +309,7 @@ func (a *API) deleteService(w http.ResponseWriter, r *http.Request) {
 		a.serviceStoreError(w, store.ErrServiceInUse)
 		return
 	}
-	if err = a.store.DeleteService(r.Context(), item.ID); err != nil {
+	if err = a.withStorageRegistrationRemoval(r, "service", item.ID, func() error { return a.store.DeleteService(r.Context(), item.ID) }); err != nil {
 		a.serviceStoreError(w, err)
 		return
 	}

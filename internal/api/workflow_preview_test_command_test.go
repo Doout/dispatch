@@ -15,6 +15,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/events"
+	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -51,6 +52,8 @@ func TestPreviewTestCommentStartsOneCheckRunWithoutCreatingPreview(t *testing.T)
 		}
 	}
 	must(data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now}))
+	// On-demand preview checks still review the accepted target credential scope.
+	must(data.CreateServer(ctx, core.Server{ID: "dev", Name: "QA development target", Runtime: core.ServerRuntimeKubernetes, State: "ready", CreatedAt: now}))
 	must(data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", APIURL: github.URL, WebURL: github.URL, State: "ready", CreatedAt: now, UpdatedAt: now}))
 	must(data.CreateConfigSource(ctx, core.ConfigSource{ID: "source", ProjectID: "project", GitHubAppID: "github", Name: "Source", Repository: "example/config", Active: true, CreatedAt: now, UpdatedAt: now}))
 	document := `apiVersion: dispatch/v1alpha1
@@ -59,6 +62,7 @@ metadata:
   name: preview-42
 spec:
   sources:
+    service: {repository: example/service, ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
     chart: {repository: example/chart, ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
   deployments:
     app:
@@ -74,9 +78,13 @@ spec:
 `
 	must(data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "preview", ConfigSourceID: "source", Kind: "Application", Name: "preview-42", Path: "temporary/preview.yaml", Document: document, Temporary: true, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now}))
 	must(data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "preview", GitHubAppID: "github", Repository: "example/service", PullRequestNumber: 42, Command: "/preview", PreviewURL: "https://preview.example.test/42", CreatedAt: now}))
-	must(data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: "deployed", ResourceID: "preview", State: "succeeded", Trigger: "pull request comment 1", Sources: map[string]core.WorkflowSourceRevision{"chart": {Repository: "example/chart", CommitSHA: strings.Repeat("a", 40)}}, CreatedAt: now}))
+	must(data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: "deployed", ResourceID: "preview", State: "succeeded", Trigger: "pull request comment 1", Sources: map[string]core.WorkflowSourceRevision{"service": {Repository: "example/service", CommitSHA: strings.Repeat("a", 40)}, "chart": {Repository: "example/chart", CommitSHA: strings.Repeat("a", 40)}}, CreatedAt: now}))
 	must(data.CreateWorkflowStageRun(ctx, core.WorkflowStageRun{ID: "deployed-stage", RevisionID: "deployed", StageName: "development", State: "succeeded", CreatedAt: now}))
+	must(data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "qa-pipeline", ConfigSourceID: "source", Kind: "Pipeline", Name: "missing-qa", Path: "qa.yaml", Document: "apiVersion: dispatch/v1alpha1\nkind: Pipeline\nmetadata: {name: missing-qa}\nspec:\n  jobs:\n    check: {run: 'true'}\n", Active: true, State: "ready", CreatedAt: now, UpdatedAt: now}))
 	a := New(data, deploy.NewService(data, deploy.SimulationExecutor{}), false, AuthConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)), EventConfig{GitHubToken: "token"})
+	a.workflows.ResolvePreviewSource = func(_ context.Context, _ string, repository string, _ int) (githubapp.PullRequestHead, error) {
+		return fixturePreviewSource(repository, strings.Repeat("a", 40)), nil
+	}
 	target := &previewPollTarget{connectionID: "github", repository: "example/service", workflowTriggers: []core.WorkflowPreviewTrigger{{ID: "trigger", ResourceID: "preview", GitHubAppID: "github", Repository: "example/service", PullRequestNumber: 42, Command: "/preview", PreviewURL: "https://preview.example.test/42"}}}
 	event := core.IncomingEvent{Kind: core.EventKindPullRequestComment, ProviderConnectionID: "github", Repository: "example/service", Command: "/preview", Arguments: "test", PullRequestNumber: 42, SourceCommentID: "17", TrustedActor: true}
 	must(a.processWorkflowPreviewComment(ctx, target, event, events.GitHubResolver{}))
