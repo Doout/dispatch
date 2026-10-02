@@ -403,6 +403,7 @@ export type WorkflowPreviewCleanup = {
  id: string; resourceId: string; reason: "expired" | "removed" | "closed";
  finalState: string; state: "pending" | "blocked" | "succeeded"; error?: string;
  attempts: number; createdAt: string; updatedAt: string;
+ services?: {runId: string; alias: string; policy: string; resourceId: string; operationId: string; state: string; error?: string}[];
  apps: { appId: string; serverId: string; jobId: string; previousJobIds?: string[]; state: string; error?: string }[];
 };
 export type WorkflowResource = {
@@ -996,6 +997,7 @@ export const api = {
  reapplyApplication: (id: string,deploymentId: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/reapply`,{method:"POST",body:JSON.stringify({deploymentId})}),
  services: () => request<ServiceConnection[]>("/api/v1/services"),
  neonProviders: (projectId: string) => request<NeonProvider[]>(`/api/v1/neon-providers?projectId=${encodeURIComponent(projectId)}`),
+ deleteNeonProvider: (id: string) => destructiveRequest<void>(`/api/v1/neon-providers/${id}`, { method: "DELETE" }),
  createNeonProvider: (data: Omit<NeonProvider, "id" | "createdAt">) => request<NeonProvider>("/api/v1/neon-providers", { method: "POST", body: JSON.stringify(data) }),
  serviceTemplates: () => request<ServiceTemplate[]>("/api/v1/service-templates"),
  serviceTemplate: (id: string) => request<ServiceTemplate>(`/api/v1/service-templates/${id}`),
@@ -1005,6 +1007,7 @@ export const api = {
  serviceResource: (id: string) => request<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource`),
  inspectServiceResource: (id: string) => request<ServiceResourceInspection>(`/api/v1/service-provision-runs/${id}/resource/inspect`, { method: "POST" }),
  recoverServiceResource: (id: string, action: "reconcile" | "retry") => request<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource/${action}`, { method: "POST" }),
+ neonLifecycle: (id: string, action: "policy-retain" | "policy-suspend" | "policy-delete" | "reset") => destructiveRequest<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource/${action}`, { method: "POST" }),
  deleteServiceResource: (id: string) => destructiveRequest<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource/delete`, { method: "POST" }),
  serviceProvisionRun: (id: string) => request<ServiceProvisionRun>(`/api/v1/service-provision-runs/${id}`),
  serviceProvisionRuns: () => request<ServiceProvisionRun[]>("/api/v1/service-provision-runs"),
@@ -1695,7 +1698,7 @@ export type DeploymentComparison = {
  changes: { path: string; kind: "added" | "removed" | "changed"; before: unknown; after: unknown }[];
 };
 
-export type ServiceResource = { providerPhase?: string; previewId?: string; previewAlias?: string; runId: string; projectId: string; serviceId: string; name: string; target: ServiceProvisionTarget; state: "accepted" | "provisioning" | "recovering" | "ready" | "unresolved" | "deleting" | "deleted"; resourceId?: string; policy: "retain"; revision: number; operationId: string; message?: string; dependencies?: string[]; recoveryAfter?: string; createdAt: string; updatedAt: string };
+export type ServiceResource = { replacedByRunId?: string; replacesRunId?: string; policyActorId?: string; policyApprovedAt?: string; providerPhase?: string; previewId?: string; previewAlias?: string; runId: string; projectId: string; serviceId: string; name: string; target: ServiceProvisionTarget; state: "accepted" | "provisioning" | "recovering" | "ready" | "unresolved" | "deleting" | "deleted"; resourceId?: string; policy: "retain" | "suspend" | "delete"; revision: number; operationId: string; message?: string; dependencies?: string[]; recoveryAfter?: string; createdAt: string; updatedAt: string };
 export type ServiceResourceInspection = { runId: string; projectId: string; serverId: string; provider: string; resourceId?: string; state: "ready" | "unready" | "absent"; storageRetained: boolean };
 
 export type WorkloadBackup = {id:string;projectId:string;sourceRunId:string;storageId:string;serverId:string;state:string;revision:number;artifactId:string;consistency:string;format:string;checksum?:string;bytes:number;encryption:string;location:string;policy:string;checkCount:number;verificationState:string;cleanupState:string;verificationIntervalHours:number;nextVerificationAt?:string;verifiedAt?:string;createdAt:string;updatedAt:string;message?:string};

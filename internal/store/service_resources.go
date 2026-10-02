@@ -41,7 +41,7 @@ func (s *SQLStore) GetServiceResource(ctx context.Context, id string) (core.Serv
 	return scanServiceResource(s.db.QueryRowContext(ctx, s.q(`SELECT `+serviceResourceColumns+` FROM service_resources WHERE run_id=?`), id))
 }
 func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServiceProvisionRun, r core.ServiceResource) error {
-	if run.ID != r.RunID || run.ProjectID != r.ProjectID || run.Target == nil || r.Target != *run.Target || r.Policy != "retain" || r.EncryptedRequest == "" || r.Revision != 1 || r.ServiceID == "" {
+	if run.ID != r.RunID || run.ProjectID != r.ProjectID || run.Target == nil || r.Target != *run.Target || !validServicePolicy(r) || r.EncryptedRequest == "" || r.Revision != 1 || r.ServiceID == "" {
 		return ErrServiceResourceChanged
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -49,6 +49,25 @@ func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServicePr
 		return err
 	}
 	defer tx.Rollback()
+	if r.Target.Provider == "neon" {
+		q := `SELECT project_id FROM neon_providers WHERE id=?`
+		if s.postgres {
+			q += ` FOR UPDATE`
+		}
+		var project string
+		if err = tx.QueryRowContext(ctx, s.q(q), r.Target.ProviderRef).Scan(&project); err != nil || project != r.ProjectID {
+			return ErrServiceResourceChanged
+		}
+	}
+	if r.ReplacesRunID != "" {
+		if err = s.checkNeonReplacement(ctx, tx, r, true); err != nil {
+			return err
+		}
+	} else if r.PreviewID != "" {
+		if err = s.lockPreviewResource(ctx, tx, r.PreviewID, false); err != nil {
+			return err
+		}
+	}
 	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO service_provision_runs(id,template_id,project_id,service_name,state,payload) VALUES(?,?,?,?,?,?)`), run.ID, run.TemplateID, run.ProjectID, run.ServiceName, run.State, jsonText(run))
 	if err != nil {
 		return err
@@ -57,13 +76,18 @@ func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServicePr
 	if err != nil {
 		return err
 	}
-	if r.PreviewID != "" {
+	if r.ReplacesRunID != "" {
+		_, err = tx.ExecContext(ctx, s.q(`INSERT INTO neon_replacements(source_run_id,replacement_run_id,preview_id,alias,state,created_at) VALUES(?,?,?,?,?,?)`), r.ReplacesRunID, r.RunID, r.PreviewID, r.PreviewAlias, "accepted", stamp(r.CreatedAt))
+		if err != nil {
+			return err
+		}
+	} else if r.PreviewID != "" {
 		if r.Target.Provider != "neon" || r.PreviewAlias == "" {
 			return ErrServiceResourceChanged
 		}
 		var project string
 		var active bool
-		if err = tx.QueryRowContext(ctx, s.q(`SELECT c.project_id,w.active FROM workflow_resources w JOIN config_sources c ON c.id=w.config_source_id WHERE w.id=?`), r.PreviewID).Scan(&project, &active); err != nil || project != r.ProjectID || !active {
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT c.project_id,w.active FROM workflow_resources w JOIN config_sources c ON c.id=w.config_source_id WHERE w.id=? AND w.temporary=TRUE`), r.PreviewID).Scan(&project, &active); err != nil || project != r.ProjectID || !active {
 			return ErrServiceResourceChanged
 		}
 		if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO neon_preview_services(preview_id,alias,run_id) VALUES(?,?,?)`), r.PreviewID, r.PreviewAlias, r.RunID); err != nil {
@@ -99,10 +123,11 @@ func (s *SQLStore) serviceResourceConsumers(ctx context.Context, tx *sql.Tx, id 
 	var n int
 	for _, q := range []string{
 		`SELECT COUNT(*) FROM app_service_bindings WHERE service_id=?`,
+		`SELECT COUNT(*) FROM neon_replacements n JOIN service_resources r ON r.run_id=n.source_run_id WHERE r.service_id=? AND n.state IN ('accepted','unresolved')`,
 		`SELECT COUNT(*) FROM neon_preview_services n JOIN service_resources r ON r.run_id=n.run_id JOIN workflow_resources w ON w.id=n.preview_id WHERE r.service_id=? AND w.active=TRUE`,
 		`SELECT COUNT(*) FROM workflow_service_references WHERE service_id=?`,
 		`SELECT COUNT(*) FROM deployment_service_bindings b JOIN deployments d ON d.id=b.deployment_id WHERE b.service_id=? AND d.state NOT IN ('succeeded','failed','cancelled')`,
-		`SELECT COUNT(*) FROM deployment_service_bindings b JOIN deployments d ON d.id=b.deployment_id JOIN apps a ON a.id=d.app_id WHERE b.service_id=? AND d.state='succeeded' AND NOT EXISTS (SELECT 1 FROM deployments newer WHERE newer.app_id=d.app_id AND newer.state='succeeded' AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.id>d.id)))`,
+		`SELECT COUNT(*) FROM deployment_service_bindings b JOIN deployments d ON d.id=b.deployment_id JOIN apps a ON a.id=d.app_id WHERE b.service_id=? AND a.state<>'closed' AND d.state='succeeded' AND NOT EXISTS (SELECT 1 FROM deployments newer WHERE newer.app_id=d.app_id AND newer.state='succeeded' AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.id>d.id)))`,
 		`SELECT COUNT(*) FROM service_resource_dependencies d JOIN service_resources r ON r.run_id=d.run_id WHERE d.service_id=? AND r.state<>'deleted'`,
 	} {
 		if err := tx.QueryRowContext(ctx, s.q(q), id).Scan(&n); err != nil {
@@ -139,6 +164,15 @@ func (s *SQLStore) ClaimServiceResource(ctx context.Context, id string, revision
 	if r.Revision != revision || r.LeaseUntil.After(now) || r.State == "deleted" || operation == "" || token == "" || state != "provisioning" && state != "recovering" && state != "deleting" {
 		return r, ErrServiceResourceChanged
 	}
+	if r.Target.Provider == "neon" && state == "recovering" {
+		var pending int
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workflow_preview_cleanup_services e JOIN workflow_preview_cleanups c ON c.id=e.cleanup_id WHERE e.run_id=? AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded' AND c.lease_token<>?`), r.RunID, token).Scan(&pending); err != nil {
+			return r, err
+		}
+		if pending > 0 {
+			return r, ErrServiceResourceChanged
+		}
+	}
 	if state == "deleting" {
 		if resourceID != "" {
 			r.ResourceID = resourceID
@@ -172,7 +206,7 @@ func (s *SQLStore) ClaimServiceResource(ctx context.Context, id string, revision
 	return r, tx.Commit()
 }
 func (s *SQLStore) SaveServiceResource(ctx context.Context, r core.ServiceResource, run core.ServiceProvisionRun, item *core.Service) error {
-	if run.ID != r.RunID || run.ProjectID != r.ProjectID || r.LeaseToken == "" || r.Policy != "retain" || r.State != "ready" && r.State != "unresolved" && r.State != "deleted" {
+	if run.ID != r.RunID || run.ProjectID != r.ProjectID || r.LeaseToken == "" || !validServicePolicy(r) || r.State != "ready" && r.State != "unresolved" && r.State != "deleted" && !(r.Target.Provider == "neon" && r.State == "deleting" && r.OperationID != r.RunID) {
 		return ErrServiceResourceChanged
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -180,6 +214,11 @@ func (s *SQLStore) SaveServiceResource(ctx context.Context, r core.ServiceResour
 		return err
 	}
 	defer tx.Rollback()
+	if r.ReplacesRunID != "" {
+		if err = s.lockPreviewResource(ctx, tx, r.PreviewID, true); err != nil {
+			return err
+		}
+	}
 	before := r.Revision
 	r.Revision++
 	r.UpdatedAt = time.Now().UTC()
@@ -201,6 +240,11 @@ func (s *SQLStore) SaveServiceResource(ctx context.Context, r core.ServiceResour
 		existing, err := decodeService(raw)
 		if err != nil || existing.ProjectID != r.ProjectID || existing.ProvisionRunID != r.RunID {
 			return ErrServiceResourceChanged
+		}
+	}
+	if r.ReplacesRunID != "" {
+		if err = s.finishNeonReplacement(ctx, tx, r, item); err != nil {
+			return err
 		}
 	}
 	if r.State == "deleted" {

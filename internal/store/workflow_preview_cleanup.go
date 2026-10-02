@@ -40,6 +40,11 @@ func (s *SQLStore) lockPreviewResource(ctx context.Context, tx *changeTx, id str
 	if err := tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workflow_preview_triggers WHERE resource_id=? AND closed_at IS NULL AND expires_at IS NOT NULL AND expires_at<=?`), id, stamp(time.Now().UTC())).Scan(&expired); err != nil {
 		return err
 	}
+	if expired == 0 {
+		if err := tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM neon_replacements WHERE preview_id=? AND state IN ('accepted','unresolved')`), id).Scan(&expired); err != nil {
+			return err
+		}
+	}
 	if expired > 0 {
 		return ErrPreviewClosing
 	}
@@ -208,6 +213,10 @@ func (s *SQLStore) ListWorkflowPreviewCleanups(ctx context.Context, resourceID s
 		return nil, err
 	}
 	for i := range result {
+		result[i].Services, err = s.neonCleanupServices(ctx, result[i].ID)
+		if err != nil {
+			return nil, err
+		}
 		result[i].Apps, err = s.previewCleanupApps(ctx, result[i].ID)
 		if err != nil {
 			return nil, err
@@ -329,6 +338,9 @@ func (s *SQLStore) BeginWorkflowPreviewCleanup(ctx context.Context, resourceID, 
 			return c, err
 		}
 	}
+	if err = s.captureNeonCleanupServices(ctx, tx, c); err != nil {
+		return c, err
+	}
 	if err = s.fencePreviewMutations(ctx, tx, resourceID, "Preview cleanup requested", now); err != nil {
 		return c, err
 	}
@@ -360,6 +372,9 @@ func (s *SQLStore) ClaimWorkflowPreviewCleanup(ctx context.Context, id string, n
 		return nil, err
 	}
 	c.Apps, err = s.previewCleanupApps(ctx, id)
+	if err == nil {
+		c.Services, err = s.neonCleanupServices(ctx, id)
+	}
 	return &c, err
 }
 func (s *SQLStore) SaveWorkflowPreviewCleanupApp(ctx context.Context, c core.WorkflowPreviewCleanup, a core.WorkflowPreviewCleanupApp) error {
@@ -389,6 +404,12 @@ func (s *SQLStore) FinishWorkflowPreviewCleanup(ctx context.Context, c core.Work
 		}
 		if incomplete > 0 {
 			return errors.New("preview cleanup still has unresolved runtime ownership")
+		}
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workflow_preview_cleanup_services WHERE cleanup_id=? AND state<>'succeeded'`), c.ID).Scan(&incomplete); err != nil {
+			return err
+		}
+		if incomplete > 0 {
+			return errors.New("preview cleanup still has unresolved owned databases")
 		}
 		// Explicit removal can supersede an expiry while cleanup is in progress.
 		if err = tx.QueryRowContext(ctx, s.q(`SELECT final_state FROM workflow_preview_cleanups WHERE id=?`), c.ID).Scan(&resourceState); err != nil {

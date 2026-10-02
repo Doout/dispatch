@@ -3,7 +3,7 @@
 Dispatch can create an isolated PostgreSQL branch in an existing Neon project.
 It does not install or provision a Neon cluster. The initial adapter supports
 schema-only preview branches, read-write compute, branch-specific credentials,
-reconciliation and reviewed branch deletion. Live Neon account validation is
+reconciliation, reviewed schema-only replacement and branch deletion. Live Neon account validation is
 pending; conformance tests use local TLS fixtures matching the published API.
 
 ## Configure a provider and service template
@@ -14,7 +14,9 @@ entering its API endpoint, Neon project ID and parent branch ID. Use a key
 restricted to that Neon project. Defaults use
 `https://console.neon.tech/api/v2`; compatible endpoints must use HTTPS and may
 not redirect. The saved endpoint, credential reference and Dispatch project
-assignment are immutable. Register a new provider to change them.
+assignment are immutable. Register a new provider to change them. Owners can
+review removal of an unused registration; template references and owned service
+history block removal so recovery retains its provider identity.
 
 The same configuration is available through owner-only
 `POST /api/v1/neon-providers`; project members can list assigned providers with
@@ -124,10 +126,25 @@ never repeats branch creation after an uncertain create whose branch cannot be
 found. Inspect the original run and provider; do not repeatedly submit new runs.
 
 Source/default/protected branches and branches with changed ownership are refused.
-Active preview references and application consumers block deletion. Preview close,
-expiry and ordinary application cleanup retain the database. Neon idle compute
-suspension can reduce idle compute use, but a new connection wakes it; this is
-not a hard stop or database deletion policy.
+Active preview references and application consumers block deletion. Retain is the
+default cleanup policy. In the owned resource panel, review and select retain,
+suspend or delete for this branch. Every change requires current project
+configuration and deployment permissions plus the shared typed confirmation.
+Delete explicitly approves permanent loss of this branch's data when the preview
+closes or expires. The selected policy and approving actor are saved before cleanup.
+
+Preview close and expiry capture each linked branch, its policy and a stable
+operation ID in the existing preview cleanup intent. Database cleanup runs only
+after its owned workloads stop. Retain preserves its reference. Suspend stops
+compute and retains data, but a new connection can wake it. Delete removes the
+branch and its connection registration after checking all consumers. Only the
+captured preview's closed application bindings are detached; other consumers block
+suspend and delete. Ownership changes block both operations.
+
+A lost delete or suspend response remains unresolved. Reconciliation inspects the
+captured branch ID and never reposts the uncertain action. A renamed branch is an
+ownership error, not evidence of deletion. Only a verified missing branch settles
+a delete. Inspect the provider when the outcome stays unknown.
 
 After stopping the preview and detaching its deployed consumers, use the existing
 owned-service **Delete resource** action. Its typed confirmation explicitly
@@ -135,14 +152,36 @@ reviews permanent branch and data deletion. Reconciliation of an interrupted
 delete inspects the same captured branch identity. Other branches, the parent
 and the Neon project remain untouched.
 
-## Current limits
+## Reset to a fresh schema
 
-`retain` is the only automatic cleanup policy in this initial adapter. Automatic
-TTL branch deletion and reviewed reset/replacement operations remain follow-up
-work. To start with a fresh schema, create a new preview identity, test its new
-connection and migrations, then review deletion of the old branch. Neon
-schema-only branches are independent roots; invoking the provider restore API
-would copy schema **and data**, so Dispatch does not expose that as a safe reset.
+Pause the preview and finish its active workflow runs. **Reset to fresh schema**
+reviews the current schema-only ServiceTemplate and owned branch. It creates a
+new generation with a fresh child role and no parent rows. The old branch and
+connection remain intact while the candidate is being prepared. Saving the new
+encrypted connection and switching the preview alias happen in one transaction.
+The old generation changes to retain and remains visible for separate deletion.
+Existing deployments keep their old connection until redeployed; run migrations
+before sending traffic to the replacement.
+
+A pending or unresolved replacement blocks preview resume and cleanup. Reconcile
+the replacement's original ServiceRun after a lost response. If abandoning it,
+review deletion of the replacement candidate; confirmed deletion releases the
+preview without changing the original binding. Never submit another reset to
+work around an uncertain candidate. Resets accept the standard Idempotency-Key
+header and replay the original service provision receipt.
+
+API paths under `/api/v1/service-provision-runs/RUN_ID/resource` are
+`policy-retain`, `policy-suspend`, `policy-delete`, and `reset`. POST the matching
+`-preview` path first, then submit its typed `confirmation` to the action path.
+Policy changes return the resource; reset returns the new owned resource or an
+idempotency receipt when a key is supplied. Template YAML continues to use
+`cleanupPolicy: retain`; destructive lifecycle policies require a separate review
+of the created branch. A deleted preview branch needs a new preview identity.
+
+Neon schema-only branches are independent roots. The provider restore API copies
+schema and data, so Dispatch does not use it for reset.
+
+## Current limits
 
 Native Dispatch workload backups currently support owned PostgreSQL/Docker
 services, not Neon branches. Use the provider's supported recovery facilities

@@ -35,6 +35,7 @@ type Spec struct {
 }
 
 type Scope struct {
+	ExpectedBranchID string `json:"-"`
 	ProjectID        string `json:"projectId"`
 	RunID            string `json:"runId"`
 	PreviewID        string `json:"previewId,omitempty"`
@@ -180,6 +181,9 @@ func annotations(scope Scope) map[string]string {
 	return map[string]string{"dispatch.managed-by": "dispatch", "dispatch.project": scope.ProjectID, "dispatch.run": scope.RunID, "dispatch.preview": scope.PreviewID, "dispatch.generation": fmt.Sprint(scope.Generation), "dispatch.config": scope.ConfigDigest}
 }
 func validateBranch(s Spec, scope Scope, b Branch, a annotation) error {
+	if scope.ExpectedBranchID != "" && b.ID != scope.ExpectedBranchID {
+		return errors.New("Neon branch differs from its captured resource identity")
+	}
 	if !providerID.MatchString(b.ID) || b.ProjectID != s.ProjectID || b.Name != Name(scope) || b.Default || b.Protected {
 		return errors.New("Neon branch identity or protection changed")
 	}
@@ -256,6 +260,16 @@ func (c *Client) branch(ctx context.Context, s Spec, scope Scope, id string) (Br
 func (c *Client) Find(ctx context.Context, s Spec, scope Scope) (*Branch, error) {
 	if err := validateScope(s, scope); err != nil {
 		return nil, err
+	}
+	if scope.ExpectedBranchID != "" {
+		branch, err := c.branch(ctx, s, scope, scope.ExpectedBranchID)
+		if IsNotFound(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &branch, nil
 	}
 	var found *Branch
 	cursor := ""

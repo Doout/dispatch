@@ -1669,3 +1669,56 @@ CREATE TABLE workflow_check_reports (
 );
 CREATE INDEX workflow_check_pending ON workflow_check_reports(complete,next_attempt_at,lease_until);
 CREATE INDEX workflow_check_revision ON workflow_check_reports(revision_id);
+
+-- dispatch:migration 093_neon_lifecycle
+CREATE TABLE workflow_preview_cleanup_services (
+ cleanup_id TEXT NOT NULL REFERENCES workflow_preview_cleanups(id),
+ run_id TEXT NOT NULL REFERENCES service_resources(run_id),
+ alias TEXT NOT NULL, policy TEXT NOT NULL, resource_id TEXT NOT NULL,
+ operation_id TEXT NOT NULL UNIQUE, state TEXT NOT NULL,
+ action_started BOOLEAN NOT NULL DEFAULT FALSE, error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(cleanup_id,run_id)
+);
+CREATE TABLE neon_replacements (
+ source_run_id TEXT NOT NULL REFERENCES service_resources(run_id),
+ replacement_run_id TEXT PRIMARY KEY REFERENCES service_resources(run_id),
+ preview_id TEXT NOT NULL REFERENCES workflow_resources(id), alias TEXT NOT NULL,
+ state TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX neon_replacement_active ON neon_replacements(preview_id,alias) WHERE state IN ('accepted','unresolved');
+
+CREATE TRIGGER neon_replacement_preview_fence BEFORE UPDATE OF active,state ON workflow_resources
+WHEN (NEW.active=TRUE OR NEW.state IN ('expiring','expired','removed')) AND EXISTS(SELECT 1 FROM neon_replacements WHERE preview_id=NEW.id AND state IN ('accepted','unresolved'))
+BEGIN SELECT RAISE(ABORT,'resolve the pending Neon replacement before changing preview lifecycle'); END;
+
+CREATE TRIGGER neon_suspend_app_insert BEFORE INSERT ON app_service_bindings
+WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
+BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+CREATE TRIGGER neon_suspend_app_update BEFORE UPDATE ON app_service_bindings
+WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
+BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+CREATE TRIGGER neon_suspend_workflow_insert BEFORE INSERT ON workflow_service_references
+WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
+BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+CREATE TRIGGER neon_suspend_workflow_update BEFORE UPDATE ON workflow_service_references
+WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
+BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+CREATE TRIGGER neon_suspend_deployment_insert BEFORE INSERT ON deployment_service_bindings
+WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
+BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+CREATE TRIGGER neon_suspend_deployment_update BEFORE UPDATE ON deployment_service_bindings
+WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
+BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+CREATE TRIGGER neon_suspend_dependency_insert BEFORE INSERT ON service_resource_dependencies
+WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
+BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+CREATE TRIGGER neon_suspend_dependency_update BEFORE UPDATE ON service_resource_dependencies
+WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
+BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
