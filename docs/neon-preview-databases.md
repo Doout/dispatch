@@ -119,9 +119,11 @@ and can coexist with these preview bindings.
 
 Owned-service history shows the provider phase, preview identity and safe
 recovery timing. The accepted create checkpoint is saved before a provider POST.
-After a lost response, reconciliation searches the exact deterministic branch
-name and verifies its Dispatch project, run, preview, configuration and generation
-annotations. It completes missing compute and role setup on that branch. It
+Recovery uses the captured branch ID when available. If the create response was
+lost before an ID was saved, reconciliation searches the exact deterministic
+branch name. It verifies the branch's Dispatch project, run, preview,
+configuration and generation annotations, then completes missing compute and
+role setup on that branch. It
 never repeats branch creation after an uncertain create whose branch cannot be
 found. Inspect the original run and provider; do not repeatedly submit new runs.
 
@@ -169,6 +171,10 @@ review deletion of the replacement candidate; confirmed deletion releases the
 preview without changing the original binding. Never submit another reset to
 work around an uncertain candidate. Resets accept the standard Idempotency-Key
 header and replay the original service provision receipt.
+
+A candidate whose durable record proves creation never started can be cancelled
+without a provider call. An attempted create with an unknown outcome still
+requires inspection.
 
 API paths under `/api/v1/service-provision-runs/RUN_ID/resource` are
 `policy-retain`, `policy-suspend`, `policy-delete`, and `reset`. POST the matching
