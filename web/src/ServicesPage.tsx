@@ -8,6 +8,7 @@ import { useDeploymentCatalog } from "./deployments/DeploymentCatalog";
 import { ServiceOperations } from "./ServiceOperations";
 import { ServiceTemplateForm } from "./ServiceTemplateForm";
 import { ServiceTemplateEditor } from "./ServiceTemplateEditor";
+import { WorkloadBackups } from "./WorkloadBackups";
 import { ServiceResourcePanel } from "./ServiceResourcePanel";
 import { ServiceTemplateCatalog } from "./ServiceTemplateCatalog";
 
@@ -20,7 +21,7 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
  const [rotation,setRotation] = useState(false);
  const [editing, setEditing] = useState<ServiceConnection | "new" | null>(null);
  const [adding, setAdding] = useState(false);
- const [tab, setTab] = useState<"services" | "templates">("services");
+ const [tab, setTab] = useState<"services" | "templates" | "backups">("services");
  const [templateEditing, setTemplateEditing] = useState<ServiceTemplate | "new" | null>(null);
  const [templatesLoading, setTemplatesLoading] = useState(true);
  const [template, setTemplate] = useState<ServiceTemplate | null>(null);
@@ -61,11 +62,11 @@ export function ServicesPage({ overview, onChanged }: { overview: Overview; onCh
   {templatesError && <p role="alert" className="error">{templatesError}</p>}
  </div>;
  return <div className="page-layout services-page">
-  <PageHeader view="services" action={canManageAnyProject(overview, "project.configure") ? { label: tab === "templates" ? "Create template" : "Add service", onClick: () => tab === "templates" ? setTemplateEditing("new") : setAdding(true) } : undefined} />
+  <PageHeader view="services" action={tab !== "backups" && canManageAnyProject(overview, "project.configure") ? { label: tab === "templates" ? "Create template" : "Add service", onClick: () => tab === "templates" ? setTemplateEditing("new") : setAdding(true) } : undefined} />
   <p className="service-intro">Create a service from a template or connect one that already exists.</p>
-  <div className="service-mode service-tabs" role="group" aria-label="Services view"><button aria-pressed={tab === "services"} onClick={() => setTab("services")}>Services</button><button aria-pressed={tab === "templates"} onClick={() => setTab("templates")}>Templates</button></div>
+  <div className="service-mode service-tabs" role="group" aria-label="Services view"><button aria-pressed={tab === "services"} onClick={() => setTab("services")}>Services</button><button aria-pressed={tab === "templates"} onClick={() => setTab("templates")}>Templates</button><button aria-pressed={tab === "backups"} onClick={() => setTab("backups")}>Backups</button></div>
   {overview.projects.length > 1 && <label className="service-filter">Project<select value={project} onChange={e => setProject(e.target.value)}><option value="">All projects</option>{overview.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
-  {tab === "templates" ? <>
+  {tab === "backups" ? <WorkloadBackups overview={overview} project={project} /> : tab === "templates" ? <>
    {templatesError ? <div role="alert" className="error">{templatesError}<button className="quiet-button" onClick={() => void refreshTemplates()}>Retry</button></div> : templatesLoading ? <p role="status">Loading templates…</p> : <ServiceTemplateCatalog templates={templates.filter(t => !project || t.projectId === project)} overview={overview} onEdit={setTemplateEditing} onUse={setTemplate} onChanged={refreshTemplates} />}
   </> : <>
   {runs.filter(run => (!project || run.projectId === project) && (run.state === "queued" || run.state === "running" || run.state === "failed")).slice(-5).reverse().map(run => <div key={run.id} className="service-provision-status" role="status"><strong>{run.serviceName} · {run.state === "failed" ? "Provisioning failed" : "Provisioning"}</strong><p>{run.error || run.phase || "Waiting for the provider to finish."}</p>{run.target && <ServiceResourcePanel runId={run.id} canManage={canManageProject(overview, run.projectId, "project.configure")} canRecover={canManageProject(overview, run.projectId, "deployment.run")} onChanged={onChanged} />}</div>)}

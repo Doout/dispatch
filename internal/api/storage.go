@@ -251,7 +251,9 @@ func (a *API) addStorageReview(ctx context.Context, out *destructiveReview) (str
 		}
 		out.Resources = append(out.Resources, fmt.Sprintf("Storage %s: %s, policy %s, %d consumer(s); workload removal retains data", item.Name, item.State, item.Policy, len(item.Consumers)))
 		if out.ResourceType == "server" && !item.Independent {
-			out.BlockedReason = store.ErrStorageProtected.Error()
+			if out.BlockedReason == "" {
+				out.BlockedReason = store.ErrStorageProtected.Error()
+			}
 		}
 	}
 	return deploy.StorageVersion(items), nil

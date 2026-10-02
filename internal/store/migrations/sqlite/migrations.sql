@@ -1540,3 +1540,7 @@ BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
 CREATE TRIGGER protect_restore_service_dependency BEFORE INSERT ON service_resource_dependencies
 WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
 BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;
+
+CREATE TRIGGER protect_restore_service_dependency_update BEFORE UPDATE ON service_resource_dependencies
+WHEN EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown'))
+BEGIN SELECT RAISE(ABORT,'service has an active data restore'); END;

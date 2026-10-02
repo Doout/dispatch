@@ -40,11 +40,14 @@ func (r Request) SecretValues() []string {
 	secrets := []string{r.Inputs.SourceCredential}
 	if r.WorkloadBackup != nil {
 		secrets = append(secrets, r.WorkloadBackup.Key, r.WorkloadBackup.Source.Password)
+		for _, value := range r.WorkloadBackup.Source.Inputs {
+			secrets = append(secrets, value)
+		}
 		if r.WorkloadBackup.Destination != nil {
 			secrets = append(secrets, r.WorkloadBackup.Destination.Password)
 		}
 		for _, check := range r.WorkloadBackup.Checks {
-			secrets = append(secrets, check.Expected)
+			secrets = append(secrets, check.Query, check.Expected)
 		}
 	}
 	for _, binding := range r.Inputs.Services {

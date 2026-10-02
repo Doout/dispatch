@@ -12,12 +12,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/workloadbackup"
 )
+
+var backupDatabaseName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$-]{0,62}$`)
 
 var backupImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
@@ -39,6 +42,14 @@ func ValidateWorkloadBackupRequest(r core.WorkloadBackupRequest, server core.Ser
 	clear(raw)
 	if err != nil || len(raw) != 32 {
 		return errors.New("backup encryption key is unavailable")
+	}
+	if _, err := backupDatabaseVariables(r.Source); err != nil {
+		return err
+	}
+	if r.Destination != nil {
+		if _, err := backupDatabaseVariables(*r.Destination); err != nil {
+			return err
+		}
 	}
 	if len(r.Checks) > 16 {
 		return errors.New("at most 16 verification assertions are supported")
@@ -175,7 +186,7 @@ func readBackupArtifact(dir string, r core.WorkloadBackupRequest) (workloadbacku
 	if err := readBackupJSON(dir, "manifest.enc", r.Key, r.Backup.ID, &a); err != nil {
 		return a, errors.New("backup manifest is inaccessible or cannot be decrypted")
 	}
-	if a.ID != r.Backup.ID || a.ProjectID != r.Backup.ProjectID || a.Encryption != "AES-256-GCM-chunks-v1" || !backupImageID.MatchString(a.ImageID) {
+	if a.ID != r.Backup.ID || a.ProjectID != r.Backup.ProjectID || a.Encryption != "AES-256-GCM-chunks-v1" || a.RequestDigest != backupRequestDigest(r) || !backupImageID.MatchString(a.ImageID) {
 		return a, errors.New("backup manifest ownership is invalid")
 	}
 	digest, n, err := workloadbackup.Checksum(filepath.Join(dir, "archive.enc"))
@@ -206,18 +217,22 @@ func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBa
 		return e.reconcileWorkloadBackup(ctx, dir, r)
 	}
 	if r.Action != "inspect" {
-		var completed core.WorkloadBackupResult
-		if readBackupJSON(dir, "result-"+r.OperationID+".enc", r.Key, r.Backup.ID, &completed) == nil {
-			if completed.OperationID != r.OperationID || completed.BackupID != r.Backup.ID || completed.ProjectID != r.Backup.ProjectID {
-				return result, errors.New("backup operation ownership changed")
-			}
+		completed, receiptErr := readBackupOperationResult(dir, "result-"+r.OperationID+".enc", r)
+		if receiptErr == nil {
 			return completed, nil
+		}
+		if !errors.Is(receiptErr, os.ErrNotExist) {
+			result.State = "unknown"
+			return result, receiptErr
 		}
 	}
 	if r.Action == "backup" {
 		result, err = e.createWorkloadBackup(ctx, dir, r, server)
 		if err == nil {
-			err = writeBackupJSON(dir, "result-"+r.OperationID+".enc", r.Key, r.Backup.ID, result)
+			err = writeBackupOperationResult(dir, "result-"+r.OperationID+".enc", r, result)
+			if err != nil {
+				result.State = "unknown"
+			}
 		}
 		return result, err
 	}
@@ -262,7 +277,10 @@ func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBa
 	}
 	result, err = e.restoreWorkloadBackup(ctx, plain, r, a, server)
 	if err == nil {
-		err = writeBackupJSON(dir, "result-"+r.OperationID+".enc", r.Key, r.Backup.ID, result)
+		err = writeBackupOperationResult(dir, "result-"+r.OperationID+".enc", r, result)
+		if err != nil {
+			result.State = "unknown"
+		}
 	}
 	return result, err
 }
@@ -290,8 +308,11 @@ func (e DockerExecutor) createWorkloadBackup(ctx context.Context, dir string, r 
 	if err != nil {
 		return result, err
 	}
-	vars, err := provisionVariables(r.Source, "")
+	vars, err := backupDatabaseVariables(r.Source)
 	if err != nil {
+		return result, err
+	}
+	if err = e.backupPostgresVersion(ctx, r.Backup.SourceResourceID, vars["service.username"], vars["service.database"]); err != nil {
 		return result, err
 	}
 	f, err := os.CreateTemp(dir, ".archive-")
@@ -303,7 +324,10 @@ func (e DockerExecutor) createWorkloadBackup(ctx context.Context, dir string, r 
 	reader, writer := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		err := e.backupCommand(ctx, nil, writer, "exec", "--user", "postgres", r.Backup.SourceResourceID, "pg_dump", "--format=custom", "--no-owner", "--no-acl", "--username="+vars["service.username"], "--dbname="+vars["service.database"])
+		options, err := backupPostgresOptions(ctx)
+		if err == nil {
+			err = e.backupCommand(ctx, nil, writer, "exec", "--user", "postgres", "-e", options, r.Backup.SourceResourceID, "pg_dump", "--format=custom", "--no-owner", "--no-acl", "--username="+vars["service.username"], "--dbname="+vars["service.database"])
+		}
 		writer.CloseWithError(err)
 		done <- err
 	}()
@@ -334,12 +358,20 @@ func (e DockerExecutor) createWorkloadBackup(ctx context.Context, dir string, r 
 	return backupArtifactResult(r, a), nil
 }
 func (e DockerExecutor) restoreInto(ctx context.Context, archive io.Reader, container, username, database string, checks []core.BackupIntegrityCheck) error {
-	args := []string{"exec", "-i", "--user", "postgres", "-e", "PGOPTIONS=-c transaction_timeout=1500000 -c statement_timeout=1500000", container, "pg_restore", "--clean", "--if-exists", "--single-transaction", "--exit-on-error", "--no-owner", "--no-acl", "--username=" + username, "--dbname=" + database}
+	options, err := backupPostgresOptions(ctx)
+	if err != nil {
+		return err
+	}
+	args := []string{"exec", "-i", "--user", "postgres", "-e", options, container, "pg_restore", "--clean", "--if-exists", "--single-transaction", "--exit-on-error", "--no-owner", "--no-acl", "--username=" + username, "--dbname=" + database}
 	if err := e.backupCommand(ctx, archive, io.Discard, args...); err != nil {
 		return errors.New("database restore failed or was interrupted; inspect its recorded operation before another restore")
 	}
 	for _, check := range checks {
-		got, err := e.backupOutput(ctx, "exec", "--user", "postgres", container, "psql", "-X", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--username="+username, "--dbname="+database, "-tA", "--command=BEGIN READ ONLY; "+check.Query+"; COMMIT;")
+		options, err := backupPostgresOptions(ctx)
+		if err != nil {
+			return err
+		}
+		got, err := e.backupOutput(ctx, "exec", "--user", "postgres", "-e", options, container, "psql", "-X", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--username="+username, "--dbname="+database, "-tA", "--command=BEGIN READ ONLY; "+check.Query+"; COMMIT;")
 		if err != nil {
 			return errors.New("restored database failed a configured integrity query")
 		}
@@ -360,8 +392,11 @@ func (e DockerExecutor) restoreWorkloadBackup(ctx context.Context, archive io.Re
 	if err = e.validateBackupVolume(ctx, *r.DestinationStorage); err != nil {
 		return result, err
 	}
-	vars, err := provisionVariables(*r.Destination, "")
+	vars, err := backupDatabaseVariables(*r.Destination)
 	if err != nil {
+		return result, err
+	}
+	if err = e.backupPostgresVersion(ctx, dest.ResourceID, vars["service.username"], vars["service.database"]); err != nil {
 		return result, err
 	}
 	if err = e.restoreInto(ctx, archive, dest.ResourceID, vars["service.username"], vars["service.database"], r.Checks); err != nil {
@@ -390,7 +425,15 @@ func (e DockerExecutor) verifyWorkloadBackup(ctx context.Context, dir string, ar
 		} else {
 			result.CleanupState = "complete"
 		}
-		_ = writeBackupJSON(dir, "verification-"+r.OperationID+".enc", r.Key, r.Backup.ID, result)
+		if journalErr := writeBackupOperationResult(dir, "verification-"+r.OperationID+".enc", r, result); journalErr != nil {
+			result.State = "unknown"
+			err = errors.New("verification outcome could not be persisted; reconcile the original operation")
+		} else if result.CleanupState == "complete" {
+			if journalErr = writeBackupOperationResult(dir, "result-"+r.OperationID+".enc", r, result); journalErr != nil {
+				result.State = "unknown"
+				err = errors.New("verification outcome could not be persisted; reconcile the original operation")
+			}
+		}
 	}()
 	// Reusing a temporary name is forbidden until its interrupted operation is inspected.
 	existing, e1 := e.backupOutput(ctx, "ps", "-aq", "--no-trunc", "--filter", "name=^/"+name+"$")
@@ -417,7 +460,7 @@ func (e DockerExecutor) verifyWorkloadBackup(ctx context.Context, dir string, ar
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for !ready {
-		if e.backupCommand(ctx, nil, io.Discard, "exec", container, "pg_isready", "-U", "postgres", "-d", "verification") == nil {
+		if e.backupCommand(ctx, nil, io.Discard, "exec", container, "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "verification") == nil {
 			ready = true
 			break
 		}
@@ -480,7 +523,16 @@ func backupRequestDigest(r core.WorkloadBackupRequest) string {
 func (e DockerExecutor) deleteWorkloadBackup(dir string, r core.WorkloadBackupRequest) (core.WorkloadBackupResult, error) {
 	result := core.WorkloadBackupResult{BackupID: r.Backup.ID, ProjectID: r.Backup.ProjectID, OperationID: r.OperationID, ArtifactID: r.Backup.ID, State: "unknown", CleanupState: "complete"}
 	var owner workloadbackup.Artifact
-	if err := readBackupJSON(dir, "owner.enc", r.Key, r.Backup.ID, &owner); err != nil || owner.ID != r.Backup.ID || owner.ProjectID != r.Backup.ProjectID || owner.RequestDigest != backupRequestDigest(r) {
+	ownerErr := readBackupJSON(dir, "owner.enc", r.Key, r.Backup.ID, &owner)
+	if errors.Is(ownerErr, os.ErrNotExist) {
+		// A failure before the initial owner record commits may leave an empty
+		// accepted backup directory. Explicit deletion can retire that empty record.
+		if backupHasNoArchiveData(dir) {
+			owner = workloadbackup.Artifact{ID: r.Backup.ID, ProjectID: r.Backup.ProjectID, RequestDigest: backupRequestDigest(r)}
+			ownerErr = writeBackupJSON(dir, "owner.enc", r.Key, r.Backup.ID, owner)
+		}
+	}
+	if ownerErr != nil || owner.ID != r.Backup.ID || owner.ProjectID != r.Backup.ProjectID || owner.RequestDigest != backupRequestDigest(r) {
 		return result, errors.New("retained backup ownership cannot be verified")
 	}
 	entries, err := os.ReadDir(dir)
@@ -499,21 +551,39 @@ func (e DockerExecutor) deleteWorkloadBackup(dir string, r core.WorkloadBackupRe
 	}
 	result.State, result.Message = "deleted", "Retained backup bytes deleted after explicit review; encrypted operation history remains."
 	if err = writeBackupJSON(dir, "deleted.enc", r.Key, r.Backup.ID, result); err != nil {
+		result.State = "unknown"
 		return result, err
 	}
-	return result, writeBackupJSON(dir, "result-"+r.OperationID+".enc", r.Key, r.Backup.ID, result)
+	err = writeBackupOperationResult(dir, "result-"+r.OperationID+".enc", r, result)
+	if err != nil {
+		result.State = "unknown"
+	}
+	return result, err
 }
 func (e DockerExecutor) reconcileWorkloadBackup(ctx context.Context, dir string, r core.WorkloadBackupRequest) (core.WorkloadBackupResult, error) {
 	result := core.WorkloadBackupResult{BackupID: r.Backup.ID, ProjectID: r.Backup.ProjectID, OperationID: r.OperationID, ArtifactID: r.Backup.ID, State: "unresolved", CleanupState: "complete", Message: "The previous outcome is uncertain. Inspect the destination before a fresh reviewed restore."}
-	var saved core.WorkloadBackupResult
-	if readBackupJSON(dir, "result-"+r.OperationID+".enc", r.Key, r.Backup.ID, &saved) == nil {
+	saved, receiptErr := readBackupOperationResult(dir, "result-"+r.OperationID+".enc", r)
+	if receiptErr == nil {
 		return saved, nil
+	}
+	if !errors.Is(receiptErr, os.ErrNotExist) {
+		return result, receiptErr
 	}
 	switch r.RecoveryAction {
 	case "backup":
 		a, err := readBackupArtifact(dir, r)
 		if err != nil {
-			return result, err
+			var owner workloadbackup.Artifact
+			ownershipErr := readBackupJSON(dir, "owner.enc", r.Key, r.Backup.ID, &owner)
+			if errors.Is(ownershipErr, os.ErrNotExist) && backupHasNoArchiveData(dir) {
+				result.State, result.Message = "failed", "The accepted backup did not create archive bytes. Retire this empty record after review."
+				return result, nil
+			}
+			if ownershipErr != nil || owner.ID != r.Backup.ID || owner.ProjectID != r.Backup.ProjectID || owner.RequestDigest != backupRequestDigest(r) {
+				return result, errors.New("backup ownership cannot be verified; recover its encryption key before retiring the archive")
+			}
+			result.State, result.Message = "failed", "Owned backup archive or manifest failed integrity verification. Review and explicitly delete the failed archive before replacing it."
+			return result, nil
 		}
 		return backupArtifactResult(r, a), nil
 	case "delete":
@@ -526,11 +596,106 @@ func (e DockerExecutor) reconcileWorkloadBackup(ctx context.Context, dir string,
 			result.CleanupState = "failed"
 			return result, err
 		}
-		if readBackupJSON(dir, "verification-"+r.OperationID+".enc", r.Key, r.Backup.ID, &saved) == nil && saved.State == "verified" {
+		if saved, receiptErr = readBackupOperationResult(dir, "verification-"+r.OperationID+".enc", r); receiptErr == nil && saved.State == "verified" {
 			saved.CleanupState = "complete"
 			return saved, nil
 		}
 		result.State, result.Message = "failed", "Interrupted verification resources were removed. Start a new isolated verification."
 	}
 	return result, nil
+}
+
+func (e DockerExecutor) backupPostgresVersion(ctx context.Context, container, user, database string) error {
+	options, err := backupPostgresOptions(ctx)
+	if err != nil {
+		return err
+	}
+	version, err := e.backupOutput(ctx, "exec", "--user", "postgres", "-e", options, container, "psql", "-X", "--no-psqlrc", "--username="+user, "--dbname="+database, "-tA", "--command=SHOW server_version_num")
+	n, parseErr := strconv.Atoi(version)
+	if err != nil || parseErr != nil || n < 170000 {
+		return errors.New("native backup recovery requires PostgreSQL 17 or newer with bounded transaction execution")
+	}
+	return nil
+}
+
+func backupDatabaseVariables(req core.ServiceProvisionRequest) (map[string]string, error) {
+	values, err := provisionVariables(req, "")
+	if err != nil {
+		return nil, err
+	}
+	if !backupDatabaseName.MatchString(values["service.database"]) || !backupDatabaseName.MatchString(values["service.username"]) {
+		return nil, errors.New("native backup database and role names must be simple identifiers; connection strings are forbidden")
+	}
+	return values, nil
+}
+
+// The journal binds completion to immutable accepted inputs, even for a direct
+// executor caller. Mutable inventory status must not change legitimate replay.
+type backupOperationReceipt struct {
+	RequestDigest string                    `json:"requestDigest"`
+	Result        core.WorkloadBackupResult `json:"result"`
+}
+
+func backupOperationDigest(r core.WorkloadBackupRequest) string {
+	b := r.Backup
+	r.Backup = core.WorkloadBackup{ID: b.ID, ProjectID: b.ProjectID, ServerID: b.ServerID, NodeID: b.NodeID, SourceRunID: b.SourceRunID, StorageID: b.StorageID, SourceResourceID: b.SourceResourceID, ArtifactID: b.ArtifactID, Consistency: b.Consistency, Format: b.Format, Location: b.Location, Policy: b.Policy}
+	if r.Action == "reconcile" {
+		r.Action = r.RecoveryAction
+	}
+	r.RecoveryAction, r.Key = "", ""
+	raw, _ := json.Marshal(r)
+	sum := sha256.Sum256(raw)
+	clear(raw)
+	return hex.EncodeToString(sum[:])
+}
+func writeBackupOperationResult(dir, name string, r core.WorkloadBackupRequest, result core.WorkloadBackupResult) error {
+	return writeBackupJSON(dir, name, r.Key, r.Backup.ID, backupOperationReceipt{RequestDigest: backupOperationDigest(r), Result: result})
+}
+func readBackupOperationResult(dir, name string, r core.WorkloadBackupRequest) (core.WorkloadBackupResult, error) {
+	var receipt backupOperationReceipt
+	if err := readBackupJSON(dir, name, r.Key, r.Backup.ID, &receipt); err != nil {
+		return receipt.Result, err
+	}
+	result := receipt.Result
+	if receipt.RequestDigest != backupOperationDigest(r) || result.OperationID != r.OperationID || result.BackupID != r.Backup.ID || result.ProjectID != r.Backup.ProjectID {
+		return core.WorkloadBackupResult{}, errors.New("backup operation receipt does not match the accepted action or destination")
+	}
+	return result, nil
+}
+
+// Empty directories and unfinished encrypted metadata writes contain no archive.
+// Any possible archive or other file requires its valid ownership manifest.
+func backupHasNoArchiveData(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil || !strings.HasPrefix(entry.Name(), ".metadata-") || !info.Mode().IsRegular() {
+			return false
+		}
+	}
+	return true
+}
+
+// Docker client cancellation does not prove the exec process stopped. Bound each
+// database launch by the remaining controller deadline, including a margin,
+// rather than granting a new 25-minute transaction after archive preparation.
+func backupPostgresOptions(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	budget := 25 * time.Minute
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		margin := min(time.Second, remaining/10)
+		budget = min(budget, remaining-margin)
+	}
+	millis := budget.Milliseconds()
+	if millis < 1 {
+		return "", context.DeadlineExceeded
+	}
+	value := strconv.FormatInt(millis, 10)
+	return "PGOPTIONS=-c transaction_timeout=" + value + " -c statement_timeout=" + value, nil
 }

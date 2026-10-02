@@ -57,6 +57,17 @@ func (r Request) ValidateWorkloadBackupResult(result Result) error {
 	default:
 		return errors.New("invalid backup outcome")
 	}
+	action := r.WorkloadBackup.Action
+	if action == "reconcile" {
+		action = r.WorkloadBackup.RecoveryAction
+	}
+	expected := map[string]string{"backup": "ready", "inspect": "ready", "verify": "verified", "restore": "restored", "delete": "deleted"}[action]
+	if item.State != "failed" && item.State != "unknown" && item.State != "unresolved" && item.State != expected {
+		return errors.New("backup evidence does not match the accepted action")
+	}
+	if item.State == expected && item.CleanupState != "complete" {
+		return errors.New("completed backup evidence requires confirmed cleanup")
+	}
 	switch item.CleanupState {
 	case "complete", "pending", "failed":
 	default:

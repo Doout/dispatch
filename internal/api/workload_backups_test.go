@@ -35,7 +35,7 @@ func awaitBackupOperation(t *testing.T, a *API, id, state string) core.WorkloadB
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("backup operation did not reach %s: %+v", state, op)
+	t.Fatalf("backup operation %s did not reach %s: action=%s state=%s", op.ID, state, op.Action, op.State)
 	return op
 }
 func TestWorkloadBackupAPIReceiptsConfirmationAndProtectedTarget(t *testing.T) {
@@ -90,6 +90,11 @@ func TestWorkloadBackupAPIReceiptsConfirmationAndProtectedTarget(t *testing.T) {
 	confirm["confirmation"] = destructiveConfirmation{ResourceID: b.ID, Action: "restore", ExpectedVersion: review.Version, ConfirmName: source.Name}
 	json.Unmarshal(serviceRequestTest(t, a, "POST", restore, confirm, 202), &op)
 	awaitBackupOperation(t, a, op.ID, "succeeded")
+	var targetReview destructiveReview
+	json.Unmarshal(serviceRequestTest(t, a, "POST", "/api/v1/servers/"+b.ServerID+"/delete-preview", nil, 200), &targetReview)
+	if !strings.Contains(targetReview.BlockedReason, "Retained workload backups") {
+		t.Fatal("target review omitted retained backup protection", targetReview)
+	}
 	if err = a.store.DeleteServer(context.Background(), b.ServerID); err == nil {
 		t.Fatal("retained backup did not protect target registration")
 	}
@@ -132,4 +137,40 @@ func TestWorkloadBackupInterruptedVerificationPreservesRecoveryLease(t *testing.
 	}
 	serviceRequestTest(t, a, "POST", base+"/operations/"+op.ID+"/reconcile", nil, 409)
 	serviceRequestTest(t, a, "POST", base+"/verify", nil, 409)
+}
+
+func TestWorkloadBackupDelayedExecutionCannotOutliveAcceptedLease(t *testing.T) {
+	a, source := backupAPIFixture(t)
+	calls := 0
+	var mu sync.Mutex
+	a.workloadBackupBackend = func(_ context.Context, input core.WorkloadBackupRequest, _ core.Server) (core.WorkloadBackupResult, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return core.WorkloadBackupResult{BackupID: input.Backup.ID, ProjectID: input.Backup.ProjectID, OperationID: input.OperationID, ArtifactID: input.Backup.ID, State: "ready", Checksum: strings.Repeat("a", 64), CleanupState: "complete"}, nil
+	}
+	var created core.WorkloadBackupOperation
+	json.Unmarshal(serviceRequestTest(t, a, "POST", "/api/v1/workload-backups", map[string]any{"sourceRunId": source.RunID}, 202), &created)
+	awaitBackupOperation(t, a, created.ID, "succeeded")
+	b, err := a.store.(store.WorkloadBackupStore).GetWorkloadBackup(context.Background(), created.BackupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := a.acceptWorkloadBackupOperation(context.Background(), b, "verify", "delayed-verification", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a delayed dispatcher whose safe execution window is already over,
+	// while its one-minute recovery margin still protects the accepted operation.
+	op.LeaseUntil = time.Now().Add(30 * time.Second)
+	a.executeWorkloadBackupOperation(op, false)
+	saved, err := a.store.(store.WorkloadBackupStore).GetWorkloadBackupOperation(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 || saved.State != "running" {
+		t.Fatal("delayed execution received a new runtime window", calls, saved.State)
+	}
 }

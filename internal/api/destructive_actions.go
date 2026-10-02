@@ -259,6 +259,18 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 			out.BlockedReason = "Managed server cannot be deleted. The controller target is reconciled automatically."
 		}
 		out.Summary = "Remove this target registration. The server and its stored application data remain. Applications must be detached first."
+		if backups, ok := a.store.(store.WorkloadBackupStore); ok && err == nil {
+			items, backupErr := backups.ListWorkloadBackups(ctx, "")
+			if backupErr != nil {
+				return out, backupErr
+			}
+			for _, backup := range items {
+				if backup.ServerID == item.ID && backup.State != "deleted" {
+					out.Resources = append(out.Resources, "Retained workload backup "+backup.ID)
+					out.BlockedReason = "Retained workload backups require this target. Review and explicitly delete their archive bytes before removing the target."
+				}
+			}
+		}
 	case "service-resource":
 		data := a.store.(store.ServiceResourceStore)
 		var item core.ServiceResource

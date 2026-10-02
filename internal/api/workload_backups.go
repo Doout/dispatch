@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workloadbackup"
 	"github.com/go-chi/chi/v5"
@@ -476,15 +478,17 @@ func (a *API) runWorkloadBackup(ctx context.Context, input core.WorkloadBackupRe
 	}
 	if err == nil && input.Action == "reconcile" {
 		if data, ok := a.store.(interface {
-			ReconcileWorkloadBackupRuntime(context.Context, string, string, time.Time) error
+			ReconcileWorkloadBackupRuntime(context.Context, string, string, string, time.Time) error
 		}); ok {
-			err = data.ReconcileWorkloadBackupRuntime(ctx, request.Service.Request.Run.ID, job.ID, time.Now().UTC())
+			err = data.ReconcileWorkloadBackupRuntime(ctx, request.Service.Request.Run.ID, input.OperationID, job.ID, time.Now().UTC())
 		}
 	}
 	return *result.WorkloadBackup, err
 }
 func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, recovering bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Keep queueing, preparation and remote execution inside the accepted lease.
+	// A delayed goroutine must not receive a fresh 30-minute window.
+	ctx, cancel := context.WithDeadline(context.Background(), op.LeaseUntil.Add(-time.Minute))
 	defer cancel()
 	s, _ := a.workloadBackupStore()
 	b, err := s.GetWorkloadBackup(ctx, op.BackupID)
@@ -507,17 +511,25 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 	}
 	now := time.Now().UTC()
 	op.State, op.Message, op.CleanupState = "succeeded", result.Message, result.CleanupState
-	if err != nil || result.State == "unknown" || result.State == "unresolved" {
-		op.State, op.Message = "unknown", "Backup outcome is uncertain or validation failed. Inspect this operation and its target before recovery."
-		if result.State == "failed" && result.CleanupState == "complete" && ctx.Err() == nil {
-			op.State = "failed"
-		}
-		if recovering && err == nil && result.State == "unresolved" {
-			op.State = "unresolved"
+	var runtimeError *runtimecontract.Error
+	uncertain := ctx.Err() != nil || result.State == "unknown" || result.CleanupState == "failed" || errors.As(err, &runtimeError) && runtimeError.Code == runtimecontract.Uncertain
+	if err != nil || result.State == "failed" {
+		op.State = "failed"
+		if err != nil || op.Message == "" {
+			op.Message = workloadBackupFailureMessage(err)
 		}
 	}
-	if result.State == "failed" {
-		op.State = "failed"
+	if uncertain {
+		op.State = "unknown"
+		if op.Message == "" {
+			op.Message = "The outcome is uncertain. Reconcile the original operation after its execution lease ends."
+		}
+	}
+	if result.State == "unresolved" {
+		op.State = "unknown"
+		if recovering && err == nil {
+			op.State = "unresolved"
+		}
 	}
 	switch op.Action {
 	case "backup":
@@ -628,5 +640,32 @@ func (a *API) getWorkloadBackupOperation(w http.ResponseWriter, r *http.Request)
 	}
 	if a.requireProject(w, r, core.PermissionProjectView, op.ProjectID) {
 		writeJSON(w, 200, op)
+	}
+}
+
+func workloadBackupFailureMessage(err error) string {
+	if err == nil {
+		return "Verification failed; inspect its retained operation and cleanup outcome."
+	}
+	text := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(text, "checksum"):
+		return "Backup checksum failed. The archive is corrupt or was replaced."
+	case strings.Contains(text, "decrypt") || strings.Contains(text, "authenticat") || strings.Contains(text, "encryption key"):
+		return "The archive or recovery manifest cannot be decrypted or authenticated. Check the retained key and original target."
+	case strings.Contains(text, "cleanup"):
+		return "Isolated verification cleanup failed. Reconcile the original operation before starting another check."
+	case strings.Contains(text, "integrity"):
+		return "The restored database failed a configured integrity check. Inspect the destination and verification outcome."
+	case strings.Contains(text, "ownership") || strings.Contains(text, "identity") || strings.Contains(text, "destination changed"):
+		return "Resource ownership or target identity changed. Inspect the original target before another review."
+	case strings.Contains(text, "inaccessible") || strings.Contains(text, "unavailable"):
+		return "The backup or target storage is inaccessible. Check the original target and retained artifact."
+	case strings.Contains(text, "database-native"):
+		return "The database-native backup failed. Check database access and target storage space."
+	case strings.Contains(text, "restore"):
+		return "Data restore failed or was interrupted. Inspect the destination before reviewing another restore."
+	default:
+		return "Backup execution failed. Check the original target, storage space and recorded cleanup state."
 	}
 }
