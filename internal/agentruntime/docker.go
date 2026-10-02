@@ -90,6 +90,19 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 	var err error
 	var result remoteruntime.Result
 	switch request.Operation {
+	case remoteruntime.WorkloadBackup, remoteruntime.WorkloadBackupInspect:
+		output, backupErr := e.executor.RunWorkloadBackup(ctx, *request.WorkloadBackup, server)
+		result.WorkloadBackup = &output
+		if backupErr != nil {
+			result.State = "failed"
+			result.Code = runtimecontract.Failed
+			result.Message = backupErr.Error()
+			if output.State == "unknown" || ctx.Err() != nil {
+				result.State = "unknown"
+				result.Code = runtimecontract.Uncertain
+			}
+			return result
+		}
 	case remoteruntime.StorageInspect, remoteruntime.StorageDelete:
 		backend := deploy.RuntimeStorage{Run: func(ctx context.Context, _ io.Reader, out io.Writer, name string, args ...string) error {
 			if name != "docker" {

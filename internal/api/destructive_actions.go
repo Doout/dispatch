@@ -167,6 +167,9 @@ func (a *API) recheckDestructiveAction(r *http.Request, kind, action string) err
 }
 
 func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, action string) (destructiveReview, error) {
+	if kind == "workload-backup" {
+		return a.workloadBackupReview(ctx, r, action)
+	}
 	id := chi.URLParam(r, "id")
 	if kind == "relay-webhook" {
 		id = chi.URLParam(r, "webhookId")

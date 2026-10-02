@@ -33,20 +33,21 @@ type AuthConfig struct {
 }
 
 type EventConfig struct {
-	Bootstrap       *bootstrap.Manager
-	BackupDirectory string
-	MasterKeyFile   string
-	DatabaseURL     string
-	WebhookSecret   string
-	DefaultCommand  string
-	GitHubAPIURL    string
-	GitHubToken     string
-	Vault           *secretcrypto.Vault
-	GitHubApps      *githubapp.Manager
-	SecretResolver  *secretvalue.Resolver
-	Edge            *edge.Broker
-	RepositoryCache string
-	Analytics       analytics.Reader
+	WorkloadBackupDirectory string
+	Bootstrap               *bootstrap.Manager
+	BackupDirectory         string
+	MasterKeyFile           string
+	DatabaseURL             string
+	WebhookSecret           string
+	DefaultCommand          string
+	GitHubAPIURL            string
+	GitHubToken             string
+	Vault                   *secretcrypto.Vault
+	GitHubApps              *githubapp.Manager
+	SecretResolver          *secretvalue.Resolver
+	Edge                    *edge.Broker
+	RepositoryCache         string
+	Analytics               analytics.Reader
 }
 
 type githubEventServices struct {
@@ -55,6 +56,7 @@ type githubEventServices struct {
 }
 
 type API struct {
+	workloadBackupBackend  workloadBackupRuntime
 	serviceResourceBackend serviceResourceRuntime
 	bootstrapOnce          sync.Once
 	bootstrap              *bootstrap.Manager

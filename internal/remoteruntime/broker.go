@@ -169,6 +169,9 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	if (r.Operation == runtimecontract.Deploy || r.Operation == runtimecontract.Rollback) && r.Deployment.Health.State != "" && c.Result.State == "succeeded" && (c.Result.Health == nil || c.Result.Health.State != "passed") {
 		return errors.New("successful remote deployment requires persisted passing health evidence")
 	}
+	if err := r.ValidateWorkloadBackupResult(c.Result); err != nil {
+		return err
+	}
 	if err := r.ValidateServiceResult(c.Result); err != nil {
 		return err
 	}

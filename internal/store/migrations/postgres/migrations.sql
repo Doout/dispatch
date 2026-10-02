@@ -1466,3 +1466,27 @@ BEGIN
 END;
 $$;
 CREATE TRIGGER protect_service_resource_target BEFORE DELETE ON servers FOR EACH ROW EXECUTE FUNCTION protect_service_resource_target();
+
+-- dispatch:migration 085_workload_backups
+CREATE TABLE workload_backups(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),server_id TEXT NOT NULL,source_run_id TEXT NOT NULL,state TEXT NOT NULL,revision BIGINT NOT NULL,input_cipher TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX workload_backups_target ON workload_backups(server_id,state);
+CREATE TABLE workload_backup_operations(id TEXT PRIMARY KEY,backup_id TEXT NOT NULL REFERENCES workload_backups(id),project_id TEXT NOT NULL,source_run_id TEXT NOT NULL,target_run_id TEXT NOT NULL,action TEXT NOT NULL,state TEXT NOT NULL,revision BIGINT NOT NULL,lease_token TEXT NOT NULL,lease_until TEXT NOT NULL,input_cipher TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE UNIQUE INDEX workload_backup_active ON workload_backup_operations(backup_id) WHERE state IN ('running','unknown');
+CREATE INDEX workload_backup_target ON workload_backup_operations(target_run_id,state);
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect');
+CREATE FUNCTION protect_backup_target() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN IF EXISTS(SELECT 1 FROM workload_backups WHERE server_id=OLD.id AND state<>'deleted') THEN RAISE EXCEPTION 'server retains workload backup archives'; END IF; RETURN OLD; END;
+$$;
+CREATE TRIGGER protect_backup_target BEFORE DELETE ON servers FOR EACH ROW EXECUTE FUNCTION protect_backup_target();
+CREATE FUNCTION protect_backup_service() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN IF NEW.state='deleting' AND EXISTS(SELECT 1 FROM workload_backup_operations WHERE state IN ('running','unknown') AND (source_run_id=NEW.run_id OR target_run_id=NEW.run_id)) THEN RAISE EXCEPTION 'service has an active backup or restore'; END IF; RETURN NEW; END;
+$$;
+CREATE TRIGGER protect_backup_service BEFORE UPDATE OF state ON service_resources FOR EACH ROW EXECUTE FUNCTION protect_backup_service();
+CREATE FUNCTION protect_restore_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN PERFORM 1 FROM services WHERE id=NEW.service_id FOR UPDATE; IF EXISTS(SELECT 1 FROM service_resources s JOIN workload_backup_operations o ON o.target_run_id=s.run_id WHERE s.service_id=NEW.service_id AND o.action='restore' AND o.state IN ('running','unknown')) THEN RAISE EXCEPTION 'service has an active data restore'; END IF; RETURN NEW; END;
+$$;
+CREATE TRIGGER protect_restore_app_binding BEFORE INSERT OR UPDATE ON app_service_bindings FOR EACH ROW EXECUTE FUNCTION protect_restore_binding();
+CREATE TRIGGER protect_restore_deployment_binding BEFORE INSERT OR UPDATE ON deployment_service_bindings FOR EACH ROW EXECUTE FUNCTION protect_restore_binding();
+CREATE TRIGGER protect_restore_workflow_binding BEFORE INSERT OR UPDATE ON workflow_service_references FOR EACH ROW EXECUTE FUNCTION protect_restore_binding();
+CREATE TRIGGER protect_restore_service_dependency BEFORE INSERT OR UPDATE ON service_resource_dependencies FOR EACH ROW EXECUTE FUNCTION protect_restore_binding();

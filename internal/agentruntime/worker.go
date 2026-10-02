@@ -117,7 +117,7 @@ func Open(directory, node string, options ...Options) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine := dockerEngine{executor: deploy.DockerExecutor{Routes: publisher, Artifacts: w, Vault: w.vault, ArtifactDirectory: filepath.Join(directory, "artifacts")}, command: command}
+	engine := dockerEngine{executor: deploy.DockerExecutor{Routes: publisher, Artifacts: w, Vault: w.vault, ArtifactDirectory: filepath.Join(directory, "artifacts"), WorkloadBackupDirectory: filepath.Join(directory, "workload-backups")}, command: command}
 	w.execute = engine.Execute
 	w.hasWorkload = func(ctx context.Context, r remoteruntime.Request) (bool, error) {
 		resources, err := engine.resources(ctx, r)

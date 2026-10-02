@@ -26,18 +26,19 @@ var commitPattern = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 var identityPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Request struct {
-	Storage            *core.StorageResource     `json:"storage,omitempty"`
-	APIVersion         string                    `json:"apiVersion"`
-	Operation          runtimecontract.Operation `json:"operation"`
-	Deployment         core.Deployment           `json:"deployment"`
-	Snapshot           core.DeploymentSnapshot   `json:"snapshot"`
-	Application        core.App                  `json:"application"`
-	Server             core.Server               `json:"server"`
-	Inputs             Inputs                    `json:"inputs"`
-	Service            *ServiceRequest           `json:"service,omitempty"`
-	SourceDeploymentID string                    `json:"sourceDeploymentId,omitempty"`
-	ExpectedRuntime    string                    `json:"expectedRuntime,omitempty"`
-	LogLimit           int                       `json:"logLimit,omitempty"`
+	WorkloadBackup     *core.WorkloadBackupRequest `json:"workloadBackup,omitempty"`
+	Storage            *core.StorageResource       `json:"storage,omitempty"`
+	APIVersion         string                      `json:"apiVersion"`
+	Operation          runtimecontract.Operation   `json:"operation"`
+	Deployment         core.Deployment             `json:"deployment"`
+	Snapshot           core.DeploymentSnapshot     `json:"snapshot"`
+	Application        core.App                    `json:"application"`
+	Server             core.Server                 `json:"server"`
+	Inputs             Inputs                      `json:"inputs"`
+	Service            *ServiceRequest             `json:"service,omitempty"`
+	SourceDeploymentID string                      `json:"sourceDeploymentId,omitempty"`
+	ExpectedRuntime    string                      `json:"expectedRuntime,omitempty"`
+	LogLimit           int                         `json:"logLimit,omitempty"`
 }
 
 // Inputs exists only inside the encrypted job and the authenticated agent
@@ -59,6 +60,7 @@ type LeasedJob struct {
 }
 
 type Result struct {
+	WorkloadBackup  *core.WorkloadBackupResult      `json:"workloadBackup,omitempty"`
 	ServiceResource *core.ServiceResourceInspection `json:"serviceResource,omitempty"`
 	Route           *core.ApplicationRoute          `json:"route,omitempty"`
 
@@ -110,6 +112,9 @@ func (r Request) Validate() error {
 	if IsStorageOperation(r.Operation) {
 		return r.validateStorage()
 	}
+	if r.WorkloadBackup != nil && r.Operation != WorkloadBackup && r.Operation != WorkloadBackupInspect {
+		return errors.New("unexpected backup inputs")
+	}
 	if r.Storage != nil {
 		return errors.New("workload requests cannot carry storage deletion inputs")
 	}
@@ -123,6 +128,10 @@ func (r Request) Validate() error {
 		return errors.New("remote runtime supports Dockerfile and Compose workloads")
 	}
 	switch r.Operation {
+	case WorkloadBackup, WorkloadBackupInspect:
+		if err := r.validateWorkloadBackup(); err != nil {
+			return err
+		}
 	case ProvisionService, ServiceInspect, ServiceDelete:
 		if err := r.validateService(); err != nil {
 			return err
