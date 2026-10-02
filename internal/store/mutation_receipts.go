@@ -132,6 +132,8 @@ func (s *SQLStore) MutationOperationState(ctx context.Context, kind, id string) 
 		if state == "deleted" {
 			state = "succeeded"
 		}
+	case "temporary_environment":
+		err = s.db.QueryRowContext(ctx, s.q(`SELECT CASE WHEN state='closed' THEN 'succeeded' WHEN state='cleanup_blocked' THEN 'unknown' ELSE state END FROM temporary_environments WHERE cleanup_operation_id=?`), id).Scan(&state)
 	case "deployment":
 		err = s.db.QueryRowContext(ctx, s.q(`SELECT state FROM deployments WHERE id=?`), id).Scan(&state)
 	case "infrastructure_operation":

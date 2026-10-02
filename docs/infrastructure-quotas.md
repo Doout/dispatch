@@ -76,3 +76,5 @@ an operator can inspect the same resource before reconciling it.
 
 The current mock provider does not supply a price estimate. Server counts and
 machine-size rules are enforced limits; they are not a bill forecast.
+
+Temporary environments now enforce both reserved policy fields. Acceptance counts the owned environment in the same transaction as its generated app, deployment, and receipt. Failed and cleanup-blocked environments remain counted; only completed workload cleanup releases capacity. Explicit extensions stay within the maximum total lifetime measured from acceptance. See [temporary environments](temporary-environments.md).

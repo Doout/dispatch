@@ -870,9 +870,16 @@ func scanRelayWebhook(row scanner) (core.RelayWebhook, error) {
 	return item, err
 }
 
+type statementExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func (s *SQLStore) CreateApp(ctx context.Context, app core.App) error {
+	return s.insertApp(ctx, s.db, app)
+}
+func (s *SQLStore) insertApp(ctx context.Context, target statementExecutor, app core.App) error {
 	hookEnvironment, _ := json.Marshal(app.HookEnvironment)
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO apps(
+	_, err := target.ExecContext(ctx, s.q(`INSERT INTO apps(
         id,project_id,server_id,name,source_repo,branch,source_auth_type,source_credential_id,build_type,context_path,dockerfile_path,compose_path,
         compose_content,helm_chart,helm_version,helm_repository,helm_values,helm_namespace,helm_release,
         pre_deploy_hook,post_deploy_hook,container_port,domain,state,created_at,helm_group_values,hook_environment,generated,template,helm_provenance,health_policy)
@@ -885,6 +892,18 @@ func (s *SQLStore) CreateApp(ctx context.Context, app core.App) error {
 }
 
 func (s *SQLStore) UpdateApp(ctx context.Context, app core.App) error {
+	if e, err := s.TemporaryEnvironmentForApp(ctx, app.ID); err == nil {
+		current, err := s.GetApp(ctx, app.ID)
+		if err != nil {
+			return err
+		}
+		if app.State != "closed" || app.Name != e.Name || app.ProjectID != e.ProjectID || app.ServerID != e.ServerID || app.SpecDigest() != current.SpecDigest() {
+			return ErrTemporaryEnvironmentChanged
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+
 	hookEnvironment, _ := json.Marshal(app.HookEnvironment)
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE apps SET project_id=?,server_id=?,name=?,source_repo=?,branch=?,source_auth_type=?,source_credential_id=?,build_type=?,
         context_path=?,dockerfile_path=?,compose_path=?,compose_content=?,helm_chart=?,helm_version=?,helm_repository=?,
@@ -909,6 +928,13 @@ func (s *SQLStore) DeleteApp(ctx context.Context, id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var owned int
+	if err := tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM temporary_environments WHERE app_id=?`), id).Scan(&owned); err != nil {
+		return err
+	}
+	if owned > 0 {
+		return ErrTemporaryEnvironmentChanged
+	}
 	var groupReferences int
 	if err := tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM preview_group_components WHERE app_id=?`), id).Scan(&groupReferences); err != nil {
 		return err
@@ -1021,9 +1047,18 @@ func (s *SQLStore) CreateDeployment(ctx context.Context, deployment core.Deploym
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.insertDeployment(ctx, tx, deployment); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *SQLStore) insertDeployment(ctx context.Context, tx *changeTx, deployment core.Deployment) error {
+	if err := s.checkTemporaryDeployment(ctx, tx, deployment.AppID, time.Now().UTC()); err != nil {
+		return err
+	}
 	outputs, _ := json.Marshal(deployment.Outputs)
 	snapshot, _ := json.Marshal(deployment.Snapshot)
-	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO deployments(
+	_, err := tx.ExecContext(ctx, s.q(`INSERT INTO deployments(
         id,app_id,commit_sha,spec_digest,state,message,created_at,started_at,finished_at,lease_until,outputs,spec_snapshot,health)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`), deployment.ID, deployment.AppID, deployment.CommitSHA,
 		deployment.SpecDigest, string(deployment.State), deployment.Message, stamp(deployment.CreatedAt),
@@ -1037,7 +1072,7 @@ func (s *SQLStore) CreateDeployment(ctx context.Context, deployment core.Deploym
 	if err := s.BindMutationAcceptance(ctx, tx.Tx, "deployment", deployment.ID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *SQLStore) UpdateDeployment(ctx context.Context, deployment core.Deployment) error {
@@ -1046,10 +1081,13 @@ func (s *SQLStore) UpdateDeployment(ctx context.Context, deployment core.Deploym
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, s.q(`UPDATE deployments SET state=?,message=?,started_at=?,finished_at=?,lease_until=? WHERE id=?`),
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE deployments SET state=?,message=?,started_at=?,finished_at=?,lease_until=? WHERE id=? AND (? IN ('failed','cancelled') OR NOT EXISTS (SELECT 1 FROM temporary_environments e WHERE e.app_id=deployments.app_id AND (e.state IN ('closing','cleanup_blocked','closed') OR e.expires_at<=?)))`),
 		string(deployment.State), deployment.Message, nullTime(deployment.StartedAt), nullTime(deployment.FinishedAt),
-		nullTime(deployment.LeaseUntil), deployment.ID)
+		nullTime(deployment.LeaseUntil), deployment.ID, string(deployment.State), stamp(time.Now().UTC()))
 	if err != nil {
+		return err
+	}
+	if err = changed(result, err); err != nil {
 		return err
 	}
 	if deployment.State.Terminal() {

@@ -117,6 +117,8 @@ func (a *API) writeMutationReceipt(w http.ResponseWriter, r *http.Request, recei
 		response.OperationURL = "/api/v1/service-provision-runs/" + receipt.OperationID
 	case "service_resource":
 		response.OperationURL = "/api/v1/service-provision-runs/" + receipt.ResourceID + "/resource"
+	case "temporary_environment":
+		response.OperationURL = "/api/v1/temporary-environments/" + receipt.ResourceID
 	case "deployment":
 		response.OperationURL = "/api/v1/deployments/" + receipt.OperationID
 	case "infrastructure_operation":

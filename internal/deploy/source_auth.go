@@ -55,6 +55,14 @@ func (e SourceAuthExecutor) Deploy(ctx context.Context, deployment core.Deployme
 }
 
 func (e SourceAuthExecutor) Cleanup(ctx context.Context, app core.App, server core.Server, progress Progress) error {
+	if id, _ := ctx.Value(cleanupOperationKey{}).(string); id != "" {
+		cleaner, ok := e.Next.(CleanupExecutor)
+		if !ok {
+			return ErrCleanupUnsupported
+		}
+		app.SourceCredential = ""
+		return cleaner.Cleanup(ctx, app, server, progress)
+	}
 	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Destroy); err != nil {
 		return err
 	}
