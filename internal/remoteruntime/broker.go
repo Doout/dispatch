@@ -59,6 +59,9 @@ func (b *Broker) Submit(ctx context.Context, id string, r Request) (core.Runtime
 			return core.RuntimeJob{}, err
 		}
 	}
+	if err = b.validateRetentionOwner(ctx, j, r); err != nil {
+		return core.RuntimeJob{}, err
+	}
 	if err = b.validateStorageOwner(ctx, j, r); err != nil {
 		return core.RuntimeJob{}, err
 	}
@@ -100,6 +103,9 @@ func (b *Broker) Lease(ctx context.Context, node string) (*LeasedJob, error) {
 		err = b.validateServiceOwner(ctx, *j, r)
 		if err == nil {
 			err = b.validateStorageOwner(ctx, *j, r)
+			if err == nil {
+				err = b.validateRetentionOwner(ctx, *j, r)
+			}
 		}
 	}
 	if err != nil {
@@ -121,6 +127,9 @@ func (b *Broker) Renew(ctx context.Context, node, id string, h Heartbeat) (bool,
 		err = b.validateServiceOwner(ctx, j, r)
 		if err == nil {
 			err = b.validateStorageOwner(ctx, j, r)
+			if err == nil {
+				err = b.validateRetentionOwner(ctx, j, r)
+			}
 		}
 	}
 	if err != nil {
@@ -150,6 +159,9 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 		err = b.validateServiceOwner(ctx, j, r)
 		if err == nil {
 			err = b.validateStorageOwner(ctx, j, r)
+			if err == nil {
+				err = b.validateRetentionOwner(ctx, j, r)
+			}
 		}
 	}
 	if err != nil {
@@ -173,6 +185,9 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 		return err
 	}
 	if err := r.ValidateServiceResult(c.Result); err != nil {
+		return err
+	}
+	if err := r.ValidateRetentionResult(c.Result); err != nil {
 		return err
 	}
 	if err := r.ValidateStorageResult(c.Result); err != nil {

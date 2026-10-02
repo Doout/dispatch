@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 func inputSchema(kind string) any {
@@ -23,8 +24,19 @@ func inputSchema(kind string) any {
 			props[key] = text()
 		}
 		required = []string{"digest", "confirmName"}
+	case "ProviderOptionsInput":
+		props["kind"] = map[string]any{"type": "string", "enum": []string{"regions", "sizes", "images", "networks"}}
+		props["config"] = map[string]any{"type": "object"}
+		required = []string{"kind"}
+	case "SnapshotReviewInput":
+		props["name"] = text()
+		props["diskSet"] = map[string]any{"type": "string", "enum": []string{"boot", "all"}}
+		props["consistency"] = map[string]any{"type": "string", "enum": []string{"crash-consistent"}}
+		props["encryption"] = map[string]any{"type": "object", "properties": map[string]any{"mode": map[string]any{"type": "string", "enum": []string{"provider-managed"}}}, "required": []string{"mode"}, "additionalProperties": false}
+		props["retainUntil"] = map[string]any{"type": "string", "format": "date-time"}
+		required = []string{"name", "diskSet", "consistency", "encryption"}
 	case "ServerCreateReview":
-		for _, key := range []string{"projectId", "providerId", "name", "region", "size", "image", "network", "sshKeySecretId"} {
+		for _, key := range []string{"projectId", "providerId", "name", "region", "size", "image", "network", "sshKeySecretId", "sourceSnapshotId"} {
 			props[key] = text()
 		}
 		props["config"] = map[string]any{"type": "object"}
@@ -46,6 +58,9 @@ func toolDescription(op Operation) map[string]any {
 		switch f {
 		case "input":
 			properties[f] = inputSchema(op.InputSchema)
+			if op.Name == "server_create" || op.Name == "snapshot_accept" {
+				properties[f].(map[string]any)["required"] = []string{"reviewId", "digest", "confirmName"}
+			}
 			continue
 		case "limit":
 			p = map[string]any{"type": "integer", "minimum": 1, "maximum": 500}
@@ -63,7 +78,8 @@ func toolDescription(op Operation) map[string]any {
 	if required == nil {
 		required = []string{}
 	}
-	return map[string]any{"name": op.Name, "description": op.Description, "inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": !op.Mutation && op.Name != "server_review", "destructiveHint": op.Name == "server_delete", "idempotentHint": op.Name != "server_review", "openWorldHint": true}}
+	createsReview := op.Name == "server_review" || op.Name == "snapshot_review" || op.Name == "snapshot_delete_review"
+	return map[string]any{"name": op.Name, "description": op.Description, "inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": !op.Mutation && !createsReview, "destructiveHint": op.Name == "server_delete" || op.Name == "snapshot_accept", "idempotentHint": !createsReview, "openWorldHint": true}}
 }
 
 type rpcRequest struct {
@@ -150,7 +166,7 @@ readLoop:
 		}
 		line := item.line
 		var request rpcRequest
-		if !json.Valid(line) {
+		if !utf8.Valid(line) || !json.Valid(line) {
 			fail(nil, -32700, "Invalid JSON")
 			continue
 		}

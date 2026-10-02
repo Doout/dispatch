@@ -1494,6 +1494,14 @@ CREATE TRIGGER protect_service_resource_target BEFORE DELETE ON servers
 WHEN EXISTS(SELECT 1 FROM service_resources WHERE server_id=OLD.id AND state<>'deleted')
 BEGIN SELECT RAISE(ABORT,'server has an owned service resource'); END;
 
+-- dispatch:migration 084_runtime_retention
+ALTER TABLE deployment_runtime_artifacts ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
+CREATE TABLE runtime_retention_reviews(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),payload TEXT NOT NULL,lease_until TEXT NOT NULL DEFAULT '',lease_token TEXT NOT NULL DEFAULT '');
+CREATE INDEX runtime_retention_project ON runtime_retention_reviews(project_id);
+CREATE TABLE runtime_artifact_retirements(deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,review_id TEXT NOT NULL REFERENCES runtime_retention_reviews(id),state TEXT NOT NULL);
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','retention_inspect');
+
 -- dispatch:migration 085_workload_backups
 CREATE TABLE workload_backups(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),server_id TEXT NOT NULL,source_run_id TEXT NOT NULL,state TEXT NOT NULL,revision BIGINT NOT NULL,input_cipher TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE INDEX workload_backups_target ON workload_backups(server_id,state);
@@ -1501,7 +1509,7 @@ CREATE TABLE workload_backup_operations(id TEXT PRIMARY KEY,backup_id TEXT NOT N
 CREATE UNIQUE INDEX workload_backup_active ON workload_backup_operations(backup_id) WHERE state IN ('running','unknown');
 CREATE INDEX workload_backup_target ON workload_backup_operations(target_run_id,state);
 DROP INDEX runtime_jobs_active_mutation;
-CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect');
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect','retention_inspect');
 CREATE TRIGGER protect_backup_target BEFORE DELETE ON servers
 WHEN EXISTS(SELECT 1 FROM workload_backups WHERE server_id=OLD.id AND state<>'deleted')
 BEGIN SELECT RAISE(ABORT,'server retains workload backup archives'); END;

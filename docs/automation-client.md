@@ -50,6 +50,15 @@ A wait timeout or Ctrl-C stops the client. It does not cancel accepted work. The
 
 The owner must register a provider, assign it and an SSH public key to the project, and set an allocation policy. Verify those prerequisites with `quota get --project PROJECT_ID`.
 
+Discover the assigned providers and their supported choices before preparing a review:
+
+```sh
+dispatchctl providers list --project PROJECT_ID
+printf '%s\n' '{"kind":"sizes","config":{}}' | dispatchctl provider options --project PROJECT_ID --provider PROVIDER_ID --input -
+```
+
+Use `regions`, `images` and `networks` for the other option kinds. The provider manifest describes public configuration fields. Scoped clients cannot supply owner-only provider secret references.
+
 Prepare `server.json` using provider-supported choices:
 
 ```json
@@ -96,7 +105,39 @@ dispatchctl server delete --server SERVER_ID --key delete-environment-001 --inpu
 dispatchctl receipt wait --receipt DELETE_RECEIPT_ID --timeout 120
 ```
 
-Snapshot and temporary-environment commands are added only when their controller APIs are integrated. The client exposes no arbitrary command execution, secret administration or human-approval tool.
+## Capture and inspect a machine snapshot
+
+The assigned provider must advertise snapshot support and the project must permit capture and have available snapshot capacity. Prepare `snapshot.json` with explicit capture policy:
+
+```json
+{
+  "name": "before-upgrade",
+  "diskSet": "all",
+  "consistency": "crash-consistent",
+  "encryption": { "mode": "provider-managed" }
+}
+```
+
+An optional `retainUntil` is an RFC3339 timestamp within the next year; omission retains the snapshot for seven days. A machine snapshot does not establish database consistency. Read the resolved disk identities and retention in the review:
+
+```sh
+dispatchctl snapshot review --server SERVER_ID --input snapshot.json > snapshot-review.json
+```
+
+Supply that review's `reviewId`, `digest` and exact `confirmName` in `accept-snapshot.json`. Use a distinct stable key for this capture:
+
+```sh
+dispatchctl snapshot accept --key snapshot-before-upgrade-001 --input accept-snapshot.json
+dispatchctl receipt wait --receipt CAPTURE_RECEIPT_ID --timeout 120
+dispatchctl snapshots list --project PROJECT_ID
+dispatchctl snapshot get --snapshot SNAPSHOT_ID
+```
+
+To restore, add `sourceSnapshotId` to the server review request, use the provider's isolated restore network and supply a fresh `bootstrap` plan. Submit it through `server review` and `server create` with a new key. The server requires both create and restore grants. A verified clone stays isolated and does not become an ordinary deployment target. See [machine snapshots](machine-snapshots.md) for the identity checks and current provider limitations.
+
+After retention expires and all restore operations settle, `snapshot delete review --snapshot SNAPSHOT_ID` returns the deletion consequences. Supply that review's confirmation fields to `snapshot accept` with its own deletion key. A protected or uncertain snapshot stays owned and continues to consume quota; inspect the original receipt and snapshot before retrying.
+
+Temporary-environment commands follow their controller API. The client exposes no arbitrary command execution, secret administration or human-approval tool.
 
 ## MCP
 

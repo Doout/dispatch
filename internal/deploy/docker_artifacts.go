@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/store"
 )
 
 const maxRuntimeArtifactBytes = 32 << 20
@@ -71,7 +72,7 @@ func (e DockerExecutor) saveArtifact(ctx context.Context, d core.Deployment, app
 		return errors.New("Runtime inputs exceed the retained artifact limit or cannot be encoded.")
 	}
 	defer clear(raw)
-	artifact := core.RuntimeArtifact{DeploymentID: d.ID, AppID: app.ID, ServerID: server.ID, ScopeID: d.ID}
+	artifact := core.RuntimeArtifact{DeploymentID: d.ID, AppID: app.ID, ServerID: server.ID, ScopeID: d.ID, Metadata: core.RuntimeArtifactMetadata{ProjectID: app.ProjectID, CreatedAt: d.CreatedAt, Images: inputs.Images}}
 	artifact.Ciphertext, err = e.Vault.Encrypt(runtimeArtifactScope(artifact), raw)
 	if err != nil {
 		return errors.New("Cannot encrypt retained runtime inputs.")
@@ -91,7 +92,7 @@ func (e DockerExecutor) loadArtifact(ctx context.Context, d core.Deployment, app
 		return inputs, errors.New("The retained Docker target changed or is unavailable.")
 	}
 	artifact, err := e.Artifacts.GetRuntimeArtifact(ctx, d.ID)
-	if err != nil || artifact.AppID != app.ID || artifact.ServerID != server.ID {
+	if err != nil || artifact.AppID != app.ID || artifact.ServerID != server.ID || artifact.Metadata.Retired {
 		return inputs, errors.New("No retained Docker runtime inputs exist for this deployment. Deploy once with artifact retention enabled.")
 	}
 	raw, err := e.Vault.Decrypt(runtimeArtifactScope(artifact), artifact.Ciphertext)
@@ -220,6 +221,15 @@ func (e DockerExecutor) RollbackRuntime(ctx context.Context, d, source core.Depl
 	inputs, err := e.loadArtifact(ctx, source, app, server)
 	if err != nil {
 		return err
+	}
+	// Local acceptance already copies the encrypted artifact. An enrolled
+	// worker keeps its own journal, so retain this rollback revision there too.
+	if _, getErr := e.Artifacts.GetRuntimeArtifact(ctx, d.ID); errors.Is(getErr, store.ErrNotFound) {
+		if err = e.saveArtifact(ctx, d, app, server, inputs); err != nil {
+			return err
+		}
+	} else if getErr != nil {
+		return getErr
 	}
 	if inputs.BuildType == core.BuildTypeCompose {
 		return e.applyComposeArtifact(ctx, d, app, server, inputs, progress)

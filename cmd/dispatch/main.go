@@ -101,8 +101,10 @@ func run(logger *slog.Logger) error {
 	sourceAuth := deploy.SourceAuthExecutor{Next: executor, Secrets: data, Vault: vault, Resolver: secretResolver, GitHubApps: githubApps}
 	executor = sourceAuth
 	deployments := deploy.NewService(data, executor)
+	deployments.Retention = deploy.SimulationRetention{Store: data}
 	if cfg.Executor == "docker" {
 		deployments.Storage.Backend = deploy.RemoteStorageBackend{Local: deploy.RuntimeStorage{}, Broker: runtimeBroker}
+		deployments.Retention = deploy.RemoteRetentionBackend{Local: dockerExecutor, Broker: runtimeBroker}
 	}
 	if cfg.Executor == "docker" {
 		deployments.ConfigureHelmComparison(sourceAuth)

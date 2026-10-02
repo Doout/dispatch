@@ -106,17 +106,29 @@ paths:
       responses:
         '202': { description: Owned deletion accepted, or original mutation receipt replayed. }
         '409': { $ref: '#/components/responses/Problem' }
-  /infrastructure/servers/review:
+  /projects/{id}/infrastructure/providers:
+    get:
+      summary: List assigned providers available to a project
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Ready providers with public manifest and capabilities, without endpoint credentials }
+        '403': { $ref: '#/components/responses/Problem' }
+  /projects/{id}/infrastructure/providers/{providerId}/options:
     post:
-      summary: Prepare project-scoped server allocation review
+      summary: Inspect assigned provider choices using public configuration
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: providerId, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ServerCreateReview' }
+            schema: { $ref: '#/components/schemas/ProviderOptionsInput' }
       responses:
-        '201': { description: Immutable reviewed allocation and digest, without provider credentials }
+        '200': { description: Supported region, size, image or network choices }
         '403': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers/{id}/operations:
     get:
       parameters:
@@ -390,19 +402,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [name, diskSet, consistency, encryption]
-              properties:
-                name: { type: string, minLength: 1, maxLength: 80 }
-                diskSet: { type: string, enum: [boot, all] }
-                consistency: { type: string, enum: [crash-consistent] }
-                encryption:
-                  type: object
-                  required: [mode]
-                  properties:
-                    mode: { type: string, enum: [provider-managed] }
-                retainUntil: { type: string, format: date-time, description: Defaults to seven days. Must fall within the next year. }
+            schema: { $ref: '#/components/schemas/SnapshotReviewInput' }
       responses:
         '201': { description: Exact disk identities, consistency, retention, digest and expiring review ID }
         '403': { $ref: '#/components/responses/Problem' }
@@ -471,22 +471,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [projectId, providerId, name, region, size, image, network, sshKeySecretId, config]
-              properties:
-                projectId: { type: string }
-                providerId: { type: string }
-                name: { type: string }
-                region: { type: string }
-                size: { type: string }
-                image: { type: string }
-                network: { type: string }
-                sshKeySecretId: { type: string }
-                config: { type: object }
-                secretRefs: { type: object, additionalProperties: { type: string } }
-                sourceSnapshotId: { type: string, description: Optional owned retained snapshot for an isolated fresh clone. }
-                bootstrap: { type: object, description: Reviewed cloud_init bootstrap plan; required for snapshot restores. }
+            schema: { $ref: '#/components/schemas/ServerCreateReview' }
       responses:
         '201': { description: Expiring creation review with digest and fresh node/bootstrap binding }
         '403': { $ref: '#/components/responses/Problem' }
@@ -1632,7 +1617,7 @@ paths:
         current, successful, baseline, and workflow dependencies. Optional expectedPolicy
         is compared with the saved policy in the same transaction that evaluates
         eligibility. A mismatch returns 409. This does not save policy changes or
-        delete data; an empty request body remains supported.
+        delete data; an empty request body remains supported. With scope runtime, expectedPolicy is required and the response also contains a durable review of exact owned artifact candidates and protection reasons. No more than 50 candidates can be deleted by one review.
       requestBody:
         required: false
         content:
@@ -1668,7 +1653,7 @@ paths:
         cleanup. The reviewed policy is applied without substituting a newer policy.
         Counts may change after preview. The UI saves policy before preview, then reviews
         and confirms cleanup; applying never performs a policy PUT. Existing confirm-only
-        clients remain supported. Removal is irreversible.
+        clients remain supported. Removal is irreversible. With scope runtime, expectedPolicy, runtimeReviewId and runtimeReviewDigest are required. The current policy, ownership and references are checked before removal. Accepted partial retries stay within the same candidate set; storage and backups are excluded.
       responses:
         '200':
           description: Successful result.
@@ -1688,6 +1673,21 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RetentionApplyInput'
+  /projects/{id}/retention/runtime-reviews/{reviewId}:
+    get:
+      operationId: getRuntimeRetentionReview
+      description: Requires project.manage and Operations enabled. Reads the original runtime cleanup candidates and per-item outcomes without scheduling work.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: reviewId, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Durable runtime cleanup review and receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeRetentionReview' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /operations/backups:
     get:
       operationId: listControllerBackups
@@ -4710,6 +4710,10 @@ components:
     RetentionReviewInput:
       type: object
       properties:
+        scope:
+          type: string
+          enum: [runtime]
+          description: Omit for existing history cleanup; runtime selects owned images and stopped revisions.
         expectedPolicy:
           allOf:
           - $ref: '#/components/schemas/RetentionPolicy'
@@ -4725,6 +4729,12 @@ components:
           confirm:
             type: string
             description: Must equal the selected project ID.
+          runtimeReviewId:
+            type: string
+            description: Required for runtime cleanup; original durable review ID.
+          runtimeReviewDigest:
+            type: string
+            description: Required for runtime cleanup; unchanged digest from that review.
     ApplicationOwner:
       type: object
       properties:
@@ -4744,6 +4754,26 @@ components:
         updatedAt:
           type: string
           format: date-time
+    ProviderOptionsInput:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [regions, sizes, images, networks] }
+        config: { type: object, additionalProperties: true }
+        secretRefs: { type: object, additionalProperties: { type: string }, description: Controller-owner only. Not exposed by scoped clients. }
+    SnapshotReviewInput:
+      type: object
+      required: [name, diskSet, consistency, encryption]
+      properties:
+        name: { type: string }
+        diskSet: { type: string, enum: [boot, all] }
+        consistency: { type: string, enum: [crash-consistent] }
+        encryption:
+          type: object
+          required: [mode]
+          properties:
+            mode: { type: string, enum: [provider-managed] }
+        retainUntil: { type: string, format: date-time, description: Defaults to seven days. Must fall within the next year. }
     ServerCreateReview:
       type: object
       required: [projectId, providerId, name]
@@ -4756,6 +4786,8 @@ components:
         image: { type: string }
         network: { type: string }
         sshKeySecretId: { type: string, description: Assigned public SSH key reference. }
+        sourceSnapshotId: { type: string, description: Optional owned retained snapshot for an isolated fresh clone. Requires fresh cloud-init bootstrap. }
+        secretRefs: { type: object, additionalProperties: { type: string }, description: Controller-owner only. Not exposed by scoped clients. }
         bootstrap:
           type: object
           properties:
@@ -4884,9 +4916,27 @@ components:
           type: integer
           minimum: 5
           maximum: 10000
+        imageDays:
+          type: integer
+          minimum: 0
+          maximum: 36500
+          description: Zero preserves unused images indefinitely.
+        stoppedRevisionDays:
+          type: integer
+          minimum: 0
+          maximum: 36500
+          description: Zero preserves stopped revisions indefinitely.
+        keepRollbackRevisions:
+          type: integer
+          oneOf:
+            - { enum: [0] }
+            - { minimum: 2, maximum: 10000 }
+          description: Zero uses the default of five protected rollback revisions per application.
     RetentionResult:
       type: object
       properties:
+        runtime:
+          $ref: '#/components/schemas/RuntimeRetentionReview'
         logs:
           type: integer
         runs:
@@ -4895,6 +4945,42 @@ components:
           type: integer
         applied:
           type: boolean
+    RuntimeRetentionReview:
+      type: object
+      required: [id, projectId, digest, policy, state, createdAt, expiresAt, items, results]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        digest: { type: string }
+        supersededBy: { type: string, description: Replacement cleanup review. A superseded receipt cannot resume its former claim. }
+        policy: { $ref: '#/components/schemas/RetentionPolicy' }
+        state: { type: string, enum: [planned, running, partial, succeeded, blocked] }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: Deadline for initial acceptance; accepted partial retries retain their original scope. }
+        items:
+          type: array
+          items:
+            type: object
+            required: [key, kind, serverId, appId, name, identity, createdAt, protected]
+            properties:
+              key: { type: string }
+              kind: { type: string, enum: [revision, image] }
+              serverId: { type: string }
+              appId: { type: string }
+              deploymentId: { type: string }
+              name: { type: string }
+              identity: { type: string }
+              createdAt: { type: string, format: date-time }
+              protected: { type: array, items: { type: string }, description: Readable reasons excluding this resource from deletion. }
+        results:
+          type: array
+          items:
+            type: object
+            required: [key, state, message]
+            properties:
+              key: { type: string }
+              state: { type: string, enum: [removed, absent, protected, failed, pending] }
+              message: { type: string }
     BackupRecord:
       type: object
       properties:

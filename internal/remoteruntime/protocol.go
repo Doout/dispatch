@@ -39,6 +39,7 @@ type Request struct {
 	SourceDeploymentID string                      `json:"sourceDeploymentId,omitempty"`
 	ExpectedRuntime    string                      `json:"expectedRuntime,omitempty"`
 	LogLimit           int                         `json:"logLimit,omitempty"`
+	Retention          *RetentionRequest           `json:"retention,omitempty"`
 }
 
 // Inputs exists only inside the encrypted job and the authenticated agent
@@ -62,6 +63,7 @@ type LeasedJob struct {
 type Result struct {
 	WorkloadBackup  *core.WorkloadBackupResult      `json:"workloadBackup,omitempty"`
 	ServiceResource *core.ServiceResourceInspection `json:"serviceResource,omitempty"`
+	Retention       *RetentionResult                `json:"retention,omitempty"`
 	Route           *core.ApplicationRoute          `json:"route,omitempty"`
 
 	Health         *core.DeploymentHealth       `json:"health,omitempty"`
@@ -127,11 +129,16 @@ func (r Request) Validate() error {
 	if r.Application.BuildType != core.BuildTypeDockerfile && r.Application.BuildType != core.BuildTypeCompose {
 		return errors.New("remote runtime supports Dockerfile and Compose workloads")
 	}
+	if r.Operation != RetentionInspect && r.Operation != RetentionPrune && r.Retention != nil {
+		return errors.New("unexpected retention inputs")
+	}
 	switch r.Operation {
 	case WorkloadBackup, WorkloadBackupInspect:
 		if err := r.validateWorkloadBackup(); err != nil {
 			return err
 		}
+	case RetentionInspect, RetentionPrune:
+		return r.validateRetention()
 	case ProvisionService, ServiceInspect, ServiceDelete:
 		if err := r.validateService(); err != nil {
 			return err
