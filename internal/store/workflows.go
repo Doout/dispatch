@@ -12,17 +12,17 @@ import (
 
 func (s *SQLStore) CreateConfigSource(ctx context.Context, item core.ConfigSource) error {
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO config_sources(
-		id,project_id,github_app_id,credential_secret_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,last_seen_sha,last_synced_at,last_polled_at,last_error,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.ProjectID, nullString(item.GitHubAppID), nullString(item.CredentialSecretID), item.Name, item.Repository, item.Branch,
+		id,project_id,github_app_id,credential_secret_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,last_seen_sha,last_synced_at,last_polled_at,last_error,created_at,updated_at,repository_id,repository_status)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.ProjectID, nullString(item.GitHubAppID), nullString(item.CredentialSecretID), item.Name, item.Repository, item.Branch,
 		item.Path, item.SyncMode, item.PollIntervalSeconds, item.Active, item.State, item.LastSeenSHA, nullTime(item.LastSyncedAt),
-		nullTime(item.LastPolledAt), item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt))
+		nullTime(item.LastPolledAt), item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt), item.RepositoryID, jsonText(item.RepositoryStatus))
 	return err
 }
 
 func (s *SQLStore) UpdateConfigSource(ctx context.Context, item core.ConfigSource) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=? WHERE id=?`),
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=?,repository_id=?,repository_status=? WHERE id=?`),
 		item.ProjectID, nullString(item.GitHubAppID), nullString(item.CredentialSecretID), item.Name, item.Repository, item.Branch, item.Path, item.SyncMode, item.PollIntervalSeconds,
-		item.Active, item.State, item.LastSeenSHA, nullTime(item.LastSyncedAt), nullTime(item.LastPolledAt), item.LastError, stamp(item.UpdatedAt), item.ID)
+		item.Active, item.State, item.LastSeenSHA, nullTime(item.LastSyncedAt), nullTime(item.LastPolledAt), item.LastError, stamp(item.UpdatedAt), item.RepositoryID, jsonText(item.RepositoryStatus), item.ID)
 	return changed(result, err)
 }
 
@@ -31,7 +31,7 @@ func (s *SQLStore) DeleteConfigSource(ctx context.Context, id string) error {
 	return changed(result, err)
 }
 
-const configSourceSelect = `SELECT id,project_id,github_app_id,credential_secret_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,last_seen_sha,last_synced_at,last_polled_at,last_error,created_at,updated_at FROM config_sources`
+const configSourceSelect = `SELECT id,project_id,github_app_id,credential_secret_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,last_seen_sha,last_synced_at,last_polled_at,last_error,created_at,updated_at,repository_id,repository_status FROM config_sources`
 
 func (s *SQLStore) GetConfigSource(ctx context.Context, id string) (core.ConfigSource, error) {
 	item, err := scanConfigSource(s.db.QueryRowContext(ctx, s.q(configSourceSelect+` WHERE id=?`), id))
@@ -61,9 +61,12 @@ func (s *SQLStore) ListConfigSources(ctx context.Context) ([]core.ConfigSource, 
 func scanConfigSource(row scanner) (core.ConfigSource, error) {
 	var item core.ConfigSource
 	var githubAppID, credentialSecretID, synced, polled sql.NullString
-	var created, updated string
+	var created, updated, repositoryStatus string
 	err := row.Scan(&item.ID, &item.ProjectID, &githubAppID, &credentialSecretID, &item.Name, &item.Repository, &item.Branch, &item.Path,
-		&item.SyncMode, &item.PollIntervalSeconds, &item.Active, &item.State, &item.LastSeenSHA, &synced, &polled, &item.LastError, &created, &updated)
+		&item.SyncMode, &item.PollIntervalSeconds, &item.Active, &item.State, &item.LastSeenSHA, &synced, &polled, &item.LastError, &created, &updated, &item.RepositoryID, &repositoryStatus)
+	if err == nil {
+		err = json.Unmarshal([]byte(repositoryStatus), &item.RepositoryStatus)
+	}
 	item.GitHubAppID, item.CredentialSecretID = githubAppID.String, credentialSecretID.String
 	item.LastSyncedAt, item.LastPolledAt = parseNullTime(synced), parseNullTime(polled)
 	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
@@ -71,6 +74,27 @@ func scanConfigSource(row scanner) (core.ConfigSource, error) {
 }
 
 func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.WorkflowResource) error {
+	trigger, withTrigger := ctx.Value(workflowPreviewTriggerKey{}).(core.WorkflowPreviewTrigger)
+	if withTrigger {
+		if !item.Temporary || item.Kind != "Application" || trigger.TemplateID == "" {
+			return errors.New("preview trigger requires a generated application")
+		}
+		template, err := s.GetWorkflowPreviewTemplate(ctx, trigger.TemplateID)
+		if err != nil {
+			return err
+		}
+		if template.ConfigSourceID != item.ConfigSourceID || template.GitHubAppID != trigger.GitHubAppID {
+			return errors.New("preview template does not own this resource")
+		}
+		trigger.ResourceID = item.ID
+		trigger.SourceTrustPolicy = template.SourceTrustPolicy
+		if trigger.SourceTrustPolicy == "" {
+			trigger.SourceTrustPolicy = "same_repository"
+		}
+		if trigger.TTL == "" {
+			trigger.TTL = "0"
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -84,6 +108,11 @@ func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.Workflo
 	}
 	for _, serviceID := range item.ServiceIDs {
 		if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_service_references(resource_id,service_id) VALUES(?,?)`), item.ID, serviceID); err != nil {
+			return err
+		}
+	}
+	if withTrigger {
+		if err := s.createWorkflowPreviewTrigger(ctx, tx, trigger); err != nil {
 			return err
 		}
 	}
@@ -189,9 +218,9 @@ func (s *SQLStore) ReplaceWorkflowResources(ctx context.Context, source core.Con
 	if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM workflow_service_references WHERE resource_id IN (SELECT id FROM workflow_resources WHERE config_source_id=? AND state='removed')`), source.ID); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=? WHERE id=?`),
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=?,repository_id=?,repository_status=? WHERE id=?`),
 		source.ProjectID, nullString(source.GitHubAppID), nullString(source.CredentialSecretID), source.Name, source.Repository, source.Branch, source.Path, source.SyncMode, source.PollIntervalSeconds,
-		source.Active, source.State, source.LastSeenSHA, nullTime(source.LastSyncedAt), nullTime(source.LastPolledAt), source.LastError, stamp(source.UpdatedAt), source.ID)
+		source.Active, source.State, source.LastSeenSHA, nullTime(source.LastSyncedAt), nullTime(source.LastPolledAt), source.LastError, stamp(source.UpdatedAt), source.RepositoryID, jsonText(source.RepositoryStatus), source.ID)
 	if err != nil {
 		return err
 	}
@@ -251,7 +280,7 @@ func (s *SQLStore) UpdateWorkflowEvent(ctx context.Context, item core.WorkflowEv
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_events SET state=?,error=?,processed_at=? WHERE id=?`), item.State, item.Error, nullTime(item.ProcessedAt), item.ID)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_events SET state=?,error=?,processed_at=?,revision_ids=? WHERE id=?`), item.State, item.Error, nullTime(item.ProcessedAt), jsonText(nonNilRevisionIDs(item.RevisionIDs)), item.ID)
 	if err := changed(result, err); err != nil {
 		return err
 	}
@@ -278,10 +307,30 @@ func workflowEventActivity(item core.WorkflowEvent, source core.ConfigSource) co
 }
 
 func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.WorkflowRevision) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending,source_trust) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	receipt := WorkflowReceiptFromContext(ctx)
+	if receipt.Key != "" {
+		if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO workflow_command_receipts(resource_id,command_key,revision_id) VALUES(?,?,?)`), item.ResourceID, receipt.Key, item.ID); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending,source_trust) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.ResourceID, item.ConfigSHA, item.SpecDigest, item.State, item.Trigger, jsonText(item.Sources), jsonText(item.Outputs), item.Error,
 		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.PullRequests), jsonText(item.Feedback), item.Feedback != nil && !item.Feedback.Complete, jsonText(item.SourceTrust))
-	return err
+	if err != nil {
+		return err
+	}
+	if receipt.TriggerID != "" {
+		result, err := tx.ExecContext(ctx, s.q(`UPDATE workflow_preview_comments SET revision_id=? WHERE trigger_id=? AND comment_id=? AND revision_id IS NULL AND EXISTS(SELECT 1 FROM workflow_preview_triggers WHERE id=? AND resource_id=?)`), item.ID, receipt.TriggerID, receipt.CommentID, receipt.TriggerID, item.ResourceID)
+		if err := changed(result, err); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Source trust is updated independently so a runtime holding an older revision

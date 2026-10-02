@@ -28,6 +28,7 @@ const transportName: Record<string, string> = {
   history: "Earlier activity",
 };
 const activityName: Record<string, string> = {
+ webhook_delivery: "Webhook delivery",
   branch_scan: "Source changed",
   configuration_sync: "Configuration synced",
   poll_failed: "Polling failed",
@@ -450,6 +451,7 @@ function ActivityRow({
       </td>
       <td data-label="Outcome">
         <StatusLabel state={item.state} />
+        {item.deliveryId && <small>Attempt {item.attempts ?? 0}{item.nextAttemptAt ? ` · Retry ${timeLabel(item.nextAttemptAt)}` : ""}</small>}
         {item.message && <small className="event-error">{item.message}</small>}
       </td>
       <td data-label="Received">{timeLabel(item.createdAt)}</td>

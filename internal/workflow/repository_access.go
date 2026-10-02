@@ -27,6 +27,11 @@ type repositoryAccess struct {
 var commitRefPattern = regexp.MustCompile(`^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$`)
 
 func (s *Service) repositoryHead(ctx context.Context, source core.ConfigSource, repository, branch string) (string, error) {
+	if source.GitHubAppID != "" && source.RepositoryID > 0 && normalizeRepository(repository) == normalizeRepository(source.Repository) {
+		if err := s.requireRepositoryIdentity(ctx, source); err != nil {
+			return "", err
+		}
+	}
 	if commitRefPattern.MatchString(branch) {
 		return strings.ToLower(branch), nil
 	}

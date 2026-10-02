@@ -91,6 +91,20 @@ func (s *Service) syncSource(ctx context.Context, id string, event *core.Workflo
 	if source.GitHubAppID == "" && source.CredentialSecretID == "" {
 		return s.sourceError(ctx, source, errors.New("repository access is not configured"))
 	}
+	if source.GitHubAppID != "" {
+		if s.GitHub == nil {
+			return s.sourceError(ctx, source, errors.New("GitHub App access is not configured"))
+		}
+		status, checkErr := s.GitHub.CheckRepository(ctx, source.GitHubAppID, source.Repository, source.RepositoryID)
+		if checkErr != nil {
+			return s.sourceError(ctx, source, checkErr)
+		}
+		source.RepositoryStatus = &status
+		if checkErr = githubapp.RequireAccessible(status); checkErr != nil {
+			return s.sourceError(ctx, source, checkErr)
+		}
+		source.RepositoryID = status.RepositoryID
+	}
 	webhookErr := error(nil)
 	if source.SyncMode != core.ConfigSyncPoll {
 		webhookErr = s.GitHub.EnsureWebhookConfig(ctx, source.GitHubAppID)
@@ -228,7 +242,7 @@ func (s *Service) syncSource(ctx context.Context, id string, event *core.Workflo
 			if err == nil {
 				var revision core.WorkflowRevision
 				revision, err = s.startIfChanged(ctx, resource, source, snapshot, "configuration sync")
-				if event != nil && revision.ID != "" {
+				if event != nil && revision.ID != "" && !slices.Contains(event.RevisionIDs, revision.ID) {
 					event.RevisionIDs = append(event.RevisionIDs, revision.ID)
 				}
 			}
@@ -335,16 +349,27 @@ func (s *Service) HandlePush(ctx context.Context, connectionID, deliveryID strin
 		}
 		if inserted {
 			created++
-			go s.processEvent(context.Background(), event)
+			// The webhook worker drains this durable intent outside the request.
 		}
 	}
 	return created, nil
 }
 
-func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
-	event.State = "running"
-	_ = s.Store.UpdateWorkflowEvent(ctx, event)
+func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) error {
+	unlock := s.lock("event:" + event.ID)
+	defer unlock()
+	// Retried deliveries reuse the per-resource revision receipt, even after
+	// history retention or a controller restart.
+	ctx = store.WithWorkflowReceipt(ctx, store.WorkflowReceipt{Key: "github-event:" + event.ID})
+	event.State, event.Error = "running", ""
+	if err := s.Store.UpdateWorkflowEvent(ctx, event); err != nil {
+		return err
+	}
 	source, err := s.Store.GetConfigSource(ctx, event.ConfigSourceID)
+	if err == nil && !source.Active {
+		event.State = "processed"
+		return s.Store.UpdateWorkflowEvent(ctx, event)
+	}
 	if err == nil && sameSource(event.Repository, event.Branch, source.Repository, source.Branch) {
 		_, err = s.syncSource(ctx, source.ID, &event)
 	}
@@ -361,7 +386,7 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
 				if runErr == nil {
 					var revision core.WorkflowRevision
 					revision, runErr = s.startIfChanged(ctx, resource, source, snapshot, "github push")
-					if revision.ID != "" {
+					if revision.ID != "" && !slices.Contains(event.RevisionIDs, revision.ID) {
 						event.RevisionIDs = append(event.RevisionIDs, revision.ID)
 					}
 				}
@@ -378,7 +403,70 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) {
 	} else {
 		event.State = "processed"
 	}
-	_ = s.Store.UpdateWorkflowEvent(ctx, event)
+	return errors.Join(err, s.Store.UpdateWorkflowEvent(ctx, event))
+}
+
+// ProcessPushDelivery runs saved work synchronously in the durable webhook worker.
+func (s *Service) ProcessPushDelivery(ctx context.Context, connectionID, deliveryID string, body []byte) ([]string, error) {
+	if _, err := s.HandlePush(ctx, connectionID, deliveryID, body); err != nil {
+		return nil, err
+	}
+	items, err := s.Store.WorkflowEventsForDelivery(ctx, deliveryID)
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for _, event := range items {
+		source, loadErr := s.Store.GetConfigSource(ctx, event.ConfigSourceID)
+		if loadErr != nil {
+			return ids, loadErr
+		}
+		if source.GitHubAppID != connectionID {
+			continue
+		}
+		if event.State != "processed" {
+			if err := s.processEvent(ctx, event); err != nil {
+				return ids, err
+			}
+		}
+	}
+	items, err = s.Store.WorkflowEventsForDelivery(ctx, deliveryID)
+	if err != nil {
+		return ids, err
+	}
+	for _, event := range items {
+		ids = append(ids, event.RevisionIDs...)
+	}
+	return ids, nil
+}
+
+// RecoverPushEvents drains legacy durable intents whose HTTP handler previously
+// launched an untracked goroutine. It never reruns an accepted workflow command.
+func (s *Service) RecoverPushEvents(ctx context.Context) error {
+	var joined error
+	for {
+		items, err := s.Store.PendingWorkflowEvents(ctx)
+		if err != nil {
+			return errors.Join(joined, err)
+		}
+		if len(items) == 0 {
+			return joined
+		}
+		progressed := false
+		for _, event := range items {
+			if ctx.Err() != nil {
+				return errors.Join(joined, ctx.Err())
+			}
+			err := s.processEvent(ctx, event)
+			joined = errors.Join(joined, err)
+			if err == nil {
+				progressed = true
+			}
+		}
+		if !progressed {
+			return joined
+		}
+	}
 }
 
 func resourceReferences(resource core.WorkflowResource, repository, branch string) bool {
@@ -621,6 +709,9 @@ func (s *Service) Deactivate(ctx context.Context, id string) (core.WorkflowResou
 func (s *Service) Start(ctx context.Context, resourceID, trigger string) (core.WorkflowRevision, error) {
 	unlock := s.lock("schedule:" + resourceID)
 	defer unlock()
+	if existing, handled, err := s.receivedRevision(ctx, resourceID); handled || err != nil {
+		return existing, err
+	}
 	resource, err := s.Store.GetWorkflowResource(ctx, resourceID)
 	if err != nil {
 		return core.WorkflowRevision{}, err
@@ -796,11 +887,14 @@ func (s *Service) UpdateTemporaryApplication(ctx context.Context, id string, con
 func (s *Service) startIfChanged(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, snapshot map[string]core.WorkflowSourceRevision, trigger string) (core.WorkflowRevision, error) {
 	unlock := s.lock("schedule:" + resource.ID)
 	defer unlock()
+	if existing, handled, err := s.receivedRevision(ctx, resource.ID); handled || err != nil {
+		return existing, err
+	}
 	if !s.snapshotChanged(ctx, resource, snapshot) {
-		return core.WorkflowRevision{}, nil
+		return s.receivedNoChange(ctx, resource.ID)
 	}
 	if automaticWorkflowTrigger(trigger) && s.reuseEquivalentWorkflow(ctx, resource, source, snapshot) {
-		return core.WorkflowRevision{}, nil
+		return s.receivedNoChange(ctx, resource.ID)
 	}
 	if err := ctx.Err(); err != nil {
 		return core.WorkflowRevision{}, err
@@ -872,6 +966,9 @@ func (s *Service) watchRunCancellation(ctx context.Context, revisionID string, c
 }
 
 func (s *Service) resolveResourceSources(ctx context.Context, source core.ConfigSource, resource core.WorkflowResource) (map[string]core.WorkflowSourceRevision, error) {
+	if err := s.requireRepositoryIdentity(ctx, source); err != nil {
+		return nil, err
+	}
 	documents, err := Parse(resource.Path, []byte(resource.Document))
 	if err != nil || len(documents) != 1 || documents[0].Spec == nil {
 		return nil, errors.New("stored application document is invalid")
