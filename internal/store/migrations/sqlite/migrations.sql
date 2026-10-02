@@ -1493,3 +1493,11 @@ BEGIN SELECT RAISE(ABORT,'service has a provisioned resource consumer'); END;
 CREATE TRIGGER protect_service_resource_target BEFORE DELETE ON servers
 WHEN EXISTS(SELECT 1 FROM service_resources WHERE server_id=OLD.id AND state<>'deleted')
 BEGIN SELECT RAISE(ABORT,'server has an owned service resource'); END;
+
+-- dispatch:migration 084_runtime_retention
+ALTER TABLE deployment_runtime_artifacts ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
+CREATE TABLE runtime_retention_reviews(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),payload TEXT NOT NULL,lease_until TEXT NOT NULL DEFAULT '',lease_token TEXT NOT NULL DEFAULT '');
+CREATE INDEX runtime_retention_project ON runtime_retention_reviews(project_id);
+CREATE TABLE runtime_artifact_retirements(deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,review_id TEXT NOT NULL REFERENCES runtime_retention_reviews(id),state TEXT NOT NULL);
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','retention_inspect');
