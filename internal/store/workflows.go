@@ -12,17 +12,17 @@ import (
 
 func (s *SQLStore) CreateConfigSource(ctx context.Context, item core.ConfigSource) error {
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO config_sources(
-		id,project_id,github_app_id,credential_secret_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,last_seen_sha,last_synced_at,last_polled_at,last_error,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.ProjectID, nullString(item.GitHubAppID), nullString(item.CredentialSecretID), item.Name, item.Repository, item.Branch,
+		id,project_id,github_app_id,credential_secret_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,last_seen_sha,last_synced_at,last_polled_at,last_error,created_at,updated_at,repository_id,repository_status)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.ProjectID, nullString(item.GitHubAppID), nullString(item.CredentialSecretID), item.Name, item.Repository, item.Branch,
 		item.Path, item.SyncMode, item.PollIntervalSeconds, item.Active, item.State, item.LastSeenSHA, nullTime(item.LastSyncedAt),
-		nullTime(item.LastPolledAt), item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt))
+		nullTime(item.LastPolledAt), item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt), item.RepositoryID, jsonText(item.RepositoryStatus))
 	return err
 }
 
 func (s *SQLStore) UpdateConfigSource(ctx context.Context, item core.ConfigSource) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=? WHERE id=?`),
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=?,repository_id=?,repository_status=? WHERE id=?`),
 		item.ProjectID, nullString(item.GitHubAppID), nullString(item.CredentialSecretID), item.Name, item.Repository, item.Branch, item.Path, item.SyncMode, item.PollIntervalSeconds,
-		item.Active, item.State, item.LastSeenSHA, nullTime(item.LastSyncedAt), nullTime(item.LastPolledAt), item.LastError, stamp(item.UpdatedAt), item.ID)
+		item.Active, item.State, item.LastSeenSHA, nullTime(item.LastSyncedAt), nullTime(item.LastPolledAt), item.LastError, stamp(item.UpdatedAt), item.RepositoryID, jsonText(item.RepositoryStatus), item.ID)
 	return changed(result, err)
 }
 
@@ -31,7 +31,7 @@ func (s *SQLStore) DeleteConfigSource(ctx context.Context, id string) error {
 	return changed(result, err)
 }
 
-const configSourceSelect = `SELECT id,project_id,github_app_id,credential_secret_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,last_seen_sha,last_synced_at,last_polled_at,last_error,created_at,updated_at FROM config_sources`
+const configSourceSelect = `SELECT id,project_id,github_app_id,credential_secret_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,last_seen_sha,last_synced_at,last_polled_at,last_error,created_at,updated_at,repository_id,repository_status FROM config_sources`
 
 func (s *SQLStore) GetConfigSource(ctx context.Context, id string) (core.ConfigSource, error) {
 	item, err := scanConfigSource(s.db.QueryRowContext(ctx, s.q(configSourceSelect+` WHERE id=?`), id))
@@ -61,9 +61,12 @@ func (s *SQLStore) ListConfigSources(ctx context.Context) ([]core.ConfigSource, 
 func scanConfigSource(row scanner) (core.ConfigSource, error) {
 	var item core.ConfigSource
 	var githubAppID, credentialSecretID, synced, polled sql.NullString
-	var created, updated string
+	var created, updated, repositoryStatus string
 	err := row.Scan(&item.ID, &item.ProjectID, &githubAppID, &credentialSecretID, &item.Name, &item.Repository, &item.Branch, &item.Path,
-		&item.SyncMode, &item.PollIntervalSeconds, &item.Active, &item.State, &item.LastSeenSHA, &synced, &polled, &item.LastError, &created, &updated)
+		&item.SyncMode, &item.PollIntervalSeconds, &item.Active, &item.State, &item.LastSeenSHA, &synced, &polled, &item.LastError, &created, &updated, &item.RepositoryID, &repositoryStatus)
+	if err == nil {
+		err = json.Unmarshal([]byte(repositoryStatus), &item.RepositoryStatus)
+	}
 	item.GitHubAppID, item.CredentialSecretID = githubAppID.String, credentialSecretID.String
 	item.LastSyncedAt, item.LastPolledAt = parseNullTime(synced), parseNullTime(polled)
 	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
@@ -189,9 +192,9 @@ func (s *SQLStore) ReplaceWorkflowResources(ctx context.Context, source core.Con
 	if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM workflow_service_references WHERE resource_id IN (SELECT id FROM workflow_resources WHERE config_source_id=? AND state='removed')`), source.ID); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=? WHERE id=?`),
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE config_sources SET project_id=?,github_app_id=?,credential_secret_id=?,name=?,repository=?,branch=?,path=?,sync_mode=?,poll_interval_seconds=?,active=?,state=?,last_seen_sha=?,last_synced_at=?,last_polled_at=?,last_error=?,updated_at=?,repository_id=?,repository_status=? WHERE id=?`),
 		source.ProjectID, nullString(source.GitHubAppID), nullString(source.CredentialSecretID), source.Name, source.Repository, source.Branch, source.Path, source.SyncMode, source.PollIntervalSeconds,
-		source.Active, source.State, source.LastSeenSHA, nullTime(source.LastSyncedAt), nullTime(source.LastPolledAt), source.LastError, stamp(source.UpdatedAt), source.ID)
+		source.Active, source.State, source.LastSeenSHA, nullTime(source.LastSyncedAt), nullTime(source.LastPolledAt), source.LastError, stamp(source.UpdatedAt), source.RepositoryID, jsonText(source.RepositoryStatus), source.ID)
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/store"
 	workflowservice "github.com/doout/dispatch/internal/workflow"
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,7 @@ type configSourceRequest struct {
 	CredentialSecretID  string `json:"credentialSecretId"`
 	Name                string `json:"name"`
 	Repository          string `json:"repository"`
+	RepositoryID        int64  `json:"repositoryId"`
 	Branch              string `json:"branch"`
 	Path                string `json:"path"`
 	SyncMode            string `json:"syncMode"`
@@ -100,7 +102,7 @@ func (a *API) updateConfigSource(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Configuration source invalid", detail)
 		return
 	}
-	if err := a.store.UpdateConfigSource(r.Context(), item); err != nil {
+	if err := a.workflows.UpdateSource(r.Context(), item); err != nil {
 		a.notFoundOrInternal(w, err, "Configuration source")
 		return
 	}
@@ -109,6 +111,7 @@ func (a *API) updateConfigSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) configSourceFromRequest(r *http.Request, item core.ConfigSource, input configSourceRequest) (core.ConfigSource, string) {
+	originalRepository := strings.TrimSpace(input.Repository)
 	input.ProjectID, input.GitHubAppID, input.CredentialSecretID, input.Name = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.GitHubAppID), strings.TrimSpace(input.CredentialSecretID), strings.TrimSpace(input.Name)
 	input.Repository = strings.Trim(strings.TrimSpace(input.Repository), "/")
 	input.Branch, input.Path, input.SyncMode = strings.TrimSpace(input.Branch), strings.Trim(strings.TrimSpace(input.Path), "/"), strings.TrimSpace(input.SyncMode)
@@ -160,10 +163,28 @@ func (a *API) configSourceFromRequest(r *http.Request, item core.ConfigSource, i
 		if err != nil || connection.State != "ready" {
 			return item, "Choose a ready GitHub App connection."
 		}
-		if err := a.validateGitHubRepositoryAccess(r.Context(), input.GitHubAppID, input.Repository); err != nil {
+		if strings.Contains(originalRepository, "://") {
+			if err := githubapp.ValidateRepositoryHost(originalRepository, connection.WebURL); err != nil {
+				return item, err.Error()
+			}
+		}
+		if a.eventConfig.GitHubApps == nil {
+			return item, "GitHub App repository access is not configured."
+		}
+		expectedID := input.RepositoryID
+		if expectedID == 0 && item.GitHubAppID == input.GitHubAppID && strings.EqualFold(item.Repository, input.Repository) {
+			expectedID = item.RepositoryID
+		}
+		status, err := a.eventConfig.GitHubApps.CheckRepository(r.Context(), input.GitHubAppID, input.Repository, expectedID)
+		if err != nil {
+			return item, "Repository access could not be checked. Retry the GitHub connection."
+		}
+		if err = githubapp.RequireAccessible(status); err != nil {
 			return item, err.Error()
 		}
+		item.RepositoryID, item.RepositoryStatus = status.RepositoryID, &status
 	} else {
+		item.RepositoryID, item.RepositoryStatus = 0, nil
 		if input.SyncMode != core.ConfigSyncPoll {
 			return item, "Saved repository credentials support polling only."
 		}

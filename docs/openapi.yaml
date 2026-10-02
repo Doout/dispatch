@@ -2671,6 +2671,22 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/GitHubRepository" } }
         "422": { $ref: "#/components/responses/Problem" }
+  /github-apps/{githubAppId}/branches:
+    parameters:
+      - $ref: "#/components/parameters/GitHubAppID"
+      - { in: query, name: repository, required: true, schema: { type: string }, description: Exact owner/name from the current repository catalog. }
+      - { in: query, name: repositoryId, required: true, schema: { type: integer, format: int64, minimum: 1 }, description: Stable repository identity selected by the caller. }
+    get:
+      operationId: listGitHubAppBranches
+      description: Requires owner access. Checks current repository access and identity before listing up to 1,000 branches. Does not select a fallback branch.
+      responses:
+        "200":
+          description: Current branches.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/GitHubBranch" } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
   /github-apps/manifest:
     post:
       operationId: startGitHubAppManifest
@@ -2739,6 +2755,55 @@ paths:
       operationId: syncConfigSource
       responses:
         "200": { description: Configuration synced. }
+        "422": { $ref: "#/components/responses/Problem" }
+  /config-sources/{configSourceId}/repository-check:
+    parameters:
+      - { in: path, name: configSourceId, required: true, schema: { type: string } }
+    post:
+      operationId: checkConfigSourceRepository
+      description: >-
+        Requires project.configure. Refreshes GitHub repository identity and access
+        evidence. Does not edit the source name or branch, fetch configuration, or
+        rewrite historical revisions. Sources using saved Git credentials return 422.
+        Restored access requires a successful sync before the source becomes ready.
+      responses:
+        "200":
+          description: Source with refreshed repositoryStatus. Connection and credential IDs are hidden from non-owners.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigSource" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /config-sources/{configSourceId}/repositories:
+    parameters:
+      - { in: path, name: configSourceId, required: true, schema: { type: string } }
+    get:
+      operationId: listConfigSourceRepositories
+      description: Requires project.configure. Loads the App's current repository catalog. Non-owners receive only the source's configured repository, matched by identity when available.
+      responses:
+        "200":
+          description: Accessible repositories, including archived and disabled entries.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/GitHubRepository" } }
+        "403": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /config-sources/{configSourceId}/branches:
+    parameters:
+      - { in: path, name: configSourceId, required: true, schema: { type: string } }
+      - { in: query, name: repository, required: true, schema: { type: string } }
+      - { in: query, name: repositoryId, required: true, schema: { type: integer, format: int64, minimum: 1 } }
+    get:
+      operationId: listConfigSourceBranches
+      description: Requires project.configure. Checks identity and access before listing branches. Non-owners can query only the configured repository. A failed lookup preserves the selected branch.
+      responses:
+        "200":
+          description: Current branches.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/GitHubBranch" } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
   /workflow/resources:
     get:
@@ -5144,12 +5209,15 @@ components:
             keyValues: { type: object, additionalProperties: { type: string } }
     ConfigSourceInput:
       type: object
-      required: [projectId, githubAppId, name, repository, branch, path, syncMode, pollIntervalSeconds]
+      required: [projectId, name, repository, branch, path, syncMode, pollIntervalSeconds]
+      description: Choose exactly one GitHub App or saved Git credential. Saved credentials support polling only.
       properties:
         projectId: { type: string }
         githubAppId: { type: string }
+        credentialSecretId: { type: string }
         name: { type: string, maxLength: 80 }
-        repository: { type: string, description: GitHub owner/name accessible to the selected installation. }
+        repository: { type: string, description: GitHub owner/name or an HTTPS or SSH clone URL for a saved credential. GitHub URLs must use the connection's configured host. }
+        repositoryId: { type: integer, format: int64, minimum: 0, description: Stable GitHub repository ID. Omission preserves the saved identity when the App and name are unchanged. Supply a replacement ID explicitly when reusing a name. Legacy sources acquire an identity on their first successful sync. }
         branch: { type: string, default: main }
         path: { type: string, default: .dispatch }
         syncMode: { type: string, enum: [webhook_poll, webhook, poll], default: webhook_poll }
@@ -5162,13 +5230,25 @@ components:
           properties:
             id: { type: string }
             active: { type: boolean }
-            state: { type: string, enum: [syncing, ready, degraded, invalid] }
+            state: { type: string, enum: [pending, syncing, ready, degraded, invalid] }
+            repositoryStatus: { $ref: "#/components/schemas/RepositoryStatus" }
             lastSeenSha: { type: string }
             lastSyncedAt: { type: string, format: date-time }
             lastPolledAt: { type: string, format: date-time }
             lastError: { type: string }
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
+    RepositoryStatus:
+      type: object
+      required: [state, detail, recovery, checkedAt]
+      properties:
+        state: { type: string, enum: [accessible, inaccessible, unavailable, renamed, archived, disabled, deleted, identity_changed] }
+        repositoryId: { type: integer, format: int64 }
+        fullName: { type: string }
+        detail: { type: string }
+        recovery: { type: string }
+        checkedAt: { type: string, format: date-time }
+      description: Missing installation access does not prove deletion. The deleted state requires a persisted, verified deletion event for the same App and repository identity.
     WorkflowResource:
       type: object
       required: [id, configSourceId, apiVersion, kind, name, path, document, specDigest, configSha, active, state, createdAt, updatedAt]
@@ -5398,7 +5478,16 @@ components:
         owner: { type: string, example: platform }
         defaultBranch: { type: string, example: main }
         private: { type: boolean }
+        archived: { type: boolean }
+        disabled: { type: boolean }
         webUrl: { type: string, format: uri }
+    GitHubBranch:
+      type: object
+      required: [name, sha, protected]
+      properties:
+        name: { type: string }
+        sha: { type: string }
+        protected: { type: boolean }
     KubernetesServerConfig:
       type: object
       properties:

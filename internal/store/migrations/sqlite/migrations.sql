@@ -1493,3 +1493,15 @@ BEGIN SELECT RAISE(ABORT,'service has a provisioned resource consumer'); END;
 CREATE TRIGGER protect_service_resource_target BEFORE DELETE ON servers
 WHEN EXISTS(SELECT 1 FROM service_resources WHERE server_id=OLD.id AND state<>'deleted')
 BEGIN SELECT RAISE(ABORT,'server has an owned service resource'); END;
+
+-- dispatch:migration 088_repository_identity
+ALTER TABLE config_sources ADD COLUMN repository_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE config_sources ADD COLUMN repository_status TEXT NOT NULL DEFAULT 'null';
+CREATE TABLE repository_deletions (
+  github_app_id TEXT NOT NULL,
+  repository_id BIGINT NOT NULL,
+  full_name TEXT NOT NULL,
+  delivery_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  PRIMARY KEY(github_app_id, repository_id)
+);

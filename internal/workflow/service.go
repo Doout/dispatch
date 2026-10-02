@@ -91,6 +91,20 @@ func (s *Service) syncSource(ctx context.Context, id string, event *core.Workflo
 	if source.GitHubAppID == "" && source.CredentialSecretID == "" {
 		return s.sourceError(ctx, source, errors.New("repository access is not configured"))
 	}
+	if source.GitHubAppID != "" {
+		if s.GitHub == nil {
+			return s.sourceError(ctx, source, errors.New("GitHub App access is not configured"))
+		}
+		status, checkErr := s.GitHub.CheckRepository(ctx, source.GitHubAppID, source.Repository, source.RepositoryID)
+		if checkErr != nil {
+			return s.sourceError(ctx, source, checkErr)
+		}
+		source.RepositoryStatus = &status
+		if checkErr = githubapp.RequireAccessible(status); checkErr != nil {
+			return s.sourceError(ctx, source, checkErr)
+		}
+		source.RepositoryID = status.RepositoryID
+	}
 	webhookErr := error(nil)
 	if source.SyncMode != core.ConfigSyncPoll {
 		webhookErr = s.GitHub.EnsureWebhookConfig(ctx, source.GitHubAppID)
@@ -872,6 +886,9 @@ func (s *Service) watchRunCancellation(ctx context.Context, revisionID string, c
 }
 
 func (s *Service) resolveResourceSources(ctx context.Context, source core.ConfigSource, resource core.WorkflowResource) (map[string]core.WorkflowSourceRevision, error) {
+	if err := s.requireRepositoryIdentity(ctx, source); err != nil {
+		return nil, err
+	}
 	documents, err := Parse(resource.Path, []byte(resource.Document))
 	if err != nil || len(documents) != 1 || documents[0].Spec == nil {
 		return nil, errors.New("stored application document is invalid")
