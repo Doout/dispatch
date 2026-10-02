@@ -3,15 +3,20 @@ package deploy
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"helm.sh/helm/v3/pkg/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/resource"
+	restfake "k8s.io/client-go/rest/fake"
 )
 
 type helmReadinessFunc func(context.Context, *resource.Info) (bool, error)
@@ -157,5 +162,90 @@ func TestHelmRecoveryIdentifiesPriorRevisionBeforeApply(t *testing.T) {
 	}
 	if recoveries != 1 {
 		t.Fatalf("recovery calls=%d", recoveries)
+	}
+}
+
+func TestHelmUnlabelledCandidateWaitStillHonorsCancellation(t *testing.T) {
+	for _, labels := range [][]string{{""}, {"", "candidate"}, {"previous", "candidate"}} {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		w := &helmActionWaiter{ctx: ctx, deploymentID: "candidate", interval: time.Millisecond}
+		w.recoveryWait = func(kube.ResourceList, time.Duration, bool) error {
+			t.Error("candidate was misidentified as atomic recovery")
+			return nil
+		}
+		var resources kube.ResourceList
+		for _, id := range labels {
+			object := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"dispatch.app/deployment-id": id}}}
+			resources = append(resources, &resource.Info{Object: object})
+		}
+		if err := w.WaitWithJobs(resources, time.Second); !errors.Is(err, context.Canceled) {
+			t.Fatalf("labels=%v cancellation result: %v", labels, err)
+		}
+	}
+}
+
+func TestHelmHookDeletionWaitFailureAllowsSameDeploymentRecovery(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "hook-still-present", true: "hook-deleted"}[deleted], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			var requests atomic.Int32
+			client := &restfake.RESTClient{
+				NegotiatedSerializer: resource.UnstructuredPlusDefaultContentConfig().NegotiatedSerializer,
+				GroupVersion:         schema.GroupVersion{Version: "v1"}, VersionedAPIPath: "/api/v1",
+				Client: restfake.CreateHTTPClient(func(r *http.Request) (*http.Response, error) {
+					requests.Add(1)
+					if r.Method != "GET" || r.URL.Path != "/api/v1/namespaces/default/pods/hook" {
+						t.Errorf("unexpected hook inspection: %s %s", r.Method, r.URL.Path)
+					}
+					code, body := http.StatusOK, `{"apiVersion":"v1","kind":"Pod","metadata":{"name":"hook","namespace":"default"}}`
+					if deleted {
+						code, body = http.StatusNotFound, `{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","code":404}`
+					}
+					return &http.Response{StatusCode: code, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+				}),
+			}
+			resources := kube.ResourceList{&resource.Info{Name: "hook", Namespace: "default", Client: client, Mapping: &meta.RESTMapping{Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"}, Scope: meta.RESTScopeNamespace}}}
+			w := &helmActionWaiter{Client: &kube.Client{Log: func(string, ...interface{}) {}}, ctx: ctx, deploymentID: "same-deployment"}
+			w.apply = func(kube.ResourceList, kube.ResourceList, bool) (*kube.Result, error) { return &kube.Result{}, nil }
+			waitErr := w.WaitForDelete(resources, 25*time.Millisecond)
+			if deleted && waitErr != nil || !deleted && !errors.Is(waitErr, context.DeadlineExceeded) || requests.Load() == 0 {
+				t.Fatalf("deleted=%v requests=%d error=%v", deleted, requests.Load(), waitErr)
+			}
+			recoveries := 0
+			w.recoveryWait = func(kube.ResourceList, time.Duration, bool) error { recoveries++; return nil }
+			previous := kube.ResourceList{&resource.Info{Object: &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"dispatch.app/deployment-id": "same-deployment"}}}}}
+			// A failed pre-upgrade hook reaches rollback before the first Update.
+			if _, err := w.Update(nil, previous, false); err != nil {
+				t.Fatal(err)
+			}
+			err := w.WaitWithJobs(previous, time.Second)
+			if deleted {
+				if !errors.Is(err, context.Canceled) || recoveries != 0 {
+					t.Fatal("successful hook cleanup bypassed candidate cancellation", err, recoveries)
+				}
+			} else if err != nil || recoveries != 1 {
+				t.Fatal("hook deletion failure did not allow bounded rollback", err, recoveries)
+			}
+		})
+	}
+}
+
+func TestHelmSecondUpdateAllowsSameDeploymentRecovery(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := &helmActionWaiter{ctx: ctx, deploymentID: "same-deployment"}
+	w.apply = func(kube.ResourceList, kube.ResourceList, bool) (*kube.Result, error) { return &kube.Result{}, nil }
+	resources := kube.ResourceList{&resource.Info{Object: &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"dispatch.app/deployment-id": "same-deployment"}}}}}
+	for range 2 {
+		if _, err := w.Update(nil, resources, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recoveries := 0
+	w.recoveryWait = func(kube.ResourceList, time.Duration, bool) error { recoveries++; return nil }
+	if err := w.WaitWithJobs(resources, time.Second); err != nil || recoveries != 1 {
+		t.Fatal("same-deployment rollback did not use its independent wait", err, recoveries)
 	}
 }

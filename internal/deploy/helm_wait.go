@@ -103,6 +103,13 @@ func (w *helmActionWaiter) WatchUntilReady(resources kube.ResourceList, timeout 
 	}
 	return err
 }
+func (w *helmActionWaiter) WaitForDelete(resources kube.ResourceList, timeout time.Duration) error {
+	err := w.Client.WaitForDelete(resources, timeout)
+	if err != nil {
+		w.waited.Store(true)
+	}
+	return err
+}
 func (w *helmActionWaiter) Delete(resources kube.ResourceList) (*kube.Result, []error) {
 	result, errs := w.Client.Delete(resources)
 	if len(errs) > 0 {
@@ -122,13 +129,20 @@ func (w *helmActionWaiter) previousRevision(resources kube.ResourceList) bool {
 	if w.deploymentID == "" || len(resources) == 0 {
 		return false
 	}
+	previous := false
 	for _, info := range resources {
 		object, err := meta.Accessor(info.Object)
-		if err == nil && object.GetLabels()["dispatch.app/deployment-id"] == w.deploymentID {
-			return false
+		if err == nil {
+			id := object.GetLabels()["dispatch.app/deployment-id"]
+			if id == w.deploymentID {
+				return false
+			}
+			previous = previous || id != ""
 		}
 	}
-	return true
+	// Flattened legacy List objects can have unlabelled children. Missing labels
+	// do not establish that a wait belongs to an earlier revision.
+	return previous
 }
 
 func (w *helmActionWaiter) Wait(resources kube.ResourceList, timeout time.Duration) error {
