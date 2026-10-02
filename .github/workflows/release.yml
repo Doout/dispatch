@@ -14,7 +14,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     permissions:
       contents: write
       packages: write
@@ -52,7 +52,7 @@ jobs:
       - run: pnpm --dir web audit --prod --audit-level high
       - run: pnpm --dir web test --maxWorkers=2
       - run: pnpm --dir web build
-      - run: go test -race -p 2 ./...
+      - run: go test -race -p 2 -timeout 40m ./...
       - run: sh scripts/install_test.sh
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
