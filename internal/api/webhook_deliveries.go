@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,7 +87,7 @@ func (a *API) acceptGitHubDelivery(w http.ResponseWriter, r *http.Request, conne
 			return
 		}
 	case "issue_comment", "pull_request":
-		_, err := events.ParseGitHubEvent(kind, id, body, now)
+		event, err := events.ParseGitHubEvent(kind, id, body, now)
 		if errors.Is(err, events.ErrEventUnsupported) {
 			w.WriteHeader(204)
 			return
@@ -94,6 +95,16 @@ func (a *API) acceptGitHubDelivery(w http.ResponseWriter, r *http.Request, conne
 		if err != nil {
 			problem(w, 400, "Invalid webhook event", err.Error())
 			return
+		}
+		if env.Action == "" || !validWebhookRepository(event.Repository) {
+			problem(w, 400, "Invalid webhook event", "The event must identify its repository and action.")
+			return
+		}
+		if kind == "issue_comment" {
+			if commentID, err := strconv.ParseUint(event.SourceCommentID, 10, 64); err != nil || commentID == 0 {
+				problem(w, 400, "Invalid comment event", "The event must identify its source comment.")
+				return
+			}
 		}
 	case "repository":
 		if connectionID == "" {
@@ -209,6 +220,14 @@ func (a *API) RunWebhookProcessor(ctx context.Context) {
 		}
 		cancel()
 	}
+	retain := func() {
+		if err := a.store.RetainWebhookDeliveries(ctx, time.Now().UTC()); err != nil && ctx.Err() == nil && a.logger != nil {
+			a.logger.Warn("webhook retention pending")
+		}
+	}
+	retain()
+	maintenance := time.NewTicker(15 * time.Minute)
+	defer maintenance.Stop()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -219,14 +238,13 @@ func (a *API) RunWebhookProcessor(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-maintenance.C:
+			retain()
 		}
 	}
 }
 
 func (a *API) ProcessWebhooksOnce(ctx context.Context) error {
-	if err := a.store.RetainWebhookDeliveries(ctx, time.Now().UTC()); err != nil {
-		return err
-	}
 	for i := 0; i < 20; i++ {
 		r, err := a.store.ClaimWebhookDelivery(ctx, time.Now().UTC(), webhookAttemptTimeout+time.Minute)
 		if errors.Is(err, store.ErrNotFound) {
@@ -270,7 +288,11 @@ func (a *API) ProcessWebhooksOnce(ctx context.Context) error {
 var errWebhookRejected = errors.New("Webhook rejected")
 
 func (a *API) executeWebhookDelivery(ctx context.Context, r core.WebhookDelivery) (string, error) {
-	body, err := a.webhookVault().Decrypt("webhook-delivery:"+r.ID, r.Ciphertext)
+	vault := a.webhookVault()
+	if vault == nil {
+		return "", errors.New("Encrypted webhook storage unavailable; restore the controller master key before retrying.")
+	}
+	body, err := vault.Decrypt("webhook-delivery:"+r.ID, r.Ciphertext)
 	if err != nil {
 		return "", errors.New("Cannot decrypt delivery; restore the controller master key before retrying.")
 	}
@@ -293,14 +315,22 @@ func (a *API) executeWebhookDelivery(ctx context.Context, r core.WebhookDelivery
 		if r.Event == "repository" && env.Action == "deleted" {
 			// Signed deletion is checked against the previously pinned repository ID.
 			// A live installation lookup would be incorrect after deletion (404).
-			if recorder, ok := a.store.(interface {
-				RecordDeletedRepository(context.Context, string, int64, string, string, time.Time) error
-			}); ok {
-				if err := recorder.RecordDeletedRepository(ctx, r.ConnectionID, env.Repository.ID, env.Repository.FullName, r.DeliveryID, r.ReceivedAt); err != nil {
-					return "", errors.New("Repository deletion evidence could not be recorded; retry scheduled.")
+			sources, err := a.store.ListConfigSources(ctx)
+			if err != nil {
+				return "", errors.New("Repository identity lookup failed; retry scheduled.")
+			}
+			bound := false
+			for _, source := range sources {
+				if source.GitHubAppID == r.ConnectionID && source.RepositoryID > 0 && source.RepositoryID == env.Repository.ID {
+					bound = true
+					break
 				}
-			} else {
-				return "", errors.New("Repository recovery is not available; retry scheduled.")
+			}
+			if !bound {
+				return "", fmt.Errorf("%w: deleted repository is not bound to this App", errWebhookRejected)
+			}
+			if err := a.store.RecordDeletedRepository(ctx, r.ConnectionID, env.Repository.ID, env.Repository.FullName, r.DeliveryID, r.ReceivedAt); err != nil {
+				return "", errors.New("Repository deletion evidence could not be recorded; retry scheduled.")
 			}
 			return "Repository deletion recorded; installation cache invalidated.", nil
 		}

@@ -14,6 +14,8 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	RecordDeletedRepository(context.Context, string, int64, string, string, time.Time) error
+	RepositoryDeleted(context.Context, string, int64) (bool, error)
 	WebhookDeliveryStore
 	WorkflowReceiptRevision(context.Context, string, string) (core.WorkflowRevision, error)
 	RecordWorkflowNoChange(context.Context, string, string) error

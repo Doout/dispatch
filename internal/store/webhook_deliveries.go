@@ -194,8 +194,16 @@ func (s *SQLStore) RetainWebhookDeliveries(ctx context.Context, now time.Time) e
 	rows.Close()
 	for _, r := range items {
 		r.State, r.Error = "expired", "Delivery retry window expired; inspect the linked workflow or cleanup status."
-		if _, err := tx.ExecContext(ctx, s.q(`UPDATE webhook_deliveries SET state='expired',ciphertext='',completed_at=?,error=?,lease_token='',lease_until='' WHERE id=?`), stamp(now), r.Error, r.ID); err != nil {
+		result, err := tx.ExecContext(ctx, s.q(`UPDATE webhook_deliveries SET state='expired',ciphertext='',completed_at=?,error=?,lease_token='',lease_until='' WHERE id=? AND expires_at<=? AND state IN ('queued','retry','running') AND lease_until<=?`), stamp(now), r.Error, r.ID, stamp(now), stamp(now))
+		if err != nil {
 			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			continue
 		}
 		if err := s.webhookActivities(ctx, tx, r); err != nil {
 			return err
@@ -205,7 +213,7 @@ func (s *SQLStore) RetainWebhookDeliveries(ctx context.Context, now time.Time) e
 	if _, err := tx.ExecContext(ctx, s.q(`DELETE FROM event_activity WHERE is_check=FALSE AND created_at<? AND state NOT IN ('queued','running','retry','deferred')`), cutoff); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, s.q(`UPDATE webhook_deliveries SET activities='[]',result='',error='' WHERE received_at<? AND ciphertext=''`), cutoff); err != nil {
+	if _, err := tx.ExecContext(ctx, s.q(`UPDATE webhook_deliveries SET activities='[]',result='',error='' WHERE received_at<? AND ciphertext='' AND (activities<>'[]' OR result<>'' OR error<>'')`), cutoff); err != nil {
 		return err
 	}
 	return tx.Commit()

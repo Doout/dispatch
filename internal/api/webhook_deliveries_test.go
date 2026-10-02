@@ -115,6 +115,7 @@ func TestWebhookValidationNeverPersistsInvalidOrUnsupportedInput(t *testing.T) {
 	}{
 		{"signature before parsing", "issue_comment", "{", false, 401},
 		{"malformed signed JSON", "issue_comment", "{", true, 400},
+		{"missing source comment identity", "issue_comment", `{"action":"created","repository":{"full_name":"acme/app"},"issue":{"number":1,"pull_request":{}},"comment":{"body":"/preview","author_association":"MEMBER"}}`, true, 400},
 		{"unsupported event", "ping", "{", true, 204},
 		{"ordinary issue comment", "issue_comment", `{"action":"created","repository":{"full_name":"acme/app"},"issue":{"number":1},"comment":{"id":1}}`, true, 204},
 	} {
@@ -169,5 +170,77 @@ func TestWebhookDeliveryInventoryRequiresOwner(t *testing.T) {
 	var result []core.WebhookDelivery
 	if err := json.Unmarshal(serviceRequestTest(t, a, "GET", "/api/v1/events/deliveries", nil, 200), &result); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSignedRepositoryDeletionRequiresPreviouslyBoundAppAndRepository(t *testing.T) {
+	a := serviceTestAPI(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	projects, err := a.store.ListProjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, id := range []string{"bound-app", "other-app"} {
+		if err := a.store.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: id, Name: id, AppID: int64(42 + index), InstallationID: 73, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.store.CreateConfigSource(ctx, core.ConfigSource{ID: "bound-source", ProjectID: projects[0].ID, GitHubAppID: "bound-app", Name: "bound-source", Repository: "acme/service", RepositoryID: 123, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, connection string
+		repo             int64
+		want             string
+	}{
+		{"bound identity", "bound-app", 123, "processed"},
+		{"same App unbound identity", "bound-app", 124, "rejected"},
+		{"other App same identity", "other-app", 123, "rejected"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			appID := 42
+			if test.connection == "other-app" {
+				appID = 43
+			}
+			body, _ := json.Marshal(map[string]any{"action": "deleted", "installation": map[string]any{"id": 73, "app_id": appID}, "repository": map[string]any{"id": test.repo, "full_name": "acme/service"}})
+			r := signedWebhookRequest("secret", "repository", strings.ReplaceAll(test.name, " ", "-"), body)
+			rr := httptest.NewRecorder()
+			a.processGitHubWebhook(rr, r, "secret", test.connection, 73, nil, nil)
+			if rr.Code != 202 {
+				t.Fatalf("receipt: %d %s", rr.Code, rr.Body.String())
+			}
+			if err := a.ProcessWebhooksOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			items, err := a.store.ListWebhookDeliveries(ctx, "", 50)
+			if err != nil || items[0].State != test.want {
+				t.Fatalf("deletion worker: %+v %v", items, err)
+			}
+			deleted, err := a.store.RepositoryDeleted(ctx, test.connection, test.repo)
+			if err != nil || deleted != (test.want == "processed") {
+				t.Fatalf("incorrect deletion evidence: %t %v", deleted, err)
+			}
+		})
+	}
+}
+
+func TestWebhookWorkerMissingMasterKeyRetainsEncryptedReceiptForRetry(t *testing.T) {
+	a := serviceTestAPI(t)
+	ctx := context.Background()
+	r := signedWebhookRequest("secret", "issue_comment", "master-key", []byte(webhookCommentBody))
+	rr := httptest.NewRecorder()
+	a.processGitHubWebhook(rr, r, "secret", "", 0, nil, nil)
+	if rr.Code != 202 {
+		t.Fatalf("receipt: %d %s", rr.Code, rr.Body.String())
+	}
+	a.eventConfig.Vault = nil
+	a.eventConfig.GitHubApps = nil
+	if err := a.ProcessWebhooksOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	items, err := a.store.ListWebhookDeliveries(ctx, "", 50)
+	if err != nil || len(items) != 1 || items[0].State != "retry" || items[0].Ciphertext == "" || items[0].Attempts != 1 || !items[0].NextAttemptAt.After(time.Now()) {
+		t.Fatalf("lost recoverable receipt: %+v %v", items, err)
 	}
 }

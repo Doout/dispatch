@@ -242,7 +242,7 @@ func (s *Service) syncSource(ctx context.Context, id string, event *core.Workflo
 			if err == nil {
 				var revision core.WorkflowRevision
 				revision, err = s.startIfChanged(ctx, resource, source, snapshot, "configuration sync")
-				if event != nil && revision.ID != "" {
+				if event != nil && revision.ID != "" && !slices.Contains(event.RevisionIDs, revision.ID) {
 					event.RevisionIDs = append(event.RevisionIDs, revision.ID)
 				}
 			}
@@ -386,7 +386,7 @@ func (s *Service) processEvent(ctx context.Context, event core.WorkflowEvent) er
 				if runErr == nil {
 					var revision core.WorkflowRevision
 					revision, runErr = s.startIfChanged(ctx, resource, source, snapshot, "github push")
-					if revision.ID != "" {
+					if revision.ID != "" && !slices.Contains(event.RevisionIDs, revision.ID) {
 						event.RevisionIDs = append(event.RevisionIDs, revision.ID)
 					}
 				}

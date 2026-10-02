@@ -212,4 +212,31 @@ func TestWorkflowReceiptAtomicallyBindsCommentAndProtectsRetainedRun(t *testing.
 	if _, err := s.WorkflowReceiptRevision(ctx, "resource", "missing-reservation"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("failed transaction retained receipt: %v", err)
 	}
+	// A generated resource and its source-trust/lifecycle owner are one commit.
+	must(s.CreateWorkflowPreviewTemplate(ctx, core.WorkflowPreviewTemplate{ID: "template", Name: "template", ConfigSourceID: "source", GitHubAppID: "github", Repository: "acme/app", Command: "/preview", SourceTrustPolicy: "approval_required", CreatedAt: now, UpdatedAt: now}))
+	trigger := core.WorkflowPreviewTrigger{ID: "generated-trigger", TemplateID: "template", GitHubAppID: "github", Repository: "acme/app", PullRequestNumber: 2, Command: "/preview", CreatedAt: now}
+	generated := core.WorkflowResource{ID: "generated", ConfigSourceID: "source", Name: "generated", Kind: "Application", Temporary: true, Active: true, CreatedAt: now, UpdatedAt: now}
+	must(s.CreateWorkflowResource(WithWorkflowPreviewTrigger(ctx, trigger), generated))
+	triggers, err := s.ListWorkflowPreviewTriggers(ctx)
+	must(err)
+	found := false
+	for _, item := range triggers {
+		if item.ID == trigger.ID {
+			found = true
+			if item.ResourceID != generated.ID || item.SourceTrustPolicy != "approval_required" {
+				t.Fatalf("generated ownership lost: %+v", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("resource committed without trigger")
+	}
+	generated.ID = "orphan-resource"
+	generated.Name = "orphan"
+	if err := s.CreateWorkflowResource(WithWorkflowPreviewTrigger(ctx, trigger), generated); err == nil {
+		t.Fatal("duplicate trigger owner accepted")
+	}
+	if _, err := s.GetWorkflowResource(ctx, generated.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("failed trigger left orphan generated resource")
+	}
 }
