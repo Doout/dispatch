@@ -6,6 +6,7 @@ import { PageHeader } from "./PageHeader";
 export function ServiceTemplateForm({ template, overview, onBack, onSaved }: { template: ServiceTemplate; overview: Overview; onBack: () => void; onSaved: () => Promise<void> }) {
  const [name, setName] = useState("");
  const [description, setDescription] = useState("");
+ const [confirmDataCopy,setConfirmDataCopy] = useState("");
  const [inputs, setInputs] = useState<Record<string,string>>({});
  const [run, setRun] = useState<ServiceProvisionRun | null>(null);
  const [error, setError] = useState("");
@@ -20,7 +21,7 @@ export function ServiceTemplateForm({ template, overview, onBack, onSaved }: { t
  }, [run?.id, run?.state, onSaved]);
  async function submit(e: FormEvent) {
   e.preventDefault(); setBusy(true); setError("");
-  try { setRun(await api.startServiceProvision(template.id, { name, description, inputs })); setInputs({}); }
+  try { setRun(await api.startServiceProvision(template.id, { name, description, inputs, confirmDataCopy })); setInputs({}); }
   catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   finally { setBusy(false); }
  }
@@ -32,8 +33,9 @@ export function ServiceTemplateForm({ template, overview, onBack, onSaved }: { t
   <form className="service-form" onSubmit={e => void submit(e)}>
    <div className="service-form-grid"><label>Service name<input required pattern="[a-z0-9][a-z0-9.\-]{0,62}" disabled={!!run} value={name} onChange={e => setName(e.target.value)} placeholder="orders-db" /></label><label>Description<input disabled={!!run} value={description} onChange={e => setDescription(e.target.value)} /></label></div>
    {entries.length > 0 && <fieldset><legend>Provisioning inputs</legend><div className="service-form-grid">{entries.map(([key, field]) => <label key={key}>{field.label || key}{field.type === "service" ? <select required={field.required} disabled={!!run} value={inputs[key] || ""} onChange={e => setInputs(old => ({ ...old, [key]: e.target.value }))}><option value="">Choose a service</option>{(overview.services ?? []).filter(service => service.projectId === template.projectId && service.type === field.serviceType).map(service => <option key={service.id} value={service.id}>{service.name}</option>)}</select> : <input required={field.required} disabled={!!run} type={field.type === "secret" ? "password" : "text"} autoComplete={field.type === "secret" ? "new-password" : "off"} value={inputs[key] || ""} onChange={e => setInputs(old => ({ ...old, [key]: e.target.value }))} />}{field.description && <small className="service-help">{field.description}</small>}</label>)}</div></fieldset>}
+   {template.neon?.dataMode === "parent-data" && <label>Confirm copying parent rows<input required disabled={!!run || overview.identity?.systemRole !== "owner"} value={confirmDataCopy} onChange={e => setConfirmDataCopy(e.target.value)} placeholder={`Copy parent rows into ${name}`} /><small>A controller owner must type: Copy parent rows into {name}</small></label>}
    <p>The template provisions the resource and saves its connection details as a Service. Credentials stay hidden after saving.</p>
-   {run && <div className="service-provision-status" role="status"><strong>{run.state === "succeeded" ? "Service ready" : run.state === "failed" ? "Provisioning failed" : "Provisioning in progress"}</strong><p>{run.error || (run.state === "succeeded" ? "The service is available to applications in this project." : run.phase || "Waiting for the provider to finish.")}</p>{run.target && <p className="service-help">{run.target.provider === "docker" ? "Container" : "Helm release"}: <code>{run.target.resourceName}</code>{run.target.namespace ? ` · ${run.target.namespace}` : ""} · {overview.servers.find(server => server.id === run.target?.serverId)?.name ?? run.target.serverId}</p>}{run.state === "failed" && <p>Check the provider before trying again; it may already have created the resource.</p>}</div>}
+   {run && <div className="service-provision-status" role="status"><strong>{run.state === "succeeded" ? "Service ready" : run.state === "failed" ? "Provisioning failed" : "Provisioning in progress"}</strong><p>{run.error || (run.state === "succeeded" ? "The service is available to applications in this project." : run.phase || "Waiting for the provider to finish.")}</p>{run.target && <p className="service-help">{run.target.provider === "neon" ? "Neon branch" : run.target.provider === "docker" ? "Container" : "Helm release"}: <code>{run.target.resourceName}</code>{run.target.namespace ? ` · ${run.target.namespace}` : ""} · {overview.servers.find(server => server.id === run.target?.serverId)?.name ?? run.target.serverId}</p>}{run.state === "failed" && <p>Check the provider before trying again; it may already have created the resource.</p>}</div>}
    {run?.target && <ServiceResourcePanel runId={run.id} canManage={true} canRecover={true} onChanged={onSaved} />}
    {error && <p role="alert" className="error">{error}</p>}
    {!run && <button className="primary-button" disabled={busy}>{busy ? "Starting…" : "Create service"}</button>}

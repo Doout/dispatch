@@ -24,6 +24,9 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 		return nil, errors.New("stored service template is invalid")
 	}
 	spec := documents[0].ServiceTemplate
+	if spec.Provision.Neon != nil {
+		return nil, errors.New("Neon provisioning requires durable owned-service acceptance")
+	}
 	if spec.Provision.Docker != nil || spec.Provision.Helm != nil {
 		run := core.ServiceProvisionRun{ID: ulid.Make().String(), TemplateID: resource.ID, ProjectID: projectID, ServiceName: resource.Name}
 		if len(runs) > 0 {

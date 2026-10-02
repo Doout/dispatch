@@ -65,6 +65,13 @@ func (s *Service) effectiveServiceBindings(ctx context.Context, project string, 
 		if ref, ok := stage.ServiceBindings[b.Alias]; ok {
 			b.ServiceRef = ref
 		}
+		if _, deferred := PreviewServiceAlias(b.ServiceRef); deferred {
+			fields := map[string]core.ServiceField{}
+			for _, key := range []string{"connectionUrl", "host", "port", "database", "username", "password", "sslmode"} {
+				fields[key] = core.ServiceField{Configured: true}
+			}
+			byRef[b.ServiceRef] = core.Service{ID: b.ServiceRef, ProjectID: project, Type: "postgresql", Fields: fields}
+		}
 		item, ok := byRef[b.ServiceRef]
 		if !ok {
 			return nil, fmt.Errorf("service binding %s references an unavailable service in this project", b.Alias)
@@ -80,6 +87,9 @@ func (s *Service) effectiveServiceBindings(ctx context.Context, project string, 
 func (s *Service) validateApplicationServices(ctx context.Context, project string, doc Document) error {
 	if doc.Spec == nil {
 		return nil
+	}
+	if _, err := s.previewServiceScopes(ctx, project, *doc.Spec); err != nil {
+		return err
 	}
 	for _, spec := range doc.Spec.Deployments {
 		if _, err := s.effectiveServiceBindings(ctx, project, spec, StageSpec{}); err != nil {
@@ -156,6 +166,9 @@ func (s *Service) applicationServiceIDs(ctx context.Context, project string, doc
 	ids := []string{}
 	add := func(bindings []core.ServiceBinding) {
 		for _, b := range bindings {
+			if _, deferred := PreviewServiceAlias(b.ServiceRef); deferred {
+				continue
+			}
 			if !seen[b.ServiceRef] {
 				seen[b.ServiceRef] = true
 				ids = append(ids, b.ServiceRef)

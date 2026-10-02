@@ -25,7 +25,15 @@ type HelmServiceProvision struct {
 	Connection   map[string]string `json:"connection,omitempty" yaml:"connection,omitempty"`
 }
 
+type NeonServiceProvision struct {
+	ProviderRef         string `json:"providerRef" yaml:"providerRef"`
+	Database            string `json:"database" yaml:"database"`
+	DataMode            string `json:"dataMode,omitempty" yaml:"dataMode,omitempty"`
+	SuspendAfterSeconds int    `json:"suspendAfterSeconds,omitempty" yaml:"suspendAfterSeconds,omitempty"`
+}
+
 type ServiceProvisionTarget struct {
+	ProviderRef  string `json:"providerRef,omitempty"`
 	Provider     string `json:"provider"`
 	ServerID     string `json:"serverId"`
 	ResourceName string `json:"resourceName"`

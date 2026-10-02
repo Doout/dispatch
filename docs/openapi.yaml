@@ -9,6 +9,34 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /neon-providers:
+    get:
+      operationId: listNeonProviders
+      description: List immutable provider assignments in a project. Requires project.view; credential references are hidden from nonowners.
+      parameters:
+        - { in: query, name: projectId, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Assigned Neon projects.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/NeonProvider' } }
+    post:
+      operationId: createNeonProvider
+      description: Owner-only registration of an existing Neon API project and scoped encrypted credential reference. Does not create a cloud project. Fields are immutable after creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NeonProvider' }
+      responses:
+        '201':
+          description: Provider registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NeonProvider' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /workload-backups:
     get:
       operationId: listWorkloadBackups
@@ -163,7 +191,7 @@ paths:
   /service-templates/{id}/runs:
     post:
       operationId: provisionServiceTemplate
-      description: Requires a direct user with project.configure and deployment.run. Built-in requests capture encrypted configuration and generated credentials before mutation. Idempotency-Key replays the original accepted run; custom scripts remain manual after uncertain outcomes.
+      description: Requires a direct user with project.configure and deployment.run. Built-in requests capture encrypted configuration and generated credentials before mutation. Idempotency-Key replays the original accepted run; custom scripts remain manual after uncertain outcomes. Neon parent-data templates require owner confirmation through confirmDataCopy; automatic previews require schema-only.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -178,6 +206,7 @@ paths:
                 name: { type: string }
                 description: { type: string }
                 inputs: { type: object, additionalProperties: { type: string, writeOnly: true } }
+                confirmDataCopy: { type: string, description: For Neon parent-data templates, an owner must enter Copy parent rows into SERVICE_NAME. }
       responses:
         '202': { description: Accepted provision run, or a shared MutationReceipt when Idempotency-Key is supplied. }
         '403': { $ref: '#/components/responses/Problem' }
@@ -4501,6 +4530,18 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    NeonProvider:
+      type: object
+      required: [projectId, name, neonProjectId, parentBranchId, credentialRef]
+      properties:
+        id: { type: string, readOnly: true }
+        projectId: { type: string }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        endpoint: { type: string, format: uri, default: 'https://console.neon.tech/api/v2' }
+        neonProjectId: { type: string }
+        parentBranchId: { type: string }
+        credentialRef: { type: string, description: Existing encrypted secret reference; never an API key value. }
+        createdAt: { type: string, format: date-time, readOnly: true }
     PreviewSourceTrustDecision:
       type: object
       required: [policy, digest, allowed, reason, sources, credentialScope, environments, checkedAt]

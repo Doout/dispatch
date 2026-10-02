@@ -121,3 +121,7 @@ Use disposable infrastructure. The integration tests are opt-in:
 - `DISPATCH_SERVICES_TEST_KUBECONFIG` and `DISPATCH_SERVICES_KUBE_POSTGRES_URL`: a disposable Kubernetes cluster and PostgreSQL reachable from its pods.
 
 The runtime tests use `postgres:17-alpine`. Load it into a local cluster before running. Run `go test ./internal/serviceconn ./internal/store ./internal/deploy -run 'Integration' -v`. Dockerfile and Compose fixtures execute `SELECT 1` using the injected URL. The Helm fixture becomes ready only after connecting, then tests an upgrade and owned-Secret cleanup. Tests create uniquely named application containers and Kubernetes namespaces and remove them afterward. They do not remove the supplied database or cluster.
+
+## Neon preview databases
+
+The built-in [Neon adapter](neon-preview-databases.md) creates schema-only branches in an existing Neon project, retains one database per preview across commits, and uses the same encrypted Service and owned-resource recovery contract. Provider registration is owner-only and project-scoped. Explicit branch deletion removes its data; preview cleanup retains it.

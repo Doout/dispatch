@@ -24,7 +24,8 @@ import (
 const defaultPollInterval = 5 * 60
 
 type Service struct {
-	RemoteDockerServices func(context.Context, core.ServiceProvisionRequest, core.DockerServiceProvision, core.Server) (map[string]string, error)
+	PreparePreviewServices func(context.Context, core.WorkflowResource, core.WorkflowRevision, Document) error
+	RemoteDockerServices   func(context.Context, core.ServiceProvisionRequest, core.DockerServiceProvision, core.Server) (map[string]string, error)
 	// ResolvePreviewSource is a provider metadata adapter; production defaults to GitHub.
 	ResolvePreviewSource func(context.Context, string, string, int) (githubapp.PullRequestHead, error)
 	Store                store.Store

@@ -195,3 +195,19 @@ spec:
  expect(value.spec.provision.docker).toEqual({ serverRef: "docker", network: "application-network", storageMountPath: "/var/lib/postgresql/data", environment: { TZ: "UTC" } });
  expect(value.spec.provision.run).toBeUndefined();
 });
+
+it("saves Neon with a project provider and schema-only data", async () => {
+ vi.spyOn(api,"neonProviders").mockResolvedValue([{id:"neon-p",projectId:"p",name:"Preview provider",endpoint:"https://neon.example/api/v2",neonProjectId:"cloud-project",parentBranchId:"production",credentialRef:"key",createdAt:""}]);
+ const save=vi.spyOn(api,"saveServiceTemplate").mockResolvedValue({id:"template",revision:1});
+ render(<ServiceTemplateEditor overview={overview} initialProject="p" onBack={()=>{}} onSaved={async()=>{}} />);
+ const user=userEvent.setup();
+ await user.type(screen.getByLabelText("Template name"),"preview-db");
+ await user.selectOptions(screen.getByLabelText("Provisioner"),"neon");
+ await screen.findByRole("option",{name:"Preview provider"});
+ await user.selectOptions(screen.getByLabelText("Project provider"),"neon-p");
+ await user.click(screen.getByRole("button",{name:"Save template"}));
+ await waitFor(()=>expect(save).toHaveBeenCalledOnce());
+ const document=parse(save.mock.calls[0][1].document);
+ expect(document.spec.provision.neon).toEqual({providerRef:"neon-p",database:"neondb",dataMode:"schema-only"});
+ expect(document.spec.provision.neon.credentialRef).toBeUndefined();
+});

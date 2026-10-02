@@ -1616,6 +1616,19 @@ CREATE TABLE repository_deletions (
   PRIMARY KEY(github_app_id, repository_id)
 );
 
+-- dispatch:migration 090_neon_services
+CREATE TABLE neon_providers (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  payload TEXT NOT NULL
+);
+CREATE INDEX neon_providers_project ON neon_providers(project_id);
+CREATE TABLE neon_preview_services (
+ preview_id TEXT NOT NULL REFERENCES workflow_resources(id),
+ alias TEXT NOT NULL,
+ run_id TEXT NOT NULL UNIQUE REFERENCES service_resources(run_id),
+ PRIMARY KEY(preview_id,alias)
+);
 -- dispatch:migration 091_workflow_check_runs
 CREATE TABLE workflow_check_reports (
  id TEXT PRIMARY KEY,

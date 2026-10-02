@@ -57,6 +57,19 @@ func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServicePr
 	if err != nil {
 		return err
 	}
+	if r.PreviewID != "" {
+		if r.Target.Provider != "neon" || r.PreviewAlias == "" {
+			return ErrServiceResourceChanged
+		}
+		var project string
+		var active bool
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT c.project_id,w.active FROM workflow_resources w JOIN config_sources c ON c.id=w.config_source_id WHERE w.id=?`), r.PreviewID).Scan(&project, &active); err != nil || project != r.ProjectID || !active {
+			return ErrServiceResourceChanged
+		}
+		if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO neon_preview_services(preview_id,alias,run_id) VALUES(?,?,?)`), r.PreviewID, r.PreviewAlias, r.RunID); err != nil {
+			return err
+		}
+	}
 	for _, id := range r.Dependencies {
 		var project string
 		dependencyQuery := `SELECT project_id FROM services WHERE id=?`
@@ -86,6 +99,7 @@ func (s *SQLStore) serviceResourceConsumers(ctx context.Context, tx *sql.Tx, id 
 	var n int
 	for _, q := range []string{
 		`SELECT COUNT(*) FROM app_service_bindings WHERE service_id=?`,
+		`SELECT COUNT(*) FROM neon_preview_services n JOIN service_resources r ON r.run_id=n.run_id JOIN workflow_resources w ON w.id=n.preview_id WHERE r.service_id=? AND w.active=TRUE`,
 		`SELECT COUNT(*) FROM workflow_service_references WHERE service_id=?`,
 		`SELECT COUNT(*) FROM deployment_service_bindings b JOIN deployments d ON d.id=b.deployment_id WHERE b.service_id=? AND d.state NOT IN ('succeeded','failed','cancelled')`,
 		`SELECT COUNT(*) FROM deployment_service_bindings b JOIN deployments d ON d.id=b.deployment_id JOIN apps a ON a.id=d.app_id WHERE b.service_id=? AND d.state='succeeded' AND NOT EXISTS (SELECT 1 FROM deployments newer WHERE newer.app_id=d.app_id AND newer.state='succeeded' AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.id>d.id)))`,
