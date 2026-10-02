@@ -8,7 +8,8 @@ archive bytes. Project viewers can inspect history. Mutations require
 
 This first implementation supports native PostgreSQL custom-format dumps on the
 same target. Generic volume archives, Helm databases, offsite destinations,
-cross-target restore, and other database engines remain follow-up work in #18.
+cross-target restore, and other database engines remain outside this first path.
+See [remaining backup work](roadmap.md#remaining-feature-work).
 A deployment rollback changes application artifacts; it does not restore data.
 [Machine snapshots](machine-snapshots.md) and controller disaster recovery have
 separate lifecycles.
@@ -20,14 +21,15 @@ container image, native consistency method, creation time, encrypted archive siz
 SHA-256 checksums, encryption format, retention policy, and subsequent operation
 outcomes. PostgreSQL `pg_dump` supplies a consistent database snapshot while the
 source stays available. The archive contains one database; cluster roles and
-original ownership or access grants are not restored. Database and role names must be simple identifiers;
-connection strings are rejected before Docker execution.
+original ownership or access grants are not restored. Database and role names
+must be simple identifiers; connection strings are rejected before Docker execution.
 
 The target streams the dump into an AES-256-GCM archive with authenticated chunks
 and an authenticated end marker. The archive limit is 256 GiB. The target encrypts
 its ownership manifest and operation receipts too. Receipts bind the exact accepted
-action and destination; a corrupt receipt cannot trigger repeated execution. Each backup gets a random key;
-the controller stores that key, source credentials and integrity assertions in
+action and destination; a corrupt receipt cannot trigger repeated execution.
+Each backup gets a random key. The controller stores that key, source credentials
+and integrity assertions in
 its encrypted recovery record. Public responses expose a key identifier, never
 the key, SQL assertions or credential values. Remote execution uses the existing
 encrypted runtime job and agent receipt protocol.

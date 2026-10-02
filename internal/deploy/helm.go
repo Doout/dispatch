@@ -40,7 +40,7 @@ type helmClientFactory func(core.Server, string, string) (helmClient, error)
 type helmClient interface {
 	UpgradeInstall(context.Context, string, core.App, core.Deployment, map[string]interface{}) error
 	Status(context.Context, string) error
-	Uninstall(context.Context, string) error
+	Uninstall(context.Context, string, core.App) error
 }
 
 type sdkHelmClient struct {
@@ -66,7 +66,7 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 	if err := ValidateHelmTarget(app, server); err != nil {
 		return err
 	}
-	preparedServer, cleanupKubeconfig, err := prepareKubernetesServer(server)
+	preparedServer, cleanupKubeconfig, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -131,6 +131,17 @@ func (e HelmExecutor) Deploy(ctx context.Context, deployment core.Deployment, ap
 	}
 	if err := progress(core.DeploymentStarting, "Installing Helm release "+release+" on "+server.Name); err != nil {
 		return err
+	}
+	if inspector, ok := client.(serviceReleaseClient); ok {
+		retained, err := inspector.InspectServiceRelease(ctx, release)
+		if err != nil && !errors.Is(err, driver.ErrReleaseNotFound) {
+			return errors.New("cannot inspect the existing Helm release before deployment")
+		}
+		if err == nil {
+			if err := requireHelmReleaseOwner(retained, app, namespace); err != nil {
+				return err
+			}
+		}
 	}
 	if len(app.ServiceRuntime) > 0 {
 		kubeClient, err := e.serviceClient(server)
@@ -235,7 +246,7 @@ func (e HelmExecutor) Cleanup(ctx context.Context, app core.App, server core.Ser
 	if err := ValidateHelmTarget(app, server); err != nil {
 		return err
 	}
-	preparedServer, cleanupKubeconfig, err := prepareKubernetesServer(server)
+	preparedServer, cleanupKubeconfig, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -256,7 +267,7 @@ func (e HelmExecutor) Cleanup(ctx context.Context, app core.App, server core.Ser
 	if err := progress(core.DeploymentStarting, "Removing Helm release "+release); err != nil {
 		return err
 	}
-	if err := client.Uninstall(ctx, release); err != nil {
+	if err := client.Uninstall(ctx, release, app); err != nil {
 		return fmt.Errorf("uninstall Helm release: %w", err)
 	}
 	if err := e.cleanupServiceSecrets(ctx, server, app, namespace, release); err != nil {
@@ -273,9 +284,14 @@ func (e HelmExecutor) client(server core.Server, namespace, workspace string) (h
 }
 
 func newSDKHelmClient(server core.Server, namespace, workspace string) (helmClient, error) {
+	if server.Kubernetes == nil {
+		return nil, errors.New("Kubernetes target credentials are unavailable")
+	}
+	if server.Kubernetes.Validation != nil && namespace != server.Kubernetes.Namespace {
+		return nil, errors.New("Helm release namespace differs from the registered target namespace")
+	}
 	settings := cli.New()
-	settings.KubeConfig = server.Kubernetes.KubeconfigPath
-	settings.KubeContext = server.Kubernetes.Context
+	selectHelmCredentials(settings, server)
 	settings.RepositoryConfig = filepath.Join(workspace, "repositories.yaml")
 	settings.RepositoryCache = filepath.Join(workspace, "repository-cache")
 	settings.SetNamespace(namespace)
@@ -290,7 +306,7 @@ func newSDKHelmClient(server core.Server, namespace, workspace string) (helmClie
 		return nil, fmt.Errorf("initialize registry client: %w", err)
 	}
 	configuration := new(action.Configuration)
-	if err := configuration.Init(settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), func(string, ...interface{}) {}); err != nil {
+	if err := configuration.Init(scopedHelmGetter(settings.RESTClientGetter(), server), namespace, os.Getenv("HELM_DRIVER"), func(string, ...interface{}) {}); err != nil {
 		return nil, err
 	}
 	configuration.RegistryClient = registryClient
@@ -302,7 +318,7 @@ func HelmReleaseManifest(ctx context.Context, server core.Server, namespace, rel
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return "", err
 	}
@@ -329,7 +345,7 @@ func HelmReleaseManifest(ctx context.Context, server core.Server, namespace, rel
 
 // HelmReleaseValues uses the stored Helm revision matching the selected deployment.
 func HelmReleaseValues(ctx context.Context, server core.Server, namespace, release string, deployment core.Deployment, expected map[string]any) (chartvalues.Result, error) {
-	prepared, cleanup, err := prepareKubernetesServer(server)
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return chartvalues.Result{}, err
 	}
@@ -392,7 +408,14 @@ func releaseValuesMatch(installed *helmrelease.Release, deployment core.Deployme
 }
 
 func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app core.App, deployment core.Deployment, values map[string]interface{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	metadata := newHelmDeploymentMetadata(app, deployment)
+	isolated := c.server.Kubernetes != nil && c.server.Kubernetes.Validation != nil
+	if isolated {
+		metadata.TargetNamespace = c.server.Kubernetes.Namespace
+	}
 	chartOptions := action.ChartPathOptions{
 		RepoURL: app.HelmRepository,
 		Version: app.HelmVersion,
@@ -415,25 +438,39 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	if err := action.CheckDependencies(chart, chart.Metadata.Dependencies); err != nil {
 		return fmt.Errorf("check chart dependencies: %w", err)
 	}
+	if isolated && len(chart.CRDObjects()) > 0 {
+		return errors.New("Registered namespace targets cannot install cluster custom resource definitions. Install required cluster APIs separately.")
+	}
+
+	actionCtx, restoreClient, err := c.actionContext(ctx, deployment.ID)
+	if err != nil {
+		return err
+	}
+	defer restoreClient()
 
 	history := action.NewHistory(c.configuration)
 	history.Max = 1
-	_, err = history.Run(release)
+	retained, err := history.Run(release)
 	if errors.Is(err, driver.ErrReleaseNotFound) {
 		install := action.NewInstall(c.configuration)
+		install.SkipCRDs, install.DisableHooks = isolated, isolated
 		install.ChartPathOptions = chartOptions
 		install.SetRegistryClient(c.registry)
 		install.ReleaseName = release
 		install.Namespace = c.settings.Namespace()
-		install.CreateNamespace = true
+		install.CreateNamespace = !isolated
 		install.Atomic = true
 		install.Wait = true
 		install.WaitForJobs = true
 		install.Timeout = time.Duration(metadata.HealthPolicy.TimeoutSeconds) * time.Second
 		install.Description = metadata.description()
+		install.Labels = metadata.labels()
 		install.PostRenderer = metadata
 		var installed *helmrelease.Release
-		installed, err = install.RunWithContext(ctx, chart, values)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		installed, err = install.RunWithContext(actionCtx, chart, values)
 		if err == nil && installed != nil {
 			c.lastManifest = installed.Manifest
 			err = c.labelRelease(ctx, installed, metadata)
@@ -443,12 +480,45 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	if err != nil {
 		return err
 	}
+	var latest *helmrelease.Release
+	for _, item := range retained {
+		if item != nil && (latest == nil || item.Version > latest.Version) {
+			latest = item
+		}
+	}
+	if err := requireHelmReleaseOwner(latest, app, c.settings.Namespace()); err != nil {
+		return err
+	}
+	if isolated {
+		if _, err := (helmDeploymentMetadata{TargetNamespace: metadata.TargetNamespace}).Run(bytes.NewBufferString(latest.Manifest)); err != nil {
+			return err
+		}
+	}
+	// Helm's atomic failure path chooses the newest successful revision, which
+	// may precede the latest failed revision. Check that candidate before writes.
+	var rollbackCandidate *helmrelease.Release
+	for _, item := range retained {
+		if item != nil && item.Info != nil && (item.Info.Status == helmrelease.StatusDeployed || item.Info.Status == helmrelease.StatusSuperseded) && (rollbackCandidate == nil || item.Version > rollbackCandidate.Version) {
+			rollbackCandidate = item
+		}
+	}
+	if rollbackCandidate != nil {
+		if err := requireHelmReleaseOwner(rollbackCandidate, app, c.settings.Namespace()); err != nil {
+			return err
+		}
+		if isolated {
+			if _, err := (helmDeploymentMetadata{TargetNamespace: metadata.TargetNamespace}).Run(bytes.NewBufferString(rollbackCandidate.Manifest)); err != nil {
+				return err
+			}
+		}
+	}
 
 	if ctx.Value(serviceInstallOnlyKey{}) == true {
 		return errors.New("a service release appeared after inspection; inspect its ownership before recovery")
 	}
 
 	upgrade := action.NewUpgrade(c.configuration)
+	upgrade.DisableHooks = isolated
 	upgrade.ChartPathOptions = chartOptions
 	upgrade.SetRegistryClient(c.registry)
 	upgrade.Namespace = c.settings.Namespace()
@@ -459,9 +529,13 @@ func (c *sdkHelmClient) UpgradeInstall(ctx context.Context, release string, app 
 	upgrade.Timeout = time.Duration(metadata.HealthPolicy.TimeoutSeconds) * time.Second
 	upgrade.MaxHistory = c.settings.MaxHistory
 	upgrade.Description = metadata.description()
+	upgrade.Labels = metadata.labels()
 	upgrade.PostRenderer = metadata
 	var installed *helmrelease.Release
-	installed, err = upgrade.RunWithContext(ctx, release, chart, values)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	installed, err = upgrade.RunWithContext(actionCtx, release, chart, values)
 	if err == nil && installed != nil {
 		c.lastManifest = installed.Manifest
 		err = c.labelRelease(ctx, installed, metadata)
@@ -483,7 +557,7 @@ func (c *sdkHelmClient) Status(ctx context.Context, release string) error {
 	return nil
 }
 
-func (c *sdkHelmClient) Uninstall(ctx context.Context, release string) error {
+func (c *sdkHelmClient) Uninstall(ctx context.Context, release string, app core.App) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -493,6 +567,14 @@ func (c *sdkHelmClient) Uninstall(ctx context.Context, release string) error {
 	}
 	if err != nil {
 		return errors.New("cannot inspect release storage before cleanup")
+	}
+	if err := requireHelmReleaseOwner(retained, app, c.settings.Namespace()); err != nil {
+		return err
+	}
+	if c.server.Kubernetes != nil && c.server.Kubernetes.Validation != nil {
+		if _, err := (helmDeploymentMetadata{TargetNamespace: c.server.Kubernetes.Namespace}).Run(bytes.NewBufferString(retained.Manifest)); err != nil {
+			return err
+		}
 	}
 	if err := checkHelmStorageCleanup(retained.Manifest); err != nil {
 		return err
@@ -554,6 +636,9 @@ func ValidateHelmTarget(app core.App, server core.Server) error {
 	if server.Kubernetes == nil || (strings.TrimSpace(server.Kubernetes.KubeconfigPath) == "" && strings.TrimSpace(server.Kubernetes.KubeconfigData) == "") {
 		return errors.New("Helm applications require a Kubernetes server with a kubeconfig")
 	}
+	if server.Kubernetes.Validation != nil && helmNamespace(app, server) != server.Kubernetes.Namespace {
+		return errors.New("This target is registered for another namespace. Select a target registered for the application's namespace.")
+	}
 	chart := strings.TrimSpace(app.HelmChart)
 	if chart == "" {
 		return errors.New("Helm chart is required")
@@ -588,13 +673,24 @@ func gitBackedHelmChart(app core.App) bool {
 	return strings.TrimSpace(app.SourceRepo) != "" && strings.TrimSpace(app.HelmRepository) == "" && !strings.Contains(chart, "://")
 }
 
-func prepareKubernetesServer(server core.Server) (core.Server, func(), error) {
+func prepareKubernetesServer(ctx context.Context, server core.Server) (core.Server, func(), error) {
 	if server.Kubernetes == nil {
 		return server, func() {}, nil
 	}
 	prepared, cleanup, err := kubeconfig.Prepare(*server.Kubernetes)
 	if err != nil {
 		return server, func() {}, fmt.Errorf("prepare kubeconfig: %w", err)
+	}
+	if recorded := server.Kubernetes.Validation; recorded != nil {
+		current, err := kubeconfig.InspectTarget(ctx, prepared)
+		if err != nil {
+			cleanup()
+			return server, func() {}, err
+		}
+		if current.ClusterUID != recorded.ClusterUID || current.NamespaceUID != recorded.NamespaceUID {
+			cleanup()
+			return server, func() {}, errors.New("The Kubernetes cluster or namespace identity changed. Register the replacement as a separate target before deploying.")
+		}
 	}
 	server.Kubernetes = &prepared
 	return server, cleanup, nil

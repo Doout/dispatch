@@ -19,6 +19,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/events"
+	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -75,6 +76,10 @@ func TestNewHeadCancelsStaleManualPreviewWithoutDeploying(t *testing.T) {
 		}
 	}
 	a := New(data, deploy.NewService(data, deploy.SimulationExecutor{}), false, AuthConfig{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	currentSHA := newSHA
+	a.workflows.ResolvePreviewSource = func(_ context.Context, _ string, repository string, _ int) (githubapp.PullRequestHead, error) {
+		return fixturePreviewSource(repository, currentSHA), nil
+	}
 	trigger := core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "preview", Repository: "example/service", PullRequestNumber: 42, AutoDeploy: false}
 	if err := a.updateWorkflowPreviewHead(ctx, trigger, "example/service", newSHA, events.GitHubResolver{}); err != nil {
 		t.Fatal(err)
@@ -91,7 +96,16 @@ func TestNewHeadCancelsStaleManualPreviewWithoutDeploying(t *testing.T) {
 	if err != nil || len(revisions) != 2 || revisions[0].Trigger != "pull request update" || revisions[0].Sources["service"].CommitSHA != newSHA {
 		t.Fatalf("automatic update did not run the newest head: %+v, %v", revisions, err)
 	}
+	// A delayed old head must not schedule or pin an older revision.
+	if err := a.updateWorkflowPreviewHead(ctx, trigger, "example/service", oldSHA, events.GitHubResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	afterOld, _ := data.ListWorkflowRevisions(ctx, "preview", 0)
+	if len(afterOld) != 2 || afterOld[0].Sources["service"].CommitSHA != newSHA {
+		t.Fatalf("old event regressed source: %+v", afterOld)
+	}
 	thirdSHA := strings.Repeat("c", 40)
+	currentSHA = thirdSHA
 	if err := a.updateWorkflowPreviewHead(ctx, trigger, "example/service", thirdSHA, events.GitHubResolver{}); err != nil {
 		t.Fatal(err)
 	}

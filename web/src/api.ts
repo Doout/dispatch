@@ -399,7 +399,15 @@ export type ConfigSource = {
   createdAt: string;
   updatedAt: string;
 };
+export type WorkflowPreviewCleanup = {
+ id: string; resourceId: string; reason: "expired" | "removed" | "closed";
+ finalState: string; state: "pending" | "blocked" | "succeeded"; error?: string;
+ attempts: number; createdAt: string; updatedAt: string;
+ services?: {runId: string; alias: string; policy: string; resourceId: string; operationId: string; state: string; error?: string}[];
+ apps: { appId: string; serverId: string; jobId: string; previousJobIds?: string[]; state: string; error?: string }[];
+};
 export type WorkflowResource = {
+ previewCleanups?: WorkflowPreviewCleanup[];
   previewTTL?: string;
   previewExpiresAt?: string;
   id: string;
@@ -495,7 +503,14 @@ export type PreviewSourceTrustDecision = {
   sources: { alias: string; repository: string; repositoryId: number; headRepository: string; headRepositoryId: number; fork: boolean; pullRequest: number; commitSha: string; githubAppId: string }[];
   credentialScope: string[]; environments: string[]; approvalId?: string; checkedAt: string;
 };
+export type WorkflowCheckReport = {
+  id: string; revisionId: string; resourceId: string; projectId: string; githubAppId: string;
+  repository: string; commitSha: string; name: string; kind: string; stage?: string; check?: string;
+  previewUrl?: string; externalId: string; checkId?: number; htmlUrl?: string; status?: string; conclusion?: string;
+  state: string; error?: string; attempts: number; complete: boolean; updatedAt: string; nextAttemptAt?: string;
+};
 export type WorkflowRevision = {
+  checks?: WorkflowCheckReport[];
   sourceTrust?: PreviewSourceTrustDecision;
   feedback?: WorkflowFeedback;
   id: string;
@@ -981,14 +996,18 @@ export const api = {
  checkApplicationDrift: (id: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/drift/check`,{method:"POST"}),
  reapplyApplication: (id: string,deploymentId: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/reapply`,{method:"POST",body:JSON.stringify({deploymentId})}),
  services: () => request<ServiceConnection[]>("/api/v1/services"),
+ neonProviders: (projectId: string) => request<NeonProvider[]>(`/api/v1/neon-providers?projectId=${encodeURIComponent(projectId)}`),
+ deleteNeonProvider: (id: string) => destructiveRequest<void>(`/api/v1/neon-providers/${id}`, { method: "DELETE" }),
+ createNeonProvider: (data: Omit<NeonProvider, "id" | "createdAt">) => request<NeonProvider>("/api/v1/neon-providers", { method: "POST", body: JSON.stringify(data) }),
  serviceTemplates: () => request<ServiceTemplate[]>("/api/v1/service-templates"),
  serviceTemplate: (id: string) => request<ServiceTemplate>(`/api/v1/service-templates/${id}`),
  saveServiceTemplate: (id: string | undefined, data: { projectId: string; document: string; configSourceId: string; revision?: number }) => request<{ id: string; revision: number }>(`/api/v1/service-templates${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(data) }),
  deleteServiceTemplate: (id: string, revision: number) => destructiveRequest<void>(`/api/v1/service-templates/${id}?revision=${revision}`, { method: "DELETE" }),
- startServiceProvision: (id: string, data: { name: string; description: string; inputs: Record<string,string> }) => request<ServiceProvisionRun>(`/api/v1/service-templates/${id}/runs`, { method: "POST", body: JSON.stringify(data) }),
+ startServiceProvision: (id: string, data: { name: string; description: string; inputs: Record<string,string>; confirmDataCopy?: string }) => request<ServiceProvisionRun>(`/api/v1/service-templates/${id}/runs`, { method: "POST", body: JSON.stringify(data) }),
  serviceResource: (id: string) => request<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource`),
  inspectServiceResource: (id: string) => request<ServiceResourceInspection>(`/api/v1/service-provision-runs/${id}/resource/inspect`, { method: "POST" }),
  recoverServiceResource: (id: string, action: "reconcile" | "retry") => request<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource/${action}`, { method: "POST" }),
+ neonLifecycle: (id: string, action: "policy-retain" | "policy-suspend" | "policy-delete" | "reset") => destructiveRequest<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource/${action}`, { method: "POST" }),
  deleteServiceResource: (id: string) => destructiveRequest<ServiceResource>(`/api/v1/service-provision-runs/${id}/resource/delete`, { method: "POST" }),
  serviceProvisionRun: (id: string) => request<ServiceProvisionRun>(`/api/v1/service-provision-runs/${id}`),
  serviceProvisionRuns: () => request<ServiceProvisionRun[]>("/api/v1/service-provision-runs"),
@@ -1639,8 +1658,8 @@ export type AnalyticsCounts = { runs: number; succeeded: number; failed: number;
 export type AnalyticsDay = { date: string; deployments: AnalyticsCounts; workflows: AnalyticsCounts; jobs: AnalyticsCounts };
 export type AnalyticsSummary = { state: string; updatedAt?: string; days: number; daily: AnalyticsDay[]; totals: AnalyticsDay };
 export type ServiceField = { value?: string; sensitive: boolean; configured: boolean; secretRef?: string };
-export type ServiceTemplate = { id: string; name: string; projectId: string; description: string; serviceType: "postgresql" | "generic"; provider?: "docker" | "helm" | "script"; inputs: Record<string, { label?: string; description?: string; type?: "string" | "secret" | "service"; required?: boolean; serviceType?: "postgresql" }>; outputs: Record<string, { sensitive?: boolean }>; configSha: string; managedBy: "dispatch" | "gitops"; revision?: number; configSourceId?: string; document?: string };
-export type ServiceProvisionTarget = { provider: "docker" | "helm"; serverId: string; resourceName: string; network?: string; namespace?: string };
+export type ServiceTemplate = { id: string; name: string; projectId: string; description: string; serviceType: "postgresql" | "generic"; provider?: "docker" | "helm" | "neon" | "script"; neon?: NeonProvision; inputs: Record<string, { label?: string; description?: string; type?: "string" | "secret" | "service"; required?: boolean; serviceType?: "postgresql" }>; outputs: Record<string, { sensitive?: boolean }>; configSha: string; managedBy: "dispatch" | "gitops"; revision?: number; configSourceId?: string; document?: string };
+export type ServiceProvisionTarget = { provider: "docker" | "helm" | "neon"; providerRef?: string; serverId: string; resourceName: string; network?: string; namespace?: string };
 export type ServiceProvisionRun = { target?: ServiceProvisionTarget; id: string; templateId: string; projectId: string; serviceName: string; serviceId?: string; state: "queued" | "running" | "succeeded" | "failed"; phase?: string; error?: string; createdAt: string; startedAt?: string; finishedAt?: string };
 export type ServiceCheck = { state: "succeeded" | "failed" | "untested"; message: string; location: string; checkedAt: string; durationMs: number };
 export type ServiceConnection = {
@@ -1679,8 +1698,11 @@ export type DeploymentComparison = {
  changes: { path: string; kind: "added" | "removed" | "changed"; before: unknown; after: unknown }[];
 };
 
-export type ServiceResource = { runId: string; projectId: string; serviceId: string; name: string; target: ServiceProvisionTarget; state: "accepted" | "provisioning" | "recovering" | "ready" | "unresolved" | "deleting" | "deleted"; resourceId?: string; policy: "retain"; revision: number; operationId: string; message?: string; dependencies?: string[]; recoveryAfter?: string; createdAt: string; updatedAt: string };
+export type ServiceResource = { replacedByRunId?: string; replacesRunId?: string; policyActorId?: string; policyApprovedAt?: string; providerPhase?: string; previewId?: string; previewAlias?: string; runId: string; projectId: string; serviceId: string; name: string; target: ServiceProvisionTarget; state: "accepted" | "provisioning" | "recovering" | "ready" | "unresolved" | "deleting" | "deleted"; resourceId?: string; policy: "retain" | "suspend" | "delete"; revision: number; operationId: string; message?: string; dependencies?: string[]; recoveryAfter?: string; createdAt: string; updatedAt: string };
 export type ServiceResourceInspection = { runId: string; projectId: string; serverId: string; provider: string; resourceId?: string; state: "ready" | "unready" | "absent"; storageRetained: boolean };
 
 export type WorkloadBackup = {id:string;projectId:string;sourceRunId:string;storageId:string;serverId:string;state:string;revision:number;artifactId:string;consistency:string;format:string;checksum?:string;bytes:number;encryption:string;location:string;policy:string;checkCount:number;verificationState:string;cleanupState:string;verificationIntervalHours:number;nextVerificationAt?:string;verifiedAt?:string;createdAt:string;updatedAt:string;message?:string};
 export type WorkloadBackupOperation = {id:string;backupId:string;projectId:string;action:string;state:string;targetRunId?:string;targetName?:string;revision:number;recoveryAfter:string;message?:string;cleanupState?:string};
+
+export type NeonProvision = { providerRef: string; database: string; dataMode?: "schema-only" | "parent-data"; suspendAfterSeconds?: number };
+export type NeonProvider = { id: string; projectId: string; name: string; endpoint: string; neonProjectId: string; parentBranchId: string; credentialRef: string; createdAt: string };

@@ -27,8 +27,8 @@ func (c *sdkHelmClient) InspectServiceRelease(ctx context.Context, name string) 
 	}
 	return action.NewGet(c.configuration).Run(name)
 }
-func (e HelmExecutor) serviceResourceClient(server core.Server, namespace string) (helmClient, func(), error) {
-	prepared, cleanup, err := prepareKubernetesServer(server)
+func (e HelmExecutor) serviceResourceClient(ctx context.Context, server core.Server, namespace string) (helmClient, func(), error) {
+	prepared, cleanup, err := prepareKubernetesServer(ctx, server)
 	if err != nil {
 		return nil, func() {}, errors.New("cannot load service target credentials")
 	}
@@ -76,7 +76,7 @@ func (e HelmExecutor) InspectServiceResource(ctx context.Context, req core.Servi
 		return result, err
 	}
 	namespace := ServiceProvisionNamespace(spec, server)
-	client, cleanup, err := e.serviceResourceClient(server, namespace)
+	client, cleanup, err := e.serviceResourceClient(ctx, server, namespace)
 	if err != nil {
 		return result, err
 	}
@@ -88,7 +88,7 @@ func (e HelmExecutor) DeleteServiceResource(ctx context.Context, req core.Servic
 		return err
 	}
 	namespace := ServiceProvisionNamespace(spec, server)
-	client, cleanup, err := e.serviceResourceClient(server, namespace)
+	client, cleanup, err := e.serviceResourceClient(ctx, server, namespace)
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,8 @@ func (e HelmExecutor) DeleteServiceResource(ctx context.Context, req core.Servic
 	if current.ResourceID != expected || expected == "" {
 		return errors.New("Helm service changed after deletion review")
 	}
-	if err = client.Uninstall(ctx, ServiceResourceName(req.Run.ID)); err != nil {
+	owner := core.App{ID: req.Run.ID, ProjectID: req.Run.ProjectID, HelmRelease: ServiceResourceName(req.Run.ID), HelmNamespace: namespace}
+	if err = client.Uninstall(ctx, ServiceResourceName(req.Run.ID), owner); err != nil {
 		return errors.New("Helm service cleanup refused or did not finish; protected storage must remain retained")
 	}
 	return nil

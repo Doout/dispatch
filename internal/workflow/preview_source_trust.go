@@ -206,6 +206,11 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 		}
 		scopes = append(scopes, "repository-access:"+connection.ID+":"+connection.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	}
+	previewScopes, err := s.previewServiceScopes(ctx, source.ProjectID, *doc.Spec)
+	if err != nil {
+		return nil, nil, err
+	}
+	scopes = append(scopes, previewScopes...)
 	environments := []string{}
 	refs := map[string]bool{}
 	if source.CredentialSecretID != "" {
@@ -215,7 +220,9 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 	collect := func(jobs map[string]JobSpec) {
 		for _, job := range jobs {
 			for _, secret := range job.Secrets {
-				refs[secret.SecretRef] = true
+				if secret.SecretRef != "" {
+					refs[secret.SecretRef] = true
+				}
 			}
 			if job.Builder == "docker" {
 				usesDockerBuilder = true
@@ -242,6 +249,9 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 				return nil, nil, err
 			}
 			for _, binding := range bindings {
+				if _, deferred := PreviewServiceAlias(binding.ServiceRef); deferred {
+					continue
+				}
 				service, err := s.Store.GetService(ctx, binding.ServiceRef)
 				if err != nil {
 					return nil, nil, err
@@ -353,6 +363,9 @@ func (s *Service) checkRevisionTrust(ctx context.Context, revision core.Workflow
 	if err != nil {
 		return err
 	}
+	if resource.Temporary && (!resource.Active || resource.State == "expiring" || resource.State == "expired" || resource.State == "removed") {
+		return store.ErrPreviewClosing
+	}
 	decision, err := s.SourceTrust(ctx, resource, revision)
 	if decision != nil {
 		if data, ok := s.Store.(store.PreviewSourceTrustStore); ok {
@@ -387,6 +400,18 @@ func (s *Service) CheckDeploymentTrust(ctx context.Context, app core.App, commit
 	}
 	if !resource.Temporary {
 		return nil
+	}
+	if !resource.Active || resource.State == "expiring" || resource.State == "expired" || resource.State == "removed" {
+		return store.ErrPreviewClosing
+	}
+	triggers, err := s.Store.ListWorkflowPreviewTriggers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, trigger := range triggers {
+		if trigger.ResourceID == resource.ID && trigger.ClosedAt == nil && trigger.ExpiresAt != nil && !trigger.ExpiresAt.After(time.Now().UTC()) {
+			return store.ErrPreviewClosing
+		}
 	}
 	revision, err := s.Store.GetWorkflowRevision(ctx, app.HelmProvenance.WorkflowRevisionID)
 	if err != nil {

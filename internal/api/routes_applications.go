@@ -62,6 +62,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.With(a.directUserOnly).Put("/", a.updateService)
 		})
 	})
+	a.neonRoutes(r)
 	r.Route("/service-templates", func(r chi.Router) {
 		r.Get("/", a.listServiceTemplates)
 		r.With(a.directUserOnly).Post("/", a.createServiceTemplate)
@@ -78,6 +79,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 		r.Get("/resource", a.getServiceResource)
 		r.Group(func(r chi.Router) {
 			r.Use(a.serviceResourcePermission(core.PermissionProjectConfigure))
+			a.neonLifecycleRoutes(r)
 			r.Post("/resource/inspect", a.inspectServiceResource)
 			r.Post("/resource/{action:reconcile|retry}", a.recoverServiceResource)
 			r.Post("/resource/delete-preview", a.previewDestructiveAction("service-resource", "delete"))

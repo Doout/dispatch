@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/neon"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -18,11 +19,30 @@ var provisionEnvironment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func validateBuiltinProvision(spec ServiceTemplateSpec) error {
 	p := spec.Provision
-	if p.Docker != nil && p.Helm != nil || strings.TrimSpace(p.Run) != "" {
-		return errors.New("spec.provision must choose exactly one of docker, helm, or run")
+	providers := 0
+	if p.Docker != nil {
+		providers++
+	}
+	if p.Helm != nil {
+		providers++
+	}
+	if p.Neon != nil {
+		providers++
+	}
+	if providers != 1 || strings.TrimSpace(p.Run) != "" {
+		return errors.New("spec.provision must choose exactly one of docker, helm, neon, or run")
 	}
 	if p.RunFrom != "" || len(p.Sources) != 0 || len(p.SourcePaths) != 0 || p.Builder != "" || len(p.Secrets) != 0 || len(spec.Sources) != 0 {
 		return errors.New("built-in provisioners do not use job sources, builders or secret bindings; use inputs for provider values")
+	}
+	if n := p.Neon; n != nil {
+		if spec.ServiceType != "postgresql" || n.ProviderRef == "" {
+			return errors.New("Neon requires PostgreSQL and a project providerRef")
+		}
+		if len(spec.Inputs) != 0 {
+			return errors.New("Neon provider configuration is captured literally; input substitutions are unsupported")
+		}
+		return neon.ValidateSpec(neon.Spec{ProjectID: "configured-project", ParentBranchID: "configured-parent", CredentialRef: n.ProviderRef, Database: n.Database, DataMode: n.DataMode, SuspendAfterSeconds: n.SuspendAfterSeconds})
 	}
 	inputs := map[string]bool{}
 	for name := range spec.Inputs {

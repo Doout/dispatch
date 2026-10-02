@@ -459,15 +459,15 @@ func (a *API) claimWorkflowPreviewPanelLease(ctx context.Context) (func(), error
 	}, nil
 }
 
-func (a *API) workflowPreviewOpenAfterClosure(ctx context.Context, trigger core.WorkflowPreviewTrigger, closedRepository string, resolver events.GitHubResolver) (bool, error) {
-	if events.NormalizeRepository(trigger.Repository) != closedRepository {
-		primary, err := resolver.ResolvePullRequest(ctx, trigger.Repository, trigger.PullRequestNumber)
-		if err != nil {
-			return false, err
-		}
-		if primary.Open {
-			return true, nil
-		}
+func (a *API) workflowPreviewOpenAfterClosure(ctx context.Context, trigger core.WorkflowPreviewTrigger, _ string, resolver events.GitHubResolver) (bool, error) {
+	// A delayed closed delivery can arrive after a reopen. Resolve every current
+	// PR, including the event's PR, before saving an irreversible shutdown intent.
+	primary, err := resolver.ResolvePullRequest(ctx, trigger.Repository, trigger.PullRequestNumber)
+	if err != nil && !errors.Is(err, events.ErrPullRequestNotFound) {
+		return false, err
+	}
+	if err == nil && primary.Open {
+		return true, nil
 	}
 	return a.workflowPreviewLinkedPullRequestOpen(ctx, trigger, resolver)
 }

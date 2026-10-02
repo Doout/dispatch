@@ -33,7 +33,7 @@ func (c *recordingHelmClient) Status(_ context.Context, release string) error {
 	return nil
 }
 
-func (c *recordingHelmClient) Uninstall(_ context.Context, release string) error {
+func (c *recordingHelmClient) Uninstall(_ context.Context, release string, _ core.App) error {
 	c.operation, c.release = "uninstall", release
 	return nil
 }

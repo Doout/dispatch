@@ -40,9 +40,10 @@ server count and provider, region and size rules. Snapshot admission enforces
 `maxSnapshots` and provider assignment; pending and unresolved captures count
 until verified deletion or cancellation before submission. Isolated restores also
 reserve a server slot. See [Machine snapshots](machine-snapshots.md).
-Temporary-environment limits are stored for that workflow. A
-nonzero temporary-environment allowance requires a maximum lifetime, capped at
-365 days. These fields do not add unsupported provider capabilities.
+Temporary-environment admission enforces `maxTemporaryEnvironments` and
+`maxTemporaryLifetimeSeconds`. A nonzero allowance requires a finite maximum
+lifetime, capped at 365 days. These limits do not enable unsupported provider
+capabilities.
 
 ## Capacity and recovery
 
@@ -77,4 +78,8 @@ an operator can inspect the same resource before reconciling it.
 The current mock provider does not supply a price estimate. Server counts and
 machine-size rules are enforced limits; they are not a bill forecast.
 
-Temporary environments now enforce both reserved policy fields. Acceptance counts the owned environment in the same transaction as its generated app, deployment, and receipt. Failed and cleanup-blocked environments remain counted; only completed workload cleanup releases capacity. Explicit extensions stay within the maximum total lifetime measured from acceptance. See [temporary environments](temporary-environments.md).
+Temporary-environment acceptance counts the environment in the same transaction
+as its generated app, deployment and receipt. Failed and cleanup-blocked
+environments remain counted; completed workload cleanup releases capacity.
+Extensions stay within the maximum total lifetime measured from acceptance. See
+[temporary environments](temporary-environments.md).

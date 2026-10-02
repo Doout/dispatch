@@ -9,6 +9,34 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /neon-providers:
+    get:
+      operationId: listNeonProviders
+      description: List immutable provider assignments in a project. Requires project.view; credential references are hidden from nonowners.
+      parameters:
+        - { in: query, name: projectId, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Assigned Neon projects.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/NeonProvider' } }
+    post:
+      operationId: createNeonProvider
+      description: Owner-only registration of an existing Neon API project and scoped encrypted credential reference. Does not create a cloud project. Fields are immutable after creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NeonProvider' }
+      responses:
+        '201':
+          description: Provider registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NeonProvider' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /workload-backups:
     get:
       operationId: listWorkloadBackups
@@ -163,7 +191,7 @@ paths:
   /service-templates/{id}/runs:
     post:
       operationId: provisionServiceTemplate
-      description: Requires a direct user with project.configure and deployment.run. Built-in requests capture encrypted configuration and generated credentials before mutation. Idempotency-Key replays the original accepted run; custom scripts remain manual after uncertain outcomes.
+      description: Requires a direct user with project.configure and deployment.run. Built-in requests capture encrypted configuration and generated credentials before mutation. Idempotency-Key replays the original accepted run; custom scripts remain manual after uncertain outcomes. Neon parent-data templates require owner confirmation through confirmDataCopy; automatic previews require schema-only.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -178,10 +206,37 @@ paths:
                 name: { type: string }
                 description: { type: string }
                 inputs: { type: object, additionalProperties: { type: string, writeOnly: true } }
+                confirmDataCopy: { type: string, description: For Neon parent-data templates, an owner must enter Copy parent rows into SERVICE_NAME. }
       responses:
         '202': { description: Accepted provision run, or a shared MutationReceipt when Idempotency-Key is supplied. }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /neon-providers/{id}/delete-preview:
+    post:
+      operationId: previewNeonProviderRemoval
+      description: Owner-only review of removing an unused provider registration; no cloud resource is changed.
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Current typed confirmation review}
+  /neon-providers/{id}:
+    delete:
+      operationId: removeNeonProvider
+      description: Owner-only removal of an unused immutable registration. Saved or repository templates and owned service history block removal. The API credential and external project remain unchanged.
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation: {$ref: '#/components/schemas/DestructiveConfirmation'}
+      responses:
+        '204': {description: Unused registration removed}
+        '409': {$ref: '#/components/responses/Problem'}
   /service-provision-runs/{id}/resource:
     get:
       operationId: getServiceResource
@@ -195,6 +250,115 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ServiceResource' }
         '404': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/policy-retain-preview:
+    post:
+      operationId: previewNeonPolicyRetain
+      description: Requires project.configure and deployment.run. Reviews an owned Neon preview branch. Retain is the default; suspend retains data and can wake on connection; delete removes all branch data after owned workloads stop. Reset creates a fresh schema-only generation on a paused preview and atomically swaps the encrypted binding, retaining the prior generation. Uncertain provider actions require inspection.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Reviewed current resource and confirmation contract. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/policy-retain:
+    post:
+      operationId: applyNeonPolicyRetain
+      description: Requires project.configure and deployment.run. Reviews an owned Neon preview branch. Retain is the default; suspend retains data and can wake on connection; delete removes all branch data after owned workloads stop. Reset creates a fresh schema-only generation on a paused preview and atomically swaps the encrypted binding, retaining the prior generation. Uncertain provider actions require inspection.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation: { $ref: '#/components/schemas/DestructiveConfirmation' }
+      responses:
+        '200': { description: Accepted owned resource or original mutation receipt for an idempotent reset. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/policy-suspend-preview:
+    post:
+      operationId: previewNeonPolicySuspend
+      description: Requires project.configure and deployment.run. Reviews an owned Neon preview branch. Retain is the default; suspend retains data and can wake on connection; delete removes all branch data after owned workloads stop. Reset creates a fresh schema-only generation on a paused preview and atomically swaps the encrypted binding, retaining the prior generation. Uncertain provider actions require inspection.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Reviewed current resource and confirmation contract. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/policy-suspend:
+    post:
+      operationId: applyNeonPolicySuspend
+      description: Requires project.configure and deployment.run. Reviews an owned Neon preview branch. Retain is the default; suspend retains data and can wake on connection; delete removes all branch data after owned workloads stop. Reset creates a fresh schema-only generation on a paused preview and atomically swaps the encrypted binding, retaining the prior generation. Uncertain provider actions require inspection.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation: { $ref: '#/components/schemas/DestructiveConfirmation' }
+      responses:
+        '200': { description: Accepted owned resource or original mutation receipt for an idempotent reset. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/policy-delete-preview:
+    post:
+      operationId: previewNeonPolicyDelete
+      description: Requires project.configure and deployment.run. Reviews an owned Neon preview branch. Retain is the default; suspend retains data and can wake on connection; delete removes all branch data after owned workloads stop. Reset creates a fresh schema-only generation on a paused preview and atomically swaps the encrypted binding, retaining the prior generation. Uncertain provider actions require inspection.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Reviewed current resource and confirmation contract. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/policy-delete:
+    post:
+      operationId: applyNeonPolicyDelete
+      description: Requires project.configure and deployment.run. Reviews an owned Neon preview branch. Retain is the default; suspend retains data and can wake on connection; delete removes all branch data after owned workloads stop. Reset creates a fresh schema-only generation on a paused preview and atomically swaps the encrypted binding, retaining the prior generation. Uncertain provider actions require inspection.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation: { $ref: '#/components/schemas/DestructiveConfirmation' }
+      responses:
+        '200': { description: Accepted owned resource or original mutation receipt for an idempotent reset. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/reset-preview:
+    post:
+      operationId: previewNeonReset
+      description: Requires project.configure and deployment.run. Reviews an owned Neon preview branch. Retain is the default; suspend retains data and can wake on connection; delete removes all branch data after owned workloads stop. Reset creates a fresh schema-only generation on a paused preview and atomically swaps the encrypted binding, retaining the prior generation. Uncertain provider actions require inspection.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Reviewed current resource and confirmation contract. }
+        '409': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs/{id}/resource/reset:
+    post:
+      operationId: applyNeonReset
+      description: Requires project.configure and deployment.run. Reviews an owned Neon preview branch. Retain is the default; suspend retains data and can wake on connection; delete removes all branch data after owned workloads stop. Reset creates a fresh schema-only generation on a paused preview and atomically swaps the encrypted binding, retaining the prior generation. Uncertain provider actions require inspection.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation: { $ref: '#/components/schemas/DestructiveConfirmation' }
+      responses:
+        '202': { description: Accepted owned resource or original mutation receipt for an idempotent reset. }
+        '409': { $ref: '#/components/responses/Problem' }
   /service-provision-runs/{id}/resource/inspect:
     post:
       operationId: inspectServiceResource
@@ -3077,8 +3241,15 @@ paths:
       description: >-
         Stops an inline PR preview, cleans its deployed resources, closes its comment
         triggers, and removes it from the active inventory. History is retained.
-        A queued, running, or approval-pending workflow blocks deletion. Owner access is required.
+        Queued, running, and approval-pending work is cancelled after durable cleanup acceptance.
+        Repeated DELETE calls resume the same cleanup. Uncertain runtime effects need inspection;
+        target enrollment replacement is never adopted automatically. Owner access is required.
       responses:
+        "202":
+          description: Cleanup accepted and retained for retry after partial failure or restart.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkflowPreviewCleanup" }
         "204": { description: Preview deleted. }
         "409": { $ref: "#/components/responses/Problem" }
   /workflow/preview-templates:
@@ -3276,6 +3447,27 @@ paths:
         - { in: query, name: resourceId, schema: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/revisions/{revisionId}:
+    get:
+      operationId: getWorkflowRevision
+      description: Requires project.view. Returns the saved execution verdict and independent GitHub Check Run reporting receipts. Checks use captured source commits; retries and permission errors never change execution state. Historical runs without receipts omit checks.
+      parameters:
+        - { in: path, name: revisionId, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Workflow revision with independent reporting progress.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  state: { type: string }
+                  checks:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkflowCheckReport" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /workflow/revisions/{revisionId}/source-trust:
     parameters:
       - { in: path, name: revisionId, required: true, schema: { type: string } }
@@ -4480,6 +4672,26 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    DestructiveConfirmation:
+      type: object
+      required: [resourceId, action, expectedVersion, confirmName]
+      properties:
+        resourceId: {type: string}
+        action: {type: string}
+        expectedVersion: {type: string}
+        confirmName: {type: string}
+    NeonProvider:
+      type: object
+      required: [projectId, name, neonProjectId, parentBranchId, credentialRef]
+      properties:
+        id: { type: string, readOnly: true }
+        projectId: { type: string }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        endpoint: { type: string, format: uri, default: 'https://console.neon.tech/api/v2' }
+        neonProjectId: { type: string }
+        parentBranchId: { type: string }
+        credentialRef: { type: string, description: Existing encrypted secret reference; never an API key value. }
+        createdAt: { type: string, format: date-time, readOnly: true }
     PreviewSourceTrustDecision:
       type: object
       required: [policy, digest, allowed, reason, sources, credentialScope, environments, checkedAt]
@@ -4599,7 +4811,7 @@ components:
         keyId: { type: string }
         location: { type: string, const: target-local }
         imageId: { type: string }
-        policy: { type: string, const: retain }
+        policy: { type: string, enum: [retain, suspend, delete] }
         checkCount: { type: integer }
         verificationState: { type: string }
         cleanupState: { type: string, enum: [complete, pending, failed] }
@@ -5358,13 +5570,20 @@ components:
       type: object
       required: [runId, projectId, serviceId, name, target, state, policy, revision, operationId]
       properties:
+        replacedByRunId: { type: string }
+        replacesRunId: { type: string }
+        previewId: { type: string }
+        previewAlias: { type: string }
+        providerPhase: { type: string }
+        policyActorId: { type: string }
+        policyApprovedAt: { type: string, format: date-time }
         runId: { type: string }
         projectId: { type: string }
         serviceId: { type: string }
         name: { type: string }
         target: { type: object, properties: { provider: {type: string}, serverId: {type: string}, resourceName: {type: string}, namespace: {type: string} } }
         state: { type: string, enum: [accepted, provisioning, recovering, ready, unresolved, deleting, deleted] }
-        policy: { type: string, const: retain }
+        policy: { type: string, enum: [retain, suspend, delete] }
         revision: { type: integer }
         operationId: { type: string }
         resourceId: { type: string }
@@ -5380,7 +5599,7 @@ components:
         runId: { type: string }
         projectId: { type: string }
         serverId: { type: string }
-        provider: { type: string, enum: [docker, helm] }
+        provider: { type: string, enum: [docker, helm, neon] }
         state: { type: string, enum: [ready, unready, absent] }
         resourceId: { type: string }
         storageRetained: { type: boolean }
@@ -5819,6 +6038,33 @@ components:
         recovery: { type: string }
         checkedAt: { type: string, format: date-time }
       description: Missing installation access does not prove deletion. The deleted state requires a persisted, verified deletion event for the same App and repository identity.
+    WorkflowCheckReport:
+      type: object
+      required: [id, revisionId, resourceId, projectId, githubAppId, repository, commitSha, name, kind, externalId, state, attempts, complete, updatedAt]
+      properties:
+        id: { type: string }
+        revisionId: { type: string }
+        resourceId: { type: string }
+        projectId: { type: string }
+        githubAppId: { type: string }
+        repository: { type: string }
+        commitSha: { type: string, description: Exact resolved commit captured before execution. }
+        name: { type: string }
+        kind: { type: string, enum: [deployment, health, qa] }
+        stage: { type: string }
+        check: { type: string }
+        previewUrl: { type: string }
+        externalId: { type: string, description: Stable reporting identity for this workflow run and context. }
+        checkId: { type: integer, format: int64 }
+        htmlUrl: { type: string, format: uri }
+        status: { type: string, enum: [queued, in_progress, completed] }
+        conclusion: { type: string, enum: [success, failure, cancelled, skipped, action_required] }
+        state: { type: string, enum: [pending, retrying, reported] }
+        error: { type: string, description: Sanitized reporting error, independent of execution. }
+        attempts: { type: integer }
+        complete: { type: boolean, description: A terminal result was successfully published to GitHub. }
+        updatedAt: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time }
     WorkflowResource:
       type: object
       required: [id, configSourceId, apiVersion, kind, name, path, document, specDigest, configSha, active, state, createdAt, updatedAt]
@@ -5833,7 +6079,11 @@ components:
         specDigest: { type: string }
         configSha: { type: string }
         active: { type: boolean }
-        state: { type: string, enum: [ready, paused, invalid] }
+        temporary: { type: boolean }
+        previewTTL: { type: string, description: Zero means no time limit. }
+        previewExpiresAt: { type: string, format: date-time }
+        previewCleanups: { type: array, items: { $ref: "#/components/schemas/WorkflowPreviewCleanup" } }
+        state: { type: string, enum: [ready, paused, invalid, expiring, expired, removed] }
         lastError: { type: string }
         sourceCount: { type: integer }
         jobCount: { type: integer }
@@ -5841,6 +6091,46 @@ components:
         targetRefs: { type: array, items: { type: string } }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    WorkflowPreviewCleanup:
+      type: object
+      required: [id, resourceId, reason, finalState, state, attempts, createdAt, updatedAt, apps]
+      properties:
+        id: { type: string }
+        resourceId: { type: string }
+        reason: { type: string, enum: [expired, removed, closed] }
+        finalState: { type: string, enum: [expired, removed] }
+        state: { type: string, enum: [pending, blocked, succeeded] }
+        error: { type: string }
+        attempts: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        services:
+          type: array
+          items:
+            type: object
+            properties:
+              runId: {type: string}
+              alias: {type: string}
+              policy: {type: string, enum: [retain, suspend, delete]}
+              resourceId: {type: string}
+              operationId: {type: string}
+              actionStarted: {type: boolean}
+              state: {type: string}
+              error: {type: string}
+        apps:
+          type: array
+          items:
+            type: object
+            properties:
+              appId: { type: string }
+              serverId: { type: string }
+              specDigest: { type: string }
+              nodeId: { type: string }
+              nodeGeneration: { type: integer }
+              jobId: { type: string }
+              previousJobIds: { type: array, items: { type: string } }
+              state: { type: string, enum: [pending, blocked, succeeded] }
+              error: { type: string }
     WorkflowTopology:
       type: object
       required: [columns, nodes, edges]
@@ -6061,6 +6351,15 @@ components:
     KubernetesServerConfig:
       type: object
       properties:
+        validation:
+          type: object
+          readOnly: true
+          description: Identity and version checked at registration. Updating credentials must preserve the cluster and namespace identities.
+          properties:
+            clusterUid: { type: string }
+            namespaceUid: { type: string }
+            version: { type: string }
+            checkedAt: { type: string, format: date-time }
         source:
           type: string
           enum: [stored, path, openshift]

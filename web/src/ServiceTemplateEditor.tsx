@@ -1,9 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import { parse, stringify } from "yaml";
 import { ArrowLeft } from "@phosphor-icons/react";
-import { api, Overview, ServiceTemplate } from "./api";
+import { api, Overview, ServiceTemplate, NeonProvision } from "./api";
 import { PageHeader } from "./PageHeader";
 import { ServiceProvisionSettings, DockerProvision, HelmProvision } from "./ServiceProvisionSettings";
+import { NeonProvisionSettings } from "./NeonProvisionSettings";
 import { canManageProject } from "./permissions";
 
 type Input = ServiceTemplate["inputs"][string];
@@ -17,7 +18,7 @@ type Definition = {
   serviceType: "postgresql" | "generic";
   inputs?: Record<string, Input>;
   sources?: Record<string, unknown>;
-  provision: { docker?: DockerProvision; helm?: HelmProvision; run?: string; builder?: string; outputs?: string[]; [key: string]: unknown };
+  provision: { neon?: NeonProvision; docker?: DockerProvision; helm?: HelmProvision; run?: string; builder?: string; outputs?: string[]; [key: string]: unknown };
   outputs: Record<string, Output>;
  };
 };
@@ -26,7 +27,7 @@ const pgOutputs = { host: {}, port: {}, database: {}, username: {}, password: { 
 
 function readDefinition(text: string): Definition {
  const value = parse(text) as Definition;
- if (value?.apiVersion !== initial.apiVersion || value?.kind !== "ServiceTemplate" || typeof value?.metadata?.name !== "string" || !value.spec || !["postgresql", "generic"].includes(value.spec.serviceType) || (!value.spec.provision || !value.spec.provision.docker && !value.spec.provision.helm && typeof value.spec.provision.run !== "string") || (value.spec.outputs && (typeof value.spec.outputs !== "object" || Array.isArray(value.spec.outputs)))) throw new Error("Provide a ServiceTemplate document with a name, service type, provisioner, and connection fields.");
+ if (value?.apiVersion !== initial.apiVersion || value?.kind !== "ServiceTemplate" || typeof value?.metadata?.name !== "string" || !value.spec || !["postgresql", "generic"].includes(value.spec.serviceType) || (!value.spec.provision || !value.spec.provision.docker && !value.spec.provision.helm && !value.spec.provision.neon && typeof value.spec.provision.run !== "string") || (value.spec.outputs && (typeof value.spec.outputs !== "object" || Array.isArray(value.spec.outputs)))) throw new Error("Provide a ServiceTemplate document with a name, service type, provisioner, and connection fields.");
  value.spec.outputs ??= value.spec.serviceType === "postgresql" ? { connectionUrl: { sensitive: true } } : {};
  for (const map of [value.spec.inputs ?? {}, value.spec.outputs]) {
   if (Array.isArray(map) || typeof map !== "object" || Object.values(map).some(field => !field || typeof field !== "object" || Array.isArray(field))) throw new Error("Inputs and outputs must be named fields with an object for each field.");
@@ -46,7 +47,7 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
  const [revision, setRevision] = useState(item?.revision);
  const [error, setError] = useState("");
  const [busy, setBusy] = useState(false);
- const provider = definition.spec.provision.docker ? "docker" : definition.spec.provision.helm ? "helm" : "script";
+ const provider = definition.spec.provision.neon ? "neon" : definition.spec.provision.docker ? "docker" : definition.spec.provision.helm ? "helm" : "script";
  const readOnly = !!item && (item.managedBy === "gitops" || !canManageProject(overview, item.projectId, "project.configure"));
  useEffect(() => {
   if (!item) return;
@@ -111,9 +112,10 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
      <label>Description<input placeholder="Create a database and return its connection details" value={definition.spec.description ?? ""} onChange={e => spec({ description: e.target.value })} /></label>
      <label>Provisioner<select aria-label="Provisioner" value={provider} onChange={e => {
       const next = e.target.value;
-      spec({ provision: next === "docker" ? { docker: { serverRef: "" } } : next === "helm" ? { helm: { serverRef: "" } } : { run: "" } });
-     }}><option value="docker" disabled={definition.spec.serviceType === "generic" && provider !== "docker"}>Docker</option><option value="helm" disabled={definition.spec.serviceType === "generic" && provider !== "helm"}>Helm</option><option value="script">Custom script (advanced)</option></select></label>
-     {provider !== "script" && <ServiceProvisionSettings docker={definition.spec.provision.docker} helm={definition.spec.provision.helm} serviceType={definition.spec.serviceType} overview={overview}
+      spec({ inputs: next === "neon" ? {} : definition.spec.inputs, provision: next === "neon" ? { neon: {providerRef: "", database: "neondb", dataMode: "schema-only"} } : next === "docker" ? { docker: { serverRef: "" } } : next === "helm" ? { helm: { serverRef: "" } } : { run: "" } });
+     }}><option value="docker" disabled={definition.spec.serviceType === "generic" && provider !== "docker"}>Docker</option><option value="helm" disabled={definition.spec.serviceType === "generic" && provider !== "helm"}>Helm</option><option value="neon" disabled={definition.spec.serviceType !== "postgresql"}>Neon</option><option value="script">Custom script (advanced)</option></select></label>
+     {provider === "neon" && definition.spec.provision.neon && <NeonProvisionSettings value={definition.spec.provision.neon} projectId={projectId} overview={overview} onChange={neon => spec({provision: {...definition.spec.provision, neon}})} />}
+     {(provider === "docker" || provider === "helm") && <ServiceProvisionSettings docker={definition.spec.provision.docker} helm={definition.spec.provision.helm} serviceType={definition.spec.serviceType} overview={overview}
       onDocker={docker => spec({ provision: { ...definition.spec.provision, docker } })}
       onHelm={helm => spec({ provision: { ...definition.spec.provision, helm } })} />}
      {provider === "script" && <section className="service-template-section"><h2>Custom script</h2><p className="service-help">Write each output as name=value to "$DISPATCH_OUTPUT_FILE". Use secret references in YAML for provider credentials.</p>
@@ -132,7 +134,7 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
        <label className="service-template-check"><input type="checkbox" checked={field.required ?? false} onChange={e => updateInput(i, name, { ...field, required: e.target.checked })} />Required</label>
        <button type="button" className="quiet-button" aria-label={`Remove input ${i + 1}`} onClick={() => inputs(Object.entries(definition.spec.inputs ?? {}).filter((_, index) => index !== i))}>Remove</button>
       </div>)}
-      <button type="button" className="quiet-button" onClick={addInput}>Add input</button>
+      <button type="button" className="quiet-button" disabled={provider === "neon"} onClick={addInput}>Add input</button>
      </section>
      <section className="service-template-section"><h2>Outputs</h2><p className="service-help">Dispatch saves these fields on the new service and hides sensitive values.</p>
       {definition.spec.serviceType === "postgresql" && <label>Connection format<select value={"connectionUrl" in definition.spec.outputs ? "url" : "fields"} onChange={e => outputs(Object.entries(e.target.value === "url" ? { connectionUrl: { sensitive: true } } : pgOutputs))}><option value="url">PostgreSQL connection URL</option><option value="fields">Individual connection fields</option></select></label>}

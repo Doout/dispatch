@@ -27,6 +27,14 @@ func (s *SQLStore) UpdateConfigSource(ctx context.Context, item core.ConfigSourc
 }
 
 func (s *SQLStore) DeleteConfigSource(ctx context.Context, id string) error {
+	var references int
+	if err := s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workflow_resources r WHERE r.config_source_id=? AND (EXISTS(SELECT 1 FROM workflow_preview_apps p WHERE p.resource_id=r.id) OR EXISTS(SELECT 1 FROM workflow_preview_cleanups c WHERE c.resource_id=r.id))`), id).Scan(&references); err != nil {
+		return err
+	}
+	if references > 0 {
+		return ErrPreviewHistory
+	}
+
 	result, err := s.db.ExecContext(ctx, s.q(`DELETE FROM config_sources WHERE id=?`), id)
 	return changed(result, err)
 }
@@ -73,6 +81,10 @@ func scanConfigSource(row scanner) (core.ConfigSource, error) {
 	return item, err
 }
 
+var ErrPreviewCommandRetired = errors.New("preview comment belongs to a removed binding")
+
+var ErrPreviewBindingExists = errors.New("preview command is already bound; retry against its existing preview")
+
 func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.WorkflowResource) error {
 	trigger, withTrigger := ctx.Value(workflowPreviewTriggerKey{}).(core.WorkflowPreviewTrigger)
 	if withTrigger {
@@ -100,6 +112,26 @@ func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.Workflo
 		return err
 	}
 	defer tx.Rollback()
+	if withTrigger {
+		// Every controller shares this connection lock when creating a template
+		// binding. A duplicate delivery rolls its unlinked resource back atomically.
+		if _, err = tx.ExecContext(ctx, s.q(`UPDATE github_apps SET updated_at=updated_at WHERE id=?`), trigger.GitHubAppID); err != nil {
+			return err
+		}
+		var existing int
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workflow_preview_triggers WHERE github_app_id=? AND lower(repository)=lower(?) AND pull_request_number=? AND command=? AND closed_at IS NULL`), trigger.GitHubAppID, trigger.Repository, trigger.PullRequestNumber, trigger.Command).Scan(&existing); err != nil {
+			return err
+		}
+		if existing > 0 {
+			return ErrPreviewBindingExists
+		}
+		if retired, err := s.retiredPreviewCommand(ctx, tx, trigger); err != nil {
+			return err
+		} else if retired {
+			return ErrPreviewCommandRetired
+		}
+
+	}
 	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_resources(id,config_source_id,api_version,kind,name,path,document,spec_digest,config_sha,temporary,active,state,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.ConfigSourceID, item.APIVersion, item.Kind, item.Name, item.Path, item.Document, item.SpecDigest, item.ConfigSHA,
 		item.Temporary, item.Active, item.State, item.LastError, stamp(item.CreatedAt), stamp(item.UpdatedAt))
@@ -120,7 +152,7 @@ func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.Workflo
 }
 
 func (s *SQLStore) UpdateWorkflowResource(ctx context.Context, item core.WorkflowResource) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_resources SET api_version=?,kind=?,name=?,path=?,document=?,spec_digest=?,config_sha=?,temporary=?,active=?,state=?,last_error=?,updated_at=? WHERE id=?`),
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_resources SET api_version=?,kind=?,name=?,path=?,document=?,spec_digest=?,config_sha=?,temporary=?,active=?,state=?,last_error=?,updated_at=? WHERE id=? AND NOT (temporary=TRUE AND state IN ('expiring','expired','removed'))`),
 		item.APIVersion, item.Kind, item.Name, item.Path, item.Document, item.SpecDigest, item.ConfigSHA, item.Temporary, item.Active, item.State, item.LastError, stamp(item.UpdatedAt), item.ID)
 	return changed(result, err)
 }
@@ -312,6 +344,9 @@ func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.Workflo
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.lockPreviewResource(ctx, tx, item.ResourceID, false); err != nil {
+		return err
+	}
 	receipt := WorkflowReceiptFromContext(ctx)
 	if receipt.Key != "" {
 		if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO workflow_command_receipts(resource_id,command_key,revision_id) VALUES(?,?,?)`), item.ResourceID, receipt.Key, item.ID); err != nil {
@@ -329,6 +364,9 @@ func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.Workflo
 		if err := changed(result, err); err != nil {
 			return err
 		}
+	}
+	if err := s.createWorkflowChecks(ctx, tx, item); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -364,6 +402,9 @@ func (s *SQLStore) supersedeWorkflowRevisions(ctx context.Context, resourceID st
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err = s.lockPreviewResource(ctx, tx, resourceID, true); err != nil {
+		return nil, err
+	}
 	rows, err := tx.QueryContext(ctx, s.q(`SELECT id FROM workflow_revisions WHERE resource_id=? AND state IN ('queued','running','awaiting_approval')`+filter), resourceID)
 	if err != nil {
 		return nil, err
@@ -386,6 +427,11 @@ func (s *SQLStore) supersedeWorkflowRevisions(ctx context.Context, resourceID st
 	}
 	if len(ids) == 0 {
 		return ids, tx.Commit()
+	}
+	if !testsOnly {
+		if err = s.fencePreviewMutations(ctx, tx, resourceID, reason, time.Now().UTC()); err != nil {
+			return nil, err
+		}
 	}
 	now := stamp(time.Now().UTC())
 	for _, table := range []string{"workflow_job_results", "workflow_stage_runs"} {
@@ -510,6 +556,16 @@ func (s *SQLStore) CreateWorkflowStageRun(ctx context.Context, item core.Workflo
 	}
 	defer tx.Rollback()
 	if err = s.checkRuntimeReferences(ctx, tx, item.DeploymentIDs); err != nil {
+		return err
+	}
+	var resourceID, state string
+	if err = tx.QueryRowContext(ctx, s.q(`SELECT resource_id,state FROM workflow_revisions WHERE id=?`), item.RevisionID).Scan(&resourceID, &state); err != nil {
+		return err
+	}
+	if state == "cancelled" {
+		return ErrPreviewClosing
+	}
+	if err = s.lockPreviewResource(ctx, tx, resourceID, false); err != nil {
 		return err
 	}
 

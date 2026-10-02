@@ -92,6 +92,14 @@ func (s *Service) StartPreviewChecks(ctx context.Context, resourceID, commentID 
 	if err != nil {
 		return core.WorkflowRevision{}, err
 	}
+	source, err := s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
+	if err != nil {
+		return revision, err
+	}
+	revision.Checks, err = s.workflowCheckReports(ctx, resource, source, revision, true)
+	if err != nil {
+		return revision, err
+	}
 	revision.SourceTrust, err = s.SourceTrust(ctx, resource, revision)
 	if err != nil {
 		now := time.Now().UTC()

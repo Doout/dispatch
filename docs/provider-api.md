@@ -5,9 +5,10 @@ Infrastructure adapters run outside the controller. The HTTP/JSON contract is
 client and handler, response validation, and a reusable conformance runner. The
 public mock implements the contract without creating infrastructure.
 
-Provider registration, credential storage and controller reconciliation are
-separate work. This package does not connect the controller's Add server action
-to a cloud API. Private adapter source and images can remain in their own repos.
+The controller uses this contract for [registered providers](infrastructure-providers.md)
+and [on-demand server operations](on-demand-servers.md). Private adapter source
+and images can remain in their own repositories. A real cloud adapter and its
+live validation are still required to allocate machines.
 
 ## HTTP contract
 

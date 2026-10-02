@@ -45,16 +45,14 @@ func (a *API) removeWorkflowPreviewForAppReviewed(ctx context.Context, id string
 			return true, err
 		}
 	}
-	if _, err := a.workflows.Deactivate(ctx, resource.ID); err != nil {
+	cleanup, err := a.beginWorkflowPreviewCleanup(ctx, resource, "removed", time.Now().UTC())
+	if err != nil {
+		if previewCleanupAlreadyEnded(err) {
+			return true, nil
+		}
 		return true, err
 	}
-	if err := a.workflows.CancelPreviewRuns(ctx, resource.ID); err != nil {
-		return true, err
-	}
-	if err := a.cleanupWorkflowPreviewResource(ctx, resource); err != nil {
-		return true, err
-	}
-	return true, a.store.RemoveWorkflowPreviewResource(ctx, resource.ID, time.Now().UTC())
+	return true, a.reconcileWorkflowPreviewCleanup(ctx, cleanup.ID)
 }
 
 // Older cleanup paths paused resources after closing all their PR triggers.
@@ -84,15 +82,12 @@ func (a *API) reconcileRemovedWorkflowPreviews(ctx context.Context) error {
 		if !r.Temporary || r.State == "removed" || !closed[r.ID] || open[r.ID] {
 			continue
 		}
-		if err := a.workflows.CancelPreviewRuns(ctx, r.ID); err != nil {
+		cleanup, err := a.beginWorkflowPreviewCleanup(ctx, r, "closed", time.Now().UTC())
+		if err != nil {
 			joined = errors.Join(joined, err)
 			continue
 		}
-		if err := a.cleanupWorkflowPreviewResource(ctx, r); err != nil {
-			joined = errors.Join(joined, err)
-			continue
-		}
-		joined = errors.Join(joined, a.store.RemoveWorkflowPreviewResource(ctx, r.ID, time.Now().UTC()))
+		joined = errors.Join(joined, a.reconcileWorkflowPreviewCleanup(ctx, cleanup.ID))
 	}
 	return joined
 }

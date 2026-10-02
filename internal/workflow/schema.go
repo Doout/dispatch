@@ -78,19 +78,24 @@ type ServiceProvisionSpec struct {
 	JobSpec `yaml:",inline"`
 	Docker  *core.DockerServiceProvision `json:"docker,omitempty" yaml:"docker,omitempty"`
 	Helm    *core.HelmServiceProvision   `json:"helm,omitempty" yaml:"helm,omitempty"`
+	Neon    *core.NeonServiceProvision   `json:"neon,omitempty" yaml:"neon,omitempty"`
 }
 
 func (p ServiceProvisionSpec) MarshalYAML() (any, error) {
-	if p.Docker != nil || p.Helm != nil {
+	if p.Docker != nil || p.Helm != nil || p.Neon != nil {
 		return struct {
 			Docker *core.DockerServiceProvision `yaml:"docker,omitempty"`
 			Helm   *core.HelmServiceProvision   `yaml:"helm,omitempty"`
-		}{Docker: p.Docker, Helm: p.Helm}, nil
+			Neon   *core.NeonServiceProvision   `yaml:"neon,omitempty"`
+		}{Docker: p.Docker, Helm: p.Helm, Neon: p.Neon}, nil
 	}
 	return p.JobSpec, nil
 }
 
 func (p ServiceProvisionSpec) Provider() string {
+	if p.Neon != nil {
+		return "neon"
+	}
 	if p.Docker != nil {
 		return "docker"
 	}
@@ -113,13 +118,14 @@ type ServiceTemplateOutputSpec struct {
 }
 
 type ApplicationSpec struct {
-	MaxParallelJobs int                       `json:"maxParallelJobs,omitempty" yaml:"maxParallelJobs,omitempty"`
-	Reporting       *core.WorkflowReporting   `json:"reporting,omitempty" yaml:"reporting,omitempty"`
-	Sources         map[string]SourceSpec     `json:"sources" yaml:"sources"`
-	Jobs            map[string]JobSpec        `json:"jobs,omitempty" yaml:"jobs,omitempty"`
-	Deployments     map[string]DeploymentSpec `json:"deployments,omitempty" yaml:"deployments,omitempty"`
-	Stages          []StageSpec               `json:"stages,omitempty" yaml:"stages,omitempty"`
-	Finally         map[string]JobSpec        `json:"finally,omitempty" yaml:"finally,omitempty"`
+	PreviewServices map[string]PreviewServiceSpec `json:"previewServices,omitempty" yaml:"previewServices,omitempty"`
+	MaxParallelJobs int                           `json:"maxParallelJobs,omitempty" yaml:"maxParallelJobs,omitempty"`
+	Reporting       *core.WorkflowReporting       `json:"reporting,omitempty" yaml:"reporting,omitempty"`
+	Sources         map[string]SourceSpec         `json:"sources" yaml:"sources"`
+	Jobs            map[string]JobSpec            `json:"jobs,omitempty" yaml:"jobs,omitempty"`
+	Deployments     map[string]DeploymentSpec     `json:"deployments,omitempty" yaml:"deployments,omitempty"`
+	Stages          []StageSpec                   `json:"stages,omitempty" yaml:"stages,omitempty"`
+	Finally         map[string]JobSpec            `json:"finally,omitempty" yaml:"finally,omitempty"`
 }
 
 type PipelineSpec struct {
@@ -156,8 +162,9 @@ type JobSpec struct {
 }
 
 type SecretBinding struct {
-	SecretRef string `json:"secretRef" yaml:"secretRef"`
-	Key       string `json:"key,omitempty" yaml:"key,omitempty"`
+	ServiceRef string `json:"serviceRef,omitempty" yaml:"serviceRef,omitempty"`
+	SecretRef  string `json:"secretRef,omitempty" yaml:"secretRef,omitempty"`
+	Key        string `json:"key,omitempty" yaml:"key,omitempty"`
 }
 
 type DeploymentSpec struct {
@@ -330,7 +337,7 @@ func applyPipelineDefaults(spec *PipelineSpec) {
 
 func applyServiceTemplateDefaults(spec *ServiceTemplateSpec) {
 	applySourceDefaults(spec.Sources)
-	if (spec.Provision.Docker != nil || spec.Provision.Helm != nil) && spec.ServiceType == "postgresql" && spec.Outputs == nil {
+	if (spec.Provision.Docker != nil || spec.Provision.Helm != nil || spec.Provision.Neon != nil) && spec.ServiceType == "postgresql" && spec.Outputs == nil {
 		spec.Outputs = map[string]ServiceTemplateOutputSpec{"connectionUrl": {Sensitive: true}}
 	}
 	if spec.Provision.Outputs == nil {
@@ -395,7 +402,7 @@ func validateServiceTemplate(document ServiceTemplateDocument) error {
 	if err := validateSources(spec.Sources); err != nil {
 		return err
 	}
-	if spec.Provision.Docker != nil || spec.Provision.Helm != nil {
+	if spec.Provision.Docker != nil || spec.Provision.Helm != nil || spec.Provision.Neon != nil {
 		if err := validateBuiltinProvision(spec); err != nil {
 			return err
 		}
@@ -445,6 +452,9 @@ func applyJobDefaults(jobs map[string]JobSpec) {
 }
 
 func validateApplication(document ApplicationDocument) error {
+	if err := validatePreviewServiceReferences(document.Spec); err != nil {
+		return err
+	}
 	if err := validateJobConcurrency(document.Spec.MaxParallelJobs); err != nil {
 		return err
 	}
@@ -651,7 +661,7 @@ func validateJobs(prefix string, jobs map[string]JobSpec, sources map[string]Sou
 			return fmt.Errorf("%s.%s.run: %w", prefix, name, err)
 		}
 		for environment, binding := range job.Secrets {
-			if !outputPattern.MatchString(environment) || strings.TrimSpace(binding.SecretRef) == "" {
+			if !outputPattern.MatchString(environment) || (strings.TrimSpace(binding.SecretRef) == "") == (strings.TrimSpace(binding.ServiceRef) == "") {
 				return fmt.Errorf("%s.%s.secrets.%s requires secretRef", prefix, name, environment)
 			}
 			if binding.Key != "" && !jsonKeyPathPattern.MatchString(binding.Key) {

@@ -167,6 +167,17 @@ func (a *API) recheckDestructiveAction(r *http.Request, kind, action string) err
 }
 
 func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, action string) (destructiveReview, error) {
+	if kind == "neon-provider" {
+		p, err := a.store.(store.NeonStore).GetNeonProvider(ctx, chi.URLParam(r, "id"))
+		if err != nil {
+			return destructiveReview{}, err
+		}
+		raw, _ := json.Marshal(p)
+		return destructiveReview{ResourceID: p.ID, ProjectID: p.ProjectID, Name: p.Name, ResourceType: kind, Action: action, Version: fmt.Sprintf("%x", sha256.Sum256(raw)), Summary: "Remove this unused provider registration. This does not change the Neon project, branches or saved API credential. Templates and owned service history block removal."}, nil
+	}
+	if kind == "neon-service" {
+		return a.neonLifecycleReview(ctx, r, action)
+	}
 	if kind == "workload-backup" {
 		return a.workloadBackupReview(ctx, r, action)
 	}
@@ -283,12 +294,12 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 		if e != nil {
 			return out, e
 		}
-		inspected, e := a.serviceResourceExecutor().Inspect(ctx, accepted, server)
+		inspected, e := a.inspectServiceResourceRecord(ctx, item, accepted, server)
 		if e != nil {
 			return out, e
 		}
 		extra = inspected
-		if !inspected.StorageRetained {
+		if !inspected.StorageRetained && item.Target.Provider != "neon" {
 			out.BlockedReason = "The provisioner cannot preserve protected storage; migrate the data before deleting this resource."
 		}
 		busy, e := data.ServiceResourceConsumers(ctx, item.ServiceID)
@@ -297,6 +308,16 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 		}
 		out.Summary = "Delete the owned service workload and remove its connection registration. Storage, backups and encrypted recovery history remain. Detach all consumers first."
 		out.Resources = append(out.Resources, "Owned "+item.Target.Provider+" resource: "+item.Target.ResourceName, "Retain all named volumes and persistent volume claims")
+		if item.Target.Provider == "neon" {
+			out.StoragePolicy = "delete"
+			out.Summary = "Permanently delete this owned Neon branch, its compute and all branch data. The parent branch and other services remain. Detach all consumers first."
+			out.Resources = []string{"Delete owned Neon branch: " + inspected.ResourceID, "Branch data cannot be recovered from this Dispatch operation history"}
+			if neverStartedNeonReplacement(item) {
+				out.StoragePolicy = "retain"
+				out.Summary = "Cancel this replacement before any branch create was attempted. The original preview branch and connection remain. This performs no provider mutation."
+				out.Resources = []string{"Unstarted replacement: " + item.RunID, "Original branch retained"}
+			}
+		}
 		for _, id := range item.Dependencies {
 			out.Resources = append(out.Resources, "External dependency retained: "+id)
 		}

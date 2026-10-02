@@ -57,36 +57,38 @@ type githubEventServices struct {
 }
 
 type API struct {
-	workloadBackupBackend  workloadBackupRuntime
-	serviceResourceBackend serviceResourceRuntime
-	bootstrapOnce          sync.Once
-	bootstrap              *bootstrap.Manager
-	previewPanelMu         sync.Mutex
-	backupMu               sync.Mutex
-	previewReportMu        sync.Mutex
-	temporaryPreviewMu     sync.Mutex
-	observations           *observe.Service
-	drift                  *drift.Service
-	overviewSnapshots      overviewCache
-	handler                http.Handler
-	store                  store.Store
-	deploy                 *deploy.Service
-	demo                   bool
-	auth                   AuthConfig
-	logger                 *slog.Logger
-	events                 *events.Service
-	groups                 *groups.Service
-	eventConfig            EventConfig
-	secretResolver         *secretvalue.Resolver
-	edge                   *edge.Broker
-	openShift              *openshift.Bootstrapper
-	lifecycle              events.Lifecycle
-	githubMu               sync.Mutex
-	githubServices         map[string]githubEventServices
-	manifestMu             sync.Mutex
-	manifestStates         map[string]githubAppManifestState
-	authManifestStates     map[string]authProviderManifestState
-	workflows              *workflowservice.Service
+	workloadBackupBackend     workloadBackupRuntime
+	serviceResourceBackend    serviceResourceRuntime
+	bootstrapOnce             sync.Once
+	bootstrap                 *bootstrap.Manager
+	previewPanelMu            sync.Mutex
+	backupMu                  sync.Mutex
+	previewReportMu           sync.Mutex
+	temporaryPreviewMu        sync.Mutex
+	observations              *observe.Service
+	drift                     *drift.Service
+	overviewSnapshots         overviewCache
+	handler                   http.Handler
+	store                     store.Store
+	deploy                    *deploy.Service
+	demo                      bool
+	auth                      AuthConfig
+	logger                    *slog.Logger
+	events                    *events.Service
+	groups                    *groups.Service
+	eventConfig               EventConfig
+	secretResolver            *secretvalue.Resolver
+	edge                      *edge.Broker
+	openShift                 *openshift.Bootstrapper
+	lifecycle                 events.Lifecycle
+	githubMu                  sync.Mutex
+	githubServices            map[string]githubEventServices
+	manifestMu                sync.Mutex
+	manifestStates            map[string]githubAppManifestState
+	authManifestStates        map[string]authProviderManifestState
+	workflows                 *workflowservice.Service
+	kubernetesTargetValidator func(context.Context, core.KubernetesServerConfig) (core.KubernetesTargetEvidence, error)
+	neonHTTPClient            *http.Client
 
 	trustedProxies []*net.IPNet
 	oauthMu        sync.Mutex
@@ -157,6 +159,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	a.observations = observe.New(data, a.drift, deployments, eventConfig.Vault)
 	deployments.OnFinished = a.observations.DeploymentFinished
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
+	a.workflows.PreparePreviewServices = a.prepareNeonPreviewServices
 	a.workflows.RemoteDockerServices = (deploy.RemoteExecutor{Local: deploy.DockerExecutor{}, Broker: a.runtimeBroker()}).Provision
 	a.workflows.ResolvePreviewSource = a.resolvePreviewSource
 	priorExecutionCheck := deployments.CheckExecution

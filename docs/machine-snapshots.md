@@ -8,7 +8,7 @@ In **Connections → Servers**, use **Machine snapshots** to choose an allocated
 source, a boot/all disk set and retention period. Review the exact disk identities,
 consistency and encryption before typing the snapshot name to accept. The provider
 must advertise and have approved snapshot capabilities. Unsupported disk policies
-are rejected before allocation. No external cloud adapter is bundled yet; the
+are rejected before allocation. No real VM provider adapter is bundled yet; the
 public mock exercises the contract without creating real VMs or disks.
 
 The API supports the same flow:

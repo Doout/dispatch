@@ -26,8 +26,8 @@ If the controller stops during an operation, its mutation reservation remains
 protected for up to 31 minutes. The API reports `recoveryAfter`; recovery becomes
 available after that deadline. This prevents another controller from starting a
 competing mutation while the original one may still run. A remote operation also
-requires an inspection taken after its previous agent lease ends. Unknown work is
-never blindly replayed.
+requires an inspection taken after its previous agent lease ends. An uncertain operation is
+not repeated without that inspection.
 
 Custom scripts and older runs without encrypted recovery records require manual
 inspection. They do not gain an automatic retry or adoption path. Do not rerun a

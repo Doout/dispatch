@@ -1,0 +1,199 @@
+# Neon preview databases
+
+Dispatch can create an isolated PostgreSQL branch in an existing Neon project.
+It does not install or provision a Neon cluster. The initial adapter supports
+schema-only preview branches, read-write compute, branch-specific credentials,
+reconciliation, reviewed schema-only replacement and branch deletion. Live Neon account validation is
+pending; conformance tests use local TLS fixtures matching the published API.
+
+## Configure a provider and service template
+
+In **Services → Templates → Create template**, choose **Neon**. A controller
+owner can add a project provider by selecting an encrypted Neon API key and
+entering its API endpoint, Neon project ID and parent branch ID. Use a key
+restricted to that Neon project. Defaults use
+`https://console.neon.tech/api/v2`; compatible endpoints must use HTTPS and may
+not redirect. The saved endpoint, credential reference and Dispatch project
+assignment are immutable. Register a new provider to change them. Owners can
+review removal of an unused registration; template references and owned service
+history block removal so recovery retains its provider identity.
+
+The same configuration is available through owner-only
+`POST /api/v1/neon-providers`; project members can list assigned providers with
+`GET /api/v1/neon-providers?projectId=PROJECT_ID`. The API never returns a token.
+A saved or repository `ServiceTemplate` references that assigned provider:
+
+```yaml
+apiVersion: dispatch/v1alpha1
+kind: ServiceTemplate
+metadata:
+  name: preview-postgres
+spec:
+  serviceType: postgresql
+  provision:
+    neon:
+      providerRef: PROVIDER_ID
+      database: neondb
+      dataMode: schema-only
+      suspendAfterSeconds: 300
+  outputs:
+    connectionUrl: {sensitive: true}
+```
+
+The selected database must exist on the parent. Schema-only copies its schema,
+without parent rows. Dispatch creates a new deterministic role on the owned
+branch and refuses to reuse a role that exists on the source. It requests the
+connection URI with an explicit branch, compute, database and role; provider
+defaults cannot select the production connection. The accepted API key and
+returned connection are encrypted. Provider response bodies are not included
+in errors, logs or public operation records.
+
+A manual service provision may use `parent-data` only when a controller owner
+submits `confirmDataCopy: "Copy parent rows into SERVICE_NAME"` with the named
+provision request. Automatic preview databases reject that mode. No masking is
+performed by Dispatch; a separate, reviewed masked seed process is required
+before any copied rows are suitable for preview use.
+
+## Bind a database to a preview
+
+Declare `previewServices` in the Application rendered by your WorkflowTemplate.
+Use a ServiceTemplate ID from the same Dispatch project. The controller prepares
+the database after checking the complete preview source revision and before
+running jobs. The source approval includes the selected template digest and
+provider identity. Fork approvals cannot authorize a later template change.
+
+```yaml
+spec:
+  previewServices:
+    database:
+      templateRef: SERVICE_TEMPLATE_ID
+      cleanupPolicy: retain
+  sources:
+    app:
+      repository: example/application
+  jobs:
+    migrate:
+      runFrom: app
+      run: ./scripts/migrate.sh
+      reuse: never
+      secrets:
+        DATABASE_URL:
+          serviceRef: preview:database
+          key: connectionUrl
+  deployments:
+    app:
+      helm:
+        sourceRef: app
+        chartPath: charts/app
+        releaseName: my-preview
+        namespace: my-preview
+      serviceBindings:
+        - alias: database
+          serviceRef: preview:database
+          helm:
+            keys:
+              DATABASE_URL: connectionUrl
+            secretNameValues: [database.existingSecret]
+  stages:
+    - name: preview
+      targetRef: preview-cluster
+      approval: automatic
+      deploy: [app]
+```
+
+Merge this fragment with your existing preview template and its instance naming.
+`DATABASE_URL` is available only to the declared job. Normal job log redaction
+applies. Do not echo credentials or write them to declared job outputs. A failed
+migration job prevents all deployment stages, leaving the prior deployment in
+place. Use expand-and-contract migrations: deployment rollback reuses the branch
+and does not undo database schema or data changes.
+
+One durable link connects each preview resource and alias to its current
+ServiceRun. New commits and controller restarts reuse that branch and its rows.
+Changing the referenced template configuration requires a reviewed replacement;
+Dispatch does not silently recreate or change an existing preview database.
+Stable production and staging services remain ordinary project service bindings
+and can coexist with these preview bindings.
+
+## Recovery and deletion
+
+Owned-service history shows the provider phase, preview identity and safe
+recovery timing. The accepted create checkpoint is saved before a provider POST.
+Recovery uses the captured branch ID when available. If the create response was
+lost before an ID was saved, reconciliation searches the exact deterministic
+branch name. It verifies the branch's Dispatch project, run, preview,
+configuration and generation annotations, then completes missing compute and
+role setup on that branch. It
+never repeats branch creation after an uncertain create whose branch cannot be
+found. Inspect the original run and provider; do not repeatedly submit new runs.
+
+Dispatch refuses source, default and protected branches, and branches whose
+ownership changed.
+Active preview references and application consumers block deletion. Retain is the
+default cleanup policy. In the owned resource panel, review and select retain,
+suspend or delete for this branch. Every change requires current project
+configuration and deployment permissions plus the shared typed confirmation.
+Delete explicitly approves permanent loss of this branch's data when the preview
+closes or expires. Dispatch saves the selected policy and approving actor before cleanup.
+
+Preview close and expiry capture each linked branch, its policy and a stable
+operation ID in the existing preview cleanup intent. Database cleanup runs only
+after its owned workloads stop. Retain preserves its reference. Suspend stops
+compute and retains data, but a new connection can wake it. Delete removes the
+branch and its connection registration after checking all consumers. Cleanup detaches only the captured preview's closed application bindings.
+Other consumers block suspend and delete. Ownership changes block both operations.
+
+A lost delete or suspend response remains unresolved. Reconciliation inspects the
+captured branch ID and never reposts the uncertain action. A renamed branch is an
+ownership error, not evidence of deletion. Only a verified missing branch settles
+a delete. Inspect the provider when the outcome stays unknown.
+
+After stopping the preview and detaching its deployed consumers, use the existing
+owned-service **Delete resource** action. Its typed confirmation explicitly
+reviews permanent branch and data deletion. Reconciliation of an interrupted
+delete inspects the same captured branch identity. Other branches, the parent
+and the Neon project remain untouched.
+
+## Reset to a fresh schema
+
+Pause the preview and finish its active workflow runs. **Reset to fresh schema**
+reviews the current schema-only ServiceTemplate and owned branch. It creates a
+new generation with a fresh child role and no parent rows. The old branch and
+connection remain intact while the candidate is being prepared. Saving the new
+encrypted connection and switching the preview alias happen in one transaction.
+The old generation changes to retain and remains visible for separate deletion.
+Existing deployments keep their old connection until redeployed; run migrations
+before sending traffic to the replacement.
+
+A pending or unresolved replacement blocks preview resume and cleanup. Reconcile
+the replacement's original ServiceRun after a lost response. If abandoning it,
+review deletion of the replacement candidate; confirmed deletion releases the
+preview without changing the original binding. Never submit another reset to
+work around an uncertain candidate. Resets accept the standard Idempotency-Key
+header and replay the original service provision receipt.
+
+A candidate whose durable record proves creation never started can be cancelled
+without a provider call. An attempted create with an unknown outcome still
+requires inspection.
+
+API paths under `/api/v1/service-provision-runs/RUN_ID/resource` are
+`policy-retain`, `policy-suspend`, `policy-delete`, and `reset`. POST the matching
+`-preview` path first, then submit its typed `confirmation` to the action path.
+Policy changes return the resource; reset returns the new owned resource or an
+idempotency receipt when a key is supplied. Template YAML continues to use
+`cleanupPolicy: retain`; destructive lifecycle policies require a separate review
+of the created branch. A deleted preview branch needs a new preview identity.
+
+Neon schema-only branches are independent roots. The provider restore API copies
+schema and data, so Dispatch does not use it for reset.
+
+## Current limits
+
+Native Dispatch workload backups currently support owned PostgreSQL/Docker
+services, not Neon branches. Use the provider's supported recovery facilities
+and independently verify your recovery procedure before explicitly deleting
+valuable branch data. Retained deployment artifacts do not back up this database.
+
+Provider reference: [Neon API](https://neon.com/docs/reference/api),
+[published API schema](https://neon.com/api_spec/release/v2.json), and
+[schema-only branching](https://neon.com/docs/guides/branching-schema-only).

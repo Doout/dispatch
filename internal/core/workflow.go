@@ -32,30 +32,31 @@ type ConfigSource struct {
 }
 
 type WorkflowResource struct {
-	PreviewTTL          string               `json:"previewTTL,omitempty"`
-	PreviewExpiresAt    *time.Time           `json:"previewExpiresAt,omitempty"`
-	LastEvaluation      *WorkflowEquivalence `json:"lastEvaluation,omitempty"`
-	PreviewPullRequests []HelmPullRequest    `json:"previewPullRequests,omitempty"`
-	ServiceIDs          []string             `json:"-"`
-	ID                  string               `json:"id"`
-	ConfigSourceID      string               `json:"configSourceId"`
-	APIVersion          string               `json:"apiVersion"`
-	Kind                string               `json:"kind"`
-	Name                string               `json:"name"`
-	Path                string               `json:"path"`
-	Document            string               `json:"document"`
-	SpecDigest          string               `json:"specDigest"`
-	ConfigSHA           string               `json:"configSha"`
-	Temporary           bool                 `json:"temporary"`
-	Active              bool                 `json:"active"`
-	State               string               `json:"state"`
-	LastError           string               `json:"lastError,omitempty"`
-	SourceCount         int                  `json:"sourceCount"`
-	JobCount            int                  `json:"jobCount"`
-	StageNames          []string             `json:"stageNames,omitempty"`
-	TargetRefs          []string             `json:"targetRefs,omitempty"`
-	CreatedAt           time.Time            `json:"createdAt"`
-	UpdatedAt           time.Time            `json:"updatedAt"`
+	PreviewCleanups     []WorkflowPreviewCleanup `json:"previewCleanups,omitempty"`
+	PreviewTTL          string                   `json:"previewTTL,omitempty"`
+	PreviewExpiresAt    *time.Time               `json:"previewExpiresAt,omitempty"`
+	LastEvaluation      *WorkflowEquivalence     `json:"lastEvaluation,omitempty"`
+	PreviewPullRequests []HelmPullRequest        `json:"previewPullRequests,omitempty"`
+	ServiceIDs          []string                 `json:"-"`
+	ID                  string                   `json:"id"`
+	ConfigSourceID      string                   `json:"configSourceId"`
+	APIVersion          string                   `json:"apiVersion"`
+	Kind                string                   `json:"kind"`
+	Name                string                   `json:"name"`
+	Path                string                   `json:"path"`
+	Document            string                   `json:"document"`
+	SpecDigest          string                   `json:"specDigest"`
+	ConfigSHA           string                   `json:"configSha"`
+	Temporary           bool                     `json:"temporary"`
+	Active              bool                     `json:"active"`
+	State               string                   `json:"state"`
+	LastError           string                   `json:"lastError,omitempty"`
+	SourceCount         int                      `json:"sourceCount"`
+	JobCount            int                      `json:"jobCount"`
+	StageNames          []string                 `json:"stageNames,omitempty"`
+	TargetRefs          []string                 `json:"targetRefs,omitempty"`
+	CreatedAt           time.Time                `json:"createdAt"`
+	UpdatedAt           time.Time                `json:"updatedAt"`
 }
 
 // WorkflowPreviewTrigger binds an inline workflow to one pull request command.
@@ -172,6 +173,7 @@ type WorkflowFeedback struct {
 }
 
 type WorkflowRevision struct {
+	Checks       []WorkflowCheckReport       `json:"checks,omitempty"`
 	SourceTrust  *PreviewSourceTrustDecision `json:"sourceTrust,omitempty"`
 	PullRequests []WorkflowPullRequest       `json:"pullRequests,omitempty"`
 	Feedback     *WorkflowFeedback           `json:"feedback,omitempty"`

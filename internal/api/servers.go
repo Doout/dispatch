@@ -126,6 +126,9 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusBadRequest, "Kubernetes connection required", detail)
 			return
 		}
+		if !a.inspectKubernetesTarget(w, r, kubernetes, nil) {
+			return
+		}
 		item.Address, item.State, item.AgentMode, item.Kubernetes = kubernetesAddress(kubernetes), "ready", "direct", kubernetes
 	case core.ServerRuntimeOpenShift:
 		if input.Kubernetes == nil {
@@ -233,6 +236,9 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 		kubernetes, detail := validateKubernetesServer(input.Kubernetes, item.Kubernetes)
 		if detail != "" {
 			problem(w, http.StatusBadRequest, "Kubernetes connection required", detail)
+			return
+		}
+		if !a.inspectKubernetesTarget(w, r, kubernetes, item.Kubernetes) {
 			return
 		}
 		item.Address, item.Kubernetes = kubernetesAddress(kubernetes), kubernetes

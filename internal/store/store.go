@@ -14,6 +14,15 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	WorkflowCheckStore
+	RegisterLegacyPreviewApp(context.Context, string, string) error
+	RetryWorkflowPreviewCleanupApp(context.Context, core.WorkflowPreviewCleanup, core.WorkflowPreviewCleanupApp) (core.WorkflowPreviewCleanupApp, error)
+	ListWorkflowPreviewCleanups(context.Context, string) ([]core.WorkflowPreviewCleanup, error)
+	BeginWorkflowPreviewCleanup(context.Context, string, string, time.Time) (core.WorkflowPreviewCleanup, error)
+	ClaimWorkflowPreviewCleanup(context.Context, string, time.Time) (*core.WorkflowPreviewCleanup, error)
+	SaveWorkflowPreviewCleanupApp(context.Context, core.WorkflowPreviewCleanup, core.WorkflowPreviewCleanupApp) error
+	FinishWorkflowPreviewCleanup(context.Context, core.WorkflowPreviewCleanup, string, time.Time) error
+
 	RecordDeletedRepository(context.Context, string, int64, string, string, time.Time) error
 	RepositoryDeleted(context.Context, string, int64) (bool, error)
 	WebhookDeliveryStore

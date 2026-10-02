@@ -222,6 +222,10 @@ func (a *API) syncConfigSource(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteConfigSource(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.DeleteConfigSource(r.Context(), chi.URLParam(r, "id")); err != nil {
+		if errors.Is(err, store.ErrPreviewHistory) {
+			problem(w, http.StatusConflict, "Preview history retained", err.Error())
+			return
+		}
 		a.notFoundOrInternal(w, err, "Configuration source")
 		return
 	}
@@ -364,6 +368,11 @@ func (a *API) getWorkflowRevision(w http.ResponseWriter, r *http.Request) {
 	item, err := a.store.GetWorkflowRevision(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		a.notFoundOrInternal(w, err, "Workflow revision")
+		return
+	}
+	item.Checks, err = a.store.ListWorkflowChecks(r.Context(), item.ID)
+	if err != nil {
+		a.internal(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, item)

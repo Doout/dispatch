@@ -71,18 +71,13 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		}
 		return 0
 	}
-	name := rest[0]
-	used := 1
-	if _, ok := automationclient.Find(name); !ok && len(rest) > 1 {
-		name = rest[0] + "_" + rest[1]
-		used = 2
-		if (name == "server_delete" || name == "snapshot_delete") && len(rest) > 2 && rest[2] == "review" {
-			name += "_review"
-			used = 3
-		}
-		if name == "environment_cleanup" && len(rest) > 2 && rest[2] == "review" {
-			name += "_review"
-			used = 3
+	name, used := rest[0], 1
+	// Match the longest registered command spelling, including three-word
+	// review and operation commands. Underscore spellings remain valid.
+	for count := 1; count <= len(rest) && !strings.HasPrefix(rest[count-1], "-"); count++ {
+		candidate := strings.Join(rest[:count], "_")
+		if _, ok := automationclient.Find(candidate); ok {
+			name, used = candidate, count
 		}
 	}
 	if _, ok := automationclient.Find(name); !ok {
@@ -91,6 +86,11 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	var a automationclient.Arguments
+	flags.StringVar(&a.RunID, "run", "", "Owned service provision run ID")
+	flags.StringVar(&a.BackupID, "backup", "", "Native workload backup ID")
+	flags.StringVar(&a.OperationID, "operation", "", "Original workload backup operation ID")
+	flags.StringVar(&a.DestinationID, "destination", "", "Reviewed destination service provision run ID")
+	flags.StringVar(&a.ReviewID, "review", "", "Original runtime retention review ID")
 	flags.StringVar(&a.ProjectID, "project", "", "Project ID")
 	flags.StringVar(&a.ProviderID, "provider", "", "Assigned provider ID")
 	flags.StringVar(&a.SnapshotID, "snapshot", "", "Owned machine snapshot ID")

@@ -11,6 +11,9 @@ import (
 )
 
 func inputSchema(kind string) any {
+	if schema := recoverySchema(kind); schema != nil {
+		return schema
+	}
 	text := func() map[string]any { return map[string]any{"type": "string"} }
 	props := map[string]any{}
 	required := []string{}
@@ -77,6 +80,14 @@ func toolDescription(op Operation) map[string]any {
 			if op.Name == "server_create" || op.Name == "snapshot_accept" || op.Name == "environment_create" {
 				properties[f].(map[string]any)["required"] = []string{"reviewId", "digest", "confirmName"}
 			}
+			if op.InputSchema == "RecoveryConfirmation" {
+				action := "delete"
+				if op.Name == "backup_restore" {
+					action = "restore"
+				}
+				schema := properties[f].(map[string]any)["properties"].(map[string]any)["confirmation"].(map[string]any)["properties"].(map[string]any)
+				schema["action"] = map[string]any{"type": "string", "const": action}
+			}
 			continue
 		case "limit":
 			p = map[string]any{"type": "integer", "minimum": 1, "maximum": 500}
@@ -94,8 +105,8 @@ func toolDescription(op Operation) map[string]any {
 	if required == nil {
 		required = []string{}
 	}
-	createsReview := op.Name == "server_review" || op.Name == "snapshot_review" || op.Name == "snapshot_delete_review" || op.Name == "environment_review"
-	return map[string]any{"name": op.Name, "description": op.Description, "inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": !op.Mutation && !createsReview, "destructiveHint": op.Name == "server_delete" || op.Name == "snapshot_accept" || op.Name == "environment_destroy", "idempotentHint": !createsReview && op.Name != "environment_extend", "openWorldHint": true}}
+	createsReview := op.CreatesReview || op.Name == "server_review" || op.Name == "snapshot_review" || op.Name == "snapshot_delete_review" || op.Name == "environment_review"
+	return map[string]any{"name": op.Name, "description": op.Description, "inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": !op.Mutation && !createsReview, "destructiveHint": op.Destructive || op.Name == "server_delete" || op.Name == "snapshot_accept" || op.Name == "environment_destroy", "idempotentHint": !createsReview && !op.NonIdempotent && op.Name != "environment_extend", "openWorldHint": true}}
 }
 
 type rpcRequest struct {

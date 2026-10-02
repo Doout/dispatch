@@ -3,6 +3,7 @@ import { Check, CheckCircle, Copy, FileCode, RocketLaunch, TerminalWindow, Warni
 import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun, WorkflowRevision } from "../api";
 import { SourceTrustReview } from "./SourceTrustReview";
 import { RunFeedback } from "./RunFeedback";
+import { RunChecks } from "./RunChecks";
 import { StageProgress } from "./StageProgress";
 import { StageTests, configuredStageTests } from "./StageTests";
 import { relative } from "../presentation";
@@ -62,9 +63,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const selectedRevision = revisions.find(item => item.id === revisionID);
-        const refreshRevision = initialRevisionID || selectedRevision?.feedback || ["queued", "running", "awaiting_approval"].includes(selectedRevision?.state ?? "");
-        const [nextJobs, nextStages, nextRevision] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID), refreshRevision ? api.workflowRevision(revisionID) : Promise.resolve(undefined)]);
+        const [nextJobs, nextStages, nextRevision] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID), api.workflowRevision(revisionID)]);
         if (active) {
           setLiveRevision(nextRevision);
           setJobs(nextJobs);
@@ -126,7 +125,18 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
       <header><div><h2 id="workflow-resource-title">{resource.name}</h2><p>{resource.kind} from {resource.path}</p></div><button data-autofocus aria-label="Close workflow details" onClick={onClose}><X size={19} weight="bold" /></button></header>
       <div className="dialog-body workflow-resource-body">
         {resource.temporary && resource.previewTTL !== undefined && <p>{resource.state === "expired" ? "Lifetime ended. Post a new preview comment to redeploy this instance." : resource.previewExpiresAt ? <>Scheduled shutdown: <time dateTime={resource.previewExpiresAt}>{new Date(resource.previewExpiresAt).toLocaleString()}</time>.</> : "No preview time limit."}</p>}
-        <div className="workflow-resource-toolbar"><span className={`status-label ${resourceStatus}`}><i />{workflowResourceStatusLabel(resourceStatus)}</span>{(canRun || canConfigure) && <div>{canRun && resource.active && resource.kind === "Application" && <button className="quiet-button" disabled={busy} onClick={() => void action("run")}><RocketLaunch size={15} />Run</button>}{canConfigure && !["expired", "expiring"].includes(resource.state) && <button className="quiet-button" disabled={busy} onClick={() => void action(resource.active ? "pause" : "activate")}>{resource.active ? "Pause" : "Activate"}</button>}</div>}</div>
+        {!!resource.previewCleanups?.length && <section aria-label="Preview cleanup history" className="workflow-evaluation">
+          <h3>Cleanup history</h3><p>Work is cancelled before cleanup. Retained storage, backups, and shared services keep their existing policies.</p>
+          {resource.previewCleanups.map((entry) => <details key={entry.id} open={entry.state !== "succeeded"}>
+            <summary>{entry.reason === "expired" ? "Lifetime ended" : entry.reason === "closed" ? "All linked pull requests closed" : "Preview removed"} · {entry.state === "succeeded" ? "Cleanup complete" : entry.state === "blocked" ? "Cleanup needs attention" : "Cleanup pending"}</summary>
+            <p>Attempt {entry.attempts} · <time dateTime={entry.updatedAt}>{new Date(entry.updatedAt).toLocaleString()}</time></p>
+            {entry.error && <p role="status">{entry.error}</p>}
+            {entry.state !== "succeeded" && <p>Cleanup resumes automatically. An uncertain target operation needs inspection before it can continue.</p>}
+            {!!entry.services?.length && <ul aria-label="Preview database cleanup">{entry.services.map(service => <li key={service.runId}>{service.alias} · {service.policy} · {service.state}{service.error && <p>{service.error}</p>}<small>Database operation <code>{service.operationId}</code></small></li>)}</ul>}
+            <ul>{entry.apps.map((app) => <li key={app.appId}>{app.appId} on {app.serverId}: {app.state}{app.error && <p>{app.error}</p>}<small>Operation <code>{app.jobId}</code></small></li>)}</ul>
+          </details>)}
+        </section>}
+        <div className="workflow-resource-toolbar"><span className={`status-label ${resourceStatus}`}><i />{workflowResourceStatusLabel(resourceStatus)}</span>{(canRun || canConfigure) && <div>{canRun && resource.active && resource.kind === "Application" && <button className="quiet-button" disabled={busy} onClick={() => void action("run")}><RocketLaunch size={15} />Run</button>}{canConfigure && !["expired", "expiring", "removed"].includes(resource.state) && <button className="quiet-button" disabled={busy} onClick={() => void action(resource.active ? "pause" : "activate")}>{resource.active ? "Pause" : "Activate"}</button>}</div>}</div>
         {error && <p className="form-error" role="alert">{error}</p>}
         {commandError && <p className="form-error" role="alert">{commandError}</p>}
         {resource.lastEvaluation && <details className="workflow-evaluation"><summary><CheckCircle size={16} weight="fill" /><strong>No deployment changes</strong><time dateTime={resource.lastEvaluation.checkedAt} title={new Date(resource.lastEvaluation.checkedAt).toLocaleString()}>Checked {relative(resource.lastEvaluation.checkedAt)}</time></summary><p>Rendered resources match the last deployments. No new run was needed.</p><ul aria-label="Latest checked sources">{Object.entries(resource.lastEvaluation.sources).map(([alias, input]) => <li key={alias}><span>{alias}</span><code title={input.commitSha}>{input.commitSha.slice(0, 12)}</code></li>)}</ul></details>}
@@ -137,6 +147,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
             {revision && <><dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>{revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
               {revision.sourceTrust && <SourceTrustReview revision={revision} isOwner={isOwner} onChanged={onChanged} />}
               {revision.feedback && <RunFeedback feedback={revision.feedback} overview={overview} />}
+              {revision.checks && <RunChecks checks={revision.checks} />}
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}
               <RunTiming revision={revision} jobs={jobs} stages={stages} />
               {jobs.length > 0 && <div className="workflow-run-list workflow-job-list"><h4>Jobs</h4>{jobs.map((job) => <button type="button" key={job.id} className={job.id === selectedJob?.id ? "active" : ""} aria-pressed={job.id === selectedJob?.id} aria-label={`${job.jobName}, ${job.state}`} onClick={() => setSelectedJobID(job.id)}><span className={`status-label ${job.state}`}><i />{job.state}</span><strong>{job.jobName}</strong><small>{job.reusedFromId ? "Reused" : formatRunDuration(itemDuration(job))}</small></button>)}</div>}
