@@ -3,6 +3,7 @@ import { Check, CheckCircle, Copy, FileCode, RocketLaunch, TerminalWindow, Warni
 import { api, Overview, WorkflowJobResult, WorkflowResource, WorkflowStageRun, WorkflowRevision } from "../api";
 import { SourceTrustReview } from "./SourceTrustReview";
 import { RunFeedback } from "./RunFeedback";
+import { RunChecks } from "./RunChecks";
 import { StageProgress } from "./StageProgress";
 import { StageTests, configuredStageTests } from "./StageTests";
 import { relative } from "../presentation";
@@ -62,9 +63,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const selectedRevision = revisions.find(item => item.id === revisionID);
-        const refreshRevision = initialRevisionID || selectedRevision?.feedback || ["queued", "running", "awaiting_approval"].includes(selectedRevision?.state ?? "");
-        const [nextJobs, nextStages, nextRevision] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID), refreshRevision ? api.workflowRevision(revisionID) : Promise.resolve(undefined)]);
+        const [nextJobs, nextStages, nextRevision] = await Promise.all([api.workflowJobs(revisionID), api.workflowStages(revisionID), api.workflowRevision(revisionID)]);
         if (active) {
           setLiveRevision(nextRevision);
           setJobs(nextJobs);
@@ -137,6 +136,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
             {revision && <><dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>{revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
               {revision.sourceTrust && <SourceTrustReview revision={revision} isOwner={isOwner} onChanged={onChanged} />}
               {revision.feedback && <RunFeedback feedback={revision.feedback} overview={overview} />}
+              {revision.checks && <RunChecks checks={revision.checks} />}
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}
               <RunTiming revision={revision} jobs={jobs} stages={stages} />
               {jobs.length > 0 && <div className="workflow-run-list workflow-job-list"><h4>Jobs</h4>{jobs.map((job) => <button type="button" key={job.id} className={job.id === selectedJob?.id ? "active" : ""} aria-pressed={job.id === selectedJob?.id} aria-label={`${job.jobName}, ${job.state}`} onClick={() => setSelectedJobID(job.id)}><span className={`status-label ${job.state}`}><i />{job.state}</span><strong>{job.jobName}</strong><small>{job.reusedFromId ? "Reused" : formatRunDuration(itemDuration(job))}</small></button>)}</div>}

@@ -495,7 +495,14 @@ export type PreviewSourceTrustDecision = {
   sources: { alias: string; repository: string; repositoryId: number; headRepository: string; headRepositoryId: number; fork: boolean; pullRequest: number; commitSha: string; githubAppId: string }[];
   credentialScope: string[]; environments: string[]; approvalId?: string; checkedAt: string;
 };
+export type WorkflowCheckReport = {
+  id: string; revisionId: string; resourceId: string; projectId: string; githubAppId: string;
+  repository: string; commitSha: string; name: string; kind: string; stage?: string; check?: string;
+  previewUrl?: string; externalId: string; checkId?: number; htmlUrl?: string; status?: string; conclusion?: string;
+  state: string; error?: string; attempts: number; complete: boolean; updatedAt: string; nextAttemptAt?: string;
+};
 export type WorkflowRevision = {
+  checks?: WorkflowCheckReport[];
   sourceTrust?: PreviewSourceTrustDecision;
   feedback?: WorkflowFeedback;
   id: string;

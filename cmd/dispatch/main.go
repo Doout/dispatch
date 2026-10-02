@@ -145,6 +145,7 @@ func run(logger *slog.Logger) error {
 	go controller.RunWorkflowPoller(shutdownCtx)
 	go controller.RunPreviewPoller(shutdownCtx)
 	go controller.RunWebhookProcessor(shutdownCtx)
+	go controller.RunWorkflowChecks(shutdownCtx)
 	go controller.RunPreviewExpirer(shutdownCtx)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: controller,

@@ -115,6 +115,7 @@ type PermissionGap struct {
 }
 
 var requiredRepositoryPermissions = map[string]string{
+	"checks":        "write",
 	"contents":      "read",
 	"issues":        "write",
 	"pull_requests": "write",
@@ -132,7 +133,7 @@ func RequiredRepositoryPermissions() map[string]string {
 
 func missingPermissions(granted map[string]string) []PermissionGap {
 	missing := []PermissionGap{}
-	for _, name := range []string{"contents", "issues", "pull_requests", "statuses"} {
+	for _, name := range []string{"checks", "contents", "issues", "pull_requests", "statuses"} {
 		required, actual := requiredRepositoryPermissions[name], granted[name]
 		if actual == required || actual == "write" && required == "read" {
 			continue

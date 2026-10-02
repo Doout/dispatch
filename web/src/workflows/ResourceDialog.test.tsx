@@ -2,7 +2,7 @@
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Overview, type WorkflowJobResult, type WorkflowResource } from "../api";
 import { WorkflowResourceDialog } from "./ResourceDialog";
 
@@ -57,12 +57,26 @@ function job(values: Partial<WorkflowJobResult>): WorkflowJobResult {
   };
 }
 
+beforeEach(() => {
+  vi.spyOn(api, "workflowRevision").mockResolvedValue(overview.workflowRevisions![0]);
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
 describe("workflow resource run details", () => {
+  it("refreshes reporting for a terminal run without legacy feedback", async () => {
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    vi.mocked(api.workflowRevision).mockResolvedValue({ ...overview.workflowRevisions![0], checks: [{ id: "report", revisionId: "revision-1", resourceId: resource.id, projectId: "project-1", githubAppId: "app", repository: "example/service", commitSha: "a".repeat(40), name: "Dispatch/deployment/checkout", kind: "deployment", externalId: "dispatch-check:report", state: "retrying", attempts: 1, complete: false, updatedAt: resource.createdAt, error: "Grant Checks: write to report this result." }] });
+    render(<WorkflowResourceDialog resource={resource} overview={overview} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    expect(await screen.findByText("Grant Checks: write to report this result.")).toBeTruthy();
+    expect(screen.getByText("Retry pending")).toBeTruthy();
+    expect(api.workflowRevision).toHaveBeenCalledWith("revision-1");
+  });
+
   it("shows phase durations, reuse, and the slowest Docker step", async () => {
     vi.spyOn(api, "workflowJobs").mockResolvedValue([
       job({ state: "succeeded", startedAt: "2026-09-01T20:01:00Z", finishedAt: "2026-09-01T20:10:00Z", log: "#4 [build 1/2] RUN install\n#4 DONE 180.0s\n#5 [build 2/2] COPY src .\n#5 CACHED\n" }),
@@ -70,6 +84,7 @@ describe("workflow resource run details", () => {
     ]);
     vi.spyOn(api, "workflowStages").mockResolvedValue([{ id: "stage", revisionId: "revision-1", stageName: "development", targetRef: "dev", state: "succeeded", approval: "automatic", createdAt: resource.createdAt, startedAt: "2026-09-01T20:10:00Z", finishedAt: "2026-09-01T20:11:00Z" }]);
     const timed = { ...overview, workflowRevisions: [{ ...overview.workflowRevisions![0], state: "succeeded", startedAt: "2026-09-01T20:01:00Z", finishedAt: "2026-09-01T20:11:00Z" }] } as Overview;
+    vi.mocked(api.workflowRevision).mockResolvedValue(timed.workflowRevisions![0]);
     render(<WorkflowResourceDialog resource={resource} overview={timed} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
     const timing = await screen.findByRole("region", { name: "Run timing" });
     await waitFor(() => expect(timing.textContent).toContain("9m"));

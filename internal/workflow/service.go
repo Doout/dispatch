@@ -910,6 +910,10 @@ func (s *Service) startWithSnapshot(ctx context.Context, resource core.WorkflowR
 	if err != nil {
 		return revision, err
 	}
+	revision.Checks, err = s.workflowCheckReports(ctx, resource, source, revision, false)
+	if err != nil {
+		return revision, err
+	}
 	revision.SourceTrust, err = s.SourceTrust(ctx, resource, revision)
 	if err != nil {
 		now := time.Now().UTC()

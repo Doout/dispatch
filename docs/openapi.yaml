@@ -3125,6 +3125,27 @@ paths:
         - { in: query, name: resourceId, schema: { type: string } }
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
+  /workflow/revisions/{revisionId}:
+    get:
+      operationId: getWorkflowRevision
+      description: Requires project.view. Returns the saved execution verdict and independent GitHub Check Run reporting receipts. Checks use captured source commits; retries and permission errors never change execution state. Historical runs without receipts omit checks.
+      parameters:
+        - { in: path, name: revisionId, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Workflow revision with independent reporting progress.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  state: { type: string }
+                  checks:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkflowCheckReport" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /workflow/revisions/{revisionId}/source-trust:
     parameters:
       - { in: path, name: revisionId, required: true, schema: { type: string } }
@@ -5435,6 +5456,33 @@ components:
         recovery: { type: string }
         checkedAt: { type: string, format: date-time }
       description: Missing installation access does not prove deletion. The deleted state requires a persisted, verified deletion event for the same App and repository identity.
+    WorkflowCheckReport:
+      type: object
+      required: [id, revisionId, resourceId, projectId, githubAppId, repository, commitSha, name, kind, externalId, state, attempts, complete, updatedAt]
+      properties:
+        id: { type: string }
+        revisionId: { type: string }
+        resourceId: { type: string }
+        projectId: { type: string }
+        githubAppId: { type: string }
+        repository: { type: string }
+        commitSha: { type: string, description: Exact resolved commit captured before execution. }
+        name: { type: string }
+        kind: { type: string, enum: [deployment, health, qa] }
+        stage: { type: string }
+        check: { type: string }
+        previewUrl: { type: string }
+        externalId: { type: string, description: Stable reporting identity for this workflow run and context. }
+        checkId: { type: integer, format: int64 }
+        htmlUrl: { type: string, format: uri }
+        status: { type: string, enum: [queued, in_progress, completed] }
+        conclusion: { type: string, enum: [success, failure, cancelled, skipped, action_required] }
+        state: { type: string, enum: [pending, retrying, reported] }
+        error: { type: string, description: Sanitized reporting error, independent of execution. }
+        attempts: { type: integer }
+        complete: { type: boolean, description: A terminal result was successfully published to GitHub. }
+        updatedAt: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time }
     WorkflowResource:
       type: object
       required: [id, configSourceId, apiVersion, kind, name, path, document, specDigest, configSha, active, state, createdAt, updatedAt]

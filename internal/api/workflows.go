@@ -366,6 +366,11 @@ func (a *API) getWorkflowRevision(w http.ResponseWriter, r *http.Request) {
 		a.notFoundOrInternal(w, err, "Workflow revision")
 		return
 	}
+	item.Checks, err = a.store.ListWorkflowChecks(r.Context(), item.ID)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, item)
 }
 

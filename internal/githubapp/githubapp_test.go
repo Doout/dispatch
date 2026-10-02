@@ -201,7 +201,7 @@ func TestVerifyReportsRegistrationAndInstallationPermissionGaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.AppPermissionsAvailable || !result.InstallationPermissionsAvailable || !result.TokenPermissionsAvailable || len(result.MissingAppPermissions) != 2 || result.MissingAppPermissions[0].Name != "issues" || result.MissingAppPermissions[1].Name != "pull_requests" || len(result.MissingInstallationPermissions) != 3 || result.MissingInstallationPermissions[0].Name != "issues" || result.MissingInstallationPermissions[1].Name != "pull_requests" || result.MissingInstallationPermissions[2].Name != "statuses" || len(result.MissingTokenPermissions) != 3 {
+	if !result.AppPermissionsAvailable || !result.InstallationPermissionsAvailable || !result.TokenPermissionsAvailable || len(result.MissingAppPermissions) != 3 || result.MissingAppPermissions[0].Name != "checks" || result.MissingAppPermissions[1].Name != "issues" || result.MissingAppPermissions[2].Name != "pull_requests" || len(result.MissingInstallationPermissions) != 4 || result.MissingInstallationPermissions[0].Name != "checks" || result.MissingInstallationPermissions[1].Name != "issues" || result.MissingInstallationPermissions[2].Name != "pull_requests" || result.MissingInstallationPermissions[3].Name != "statuses" || len(result.MissingTokenPermissions) != 4 {
 		t.Fatalf("unexpected permission audit: %#v", result)
 	}
 }
