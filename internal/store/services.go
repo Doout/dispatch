@@ -187,6 +187,9 @@ func (s *SQLStore) ReplaceAppServiceBindings(ctx context.Context, appID string, 
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.checkTemporaryDeployment(ctx, tx, appID, time.Now().UTC()); err != nil {
+		return err
+	}
 	var project, build string
 	appQuery := `SELECT project_id,build_type FROM apps WHERE id=?`
 	if s.postgres {

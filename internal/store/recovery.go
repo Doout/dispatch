@@ -17,7 +17,7 @@ func (s *SQLStore) RecoverInterruptedDeployments(ctx context.Context, now, start
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, s.q(`SELECT id,app_id FROM deployments WHERE state NOT IN ('succeeded','failed','cancelled') AND ((lease_until IS NOT NULL AND lease_until<?) OR (lease_until IS NULL AND created_at<?))`), stamp(now), stamp(startup))
+	rows, err := tx.QueryContext(ctx, s.q(`SELECT id,app_id FROM deployments WHERE NOT EXISTS (SELECT 1 FROM temporary_environments e WHERE e.app_id=deployments.app_id) AND state NOT IN ('succeeded','failed','cancelled') AND ((lease_until IS NOT NULL AND lease_until<?) OR (lease_until IS NULL AND created_at<?))`), stamp(now), stamp(startup))
 	if err != nil {
 		return nil, err
 	}

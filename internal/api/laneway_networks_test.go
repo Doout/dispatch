@@ -318,7 +318,8 @@ func TestLanewayNetworkAuthorizationFailureReportsUpstreamStatus(t *testing.T) {
 
 func newLanewayTestHandler(t *testing.T, databasePath string, vault *secretcrypto.Vault) (http.Handler, func()) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// This deadline covers database migration setup, not Laneway requests.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	data, err := store.Open(ctx, databasePath)
 	if err != nil {

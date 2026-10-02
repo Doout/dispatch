@@ -10,6 +10,7 @@ import (
 
 	"github.com/doout/dispatch/internal/analytics"
 	"github.com/doout/dispatch/internal/bootstrap"
+	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/drift"
@@ -156,6 +157,16 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	a.workflows.RemoteDockerServices = (deploy.RemoteExecutor{Local: deploy.DockerExecutor{}, Broker: a.runtimeBroker()}).Provision
 	a.workflows.ResolvePreviewSource = a.resolvePreviewSource
+	priorExecutionCheck := deployments.CheckExecution
+	deployments.CheckExecution = func(ctx context.Context, app core.App, sha string) error {
+		if err := a.checkTemporaryExecution(ctx, app, sha); err != nil {
+			return err
+		}
+		if priorExecutionCheck != nil {
+			return priorExecutionCheck(ctx, app, sha)
+		}
+		return nil
+	}
 	a.handler = a.routes()
 	return a
 }

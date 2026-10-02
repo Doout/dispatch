@@ -94,6 +94,10 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if err := a.checkTemporaryRuntimeAuthority(r.Context(), job.ID); err != nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Recheck source authorization at the credential-release boundary. A queued
 	// job cannot outlive its preview approval or a moved pull request head.
 	if job.Request.Operation == runtimecontract.Deploy || job.Request.Operation == runtimecontract.Rollback || job.Request.Operation == runtimecontract.Start || job.Request.SourceDeploymentID != "" {
@@ -130,6 +134,10 @@ func (a *API) renewRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	}
 	var input remoteruntime.Heartbeat
 	if !decode(w, r, &input) {
+		return
+	}
+	if err := a.checkTemporaryRuntimeAuthority(r.Context(), chi.URLParam(r, "jobId")); err != nil {
+		a.runtimeJobProblem(w, err)
 		return
 	}
 	cancelled, err := broker.Renew(r.Context(), node.ID, chi.URLParam(r, "jobId"), input)
