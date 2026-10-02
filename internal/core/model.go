@@ -216,6 +216,7 @@ func (s DeploymentState) Terminal() bool {
 }
 
 type Deployment struct {
+	RollbackCurrentID  string             `json:"-"`
 	Acceptance         *DeploymentReview  `json:"-"`
 	ExecutionAppName   string             `json:"-"`
 	ExecutionTemplate  bool               `json:"-"`

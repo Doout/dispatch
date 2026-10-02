@@ -27,7 +27,7 @@ func (a *API) operationsRoutes(r chi.Router) {
 		r.Get("/", a.listTeamMappings)
 		r.Post("/", a.saveTeamMapping)
 		r.Route("/{id}", func(r chi.Router) {
-			r.Delete("/", a.removeTeamMapping)
+			a.destructiveRoute(r, "DELETE", "/", "team-mapping", "delete", a.removeTeamMapping)
 		})
 	})
 	r.Route("/overview", func(r chi.Router) {

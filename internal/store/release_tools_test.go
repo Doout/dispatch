@@ -47,6 +47,7 @@ func testReleasePersistence(t *testing.T, dsn string) {
 	must(data.ReplaceAppServiceBindings(ctx, app.ID, []core.ServiceBinding{{Alias: "db", ServiceRef: service.ID, Environment: map[string]string{"DATABASE_URL": "url"}}}))
 	source := core.Deployment{ID: "release-source", AppID: app.ID, CommitSHA: "abc1234", State: core.DeploymentSucceeded, CreatedAt: now, Snapshot: core.DeploymentSnapshot{TargetID: server.ID, Values: map[string]any{"replicas": 2}}}
 	must(data.CreateDeployment(ctx, source))
+	must(data.SaveRuntimeArtifact(ctx, core.RuntimeArtifact{DeploymentID: source.ID, AppID: app.ID, ServerID: server.ID, ScopeID: source.ID, Ciphertext: "encrypted-original-runtime"}))
 	source, err = data.GetDeployment(ctx, source.ID)
 	must(err)
 	service.Revision = 2
@@ -56,6 +57,11 @@ func testReleasePersistence(t *testing.T, dsn string) {
 	action := core.ReleaseAction{ID: "release-action", ProjectID: project.ID, AppID: app.ID, DeploymentID: "release-rollback", SourceDeploymentID: source.ID, Actor: "operator", Action: "deployment.rollback", CreatedAt: now}
 	d := core.Deployment{ID: "release-rollback", AppID: app.ID, State: core.DeploymentQueued, CreatedAt: now.Add(time.Second)}
 	must(data.CreateRollbackDeployment(ctx, d, source, action))
+	artifact, err := data.GetRuntimeArtifact(ctx, d.ID)
+	must(err)
+	if artifact.ScopeID != source.ID || artifact.Ciphertext != "encrypted-original-runtime" || artifact.DeploymentID != d.ID {
+		t.Fatal("rollback did not inherit immutable runtime inputs")
+	}
 	captured, err := data.GetDeploymentServiceBindings(ctx, d.ID)
 	must(err)
 	if len(captured) != 1 || captured[0].Service.Revision != 1 || captured[0].Service.Fields["url"].EncryptedValue != "original-encrypted-input" {
@@ -65,6 +71,20 @@ func testReleasePersistence(t *testing.T, dsn string) {
 	must(err)
 	if stored.CommitSHA != source.CommitSHA || stored.SpecDigest != source.SpecDigest || stored.Snapshot.Values["replicas"] != float64(2) {
 		t.Fatal("rollback changed retained source inputs")
+	}
+	audit := core.AuditEvent{ID: "confirmed-release-delete", ActorID: "operator-id", ActorName: "Operator", ProjectID: project.ID, AppID: app.ID, ResourceID: app.ID, Action: "DELETE /api/v1/apps/{id}", ConfirmedAction: "delete", ConfirmedName: app.Name, ConfirmedVersion: "review-version", Outcome: "failed", CreatedAt: now}
+	must(data.AppendAuditEvent(ctx, audit))
+	events, err := data.ListAuditEvents(ctx, core.AuditFilter{ProjectIDs: []string{project.ID}, AppID: app.ID})
+	must(err)
+	if len(events) != 1 || events[0].ConfirmedName != app.Name || events[0].ConfirmedVersion != "review-version" || events[0].Outcome != "failed" {
+		t.Fatal("confirmed audit metadata was not retained")
+	}
+	stale := d
+	stale.ID = "stale-reviewed-rollback"
+	stale.ExecutionAppName, stale.RollbackCurrentID = app.Name, source.ID
+	stale.Acceptance = &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: project.ID, AppSpecDigest: "stale-spec"}
+	if data.CreateRollbackDeployment(ctx, stale, source, action) == nil {
+		t.Fatal("changed application accepted inside rollback transaction")
 	}
 	note := core.ReleaseNote{DeploymentID: d.ID, Notes: "Database schema is compatible", Links: []string{"https://example.test/repository/pull/1"}, Actor: "operator", UpdatedAt: now}
 	action.ID = "release-note-action"

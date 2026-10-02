@@ -2466,3 +2466,11 @@ code { font-family: var(--mono); }
 .workflow-feedback-target dt { color: var(--muted); }
 .workflow-feedback-target dd { margin: 4px 0 0; text-transform: capitalize; }
 .workflow-feedback-target p { margin: 0; }
+
+.destructive-layer { z-index: 2000; }
+.destructive-name { display: grid; gap: .6rem; margin-top: 1.25rem; }
+.destructive-name input { width: 100%; }
+
+.release-runtime-images { display: grid; gap: 8px; margin: 14px 0; }
+.release-runtime-images > div { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 4fr); gap: 12px; }
+.release-runtime-images dd { margin: 0; overflow-wrap: anywhere; }

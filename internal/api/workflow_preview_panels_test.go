@@ -386,6 +386,11 @@ func TestPreviewCleanupArchivesOldClosedRowsAndUIHelmCleanup(t *testing.T) {
 	route := chi.NewRouteContext()
 	route.URLParams.Add("id", "current")
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/apps/current/cleanup", nil).WithContext(context.WithValue(ctx, chi.RouteCtxKey, route))
+	review, err := a.destructiveReview(ctx, request, "application", "cleanup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = request.WithContext(context.WithValue(request.Context(), destructiveConfirmationKey{}, destructiveConfirmation{ResourceID: review.ResourceID, Action: review.Action, ExpectedVersion: review.Version, ConfirmName: review.Name}))
 	recorder := httptest.NewRecorder()
 	a.cleanupApp(recorder, request)
 	if recorder.Code != http.StatusNoContent {
