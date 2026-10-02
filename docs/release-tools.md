@@ -53,10 +53,12 @@ missing credentials produce an explicit unavailable reason.
 Docker and Compose deployments retain resolved runtime inputs in encrypted storage
 when the controller has a master key configured. Review shows the target, exact
 image IDs, container port and configured domain. The images must still exist on
-the original local Docker target. Restore uses those images and the original
+the original Docker target. Restore uses those images and the original
 resolved environment, commands, mounts and service networks. It never fetches
 source, builds images or runs hooks. Dispatch records the restore as a new
-deployment and preserves the selected successful deployment.
+deployment and preserves the selected successful deployment. Enrolled targets
+keep those artifacts in the agent's private state directory and use durable
+[remote runtime receipts](remote-runtime.md) for restore.
 
 Compose retains referenced files from the source checkout, including configs and
 secrets, up to 32 MiB per deployment. Source mounts must be read-only and cannot
@@ -71,8 +73,9 @@ live runtime. A changed review fails before accepting the restore; execution
 checks again before applying it. External tools can still change Docker or Helm
 resources during an operation. A failed or cancelled restore records the result
 and requires another review before retrying. Inspect runtime readiness first.
-The configured domain is shown as an input; this does not add a routing switch
-or reverse database changes.
+With [managed Docker routing](application-routing.md), the restored candidate
+must pass its retained health policy before the route switches. Database changes
+remain outside release rollback.
 
 ## Diagnose and inspect activity
 

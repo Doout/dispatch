@@ -14,20 +14,20 @@ name to accept it. Accepted inputs, including resolved field secrets, are
 frozen in encrypted storage. Credential rotation does not change a pending
 request's payload.
 
-Creation has three independent states: allocation, enrollment, and runtime.
-A provider address confirms allocation only. Issue a one-use enrollment token,
-install the runtime agent on that machine, and enroll the allocated node ID.
-The ordinary deployment target appears only after that enrolled node advertises
-the typed deploy runtime with fresh runtime evidence. The project and node
-binding are fixed. Issuing an enrollment token cannot replace an already
-currently enrolled identity. Pinned cloud-init/bootstrap and verified SSH
-recovery are handled by the bootstrap integration.
+Creation tracks allocation, enrollment and runtime readiness separately. A
+provider address confirms allocation only. A reviewed cloud-init plan can install
+the pinned agent and enroll the allocated node; verified SSH supports installation
+and recovery on an existing machine. A target appears only after fresh
+authenticated runtime evidence. A bootstrap plan also requires the reviewed agent
+artifact. The project and node binding are fixed. A new enrollment token cannot
+replace an enrolled identity. See [target installation](target-bootstrap.md).
 
 ## HTTP workflow
 
-All endpoints below currently require a controller owner. The manager exposes
-project/provider permission hooks and the acceptance store exposes transactional
-admission hooks for scoped automation grants and quotas.
+Project operators and automation accounts need current infrastructure grants,
+an assigned provider and an assigned SSH public key. Creation requires available
+quota for every caller. Global provider secret references remain owner-only. See
+[automation grants](automation-identities.md) and [project quotas](infrastructure-quotas.md).
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -47,9 +47,10 @@ admission hooks for scoped automation grants and quotas.
 Creation input includes `projectId`, `providerId`, `name`, `region`, `size`,
 `image`, `network`, `sshKeySecretId`, `config`, and optional `secretRefs`.
 A second key cannot consume the same review. Repeated acceptance with the same
-key returns the original operation. Shared public mutation receipts can provide
-a preallocated operation identity; it is bound to acceptance in the same database
-transaction. Operation history remains durable after machine deletion.
+key returns the original operation. An `Idempotency-Key` header uses the
+[public receipt contract](mutation-receipts.md) and replaces the body `requestKey`.
+Acceptance binds that receipt to the operation in the same database transaction.
+Operation history remains durable after machine deletion.
 
 ## Recovery and deletion
 

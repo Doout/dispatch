@@ -290,9 +290,9 @@ policy edits remain outside these commands.
 ## Capture, verify and restore a workload backup
 
 The current native adapter supports owned PostgreSQL 17+ services on Docker.
-Archives stay encrypted on their original target and retain by default. This is
+Archives stay encrypted on their original target and are retained by default. This is
 separate from machine snapshots and controller database backups. Mutations
-require the server's `project.configure` and `deployment.run` grants.
+require `project.configure` and `deployment.run` in the owning project.
 
 Prepare `backup.json` with the source service provision run ID:
 
@@ -342,8 +342,8 @@ dispatchctl backup restore review --backup BACKUP_ID --destination DESTINATION_S
 
 Read the overwrite consequences. Write `restore.json` using the same
 `confirmation` object shown for service deletion, with `resourceId` set to the
-backup ID, `action` set to `restore`, `expectedVersion` copied from the review's `version`, and the exact destination
-service name as `confirmName`:
+backup ID, `action` set to `restore`, `expectedVersion` copied from the review's
+`version`, and the exact destination service name as `confirmName`:
 
 ```sh
 dispatchctl backup restore --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID --key database-restore-001 --input restore.json

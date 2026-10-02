@@ -22,16 +22,17 @@ simulation. Clients must not interpret the vocabulary as enabled capabilities.
 | rollback | Restore a retained immutable release through a new deployment record and a current reviewed confirmation. Preserve application data. |
 | destroy | Remove only owned disposable resources. Preserve protected storage, and report partial cleanup. Repetition tolerates already absent owned resources. |
 
-The initial common executors advertise deploy and destroy. Inspect, logs,
-start, stop and rollback are rejected by the common dispatcher until the selected
-driver implements them. Existing deployment logs, diagnosis and reviewed release
-rollback remain separate APIs. Their existence does not make those operations
-available through every runtime driver.
+Simulation, local Docker and Helm advertise deploy and destroy through the common
+dispatcher. Their existing diagnosis, logs and reviewed release rollback APIs
+remain separate. A configured [outbound Docker runtime](remote-runtime.md) also
+advertises inspect, logs, start, stop and retained rollback. Each agent poll
+checks the worker's protocol and supported operations before releasing inputs.
 
-Docker currently requires a local target. Remote Docker targets advertise no
-supported operations until enrolled remote execution is configured. Helm uses
-the Kubernetes API. It is tested by the existing Helm tests; the broader shared
-Kubernetes conformance work follows the Simulation/Docker foundation.
+Docker runs on the controller's local target or a server bound to an enrolled
+agent. An unenrolled remote address enables no operations. Helm uses the
+Kubernetes API. [Registered Kubernetes targets](kubernetes-targets.md) add version,
+namespace, credential and ownership checks; local K3s has passed the shared
+deploy/destroy suite. Other cluster validation remains documented separately.
 
 ## Acceptance and immutable source
 
@@ -62,16 +63,17 @@ The controller persists a deployment and holds its application mutation lock
 before execution. Existing leases identify interrupted work. A cancellation or
 timeout does not prove the runtime made no changes; inspect the recorded target
 before retrying an uncertain operation. Recovery must retain the original
-operation identity and must not blindly repeat uncertain side effects. Public API
-request receipts are separate from runtime resource identity.
+operation identity and inspect uncertain effects before accepting new work.
+Public API request receipts are separate from runtime resource identity.
 
 ## Conformance and compatibility
 
 `internal/runtimecontract/conformance.Run` supplies reusable capability,
 cancellation and repeated lifecycle cases. Simulation and Docker run the same
 applicable cases in `internal/deploy/runtime_contract_test.go`; Docker's portable
-suite uses a deterministic command fixture. The source test uses a real local Git
-repository and advances its branch after acceptance. Live Docker tests remain
+suite uses a deterministic command fixture. The opt-in Kubernetes lifecycle test
+runs the shared deploy/destroy cases against a disposable cluster. The source
+test uses a real local Git repository and advances its branch after acceptance. Live Docker tests remain
 separate and must use disposable resources.
 
 Each new driver must declare every v1 operation, reject unsupported operations

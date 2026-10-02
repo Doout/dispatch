@@ -6,7 +6,7 @@ HTTPS is required. A direct loopback endpoint may use HTTP for the local mock. A
 
 The registration stores the verified `dispatch.provider/v1` manifest, its digest, approved capabilities and a revision. Invalid schemas, incompatible versions and missing capabilities leave the registration disabled with a failure message. JSON Schema validation does not load files or external references. Configuration discovery rejects top-level fields absent from the manifest's `properties` map, even when the provider schema otherwise allows additional properties.
 
-Endpoint and network route are fixed for a registration. Register a new connection to point at another adapter. Verification may accept a new implementation version or schema after review, but the adapter name and API version must keep their original identity. Callers check the manifest digest again before using the connection. Resource operations must retain their original registration and reviewed manifest digest.
+Endpoint and network route are fixed for a registration. Register a new connection to point at another adapter. Verification may accept a new implementation version or schema after review, but the adapter name and API version must keep their original identity. Create submissions retain their reviewed manifest digest and original registration. Existing resources can be inspected or deleted after an approved compatible upgrade, with their original ownership labels.
 
 To rotate authentication, update the existing secret in **Secrets**, then verify the provider. To use another credential, edit the registration and choose the new secret reference. A referenced credential cannot be deleted or converted to a plain variable. Its provider reference appears in secret usage.
 
@@ -14,7 +14,7 @@ To rotate authentication, update the existing secret in **Secrets**, then verify
 
 ## API
 
-All endpoints require the controller owner. Project access and unattended provisioning require the later authorization and quota gates.
+The registration endpoints below require a controller owner. Project operators and automation accounts use the assigned-provider catalog and lifecycle APIs described in [on-demand servers](on-demand-servers.md), subject to current grants and quotas.
 
 | Method | Path | Result |
 | --- | --- | --- |
