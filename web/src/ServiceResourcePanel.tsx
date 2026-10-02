@@ -30,7 +30,9 @@ export function ServiceResourcePanel({ runId, canManage, canRecover, onChanged }
  return <section className="service-card-section" aria-label="Owned service resource">
   <h3>Owned resource</h3>
   {resource && <><p role="status">{resource.state === "unresolved" ? "Recovery required" : resource.state === "ready" ? "Ready" : resource.state === "deleted" ? "Deleted" : "Operation in progress"}. {resource.message}</p>
-   <p className="service-help">Workload deletion retains storage and encrypted recovery history. Removing the connection registration is a separate action.</p>
+   <p className="service-help">{resource.target.provider === "neon" ? "Preview cleanup retains this database. Explicit branch deletion permanently removes its data. Removing its connection registration is a separate action." : "Workload deletion retains storage and encrypted recovery history. Removing the connection registration is a separate action."}</p>
+   {resource.providerPhase && <p>{resource.providerPhase}</p>}
+   {resource.previewId && <p className="service-help">Preview database: {resource.previewAlias} · {resource.previewId}</p>}
    {inspection && <p>Last inspection: {inspection.state === "absent" ? "Resource is absent" : inspection.state === "ready" ? "Owned resource is ready" : "Owned resource is not ready"}.</p>}
    {canManage && resource.state !== "deleted" && <div className="service-actions">
     <button type="button" className="quiet-button" disabled={busy || active} onClick={() => void act("inspect")}>Inspect resource</button>

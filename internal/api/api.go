@@ -57,6 +57,7 @@ type githubEventServices struct {
 }
 
 type API struct {
+	neonHTTPClient         *http.Client
 	workloadBackupBackend  workloadBackupRuntime
 	serviceResourceBackend serviceResourceRuntime
 	bootstrapOnce          sync.Once
@@ -157,6 +158,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	a.observations = observe.New(data, a.drift, deployments, eventConfig.Vault)
 	deployments.OnFinished = a.observations.DeploymentFinished
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
+	a.workflows.PreparePreviewServices = a.prepareNeonPreviewServices
 	a.workflows.RemoteDockerServices = (deploy.RemoteExecutor{Local: deploy.DockerExecutor{}, Broker: a.runtimeBroker()}).Provision
 	a.workflows.ResolvePreviewSource = a.resolvePreviewSource
 	priorExecutionCheck := deployments.CheckExecution

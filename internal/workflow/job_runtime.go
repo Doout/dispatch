@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/serviceconn"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
@@ -309,6 +310,31 @@ func (r *jobRuntime) resolveSecrets(ctx context.Context, bindings map[string]Sec
 	}
 	result := map[string]string{}
 	for environment, binding := range bindings {
+		if binding.ServiceRef != "" {
+			id, err := r.service.previewServiceID(ctx, r.revision.ResourceID, binding.ServiceRef)
+			if err != nil {
+				return nil, err
+			}
+			item, err := r.service.Store.GetService(ctx, id)
+			if err != nil || item.ProjectID != r.source.ProjectID {
+				return nil, errors.New("preview database is unavailable in this project")
+			}
+			fields, err := (serviceconn.Resolver{Vault: r.service.Secrets.Vault, Secrets: r.service.Secrets}).Resolve(ctx, item)
+			if err != nil {
+				return nil, errors.New("preview database credentials unavailable")
+			}
+			key := binding.Key
+			if key == "" {
+				key = "connectionUrl"
+			}
+			value, ok := fields[key]
+			if !ok {
+				return nil, errors.New("preview database connection field unavailable")
+			}
+			result[environment] = value
+			continue
+		}
+
 		id := ""
 		var saved core.Secret
 		for _, secret := range secrets {

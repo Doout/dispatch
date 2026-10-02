@@ -206,6 +206,11 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 		}
 		scopes = append(scopes, "repository-access:"+connection.ID+":"+connection.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	}
+	previewScopes, err := s.previewServiceScopes(ctx, source.ProjectID, *doc.Spec)
+	if err != nil {
+		return nil, nil, err
+	}
+	scopes = append(scopes, previewScopes...)
 	environments := []string{}
 	refs := map[string]bool{}
 	if source.CredentialSecretID != "" {
@@ -215,7 +220,9 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 	collect := func(jobs map[string]JobSpec) {
 		for _, job := range jobs {
 			for _, secret := range job.Secrets {
-				refs[secret.SecretRef] = true
+				if secret.SecretRef != "" {
+					refs[secret.SecretRef] = true
+				}
 			}
 			if job.Builder == "docker" {
 				usesDockerBuilder = true
@@ -242,6 +249,9 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 				return nil, nil, err
 			}
 			for _, binding := range bindings {
+				if _, deferred := PreviewServiceAlias(binding.ServiceRef); deferred {
+					continue
+				}
 				service, err := s.Store.GetService(ctx, binding.ServiceRef)
 				if err != nil {
 					return nil, nil, err

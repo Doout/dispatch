@@ -18,6 +18,7 @@ import (
 )
 
 type serviceTemplateView struct {
+	Neon           *core.NeonServiceProvision                    `json:"neon,omitempty"`
 	Provider       string                                        `json:"provider"`
 	ID             string                                        `json:"id"`
 	Name           string                                        `json:"name"`
@@ -62,7 +63,7 @@ func (a *API) listServiceTemplates(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		spec := documents[0].ServiceTemplate
-		result = append(result, serviceTemplateView{ID: resource.ID, Name: resource.Name, ProjectID: source.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Provider: spec.Provision.Provider(), Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: resource.ConfigSHA, ManagedBy: "gitops", ConfigSourceID: resource.ConfigSourceID})
+		result = append(result, serviceTemplateView{ID: resource.ID, Name: resource.Name, ProjectID: source.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Provider: spec.Provision.Provider(), Neon: spec.Provision.Neon, Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: resource.ConfigSHA, ManagedBy: "gitops", ConfigSourceID: resource.ConfigSourceID})
 	}
 	saved, err := a.store.ListSavedServiceTemplates(r.Context())
 	if err != nil {
@@ -78,7 +79,7 @@ func (a *API) listServiceTemplates(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		spec := documents[0].ServiceTemplate
-		result = append(result, serviceTemplateView{ID: item.ID, Name: item.Name, ProjectID: item.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Provider: spec.Provision.Provider(), Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: item.Digest, ManagedBy: "dispatch", Revision: item.Revision, ConfigSourceID: item.ConfigSourceID})
+		result = append(result, serviceTemplateView{ID: item.ID, Name: item.Name, ProjectID: item.ProjectID, Description: spec.Description, ServiceType: spec.ServiceType, Provider: spec.Provision.Provider(), Neon: spec.Provision.Neon, Inputs: spec.Inputs, Outputs: spec.Outputs, ConfigSHA: item.Digest, ManagedBy: "dispatch", Revision: item.Revision, ConfigSourceID: item.ConfigSourceID})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Name == result[j].Name {
@@ -90,9 +91,10 @@ func (a *API) listServiceTemplates(w http.ResponseWriter, r *http.Request) {
 }
 
 type serviceProvisionRequest struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Inputs      map[string]string `json:"inputs"`
+	Name            string            `json:"name"`
+	Description     string            `json:"description"`
+	Inputs          map[string]string `json:"inputs"`
+	ConfirmDataCopy string            `json:"confirmDataCopy,omitempty"`
 }
 
 func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
@@ -133,10 +135,17 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	target, err := a.serviceProvisionTarget(r.Context(), *spec)
+	target, err := a.serviceProvisionTarget(r.Context(), *spec, projectID)
 	if err != nil {
 		problem(w, 400, "Invalid provisioner target", err.Error())
 		return
+	}
+	if spec.Provision.Neon != nil && spec.Provision.Neon.DataMode == "parent-data" {
+		if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner || input.ConfirmDataCopy != "Copy parent rows into "+input.Name {
+			problem(w, 403, "Data copy requires approval", "A controller owner must explicitly confirm copying parent rows into this named service.")
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), neonDataCopyApprovalKey{}, true))
 	}
 	r, receipt, proceed := a.reserveMutation(w, r, projectID, "service.provision", struct {
 		TemplateID string
@@ -376,8 +385,17 @@ func (a *API) getServiceProvisionRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, run)
 }
 
-func (a *API) serviceProvisionTarget(ctx context.Context, spec workflow.ServiceTemplateSpec) (*core.ServiceProvisionTarget, error) {
+func (a *API) serviceProvisionTarget(ctx context.Context, spec workflow.ServiceTemplateSpec, projects ...string) (*core.ServiceProvisionTarget, error) {
 	var target core.ServiceProvisionTarget
+	if n := spec.Provision.Neon; n != nil {
+		if len(projects) != 1 {
+			return nil, errors.New("Neon requires a project-scoped provider")
+		}
+		if _, err := a.resolveNeonSpec(ctx, projects[0], *n); err != nil {
+			return nil, err
+		}
+		return &core.ServiceProvisionTarget{Provider: "neon", ProviderRef: n.ProviderRef}, nil
+	}
 	if spec.Provision.Docker != nil {
 		target.Provider, target.ServerID = "docker", spec.Provision.Docker.ServerRef
 		target.Network = spec.Provision.Docker.Network

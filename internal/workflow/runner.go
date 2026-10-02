@@ -31,6 +31,17 @@ func (s *Service) runApplication(ctx context.Context, resource core.WorkflowReso
 		return
 	}
 	document := documents[0]
+	if len(document.Spec.PreviewServices) > 0 {
+		if !resource.Temporary || s.PreparePreviewServices == nil {
+			s.failRevision(ctx, source, &revision, errors.New("preview service provisioning is unavailable for this resource"))
+			return
+		}
+		if err := s.PreparePreviewServices(ctx, resource, revision, document); err != nil {
+			s.failRevision(ctx, source, &revision, err)
+			return
+		}
+	}
+
 	s.publishStatus(ctx, source, revision, "pending", "Deployment started")
 	root, err := os.MkdirTemp("", "dispatch-workflow-")
 	if err != nil {

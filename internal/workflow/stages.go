@@ -193,7 +193,11 @@ type preparedHelmDeployment struct {
 
 func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, deploymentName string, spec DeploymentSpec, server core.Server) (preparedHelmDeployment, error) {
 	var prepared preparedHelmDeployment
-	bindings, err := s.effectiveServiceBindings(ctx, source.ProjectID, spec, stage)
+	resolvedSpec, resolvedStage, err := s.resolvePreviewDeploymentBindings(ctx, resource.ID, spec, stage)
+	if err != nil {
+		return preparedHelmDeployment{}, err
+	}
+	bindings, err := s.effectiveServiceBindings(ctx, source.ProjectID, resolvedSpec, resolvedStage)
 	if err != nil {
 		return prepared, err
 	}

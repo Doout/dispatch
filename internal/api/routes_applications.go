@@ -62,6 +62,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.With(a.directUserOnly).Put("/", a.updateService)
 		})
 	})
+	a.neonRoutes(r)
 	r.Route("/service-templates", func(r chi.Router) {
 		r.Get("/", a.listServiceTemplates)
 		r.With(a.directUserOnly).Post("/", a.createServiceTemplate)

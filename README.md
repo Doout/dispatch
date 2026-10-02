@@ -257,3 +257,5 @@ Historical reporting uses embedded DuckDB with asynchronous Parquet exports. See
 Application [sync and drift checks](docs/application-drift.md) compare saved Helm deployments with Kubernetes/OpenShift resources and support explicit reapply.
 
 Owned PostgreSQL services support [encrypted workload backups and isolated restore verification](docs/workload-backups.md).
+
+Neon preview databases use project-scoped provider connections and retained owned-service runs. See [configuration, migrations and recovery](docs/neon-preview-databases.md).

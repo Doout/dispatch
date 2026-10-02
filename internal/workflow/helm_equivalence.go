@@ -34,7 +34,7 @@ func (s *Service) reuseEquivalentWorkflow(ctx context.Context, resource core.Wor
 		return false
 	}
 	spec := documents[0].Spec
-	if len(spec.Stages) == 0 || len(spec.Finally) != 0 {
+	if len(spec.Stages) == 0 || len(spec.Finally) != 0 || len(spec.PreviewServices) != 0 {
 		return false
 	}
 	for _, stage := range spec.Stages {

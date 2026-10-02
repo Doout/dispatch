@@ -288,7 +288,7 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 			return out, e
 		}
 		extra = inspected
-		if !inspected.StorageRetained {
+		if !inspected.StorageRetained && item.Target.Provider != "neon" {
 			out.BlockedReason = "The provisioner cannot preserve protected storage; migrate the data before deleting this resource."
 		}
 		busy, e := data.ServiceResourceConsumers(ctx, item.ServiceID)
@@ -297,6 +297,11 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 		}
 		out.Summary = "Delete the owned service workload and remove its connection registration. Storage, backups and encrypted recovery history remain. Detach all consumers first."
 		out.Resources = append(out.Resources, "Owned "+item.Target.Provider+" resource: "+item.Target.ResourceName, "Retain all named volumes and persistent volume claims")
+		if item.Target.Provider == "neon" {
+			out.StoragePolicy = "delete"
+			out.Summary = "Permanently delete this owned Neon branch, its compute and all branch data. The parent branch and other services remain. Detach all consumers first."
+			out.Resources = []string{"Delete owned Neon branch: " + inspected.ResourceID, "Branch data cannot be recovered from this Dispatch operation history"}
+		}
 		for _, id := range item.Dependencies {
 			out.Resources = append(out.Resources, "External dependency retained: "+id)
 		}
