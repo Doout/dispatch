@@ -145,6 +145,7 @@ func run(logger *slog.Logger) error {
 	go controller.RunWorkflowPoller(shutdownCtx)
 	go controller.RunPreviewPoller(shutdownCtx)
 	go controller.RunWebhookProcessor(shutdownCtx)
+	go controller.RunWorkflowChecks(shutdownCtx)
 	go controller.RunPreviewExpirer(shutdownCtx)
 	go controller.RunTemporaryEnvironments(shutdownCtx)
 	go controller.RunWorkloadBackupVerification(shutdownCtx)

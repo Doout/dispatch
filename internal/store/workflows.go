@@ -330,6 +330,9 @@ func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.Workflo
 			return err
 		}
 	}
+	if err := s.createWorkflowChecks(ctx, tx, item); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

@@ -172,6 +172,7 @@ type WorkflowFeedback struct {
 }
 
 type WorkflowRevision struct {
+	Checks       []WorkflowCheckReport       `json:"checks,omitempty"`
 	SourceTrust  *PreviewSourceTrustDecision `json:"sourceTrust,omitempty"`
 	PullRequests []WorkflowPullRequest       `json:"pullRequests,omitempty"`
 	Feedback     *WorkflowFeedback           `json:"feedback,omitempty"`

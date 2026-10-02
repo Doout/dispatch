@@ -1629,3 +1629,21 @@ CREATE TABLE neon_preview_services (
  run_id TEXT NOT NULL UNIQUE REFERENCES service_resources(run_id),
  PRIMARY KEY(preview_id,alias)
 );
+-- dispatch:migration 091_workflow_check_runs
+CREATE TABLE workflow_check_reports (
+ id TEXT PRIMARY KEY,
+ revision_id TEXT NOT NULL REFERENCES workflow_revisions(id) ON DELETE CASCADE,
+ resource_id TEXT NOT NULL,
+ external_id TEXT NOT NULL UNIQUE,
+ payload TEXT NOT NULL,
+ app_id BIGINT NOT NULL,
+ api_url TEXT NOT NULL,
+ create_state TEXT NOT NULL DEFAULT '',
+ digest TEXT NOT NULL DEFAULT '',
+ complete BOOLEAN NOT NULL DEFAULT FALSE,
+ next_attempt_at TEXT NOT NULL,
+ lease_token TEXT NOT NULL DEFAULT '',
+ lease_until TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX workflow_check_pending ON workflow_check_reports(complete,next_attempt_at,lease_until);
+CREATE INDEX workflow_check_revision ON workflow_check_reports(revision_id);

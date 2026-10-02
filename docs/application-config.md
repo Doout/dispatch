@@ -601,6 +601,18 @@ Statuses link to the QA run in Dispatch. **GitHub results** in run details shows
 
 The GitHub App needs **Commit statuses: write** and **Pull requests: write** for the affected repositories. The manifest already requests both. **Connections > Verify** checks registration and installation grants. After changing App permissions, accept the installation update or reinstall it. Feedback reporting uses installation tokens and never falls back to a personal token.
 
+#### GitHub Check Runs
+
+New Application runs also publish GitHub Check Runs for each distinct resolved source commit. Linked PRs retain the App, repository and SHA captured when the run was accepted. A branch move or later edit to the preview links cannot redirect an existing report. Existing commit statuses, PR comments and reviews keep their separate behavior.
+
+The contexts are `Dispatch/deployment/<application>`, `Dispatch/health/<application>/<stage>/<check>` for configured automatic stage checks, and `Dispatch/qa/<application>` for comment-triggered QA. Reporting reads the saved workflow and child check results; it starts no build, health probe or QA job. An automatic check that never ran is reported as skipped. Cancelled runs report cancellation; interrupted runs require a new execution. Historical runs are not backfilled.
+
+The App needs **Checks: write** on the source repositories. The generated manifest requests it. For an existing App, update its repository permissions and accept the installation permission update, or reinstall it, then use **Connections > Verify**. A missing grant appears in **GitHub Check Runs** in run details and does not change deployment success or failure. GitHub documents the installation-token permission and request fields in its [Check Runs API](https://docs.github.com/en/rest/checks/runs?apiVersion=2022-11-28).
+
+Each reporting receipt stores its own external identity and GitHub check ID. Controller restarts retry updates to that same check. If a create response is lost, Dispatch searches the captured App and commit for the accepted external identity before continuing. If it remains absent, the receipt stays pending reconciliation and never blindly sends a second create request. A new workflow run receives a new reporting identity, even on the same commit.
+
+Check summaries contain a fixed outcome message, a link to the Dispatch run and the tested preview URL when configured. Job logs, secret values and upstream error bodies stay out of GitHub summaries. Run details show permission and network reporting errors separately from execution results.
+
 #### Promoting a template through stages
 
 A `WorkflowTemplate` retains the full ordered `spec.stages` list when Dispatch creates its Application. Each run builds once and promotes the same source commits and build outputs through those stages. A stage finishes after its deployments and automatic checks succeed. A failed deployment or automatic check stops promotion; `approval: required` pauses before the next environment deploys.
