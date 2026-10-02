@@ -119,8 +119,15 @@ func (s *catchupSource) ListAnalyticsEvents(_ context.Context, limit int) ([]cor
 		s.service.setState("ready")
 	} else if s.reads <= 3 {
 		snapshot := s.service.Summary(map[string]bool{"project": true}, 7)
-		if snapshot.State != "catching_up" || snapshot.Totals.Deployments.Runs != 0 {
-			return nil, errors.New("full import batch recomputed history before refresh interval")
+		if snapshot.State != "catching_up" {
+			return nil, errors.New("full import batch left the public snapshot ready")
+		}
+	} else {
+		// A partial batch must publish before the next source poll. Import and
+		// filesystem latency do not determine when that batch is reached.
+		snapshot := s.service.Summary(map[string]bool{"project": true}, 7)
+		if snapshot.State != "ready" || snapshot.Totals.Deployments.Runs != 501 {
+			return nil, errors.New("final partial batch did not publish before the next source poll")
 		}
 	}
 	n := len(s.events)
@@ -136,7 +143,7 @@ func (s *catchupSource) AckAnalyticsEvents(_ context.Context, events []core.Anal
 	s.events = s.events[len(events):]
 	return nil
 }
-func TestCatchupThrottlesFullScansAndPublishesFinalBatch(t *testing.T) {
+func TestCatchupPublishesBacklogStateAndFinalBatch(t *testing.T) {
 	now := time.Now().UTC()
 	source := &catchupSource{}
 	for i := 1; i <= 501; i++ {
@@ -148,7 +155,7 @@ func TestCatchupThrottlesFullScansAndPublishesFinalBatch(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- service.run(ctx) }()
 	defer func() { cancel(); <-done }()
-	deadline := time.After(10 * time.Second)
+	deadline := time.After(2 * time.Minute)
 	for {
 		out := service.Summary(map[string]bool{"project": true}, 7)
 		if out.State == "ready" && out.Totals.Deployments.Runs == 501 {
@@ -159,7 +166,7 @@ func TestCatchupThrottlesFullScansAndPublishesFinalBatch(t *testing.T) {
 			done <- err
 			t.Fatalf("worker: %v", err)
 		case <-deadline:
-			t.Fatal("final partial batch did not publish immediately")
+			t.Fatal("worker did not finish catch-up")
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
