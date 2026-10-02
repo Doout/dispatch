@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,7 +26,9 @@ import (
 
 func TestAppWebhookAcceptsMatchingInstallationsAcrossOrganizations(t *testing.T) {
 	a := serviceTestAPI(t)
+	var lookups atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lookups.Add(1)
 		switch r.URL.Path {
 		case "/repos/alpha/service/installation":
 			fmt.Fprint(w, `{"id":73,"app_id":42}`)
@@ -66,17 +69,17 @@ func TestAppWebhookAcceptsMatchingInstallationsAcrossOrganizations(t *testing.T)
 		validSignature   bool
 		want             int
 	}{
-		{"first organization", "alpha/service", 73, true, 204},
-		{"second organization", "beta/ui", 74, true, 204},
-		{"another repository's installation", "beta/ui", 73, true, 403},
+		{"first organization", "alpha/service", 73, true, 202},
+		{"second organization", "beta/ui", 74, true, 202},
+		{"another repository's installation", "beta/ui", 73, true, 202},
 		{"missing installation", "alpha/service", 0, true, 403},
 		{"invalid signature", "beta/ui", 74, false, 401},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			body := fmt.Sprintf(`{"installation":{"id":%d},"repository":{"full_name":%q}}`, test.installation, test.repository)
+			body := fmt.Sprintf(`{"ref":"refs/heads/main","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","installation":{"id":%d},"repository":{"full_name":%q}}`, test.installation, test.repository)
 			request := httptest.NewRequest("POST", "/", strings.NewReader(body))
-			request.Header.Set("X-GitHub-Event", "ping")
-			request.Header.Set("X-GitHub-Delivery", "test-delivery")
+			request.Header.Set("X-GitHub-Event", "push")
+			request.Header.Set("X-GitHub-Delivery", strings.NewReplacer(" ", "-", "'", "").Replace(test.name))
 			mac := hmac.New(sha256.New, []byte(secret))
 			mac.Write([]byte(body))
 			signature := hex.EncodeToString(mac.Sum(nil))
@@ -84,10 +87,30 @@ func TestAppWebhookAcceptsMatchingInstallationsAcrossOrganizations(t *testing.T)
 				signature = strings.Repeat("0", 64)
 			}
 			request.Header.Set("X-Hub-Signature-256", "sha256="+signature)
+			before := lookups.Load()
 			response := httptest.NewRecorder()
 			a.processGitHubWebhook(response, request, secret, "app", 73, nil, nil)
 			if response.Code != test.want {
 				t.Fatalf("status %d: %s", response.Code, response.Body.String())
+			}
+			if lookups.Load() != before {
+				t.Fatal("HTTP acknowledgement performed installation lookup")
+			}
+			if test.want == 202 {
+				if err := a.ProcessWebhooksOnce(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				items, err := a.store.ListWebhookDeliveries(context.Background(), "", 50)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "processed"
+				if test.name == "another repository's installation" {
+					want = "rejected"
+				}
+				if items[0].State != want {
+					t.Fatalf("worker installation check: %+v", items[0])
+				}
 			}
 		})
 	}

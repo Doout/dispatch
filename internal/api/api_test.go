@@ -1863,11 +1863,21 @@ func TestSignedPullRequestWebhookCreatesAndClosesPreview(t *testing.T) {
 		t.Fatalf("expected delivery retry to be idempotent, got %d: %s", response.Code, response.Body.String())
 	}
 
+	if err := handler.(*API).ProcessWebhooksOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	closed := []byte(`{"action":"closed","repository":{"full_name":"acme/checkout"},"sender":{"login":"octo"},"pull_request":{"number":17,"head":{"ref":"feature/cart","sha":"abc123"},"base":{"ref":"main"}}}`)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, signedWebhookRequest("hook-secret", "pull_request", "delivery-close", closed))
-	if response.Code != http.StatusAccepted || !bytes.Contains(response.Body.Bytes(), []byte(`"state":"closed"`)) {
-		t.Fatalf("expected close webhook to complete cleanup, got %d: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("expected durable close receipt, got %d: %s", response.Code, response.Body.String())
+	}
+	if err := handler.(*API).ProcessWebhooksOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	previews, err := handler.(*API).store.ListPreviewEnvironments(context.Background(), "")
+	if err != nil || len(previews) != 1 || previews[0].State != core.PreviewClosed {
+		t.Fatalf("queued close did not clean preview: %+v %v", previews, err)
 	}
 }
 
@@ -1958,6 +1968,9 @@ func testHandlerWithEventConfig(t *testing.T, auth AuthConfig, seedDemo bool, ev
 			_ = data.Close()
 			t.Fatal(err)
 		}
+	}
+	if eventConfig.WebhookSecret != "" && eventConfig.Vault == nil {
+		eventConfig.Vault = webhookTestVault(t)
 	}
 	if eventConfig.GitHubApps == nil && eventConfig.Vault != nil {
 		eventConfig.GitHubApps = githubapp.New(data, eventConfig.Vault)

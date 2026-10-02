@@ -14,6 +14,12 @@ type AdminCredential struct {
 }
 
 type Store interface {
+	WebhookDeliveryStore
+	WorkflowReceiptRevision(context.Context, string, string) (core.WorkflowRevision, error)
+	RecordWorkflowNoChange(context.Context, string, string) error
+	WorkflowEventsForDelivery(context.Context, string) ([]core.WorkflowEvent, error)
+	PendingWorkflowEvents(context.Context) ([]core.WorkflowEvent, error)
+
 	UpdateDeploymentHealth(context.Context, string, core.DeploymentHealth) error
 	ClaimWorkflowPreviewPanelLease(context.Context, string, time.Time) (bool, error)
 	ReleaseWorkflowPreviewPanelLease(context.Context, string) error

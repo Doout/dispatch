@@ -43,7 +43,7 @@ func (a *API) configuredEventRules(ctx context.Context) ([]eventRule, error) {
 	bySource := map[string]core.ConfigSource{}
 	for _, source := range sources {
 		bySource[source.ID] = source
-		result = append(result, eventRule{ID: "configuration:" + source.ID, Name: source.Name, ProjectIDs: []string{source.ProjectID}, Kind: "configuration", Repositories: []string{source.Repository}, Branch: source.Branch, Mode: source.SyncMode, Interval: source.PollIntervalSeconds, Enabled: source.Active, Error: source.LastError, CheckKeys: []string{"configuration:" + source.ID}})
+		result = append(result, eventRule{ID: "configuration:" + source.ID, Name: source.Name, ProjectIDs: []string{source.ProjectID}, Kind: "configuration", ConnectionID: source.GitHubAppID, Repositories: []string{source.Repository}, Branch: source.Branch, Mode: source.SyncMode, Interval: source.PollIntervalSeconds, Enabled: source.Active, Error: source.LastError, CheckKeys: []string{"configuration:" + source.ID}})
 	}
 	templates, err := a.store.ListWorkflowPreviewTemplates(ctx)
 	if err != nil {

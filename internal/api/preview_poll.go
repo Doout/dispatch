@@ -656,19 +656,15 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if err != nil {
 			return err
 		}
-		resource, err := a.workflows.CreateTemporaryApplication(ctx, template.ConfigSourceID, []byte(rendered))
-		if err != nil {
-			return fmt.Errorf("create preview from template %s: %w", template.Name, err)
-		}
-		trigger := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), TemplateID: template.ID, TemplateSource: template.GitSource, ResourceID: resource.ID,
+		trigger := core.WorkflowPreviewTrigger{ID: ulid.Make().String(), TemplateID: template.ID, TemplateSource: template.GitSource,
 			GitHubAppID: template.GitHubAppID, Repository: target.repository, PullRequestNumber: event.PullRequestNumber,
 			Command: template.Command, PreviewURL: previewURL, AutoDeploy: template.AutoDeploy, LiveReload: template.LiveReload,
 			MaxAutoRunsPerHour: template.MaxAutoRunsPerHour, TTL: template.TTL, SourceDefaults: defaults, CreatedAt: time.Now().UTC()}
-		if err := a.store.CreateWorkflowPreviewTrigger(ctx, trigger); err != nil {
-			resource.Active, resource.State, resource.UpdatedAt = false, "removed", time.Now().UTC()
-			_ = a.store.UpdateWorkflowResource(ctx, resource)
-			return err
+		resource, err := a.workflows.CreateTemporaryApplication(store.WithWorkflowPreviewTrigger(ctx, trigger), template.ConfigSourceID, []byte(rendered))
+		if err != nil {
+			return fmt.Errorf("create preview from template %s: %w", template.Name, err)
 		}
+		trigger.ResourceID = resource.ID
 		target.workflowTriggers = append(target.workflowTriggers, trigger)
 	}
 	freshTriggers, err := a.store.ListWorkflowPreviewTriggers(ctx)
@@ -786,7 +782,7 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			return err
 		}
 		target.workflowTriggers[index] = updatedTrigger
-		revision, err := a.workflows.Start(ctx, resource.ID, "pull request comment "+event.SourceCommentID)
+		revision, err := a.workflows.Start(store.WithWorkflowReceipt(ctx, store.WorkflowReceipt{Key: "preview-comment:" + trigger.ID + ":" + event.SourceCommentID, TriggerID: trigger.ID, CommentID: event.SourceCommentID}), resource.ID, "pull request comment "+event.SourceCommentID)
 		if err != nil {
 			_ = a.store.ReleaseWorkflowPreviewComment(ctx, trigger.ID, event.SourceCommentID)
 			return err

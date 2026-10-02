@@ -1474,3 +1474,50 @@ CREATE INDEX runtime_retention_project ON runtime_retention_reviews(project_id);
 CREATE TABLE runtime_artifact_retirements(deployment_id TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,review_id TEXT NOT NULL REFERENCES runtime_retention_reviews(id),state TEXT NOT NULL);
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','retention_inspect');
+
+-- dispatch:migration 087_webhook_deliveries
+CREATE TABLE webhook_deliveries (
+ id TEXT PRIMARY KEY,
+ connection_id TEXT NOT NULL,
+ delivery_id TEXT NOT NULL,
+ body_digest TEXT NOT NULL,
+ event_name TEXT NOT NULL,
+ repository TEXT NOT NULL,
+ installation_id BIGINT NOT NULL,
+ state TEXT NOT NULL,
+ attempts INTEGER NOT NULL DEFAULT 0,
+ error TEXT NOT NULL DEFAULT '',
+ received_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ next_attempt_at TEXT NOT NULL,
+ completed_at TEXT,
+ result TEXT NOT NULL DEFAULT '',
+ ciphertext TEXT NOT NULL,
+ lease_token TEXT NOT NULL DEFAULT '',
+ lease_until TEXT NOT NULL DEFAULT '',
+ activities TEXT NOT NULL DEFAULT '[]',
+ UNIQUE(connection_id,delivery_id),
+ UNIQUE(connection_id,body_digest)
+);
+CREATE INDEX webhook_delivery_pending ON webhook_deliveries(state,next_attempt_at,lease_until);
+CREATE TABLE workflow_command_receipts (
+ resource_id TEXT NOT NULL,
+ command_key TEXT NOT NULL,
+ revision_id TEXT NOT NULL,
+ PRIMARY KEY(resource_id,command_key)
+);
+ALTER TABLE workflow_events ADD COLUMN revision_ids TEXT NOT NULL DEFAULT '[]';
+
+UPDATE workflow_preview_comments SET revision_id=(
+ SELECT MAX(r.id) FROM workflow_revisions r JOIN workflow_preview_triggers t ON t.resource_id=r.resource_id
+ WHERE t.id=workflow_preview_comments.trigger_id
+ AND r.trigger_name IN ('pull request comment ' || workflow_preview_comments.comment_id,'pull request test ' || workflow_preview_comments.comment_id)
+) WHERE revision_id IS NULL AND EXISTS (
+ SELECT 1 FROM workflow_revisions r JOIN workflow_preview_triggers t ON t.resource_id=r.resource_id
+ WHERE t.id=workflow_preview_comments.trigger_id
+ AND r.trigger_name IN ('pull request comment ' || workflow_preview_comments.comment_id,'pull request test ' || workflow_preview_comments.comment_id)
+);
+INSERT INTO workflow_command_receipts(resource_id,command_key,revision_id)
+ SELECT t.resource_id,'preview-comment:' || c.trigger_id || ':' || c.comment_id,c.revision_id
+ FROM workflow_preview_comments c JOIN workflow_preview_triggers t ON t.id=c.trigger_id
+ WHERE c.revision_id IS NOT NULL;

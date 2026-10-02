@@ -30,7 +30,7 @@ func (s *SQLStore) saveEventActivity(ctx context.Context, writer eventActivityWr
  resource_id=CASE WHEN excluded.resource_id<>'' THEN excluded.resource_id ELSE event_activity.resource_id END,
  revision_ids=CASE WHEN excluded.revision_ids<>'[]' THEN excluded.revision_ids ELSE event_activity.revision_ids END,
  preview_url=CASE WHEN excluded.preview_url<>'' THEN excluded.preview_url ELSE event_activity.preview_url END
- WHERE event_activity.is_check=TRUE OR event_activity.state IN ('queued','running','failed','deferred')
+ WHERE event_activity.is_check=TRUE OR event_activity.state IN ('queued','running','failed','deferred','retry')
  OR (event_activity.revision_ids='[]' AND excluded.revision_ids<>'[]')`),
 		item.ID, item.ProjectID, key, item.RuleID, item.Transport, item.Check, item.State, stamp(item.CreatedAt), string(payload), item.ResourceID, jsonText(nonNilRevisionIDs(item.RevisionIDs)), item.PreviewURL)
 	return err

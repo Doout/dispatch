@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -656,116 +655,18 @@ func (a *API) githubAppWebhook(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	services, err := a.githubAppServices(r.Context(), id)
-	if err != nil {
-		a.internal(w, err)
-		return
-	}
-	a.processGitHubWebhook(w, r, secret, id, connection.InstallationID, services.groups, services.events)
+	a.processGitHubWebhook(w, r, secret, id, connection.InstallationID, nil, nil)
 }
 
-func (a *API) processGitHubWebhook(w http.ResponseWriter, r *http.Request, secret, connectionID string, installationID int64, groupService *groups.Service, eventService *events.Service) {
+func (a *API) processGitHubWebhook(w http.ResponseWriter, r *http.Request, secret, connectionID string, installationID int64, _ *groups.Service, _ *events.Service) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBytes))
 	if err != nil {
-		problem(w, http.StatusBadRequest, "Invalid webhook body", "Keep the webhook payload under 1 MB.")
+		problem(w, 400, "Invalid webhook body", "Keep the webhook payload under 1 MB.")
 		return
 	}
 	if err := events.VerifySignature(secret, body, r.Header.Get("X-Hub-Signature-256")); err != nil {
-		problem(w, http.StatusUnauthorized, "Invalid webhook signature", "Sign the request body with the configured webhook secret.")
+		problem(w, 401, "Invalid webhook signature", "Sign the request body with the configured webhook secret.")
 		return
 	}
-	if connectionID != "" && a.eventConfig.GitHubApps != nil {
-		var envelope struct {
-			Installation *struct {
-				ID int64 `json:"id"`
-			} `json:"installation"`
-			Repository struct {
-				FullName string `json:"full_name"`
-			} `json:"repository"`
-		}
-		if err := json.Unmarshal(body, &envelope); err != nil || envelope.Installation == nil || envelope.Installation.ID < 1 {
-			problem(w, http.StatusForbidden, "Missing GitHub App installation", "The event must identify its installation.")
-			return
-		}
-		matches := false
-		if envelope.Repository.FullName != "" {
-			expected, err := a.eventConfig.GitHubApps.RepositoryInstallation(r.Context(), connectionID, envelope.Repository.FullName)
-			if err != nil {
-				problem(w, http.StatusBadGateway, "GitHub App installation lookup failed", err.Error())
-				return
-			}
-			matches = expected == envelope.Installation.ID
-		} else {
-			installations, err := a.eventConfig.GitHubApps.ListInstallations(r.Context(), connectionID)
-			if err != nil {
-				problem(w, http.StatusBadGateway, "GitHub App installation lookup failed", err.Error())
-				return
-			}
-			for _, item := range installations {
-				if item.ID == envelope.Installation.ID && !item.Suspended {
-					matches = true
-					break
-				}
-			}
-		}
-		if !matches {
-			problem(w, http.StatusForbidden, "Unexpected GitHub App installation", "The event installation does not match this App's access to the repository.")
-			return
-		}
-	} else if installationID > 0 {
-		var envelope struct {
-			Installation *struct {
-				ID int64 `json:"id"`
-			} `json:"installation"`
-		}
-		if err := json.Unmarshal(body, &envelope); err != nil || envelope.Installation == nil || envelope.Installation.ID != installationID {
-			problem(w, http.StatusForbidden, "Unexpected GitHub App installation", "The event does not belong to this connection's installation.")
-			return
-		}
-	}
-
-	if r.Header.Get("X-GitHub-Event") == "push" {
-		if connectionID == "" || a.workflows == nil {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		created, err := a.workflows.HandlePush(r.Context(), connectionID, r.Header.Get("X-GitHub-Delivery"), body)
-		if err != nil {
-			problem(w, http.StatusBadRequest, "Invalid push event", err.Error())
-			return
-		}
-		writeJSON(w, http.StatusAccepted, map[string]int{"queued": created})
-		return
-	}
-	event, err := events.ParseGitHubEvent(r.Header.Get("X-GitHub-Event"), r.Header.Get("X-GitHub-Delivery"), body, time.Now().UTC())
-	if errors.Is(err, events.ErrEventUnsupported) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if err != nil {
-		problem(w, http.StatusBadRequest, "Invalid webhook event", err.Error())
-		return
-	}
-	event.ProviderConnectionID = connectionID
-	event.DeliveryID = events.CommentDeliveryID(event)
-	target := &previewPollTarget{connectionID: connectionID, repository: events.NormalizeRepository(event.Repository), transport: "webhook"}
-	if err := a.previewDeliveryActivity(r.Context(), target, event, "running", nil); err != nil {
-		a.internal(w, err)
-		return
-	}
-	result, err := a.consumeGitHubPreviewEvent(r.Context(), event, groupService, eventService)
-	state := "processed"
-	if err != nil {
-		state = "failed"
-	}
-	err = errors.Join(err, a.previewDeliveryActivity(r.Context(), target, event, state, err))
-	if err != nil {
-		problem(w, http.StatusUnprocessableEntity, "Preview event rejected", err.Error())
-		return
-	}
-	status := http.StatusAccepted
-	if result.Duplicate {
-		status = http.StatusOK
-	}
-	writeJSON(w, status, result)
+	a.acceptGitHubDelivery(w, r, connectionID, installationID, body)
 }
