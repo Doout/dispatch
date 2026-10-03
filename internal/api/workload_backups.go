@@ -13,8 +13,6 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
-	"github.com/doout/dispatch/internal/remoteruntime"
-	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workloadbackup"
 	"github.com/go-chi/chi/v5"
@@ -337,7 +335,7 @@ func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.Workload
 		op.ExecutionServerID = server.ID
 		op.ExecutionNodeID = server.AgentNodeID
 		if server.AgentNodeID != "" {
-			data, ok := a.store.(*store.SQLStore)
+			data, ok := a.store.(workloadBackupEnrollmentReader)
 			if !ok {
 				return op, errors.New("target identity unavailable")
 			}
@@ -363,7 +361,7 @@ func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.Workload
 			}
 			op.ExecutionServerID, op.ExecutionNodeID = server.ID, server.AgentNodeID
 			if server.AgentNodeID != "" {
-				data, ok := a.store.(*store.SQLStore)
+				data, ok := a.store.(workloadBackupEnrollmentReader)
 				if !ok {
 					return op, errors.New("target identity unavailable")
 				}
@@ -562,200 +560,6 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 	}{b, target, action})
 	return out, nil
 }
-func (a *API) runWorkloadBackup(ctx context.Context, input core.WorkloadBackupRequest, server core.Server) (core.WorkloadBackupResult, error) {
-	if a.workloadBackupBackend != nil {
-		return a.workloadBackupBackend(ctx, input, server)
-	}
-	if server.AgentNodeID == "" {
-		return (deploy.DockerExecutor{WorkloadBackupDirectory: a.eventConfig.WorkloadBackupDirectory}).RunWorkloadBackup(ctx, input, server)
-	}
-	broker := a.runtimeBroker()
-	if broker == nil {
-		return core.WorkloadBackupResult{}, errors.New("remote encrypted backup execution is unavailable")
-	}
-	request := remoteruntime.NewWorkloadBackupRequest(input, server)
-	id := "backup-" + input.OperationID
-	if input.Action == "inspect" || input.Action == "reconcile" {
-		id = ulid.Make().String()
-	}
-	job, err := broker.Submit(ctx, id, request)
-	if err != nil {
-		return core.WorkloadBackupResult{}, err
-	}
-	result, err := broker.Wait(ctx, job.ID, nil)
-	if validation := request.ValidateWorkloadBackupResult(result); validation != nil {
-		return core.WorkloadBackupResult{}, validation
-	}
-	if result.WorkloadBackup == nil {
-		return core.WorkloadBackupResult{}, err
-	}
-	if err == nil && input.Action == "reconcile" {
-		if data, ok := a.store.(interface {
-			ReconcileWorkloadBackupRuntime(context.Context, string, string, string, time.Time) error
-		}); ok {
-			err = data.ReconcileWorkloadBackupRuntime(ctx, request.Service.Request.Run.ID, input.OperationID, job.ID, time.Now().UTC())
-		}
-	}
-	return *result.WorkloadBackup, err
-}
-func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, recovering bool) {
-	// Keep queueing, preparation and remote execution inside the accepted lease.
-	// A delayed goroutine must not receive a fresh 30-minute window.
-	ctx, cancel := context.WithDeadline(context.Background(), op.LeaseUntil.Add(-time.Minute))
-	defer cancel()
-	s, _ := a.workloadBackupStore()
-	b, err := s.GetWorkloadBackup(ctx, op.BackupID)
-	if err != nil {
-		return
-	}
-	input, err := a.decryptWorkloadBackup(op.ID, "operation", op.EncryptedInput)
-	if err == nil {
-		err = a.backupOperationPolicyAuthority(ctx, op)
-	}
-	// Preparation has not dispatched a runtime job. Unknown evidence is introduced only after execution begins.
-	result := core.WorkloadBackupResult{State: "failed", CleanupState: "complete"}
-	if recovering {
-		result.State, result.CleanupState = "unknown", "pending"
-	}
-	if err == nil && op.Action == "delete-offsite" {
-		access, e := a.grantBackupObjects(ctx, b, op.OffsiteStoreID, false, true)
-		input.Backup, input.OffsiteAccess = b, &access
-		if e != nil {
-			err = e
-		} else if a.workloadBackupBackend != nil {
-			result, err = a.workloadBackupBackend(ctx, input, core.Server{})
-		} else {
-			result, err = deploy.DeleteOffsiteWorkloadBackup(ctx, nil, input)
-		}
-	} else if err == nil {
-		executionServer := b.ServerID
-		if op.ExecutionServerID != "" {
-			executionServer = op.ExecutionServerID
-		}
-		server, e := a.store.GetServer(ctx, executionServer)
-		if e != nil || executionServer == b.ServerID && server.AgentNodeID != b.NodeID || op.ExecutionServerID != "" && (server.AgentNodeID != op.ExecutionNodeID || !a.backupExecutionGenerationMatches(ctx, op)) {
-			err = errors.New("backup target identity changed")
-		} else {
-			input.Backup = b
-			if input.OffsiteAccess != nil {
-				access, grantErr := a.grantBackupObjects(ctx, b, op.OffsiteStoreID, op.Action == "export" && !recovering, false)
-				input.OffsiteAccess, e = &access, grantErr
-				if e != nil {
-					err = e
-				}
-			}
-			if recovering {
-				input.RecoveryAction, input.Action = op.Action, "reconcile"
-			}
-			if err == nil {
-				err = a.deploy.Storage.WithTarget(ctx, server.ID, func() error {
-					if op.ExecutionServerID != "" && !a.backupExecutionGenerationMatches(ctx, op) {
-						return errors.New("accepted destination enrollment changed")
-					}
-					if policyErr := a.backupOperationPolicyAuthority(ctx, op); policyErr != nil {
-						return policyErr
-					}
-					var e error
-					result, e = a.runWorkloadBackup(ctx, input, server)
-					return e
-				})
-			}
-		}
-	}
-	now := time.Now().UTC()
-	op.State, op.Message, op.CleanupState = "succeeded", result.Message, result.CleanupState
-	var runtimeError *runtimecontract.Error
-	uncertain := ctx.Err() != nil || result.State == "unknown" || result.CleanupState == "failed" || errors.As(err, &runtimeError) && runtimeError.Code == runtimecontract.Uncertain
-	if err != nil || result.State == "failed" {
-		op.State = "failed"
-		if err != nil || op.Message == "" {
-			op.Message = workloadBackupFailureMessage(err)
-		}
-	}
-	if uncertain {
-		op.State = "unknown"
-		if op.Message == "" {
-			op.Message = "The outcome is uncertain. Reconcile the original operation after its execution lease ends."
-		}
-	}
-	if result.State == "unresolved" {
-		op.State = "unknown"
-		if recovering && err == nil {
-			op.State = "unresolved"
-		}
-	}
-	switch op.Action {
-	case "retire-local":
-		if op.State == "succeeded" && result.State == "local-retired" && result.CleanupState == "complete" {
-			b.LocalState = "retired"
-		}
-	case "delete-offsite":
-		if op.State == "unknown" && b.Offsite != nil {
-			off := *b.Offsite
-			off.VerificationState = "deletion-pending"
-			b.Offsite = &off
-		}
-		if op.State == "succeeded" && result.State == "offsite-deleted" && result.CleanupState == "complete" && b.Offsite != nil {
-			off := *b.Offsite
-			off.DeletedAt = &now
-			off.VerificationState = "deleted"
-			b.Offsite = &off
-			if b.LocalState == "retired" {
-				b.State = "deleted"
-			}
-		}
-	case "export":
-		if op.State == "succeeded" && result.State == "exported" && result.Offsite != nil {
-			b.Offsite = result.Offsite
-			b.Offsite.VerificationState, b.Offsite.VerifiedAt = "not_verified", nil
-		}
-	case "backup":
-		b.State = "unknown"
-		if op.State == "succeeded" && result.State == "ready" {
-			b.State = "ready"
-			b.Checksum, b.PlaintextChecksum, b.Bytes, b.ImageID = result.Checksum, result.PlaintextChecksum, result.Bytes, result.ImageID
-		}
-		if op.State == "failed" {
-			b.State = "failed"
-		}
-	case "restore":
-		if b.LocalState == "retired" || op.ExecutionServerID != "" && op.ExecutionServerID != b.ServerID {
-			b.CleanupState = result.CleanupState
-		}
-	case "verify":
-		b.VerificationState = "failed"
-		b.CleanupState = result.CleanupState
-		if op.State == "succeeded" && result.State == "verified" && result.CleanupState == "complete" {
-			b.VerificationState = "verified"
-			b.VerifiedAt = &now
-		}
-		if result.CleanupState != "complete" {
-			b.VerificationState = "unknown"
-			op.State = "unknown"
-		}
-		if input.OffsiteAccess != nil && b.Offsite != nil {
-			b.Offsite.VerificationState = b.VerificationState
-			if b.VerificationState == "verified" && op.State == "succeeded" {
-				b.Offsite.VerifiedAt = &now
-			}
-		}
-	case "delete":
-		if op.State == "succeeded" && result.State == "deleted" {
-			b.State = "deleted"
-		}
-	}
-	if b.VerificationIntervalHours > 0 {
-		next := now.Add(time.Duration(b.VerificationIntervalHours) * time.Hour)
-		b.NextVerificationAt = &next
-		if (op.Action == "backup" || op.Action == "export" && b.Offsite != nil) && b.CapturePolicyID != "" && b.State == "ready" {
-			b.NextVerificationAt = &now
-		}
-	}
-	b.Message = op.Message
-	if err = s.CompleteWorkloadBackupOperation(context.WithoutCancel(ctx), b, op); err != nil {
-		a.logger.Error("Workload backup outcome could not be saved", "operation", op.ID)
-	}
-}
 func (a *API) reconcileWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	s, _ := a.workloadBackupStore()
 	b, err := s.GetWorkloadBackup(r.Context(), chi.URLParam(r, "id"))
@@ -843,32 +647,5 @@ func (a *API) getWorkloadBackupOperation(w http.ResponseWriter, r *http.Request)
 	}
 	if a.requireProject(w, r, core.PermissionProjectView, op.ProjectID) {
 		writeJSON(w, 200, op)
-	}
-}
-
-func workloadBackupFailureMessage(err error) string {
-	if err == nil {
-		return "Verification failed; inspect its retained operation and cleanup outcome."
-	}
-	text := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(text, "checksum"):
-		return "Backup checksum failed. The archive is corrupt or was replaced."
-	case strings.Contains(text, "decrypt") || strings.Contains(text, "authenticat") || strings.Contains(text, "encryption key"):
-		return "The archive or recovery manifest cannot be decrypted or authenticated. Check the retained key and original target."
-	case strings.Contains(text, "cleanup"):
-		return "Isolated verification cleanup failed. Reconcile the original operation before starting another check."
-	case strings.Contains(text, "integrity"):
-		return "The restored database failed a configured integrity check. Inspect the destination and verification outcome."
-	case strings.Contains(text, "ownership") || strings.Contains(text, "identity") || strings.Contains(text, "destination changed"):
-		return "Resource ownership or target identity changed. Inspect the original target before another review."
-	case strings.Contains(text, "inaccessible") || strings.Contains(text, "unavailable"):
-		return "The backup or target storage is inaccessible. Check the original target and retained artifact."
-	case strings.Contains(text, "database-native"):
-		return "The database-native backup failed. Check database access and target storage space."
-	case strings.Contains(text, "restore"):
-		return "Data restore failed or was interrupted. Inspect the destination before reviewing another restore."
-	default:
-		return "Backup execution failed. Check the original target, storage space and recorded cleanup state."
 	}
 }

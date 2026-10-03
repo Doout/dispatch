@@ -212,7 +212,7 @@ func (a *API) exportWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	op.ExecutionServerID, op.ExecutionNodeID = server.ID, server.AgentNodeID
 	if server.AgentNodeID != "" {
-		data, ok := a.store.(*store.SQLStore)
+		data, ok := a.store.(workloadBackupEnrollmentReader)
 		if !ok {
 			a.internal(w, errors.New("target identity unavailable"))
 			return
@@ -243,7 +243,7 @@ func (a *API) backupExecutionGenerationMatches(ctx context.Context, op core.Work
 	if op.ExecutionNodeID == "" {
 		return true
 	}
-	data, ok := a.store.(*store.SQLStore)
+	data, ok := a.store.(workloadBackupEnrollmentReader)
 	if !ok {
 		return false
 	}

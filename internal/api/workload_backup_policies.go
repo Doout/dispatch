@@ -53,10 +53,10 @@ func (a *API) listWorkloadBackupPolicies(w http.ResponseWriter, r *http.Request)
 	result := []core.WorkloadBackupPolicy{}
 	for _, p := range items {
 		if visible[p.ProjectID] || currentIdentity(r.Context()).SystemRole == core.UserRoleOwner {
-			p = a.inspectBackupPolicyOffsite(r.Context(), p)
 			result = append(result, p)
 		}
 	}
+	result = a.inspectBackupPoliciesOffsite(r.Context(), result)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, result)
 }
@@ -151,7 +151,7 @@ func (a *API) createWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request)
 			}
 		}
 		if p.NodeID != "" {
-			d, ok := a.store.(*store.SQLStore)
+			d, ok := a.store.(workloadBackupEnrollmentReader)
 			if !ok {
 				return errors.New("durable target identity is unavailable")
 			}
@@ -344,7 +344,7 @@ func (a *API) backupPolicyTarget(ctx context.Context, p core.WorkloadBackupPolic
 		return store.ErrWorkloadBackupChanged
 	}
 	if p.NodeID != "" {
-		data, ok := a.store.(*store.SQLStore)
+		data, ok := a.store.(workloadBackupEnrollmentReader)
 		if !ok {
 			return store.ErrWorkloadBackupChanged
 		}
@@ -648,7 +648,7 @@ func (a *API) checkBackupPolicyRuntimeAuthority(ctx context.Context, id string) 
 		if serverID != binding.ServerID || nodeID != binding.NodeID {
 			return store.ErrWorkloadBackupChanged
 		}
-		data, ok := a.store.(*store.SQLStore)
+		data, ok := a.store.(workloadBackupEnrollmentReader)
 		if !ok {
 			return store.ErrWorkloadBackupChanged
 		}
