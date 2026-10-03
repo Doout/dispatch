@@ -1,0 +1,1 @@
+{"leaseToken":"fixture-lease-token","result":{"workloadBackup":{"backupId":"fixture-backup","projectId":"fixture-project","operationId":"fixture-original-restore","state":"restored","artifactId":"fixture-backup","bytes":128,"cleanupState":"complete","message":"Original restore confirmed"},"storage":null,"state":"succeeded"}}
