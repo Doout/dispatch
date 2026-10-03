@@ -60,6 +60,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [name, sourceRunId, intervalHours, keepLast, confirmRetention]
               properties:
                 name: { type: string, minLength: 2, maxLength: 80 }
@@ -78,6 +79,7 @@ paths:
                   writeOnly: true
                   items:
                     type: object
+                    additionalProperties: false
                     required: [query, expected]
                     properties:
                       query: { type: string, maxLength: 4096, writeOnly: true }
@@ -116,6 +118,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [revision, enabled, confirmName]
               properties:
                 revision: { type: integer, minimum: 1 }
@@ -358,14 +361,14 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Current destructive review with exact identity and blockers. }
+        '200': { $ref: '#/components/responses/DestructiveReview' }
   /workload-backups/{id}/retire-local:
     post:
       operationId: acceptWorkloadBackupLocalRetirement
       description: Requires project.configure and deployment.run. Authenticate offsite archive and encrypted manifest before retiring original local archive bytes. Controller key and recovery metadata remain. Requires independently verified offsite preservation. Supply a stable retry key and exact current confirmation.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 }, description: Generate once for this reviewed operation and reuse for identical retries. }
       requestBody:
         required: true
         content:
@@ -382,14 +385,14 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Current destructive review with exact identity and blockers. }
+        '200': { $ref: '#/components/responses/DestructiveReview' }
   /workload-backups/{id}/delete-offsite:
     post:
       operationId: acceptWorkloadBackupOffsiteDeletion
       description: Requires project.configure and deployment.run. Conditionally delete only reviewed owned encrypted archive and manifest objects. Versioned objects and unsupported conditional stores remain protected. Keep a usable recovery point. Supply a stable retry key and exact current confirmation.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 }, description: Generate once for this reviewed operation and reuse for identical retries. }
       requestBody:
         required: true
         content:
@@ -5052,6 +5055,11 @@ components:
       required: true
       schema: { type: string }
   responses:
+    DestructiveReview:
+      description: Current resource identity, confirmation version, consequences and blockers. A changed resource requires a fresh review.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DestructiveReview' }
     WorkloadBackupAccepted:
       description: Durable operation accepted, or the original shared mutation receipt when Idempotency-Key is supplied. Acceptance does not imply completion.
       content:
@@ -5071,6 +5079,21 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    DestructiveReview:
+      type: object
+      required: [resourceId, resourceType, name, action, version, summary, resources]
+      properties:
+        resourceId: { type: string }
+        resourceType: { type: string }
+        name: { type: string, description: Exact confirmName for the accepted action. }
+        action: { type: string }
+        version: { type: string, description: Supply as confirmation.expectedVersion. }
+        summary: { type: string }
+        resources: { type: array, items: { type: string } }
+        blockedReason: { type: string }
+        storagePolicy: { type: string }
+        projectId: { type: string }
+        appId: { type: string }
     DestructiveConfirmation:
       type: object
       required: [resourceId, action, expectedVersion, confirmName]
@@ -5259,7 +5282,7 @@ components:
             confirmName: { type: string }
     WorkloadBackup:
       type: object
-      required: [id, projectId, sourceRunId, storageId, serverId, sourceResourceId, state, revision, artifactId, consistency, format, bytes, encryption, keyId, location, policy, verificationState, cleanupState, verificationIntervalHours, createdAt, updatedAt]
+      required: [id, projectId, sourceRunId, storageId, serverId, sourceResourceId, state, revision, artifactId, consistency, format, bytes, encryption, keyId, location, policy, checkCount, verificationState, cleanupState, verificationIntervalHours, createdAt, updatedAt]
       properties:
         localState: { type: string, enum: [present, retired], description: Omitted legacy value means the local copy is present. }
         id: { type: string }
@@ -5303,6 +5326,7 @@ components:
         id: { type: string }
         backupId: { type: string }
         projectId: { type: string }
+        capturePolicyId: { type: string, readOnly: true, description: Policy authorizing this unattended operation. Absent for manually accepted operations. }
         action: { type: string, enum: [backup, verify, restore, delete, export, retire-local, delete-offsite] }
         state: { type: string, enum: [running, succeeded, failed, unknown, unresolved] }
         targetRunId: { type: string }
@@ -6229,7 +6253,7 @@ components:
         requestKey: { type: string, description: Legacy retry key, required only when Idempotency-Key is omitted. }
     WorkloadBackupPolicy:
       type: object
-      required: [id, projectId, sourceRunId, serverId, name, enabled, revision, intervalHours, keepLast, nextCaptureAt, missedCaptures, state]
+      required: [id, projectId, sourceRunId, sourceResourceId, serverId, name, enabled, revision, intervalHours, keepLast, nextCaptureAt, missedCaptures, missedExports, state, actor, createdAt, updatedAt]
       properties:
         id: { type: string }
         projectId: { type: string }
@@ -6263,9 +6287,24 @@ components:
         lastOffsiteRecoveryPointAt: { type: string, format: date-time, description: Creation time of the captured data in the newest confirmed offsite recovery point. }
         lastOffsiteVerifiedAt: { type: string, format: date-time }
         missedExports: { type: integer, description: Captured archives with a rejected or failed scheduled export, counted at most once each. }
+        offsiteNotificationState: { type: string, readOnly: true, description: Last observed offsite notification state used to suppress unchanged transitions. }
+        offsiteNotificationSequence: { type: integer, format: int64, minimum: 0, readOnly: true, description: Durable sequence distinguishing recurring notification transitions. }
         missedCaptures: { type: integer }
         state: { type: string }
         message: { type: string }
+        actor:
+          type: object
+          readOnly: true
+          description: Original identity whose current authority is checked before unattended operations. Credential IDs identify accepted authority and contain no credential values.
+          required: [id, username, displayName, systemRole, permissions]
+          properties:
+            kind: { type: string }
+            credentialId: { type: string }
+            id: { type: string }
+            username: { type: string }
+            displayName: { type: string }
+            systemRole: { type: string }
+            permissions: { type: [array, 'null'], items: { type: string } }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     MutationReceipt:
