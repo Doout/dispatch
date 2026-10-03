@@ -609,7 +609,7 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 		return
 	}
 	input, err := a.decryptWorkloadBackup(op.ID, "operation", op.EncryptedInput)
-	if err == nil && op.CapturePolicyID != "" && !recovering {
+	if err == nil && op.CapturePolicyID != "" {
 		policies, e := a.backupPolicyStore()
 		if e == nil {
 			policy, lookup := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
@@ -660,6 +660,19 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 				err = a.deploy.Storage.WithTarget(ctx, server.ID, func() error {
 					if op.ExecutionServerID != "" && !a.backupExecutionGenerationMatches(ctx, op) {
 						return errors.New("accepted destination enrollment changed")
+					}
+					if op.CapturePolicyID != "" {
+						policies, policyErr := a.backupPolicyStore()
+						if policyErr != nil {
+							return policyErr
+						}
+						policy, policyErr := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
+						if policyErr != nil || !policy.Enabled {
+							return store.ErrWorkloadBackupChanged
+						}
+						if policyErr = a.backupPolicyAuthority(ctx, policy); policyErr != nil {
+							return policyErr
+						}
 					}
 					var e error
 					result, e = a.runWorkloadBackup(ctx, input, server)
@@ -713,6 +726,7 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 	case "export":
 		if op.State == "succeeded" && result.State == "exported" && result.Offsite != nil {
 			b.Offsite = result.Offsite
+			b.Offsite.VerificationState, b.Offsite.VerifiedAt = "not_verified", nil
 		}
 	case "backup":
 		b.State = "unknown"
@@ -738,6 +752,16 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 			b.VerificationState = "unknown"
 			op.State = "unknown"
 		}
+		if input.OffsiteAccess != nil && b.Offsite != nil {
+			b.Offsite.VerificationState = b.VerificationState
+			if b.VerificationState == "verified" && op.State == "succeeded" {
+				b.Offsite.VerifiedAt = &now
+			}
+		}
+	case "retire-local":
+		if op.State == "succeeded" && result.State == "local-retired" && result.CleanupState == "complete" {
+			b.LocalState = "retired"
+		}
 	case "delete":
 		if op.State == "succeeded" && result.State == "deleted" {
 			b.State = "deleted"
@@ -746,7 +770,7 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 	if b.VerificationIntervalHours > 0 {
 		next := now.Add(time.Duration(b.VerificationIntervalHours) * time.Hour)
 		b.NextVerificationAt = &next
-		if op.Action == "backup" && b.CapturePolicyID != "" && b.State == "ready" {
+		if (op.Action == "backup" || op.Action == "export" && b.Offsite != nil) && b.CapturePolicyID != "" && b.State == "ready" {
 			b.NextVerificationAt = &now
 		}
 	}

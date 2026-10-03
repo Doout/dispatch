@@ -16,9 +16,15 @@ import (
 	"github.com/doout/dispatch/internal/remoteruntime"
 	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/oklog/ulid/v2"
 )
 
 func queuedBackupPolicyRuntime(t *testing.T) (*API, core.PrivateNetwork, edge.Session, core.WorkloadBackupPolicy, core.WorkloadBackupRequest) {
+	t.Helper()
+	return queuedBackupPolicyRuntimeForActor(t, false)
+}
+
+func queuedBackupPolicyRuntimeForActor(t *testing.T, scoped bool) (*API, core.PrivateNetwork, edge.Session, core.WorkloadBackupPolicy, core.WorkloadBackupRequest) {
 	t.Helper()
 	a, _, template := resourceAPIFixture(t)
 	ctx := context.Background()
@@ -44,7 +50,12 @@ func queuedBackupPolicyRuntime(t *testing.T) (*API, core.PrivateNetwork, edge.Se
 	source := awaitServiceResource(t, a, run.ID, "ready")
 	a.deploy.Storage.Backend = &storageTestBackend{observation: core.StorageObservation{Resource: core.StorageResource{Kind: "docker_volume", Name: deploy.ServiceResourceName(run.ID) + "-data", Identity: "owned-volume", Evidence: "labels"}, Labels: map[string]string{"dispatch.managed-by": "dispatch", "dispatch.project": source.ProjectID, "dispatch.service-template": template.ID, "dispatch.service-provision": run.ID}}}
 	input := map[string]any{"name": "runtime-backup", "sourceRunId": source.RunID, "intervalHours": 1, "keepLast": 1, "confirmRetention": "runtime-backup"}
-	accepted := mutationRequest(a, "secret", "POST", "/api/v1/workload-backup-policies", "runtime-policy", input)
+	token := "secret"
+	if scoped {
+		token, _ = offsiteIdentity(t, a, source.ProjectID)
+		automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/assignments/"+source.ProjectID, map[string]any{"kind": "target", "resourceId": source.Target.ServerID}, 200)
+	}
+	accepted := mutationRequest(a, token, "POST", "/api/v1/workload-backup-policies", "runtime-policy", input)
 	if accepted.Code != 201 {
 		t.Fatal(accepted.Code, accepted.Body.String())
 	}
@@ -213,4 +224,134 @@ func TestScheduledBackupRenewalDenialRetainsOriginalCompletionEvidence(t *testin
 	if err != nil || job.State != "succeeded" || job.EncryptedResult == "" {
 		t.Fatal("valid original execution evidence was discarded", job.State, err)
 	}
+}
+
+func queuedBackupPolicyReconciliation(t *testing.T) (*API, core.PrivateNetwork, edge.Session, core.WorkloadBackupPolicy, core.WorkloadBackupRequest, string) {
+	t.Helper()
+	a, node, session, p, request := queuedBackupPolicyRuntimeForActor(t, true)
+	ctx := context.Background()
+	if err := a.runtimeBroker().Store.ExpireRuntimeJobs(ctx, time.Now().UTC().Add(31*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	request.Action, request.RecoveryAction = "reconcile", "backup"
+	server, err := a.store.GetServer(ctx, p.ServerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID := ulid.Make().String()
+	if _, err = a.runtimeBroker().Submit(ctx, jobID, remoteruntime.NewWorkloadBackupRequest(request, server)); err != nil {
+		t.Fatal(err)
+	}
+	return a, node, session, p, request, jobID
+}
+
+func TestScheduledBackupRandomReconciliationRevocationBeforeLease(t *testing.T) {
+	a, node, session, p, _, jobID := queuedBackupPolicyReconciliation(t)
+	if err := a.store.(store.AutomationStore).RevokeAutomationCredential(context.Background(), p.Actor.ID, p.Actor.CredentialID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	raw := backupRuntimeNodeRequest(t, a, node, session.Token, "next", "GET", nil, 204)
+	if len(raw) != 0 {
+		t.Fatal("revoked actor received backup decryption input")
+	}
+	job, err := a.runtimeBroker().Store.GetRuntimeJob(context.Background(), jobID)
+	if err != nil || job.State != "failed" || job.EncryptedRequest != "" {
+		t.Fatal("random reconciliation remained dispatchable", job.State, err)
+	}
+}
+
+func TestScheduledBackupRandomReconciliationRevocationBeforeRenewal(t *testing.T) {
+	a, node, session, p, request, jobID := queuedBackupPolicyReconciliation(t)
+	var lease remoteruntime.LeasedJob
+	if err := json.Unmarshal(backupRuntimeNodeRequest(t, a, node, session.Token, "next", "GET", nil, 200), &lease); err != nil || lease.ID != jobID {
+		t.Fatal("random recovery did not lease", err)
+	}
+	if err := a.store.(store.AutomationStore).RevokeAutomationCredential(context.Background(), p.Actor.ID, p.Actor.CredentialID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	backupRuntimeNodeRequest(t, a, node, session.Token, jobID+"/heartbeat", "POST", remoteruntime.Heartbeat{LeaseToken: "stale-lease"}, 409)
+	job, _ := a.runtimeBroker().Store.GetRuntimeJob(context.Background(), jobID)
+	if job.CancelRequested {
+		t.Fatal("stale heartbeat cancelled legitimate inspection")
+	}
+	backupRuntimeNodeRequest(t, a, node, session.Token, jobID+"/heartbeat", "POST", remoteruntime.Heartbeat{LeaseToken: lease.LeaseToken}, 422)
+	job, _ = a.runtimeBroker().Store.GetRuntimeJob(context.Background(), jobID)
+	if !job.CancelRequested || job.State != "running" {
+		t.Fatal("revoked policy renewed random inspection", job.State)
+	}
+	result := core.WorkloadBackupResult{BackupID: request.Backup.ID, ProjectID: request.Backup.ProjectID, OperationID: request.OperationID, ArtifactID: request.Backup.ID, State: "ready", Checksum: strings.Repeat("a", 64), Bytes: 42, CleanupState: "complete"}
+	backupRuntimeNodeRequest(t, a, node, session.Token, jobID+"/complete", "POST", remoteruntime.Completion{LeaseToken: lease.LeaseToken, Result: remoteruntime.Result{State: "succeeded", WorkloadBackup: &result}}, 204)
+	job, _ = a.runtimeBroker().Store.GetRuntimeJob(context.Background(), jobID)
+	if job.State != "succeeded" || job.EncryptedResult == "" {
+		t.Fatal("revocation lost original legitimate inspection result")
+	}
+}
+
+func TestScheduledBackupRandomReconciliationRejectsChangedSourceIdentity(t *testing.T) {
+	a, node, session, p, request := queuedBackupPolicyRuntimeForActor(t, true)
+	ctx := context.Background()
+	if err := a.runtimeBroker().Store.ExpireRuntimeJobs(ctx, time.Now().UTC().Add(31*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	request.Action, request.RecoveryAction = "reconcile", "backup"
+	request.Backup.SourceResourceID = "another-owned-container"
+	server, _ := a.store.GetServer(ctx, p.ServerID)
+	jobID := ulid.Make().String()
+	if _, err := a.runtimeBroker().Submit(ctx, jobID, remoteruntime.NewWorkloadBackupRequest(request, server)); err != nil {
+		t.Fatal(err)
+	}
+	backupRuntimeNodeRequest(t, a, node, session.Token, "next", "GET", nil, 204)
+	job, _ := a.runtimeBroker().Store.GetRuntimeJob(ctx, jobID)
+	if job.State != "failed" || job.EncryptedRequest != "" {
+		t.Fatal("changed source identity released original encryption keys")
+	}
+}
+
+func TestManualBackupRecoveryDoesNotInheritRevokedPolicyActor(t *testing.T) {
+	a, node, session, p, request := queuedBackupPolicyRuntimeForActor(t, true)
+	ctx := context.Background()
+	backups := a.store.(store.WorkloadBackupStore)
+	if err := a.runtimeBroker().Store.ExpireRuntimeJobs(ctx, time.Now().UTC().Add(31*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	op, err := backups.GetWorkloadBackupOperation(ctx, request.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := backups.GetWorkloadBackup(ctx, request.Backup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.State, b.Checksum = "ready", strings.Repeat("a", 64)
+	op.State, op.CleanupState = "succeeded", "complete"
+	if err = backups.CompleteWorkloadBackupOperation(ctx, b, op); err != nil {
+		t.Fatal(err)
+	}
+	b, err = backups.GetWorkloadBackup(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual := newBackupOperation("owner-reviewed-verification", b, "verify")
+	request.OperationID, request.Action, request.Backup = manual.ID, "verify", b
+	manual.EncryptedInput, err = a.encryptWorkloadBackup(manual.ID, "operation", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = backups.CreateWorkloadBackupOperation(ctx, manual, b.Revision); err != nil {
+		t.Fatal(err)
+	}
+	request.Action, request.RecoveryAction = "reconcile", "verify"
+	server, _ := a.store.GetServer(ctx, p.ServerID)
+	jobID := ulid.Make().String()
+	if _, err = a.runtimeBroker().Submit(ctx, jobID, remoteruntime.NewWorkloadBackupRequest(request, server)); err != nil {
+		t.Fatal(err)
+	}
+	if err = a.store.(store.AutomationStore).RevokeAutomationCredential(ctx, p.Actor.ID, p.Actor.CredentialID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	var lease remoteruntime.LeasedJob
+	if err = json.Unmarshal(backupRuntimeNodeRequest(t, a, node, session.Token, "next", "GET", nil, 200), &lease); err != nil || lease.ID != jobID {
+		t.Fatal("manual owner recovery inherited revoked policy authority", err)
+	}
+	backupRuntimeNodeRequest(t, a, node, session.Token, jobID+"/heartbeat", "POST", remoteruntime.Heartbeat{LeaseToken: lease.LeaseToken}, 200)
 }

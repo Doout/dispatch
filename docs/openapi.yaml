@@ -51,7 +51,7 @@ paths:
               schema: { type: array, items: { $ref: '#/components/schemas/WorkloadBackupPolicy' } }
     post:
       operationId: createWorkloadBackupPolicy
-      description: Requires project.configure and deployment.run on the owned PostgreSQL source. Immutable cadence, source ownership and actor authority are captured before acceptance. Scheduled archives verify in isolation before older verified policy archives become retention candidates. The newest keepLast verified captures remain protected while enabled. Current grants and original enrollment are checked before unattended mutation.
+      description: Requires project.configure and deployment.run on the owned PostgreSQL source. Immutable cadence, source ownership and actor authority are captured before acceptance. Scheduled archives verify in isolation before older verified policy archives become retention candidates. The newest keepLast verified captures remain protected while enabled. An optional immutable approved offsiteStoreId and exact confirmOffsiteStoreId authorize one export per verified capture, then isolated restore verification using downloaded encrypted bytes. Uploaded objects alone do not establish offsite protection. offsiteStaleAfterHours defaults to twice the capture cadence and measures the captured data age. notificationAppId explicitly uses an already enabled same-project observation webhook. retireLocalAfterOffsiteVerification optionally retires older local copies after verified offsite preservation while keeping keepLast local copies. Offsite object deletion is never automatic. Current grants and original enrollment are checked before unattended mutation.
       parameters:
         - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
       requestBody:
@@ -66,7 +66,12 @@ paths:
                 sourceRunId: { type: string }
                 intervalHours: { type: integer, minimum: 1, maximum: 8760 }
                 keepLast: { type: integer, minimum: 1, maximum: 1000 }
-                confirmRetention: { type: string, description: Exact policy name approving automatic removal of older policy archives after newer verified recovery points exist. }
+                confirmRetention: { type: string, description: Exact policy name approving automatic removal of older local policy archives after newer verified recovery points exist. }
+                offsiteStoreId: { type: string, description: Approved immutable destination belonging to the source project. }
+                confirmOffsiteStoreId: { type: string, description: Exact offsiteStoreId approving unattended encrypted exports. Required when offsiteStoreId is supplied. }
+                offsiteStaleAfterHours: { type: integer, minimum: 1, maximum: 17520, description: At least intervalHours. Defaults to twice intervalHours; measured from capture creation, never upload or re-verification. }
+                notificationAppId: { type: string, description: Explicit opt-in to the existing enabled same-project observation webhook. No destination is created or enabled implicitly. }
+                retireLocalAfterOffsiteVerification: { type: boolean, default: false, description: Approves removal of older local bytes after the newest capture and each candidate pass offsite restore verification. keepLast local copies remain. Offsite objects and controller recovery metadata stay retained. }
                 checks:
                   type: array
                   maxItems: 16
@@ -5237,8 +5242,8 @@ components:
         manifestChecksum: { type: string }
         imageReference: { type: string, description: Original image repository with immutable sha256 pull digest. }
         confirmedAt: { type: string, format: date-time }
+        verificationState: { type: string, description: Verification using downloaded encrypted offsite objects and an isolated restore. Upload confirmation alone is not verified. }
         verifiedAt: { type: string, format: date-time }
-        verificationState: { type: string, description: Independent offsite restore verification state. }
         deletedAt: { type: string, format: date-time, description: Confirmed exact object deletion tombstone. }
     WorkloadBackupConfirmation:
       type: object
@@ -5279,6 +5284,8 @@ components:
         location: { type: string, const: target-local }
         imageId: { type: string }
         offsite: { $ref: '#/components/schemas/BackupOffsiteArtifact' }
+        scheduledExportOperationId: { type: string, description: Original durable export identity, retained after failure or an uncertain reply. }
+        scheduledExportMissed: { type: boolean, description: This captured archive has counted once toward its policy missedExports. }
         policy: { type: string, enum: [retain, suspend, delete] }
         checkCount: { type: integer }
         verificationState: { type: string }
@@ -6242,6 +6249,20 @@ components:
         lastSuccessAt: { type: string, format: date-time }
         lastBackupId: { type: string }
         lastVerifiedBackupId: { type: string }
+        offsiteStoreId: { type: string }
+        offsiteStoreDigest: { type: string, description: Frozen destination identity including credential reference, excluding secret values. }
+        offsiteStaleAfterHours: { type: integer }
+        notificationAppId: { type: string }
+        retireLocalAfterOffsiteVerification: { type: boolean }
+        retentionBlockedReason: { type: string, description: Explains when local archives can exceed keepLast because retirement is disabled or newer offsite protection is pending. }
+        offsiteState: { type: string, enum: [pending, exporting, verifying, healthy, export_failed, verification_failed, blocked] }
+        offsiteFreshness: { type: string, enum: [disabled, not_protected, fresh, stale], description: Derived on inspection from capture creation time. Export and verification cannot make old captured data fresh. }
+        offsiteMessage: { type: string, description: Sanitized protection or failure reason. }
+        lastOffsiteBackupId: { type: string }
+        lastOffsiteOperationId: { type: string }
+        lastOffsiteRecoveryPointAt: { type: string, format: date-time, description: Creation time of the captured data in the newest confirmed offsite recovery point. }
+        lastOffsiteVerifiedAt: { type: string, format: date-time }
+        missedExports: { type: integer, description: Captured archives with a rejected or failed scheduled export, counted at most once each. }
         missedCaptures: { type: integer }
         state: { type: string }
         message: { type: string }

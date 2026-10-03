@@ -98,3 +98,46 @@ func TestBackupPolicyInspectionAndCASPreservePolicyContinuation(t *testing.T) {
 		t.Fatal("MCP pause schema does not require enabled")
 	}
 }
+
+func TestBackupPolicyOffsiteApprovalIsExplicitAcrossClientAndMCPSchema(t *testing.T) {
+	var calls atomic.Int32
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var input BackupPolicyCreateInput
+		if json.NewDecoder(r.Body).Decode(&input) != nil || input.OffsiteStoreID != "store-1" || input.ConfirmOffsiteStoreID != input.OffsiteStoreID || input.OffsiteStaleAfterHours != 48 || input.NotificationAppID != "app-1" || !input.RetireLocalAfterOffsiteVerification {
+			t.Error("client changed explicit offsite approval")
+		}
+		w.Header().Set("Location", "/api/v1/mutation-receipts/receipt-1")
+		w.WriteHeader(201)
+		io.WriteString(w, `{"id":"receipt-1","operationId":"policy-1","resourceId":"source-run","operationKind":"workload_backup_policy"}`)
+	})
+	base := `{"name":"daily-pg","sourceRunId":"source-run","intervalHours":24,"keepLast":7,"confirmRetention":"daily-pg"`
+	for _, extension := range []string{
+		`,"offsiteStoreId":"store-1"}`,
+		`,"offsiteStoreId":"store-1","confirmOffsiteStoreId":"store-2"}`,
+		`,"offsiteStaleAfterHours":48}`,
+		`,"notificationAppId":"app-1"}`,
+		`,"retireLocalAfterOffsiteVerification":true}`,
+		`,"offsiteStoreId":"store-1","confirmOffsiteStoreId":"store-1","offsiteStaleAfterHours":23}`,
+	} {
+		r := c.Call(context.Background(), "backup_policy_create", Arguments{Key: "offsite-policy-once", Input: json.RawMessage(base + extension)})
+		if r.OK || r.ExitCode() != 2 {
+			t.Fatal("implicit offsite authority reached the server", r)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatal("invalid offsite approval was sent")
+	}
+	valid := base + `,"offsiteStoreId":"store-1","confirmOffsiteStoreId":"store-1","offsiteStaleAfterHours":48,"notificationAppId":"app-1","retireLocalAfterOffsiteVerification":true}`
+	result := c.Call(context.Background(), "backup_policy_create", Arguments{Key: "offsite-policy-once", Input: json.RawMessage(valid)})
+	if !result.OK || calls.Load() != 1 || result.Continuation == nil || result.Continuation.OperationID != "policy-1" {
+		t.Fatal("client lost approved policy acceptance", result)
+	}
+	schema := workflowSchema("BackupPolicyCreateInput")
+	properties := schema["properties"].(map[string]any)
+	for _, field := range []string{"offsiteStoreId", "confirmOffsiteStoreId", "offsiteStaleAfterHours", "notificationAppId", "retireLocalAfterOffsiteVerification"} {
+		if properties[field] == nil {
+			t.Fatal("MCP schema omitted offsite approval", field)
+		}
+	}
+}

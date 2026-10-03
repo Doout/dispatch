@@ -166,13 +166,15 @@ func TestBackupCapturePoliciesCreateFreshArchivesAndKeepLastUsable(t *testing.T)
 func TestBackupCapturePolicyRejectsStaleStorageAndRevokedActor(t *testing.T) {
 	a, source := backupAPIFixture(t)
 	ctx := context.Background()
+	token, _ := offsiteIdentity(t, a, source.ProjectID)
+	automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/assignments/"+source.ProjectID, map[string]any{"kind": "target", "resourceId": source.Target.ServerID}, 200)
 	calls := 0
 	a.workloadBackupBackend = func(_ context.Context, _ core.WorkloadBackupRequest, _ core.Server) (core.WorkloadBackupResult, error) {
 		calls++
 		return core.WorkloadBackupResult{}, nil
 	}
 	input := map[string]any{"name": "owned-capture", "sourceRunId": source.RunID, "intervalHours": 1, "keepLast": 1, "confirmRetention": "owned-capture"}
-	response := mutationRequest(a, "secret", "POST", "/api/v1/workload-backup-policies", "ownership-policy", input)
+	response := mutationRequest(a, token, "POST", "/api/v1/workload-backup-policies", "ownership-policy", input)
 	if response.Code != 201 {
 		t.Fatal(response.Code, response.Body.String())
 	}
@@ -186,7 +188,9 @@ func TestBackupCapturePolicyRejectsStaleStorageAndRevokedActor(t *testing.T) {
 	if calls != 0 || p.State != "blocked" || p.MissedCaptures != 1 || p.LastBackupID != "" {
 		t.Fatal("stale volume identity allowed mutation", calls, p.State, p.MissedCaptures)
 	}
-	p.Actor = core.Identity{ID: "removed-user", SystemRole: core.UserRoleOwner}
+	if err := a.store.(store.AutomationStore).RevokeAutomationCredential(ctx, p.Actor.ID, p.Actor.CredentialID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
 	p.NextCaptureAt = time.Now().Add(-time.Second)
 	if err := policies.UpdateWorkloadBackupPolicy(ctx, p, p.Revision); err != nil {
 		t.Fatal(err)

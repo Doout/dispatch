@@ -10,6 +10,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/remoteruntime"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workloadbackup"
 	"github.com/go-chi/chi/v5"
@@ -52,6 +53,7 @@ func (a *API) listWorkloadBackupPolicies(w http.ResponseWriter, r *http.Request)
 	result := []core.WorkloadBackupPolicy{}
 	for _, p := range items {
 		if visible[p.ProjectID] || currentIdentity(r.Context()).SystemRole == core.UserRoleOwner {
+			p = a.inspectBackupPolicyOffsite(r.Context(), p)
 			result = append(result, p)
 		}
 	}
@@ -70,23 +72,33 @@ func (a *API) getWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.requireProject(w, r, core.PermissionProjectView, p.ProjectID) {
+		p = a.inspectBackupPolicyOffsite(r.Context(), p)
 		writeJSON(w, 200, p)
 	}
 }
 func (a *API) createWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name             string                      `json:"name"`
-		SourceRunID      string                      `json:"sourceRunId"`
-		IntervalHours    int                         `json:"intervalHours"`
-		KeepLast         int                         `json:"keepLast"`
-		ConfirmRetention string                      `json:"confirmRetention"`
-		Checks           []core.BackupIntegrityCheck `json:"checks"`
+		RetireLocalAfterOffsiteVerification bool                        `json:"retireLocalAfterOffsiteVerification"`
+		OffsiteStoreID                      string                      `json:"offsiteStoreId"`
+		ConfirmOffsiteStoreID               string                      `json:"confirmOffsiteStoreId"`
+		OffsiteStaleAfterHours              int                         `json:"offsiteStaleAfterHours"`
+		NotificationAppID                   string                      `json:"notificationAppId"`
+		Name                                string                      `json:"name"`
+		SourceRunID                         string                      `json:"sourceRunId"`
+		IntervalHours                       int                         `json:"intervalHours"`
+		KeepLast                            int                         `json:"keepLast"`
+		ConfirmRetention                    string                      `json:"confirmRetention"`
+		Checks                              []core.BackupIntegrityCheck `json:"checks"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
 	if len(strings.TrimSpace(input.Name)) < 2 || len(input.Name) > 80 || strings.ContainsAny(input.Name, "\x00\r\n") || input.IntervalHours < 1 || input.IntervalHours > 8760 || input.KeepLast < 1 || input.KeepLast > 1000 || input.ConfirmRetention != input.Name {
 		problem(w, 422, "Invalid capture policy", "Choose a name, cadence between 1 and 8760 hours and between 1 and 1000 retained verified captures. Confirm automatic removal of older policy archives with the exact policy name.")
+		return
+	}
+	if input.OffsiteStoreID == "" && (input.ConfirmOffsiteStoreID != "" || input.OffsiteStaleAfterHours != 0 || input.NotificationAppID != "" || input.RetireLocalAfterOffsiteVerification) || input.OffsiteStoreID != "" && input.ConfirmOffsiteStoreID != input.OffsiteStoreID || input.OffsiteStaleAfterHours != 0 && (input.OffsiteStaleAfterHours < input.IntervalHours || input.OffsiteStaleAfterHours > 17520) {
+		problem(w, 422, "Explicit offsite approval required", "Choose an approved destination, confirm its exact ID and an optional freshness threshold between the capture interval and 17520 hours. Notifications require an offsite destination.")
 		return
 	}
 	record, err := a.store.(store.ServiceResourceStore).GetServiceResource(r.Context(), input.SourceRunID)
@@ -119,6 +131,25 @@ func (a *API) createWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 		p = core.WorkloadBackupPolicy{ID: id, ProjectID: record.ProjectID, SourceRunID: record.RunID, SourceResourceID: record.ResourceID, ServerID: server.ID, NodeID: server.AgentNodeID, Name: input.Name, Enabled: true, Revision: 1, IntervalHours: input.IntervalHours, KeepLast: input.KeepLast, NextCaptureAt: now, State: "scheduled", Actor: currentIdentity(r.Context()), CreatedAt: now, UpdatedAt: now}
+		p.OffsiteStoreID, p.OffsiteStaleAfterHours, p.NotificationAppID = input.OffsiteStoreID, input.OffsiteStaleAfterHours, input.NotificationAppID
+		p.RetireLocalAfterOffsiteVerification = input.RetireLocalAfterOffsiteVerification
+		if p.OffsiteStoreID != "" {
+			if p.OffsiteStaleAfterHours == 0 {
+				p.OffsiteStaleAfterHours = p.IntervalHours * 2
+			}
+			item, lookupErr := a.getPolicyOffsiteStore(r.Context(), p)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			p.OffsiteStoreDigest = policyOffsiteStoreDigest(item)
+			p.OffsiteState = "pending"
+			p.OffsiteMessage = "The first captured recovery point is awaiting offsite export and verification."
+			if p.NotificationAppID != "" {
+				if _, lookupErr = a.backupPolicyNotificationConfig(r.Context(), p); lookupErr != nil {
+					return lookupErr
+				}
+			}
+		}
 		if p.NodeID != "" {
 			d, ok := a.store.(*store.SQLStore)
 			if !ok {
@@ -226,6 +257,7 @@ func (a *API) updateWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	p, _ = s.GetWorkloadBackupPolicy(r.Context(), p.ID)
+	p = a.inspectBackupPolicyOffsite(r.Context(), p)
 	writeJSON(w, 200, p)
 }
 
@@ -279,6 +311,11 @@ func (a *API) backupPolicyAuthority(ctx context.Context, p core.WorkloadBackupPo
 	if !assigned {
 		return store.ErrAutomationCredential
 	}
+	if p.OffsiteStoreID != "" {
+		if _, err := a.getPolicyOffsiteStore(ctx, p); err != nil {
+			return err
+		}
+	}
 	return a.backupPolicyTarget(ctx, p)
 }
 func (a *API) backupPolicyTarget(ctx context.Context, p core.WorkloadBackupPolicy) error {
@@ -320,16 +357,20 @@ func (a *API) scheduleWorkloadBackupCaptures(ctx context.Context) {
 		a.recoverBackupPolicyOperations(ctx, p)
 		p = a.refreshBackupPolicy(ctx, p)
 		if err = a.backupPolicyAuthority(ctx, p); err != nil {
-			a.missBackupCapture(ctx, p, "The original actor or target no longer authorizes automatic capture and retention.")
+			p = a.scheduleBackupPolicyOffsite(ctx, p, false)
+			a.missBackupCapture(ctx, p, "The original actor, source, destination or target no longer authorizes automatic capture and retention.")
 			continue
 		}
 		if !p.NextCaptureAt.After(time.Now()) {
 			if err = a.acceptBackupCapture(ctx, p); err != nil {
 				a.missBackupCapture(ctx, p, "Fresh capture was not accepted. Inspect source ownership and pending or uncertain operations.")
 			}
-		} else {
-			a.pruneBackupPolicy(ctx, p)
 		}
+		if latest, lookup := s.GetWorkloadBackupPolicy(ctx, p.ID); lookup == nil {
+			p = latest
+		}
+		p = a.scheduleBackupPolicyOffsite(ctx, p, true)
+		a.pruneBackupPolicy(ctx, p)
 	}
 }
 func (a *API) missBackupCapture(ctx context.Context, p core.WorkloadBackupPolicy, message string) {
@@ -444,7 +485,7 @@ func (a *API) refreshBackupPolicy(ctx context.Context, p core.WorkloadBackupPoli
 	return p
 }
 func (a *API) pruneBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy) {
-	if p.State != "healthy" || p.LastBackupID == "" || p.LastBackupID != p.LastVerifiedBackupID {
+	if p.OffsiteStoreID != "" && (!p.RetireLocalAfterOffsiteVerification || p.LastOffsiteBackupID != p.LastBackupID) || p.State != "healthy" || p.LastBackupID == "" || p.LastBackupID != p.LastVerifiedBackupID {
 		return
 	}
 	s, _ := a.backupPolicyStore()
@@ -455,7 +496,7 @@ func (a *API) pruneBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy
 	}
 	verified := []core.WorkloadBackup{}
 	for _, b := range items {
-		if b.CapturePolicyID == p.ID && b.State == "ready" && b.VerificationState == "verified" && b.CleanupState == "complete" {
+		if b.CapturePolicyID == p.ID && b.LocalState != "retired" && b.LocalState != "retiring" && b.State == "ready" && b.VerificationState == "verified" && b.CleanupState == "complete" {
 			verified = append(verified, b)
 		}
 	}
@@ -471,7 +512,7 @@ func (a *API) pruneBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy
 	// One reviewed-policy archive per tick keeps retention bounded and restartable.
 	var b core.WorkloadBackup
 	for i := len(verified) - 1; i >= p.KeepLast; i-- {
-		if verified[i].Offsite == nil {
+		if p.OffsiteStoreID == "" && verified[i].Offsite == nil || p.OffsiteStoreID != "" && verifiedPolicyOffsite(p, verified[i]) {
 			b = verified[i]
 			break
 		}
@@ -483,9 +524,22 @@ func (a *API) pruneBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy
 	if err != nil {
 		return
 	}
-	op := newBackupOperation(ulid.Make().String(), b, "delete")
+	action := "delete"
+	if p.OffsiteStoreID != "" {
+		action = "retire-local"
+	}
+	op := newBackupOperation(ulid.Make().String(), b, action)
 	op.CapturePolicyID = p.ID
-	request.OperationID, request.Action, request.Backup = op.ID, "delete", b
+	request.OperationID, request.Action, request.Backup = op.ID, action, b
+	if action == "retire-local" {
+		access, grantErr := a.grantBackupObjects(ctx, b, p.OffsiteStoreID, false, false)
+		if grantErr != nil {
+			return
+		}
+		request.OffsiteAccess, request.ExecutionNodeGeneration = &access, p.NodeGeneration
+		op.OffsiteStoreID = p.OffsiteStoreID
+		op.ExecutionServerID, op.ExecutionNodeID, op.ExecutionGeneration = p.ServerID, p.NodeID, p.NodeGeneration
+	}
 	op.EncryptedInput, err = a.encryptWorkloadBackup(op.ID, "operation", request)
 	if err != nil {
 		return
@@ -497,7 +551,7 @@ func (a *API) pruneBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy
 
 // After restart, inspect the original accepted operation rather than repeat its mutation.
 func (a *API) recoverBackupPolicyOperations(ctx context.Context, p core.WorkloadBackupPolicy) {
-	if a.backupPolicyTarget(ctx, p) != nil {
+	if a.backupPolicyAuthority(ctx, p) != nil {
 		return
 	}
 	backups, _ := a.workloadBackupStore()
@@ -528,19 +582,66 @@ func (a *API) recoverBackupPolicyOperations(ctx context.Context, p core.Workload
 
 // Called before agent input release and lease renewal for unattended policy jobs.
 func (a *API) checkBackupPolicyRuntimeAuthority(ctx context.Context, id string) error {
-	if !strings.HasPrefix(id, "backup-") {
+	operationID := ""
+	var binding *remoteruntime.BackupAuthorityBinding
+	if broker := a.runtimeBroker(); broker != nil {
+		var bindingErr error
+		binding, bindingErr = broker.BackupAuthority(ctx, id)
+		if bindingErr != nil && !errors.Is(bindingErr, store.ErrNotFound) {
+			return bindingErr
+		}
+		if binding != nil {
+			operationID = binding.OperationID
+		}
+	}
+	// The prefix supports existing directly queued capture records. Runtime-backed
+	// jobs always resolve the operation from their authenticated encrypted request.
+	if operationID == "" && strings.HasPrefix(id, "backup-") {
+		operationID = strings.TrimPrefix(id, "backup-")
+	}
+	if operationID == "" {
 		return nil
 	}
 	backups, err := a.workloadBackupStore()
 	if err != nil {
 		return err
 	}
-	op, err := backups.GetWorkloadBackupOperation(ctx, strings.TrimPrefix(id, "backup-"))
-	if errors.Is(err, store.ErrNotFound) {
+	op, err := backups.GetWorkloadBackupOperation(ctx, operationID)
+	if errors.Is(err, store.ErrNotFound) && binding == nil {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if binding != nil {
+		if op.BackupID != binding.BackupID || op.ProjectID != binding.ProjectID || op.TargetRunID != binding.TargetRunID || op.OffsiteStoreID != binding.OffsiteStoreID {
+			return store.ErrWorkloadBackupChanged
+		}
+		backup, lookupErr := backups.GetWorkloadBackup(ctx, op.BackupID)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if backup.SourceRunID != binding.SourceRunID || backup.SourceResourceID != binding.SourceResourceID {
+			return store.ErrWorkloadBackupChanged
+		}
+		serverID, nodeID := backup.ServerID, backup.NodeID
+		if op.ExecutionServerID != "" {
+			serverID, nodeID = op.ExecutionServerID, op.ExecutionNodeID
+		}
+		if serverID != binding.ServerID || nodeID != binding.NodeID {
+			return store.ErrWorkloadBackupChanged
+		}
+		data, ok := a.store.(*store.SQLStore)
+		if !ok {
+			return store.ErrWorkloadBackupChanged
+		}
+		credential, lookupErr := data.GetEdgeCredential(ctx, binding.NodeID)
+		if lookupErr != nil || credential.Revoked || credential.PublicKey == "" || credential.Generation != binding.NodeGeneration {
+			return store.ErrWorkloadBackupChanged
+		}
+		if op.ExecutionGeneration != 0 && op.ExecutionGeneration != binding.NodeGeneration {
+			return store.ErrWorkloadBackupChanged
+		}
 	}
 	if op.CapturePolicyID == "" {
 		return nil

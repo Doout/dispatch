@@ -530,6 +530,25 @@ across a lost response. Inspect capture and verification timestamps, missed
 captures, blockers and the latest verified archive before relying on the policy.
 Failed capture or verification must not replace the last usable backup.
 
+For scheduled offsite protection, include `offsiteStoreId` and an identical
+`confirmOffsiteStoreId` in the creation file. The owner must register that
+immutable destination in the same project first. Optional
+`offsiteStaleAfterHours` defaults to twice the capture interval and measures the
+captured data age. Uploading an old archive cannot refresh it. Inspect
+`offsiteState`, `offsiteFreshness`, `lastOffsiteBackupId`,
+`lastOffsiteRecoveryPointAt`, `lastOffsiteVerifiedAt` and `missedExports`.
+An upload is only `verifying`; protection requires a downloaded and decrypted
+isolated restore. Each capture keeps one original scheduled export operation ID
+across reply loss and restart.
+
+Set `retireLocalAfterOffsiteVerification` to true only when approving automatic
+retirement of older local copies after offsite verification. The newest
+`keepLast` local copies remain. The default keeps local bytes and reports
+`retentionBlockedReason` because they can exceed that count. This choice never
+authorizes automatic offsite object deletion. Optional `notificationAppId`
+explicitly uses an existing same-project enabled observation webhook for failures,
+stale protection and recovery; no delivery channel is enabled implicitly.
+
 Pause or resume with the current revision, an explicit `enabled` value and the
 exact policy name. For example, `pause-policy.json` contains:
 

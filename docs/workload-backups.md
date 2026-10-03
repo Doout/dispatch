@@ -219,7 +219,71 @@ Pause or resume through `PUT /api/v1/workload-backup-policies/{id}` with
 new captures and retention. An already running operation may finish. A resume
 rechecks the original authority and target; it does not reset the cadence. An
 explicit manual verification or reviewed restore remains available independently.
-Policy schedules do not provide offsite storage or cross-target recovery.
+Policies without an approved offsite destination remain target-local.
+
+
+## Schedule offsite protection
+
+Add the following fields when creating a capture policy to export each locally
+verified capture to an owner-registered destination in the same project:
+
+```json
+{
+  "offsiteStoreId": "APPROVED_STORE_ID",
+  "confirmOffsiteStoreId": "APPROVED_STORE_ID",
+  "offsiteStaleAfterHours": 48,
+  "retireLocalAfterOffsiteVerification": true,
+  "notificationAppId": "EXISTING_APPLICATION_ID"
+}
+```
+
+The exact destination ID confirms unattended exports. The destination, credential
+reference, freshness threshold, retirement choice and notification application
+are frozen with the original policy. The credential value can rotate without
+changing its reference. A changed destination identity or unavailable credential
+blocks further unattended work. Current actor grants, source ownership and
+original target enrollment must still authorize every export and verification.
+
+The first locally verified capture receives one durable export operation. The
+controller records that identity with the capture before dispatch. Reply loss,
+concurrent scheduler calls and restarts preserve it. An uncertain export is
+inspected with read-only object access rather than uploaded again. Failed exports
+remain available for inspection and explicit operator recovery. `missedExports`
+counts a captured archive at most once, even while the same failure persists.
+
+Confirmed upload only moves the policy to `verifying`. The agent then downloads
+the encrypted archive and manifest, authenticates and decrypts them, and performs
+an isolated restore with the policy's integrity checks. Only that success sets
+`lastOffsiteBackupId` and `lastOffsiteVerifiedAt`. A later failed or uncertain
+verification removes that archive from the currently confirmed recovery points.
+Older intact verified points remain available.
+
+`lastOffsiteRecoveryPointAt` is the capture creation time. `offsiteFreshness`
+compares that time with `offsiteStaleAfterHours`, which defaults to twice the
+capture interval. The threshold must be at least the interval and at most 17520
+hours. Uploading or checking an old archive cannot make its captured data fresh.
+An enabled policy with no confirmed offsite recovery point becomes stale after
+its first freshness window. Inspection computes freshness even while the
+controller scheduler is stopped.
+
+`retireLocalAfterOffsiteVerification` defaults to false. Without explicit approval,
+local copies can exceed `keepLast`; `retentionBlockedReason` reports that limit.
+When approved, the newest capture must pass offsite restore verification before
+older local copies retire. The controller keeps the newest `keepLast` verified
+local copies and retires at most one older verified local copy per minute. Each
+retirement authenticates its exact encrypted offsite archive again before deleting
+local bytes. Offsite objects, wrapped encryption keys and operation history remain.
+Failed offsite protection blocks local retirement. Scheduled policies never
+automatically delete offsite objects.
+
+Notifications are optional. `notificationAppId` explicitly selects an existing
+application in the source project whose observation notifications and encrypted
+webhook are already enabled. The policy does not create or enable a destination.
+Export failures, uncertainty, stale protection and subsequent recovery use the
+existing durable observation outbox, deduplication, mute settings and retry limits.
+Notification payloads contain policy IDs and sanitized state, never credentials,
+signed object URLs, SQL assertions or encryption keys. Changed delivery settings
+cancel pending events. Omitting the application ID leaves delivery disabled.
 
 
 ## Export encrypted archives offsite
