@@ -15,7 +15,7 @@ an untested provider. Feature documents describe the supported paths; the
 | Routing and health | [Managed Docker routes](application-routing.md) publish a candidate after its [captured health policy](deployment-health.md) passes. Workload, route and certificate evidence remain separate. Helm uses native readiness and its rollout behavior. Automatic rollback of an already promoted release is still future work. |
 | Storage and services | [Storage ownership](storage.md) protects retained Docker volumes and Kubernetes PVCs. [Owned service recovery](service-resource-lifecycle.md) preserves accepted credentials and blocks deletion while consumers remain. [Runtime retention](operations.md#runtime-artifacts) reviews images and stopped revisions separately from data deletion. |
 | Machine snapshots | [Snapshot capture, retention and isolated restore](machine-snapshots.md) use provider capabilities, exact disk evidence, fresh identities and quota reservations. Mock conformance exercises this contract. Real snapshot capture and safe clone boot remain release gates. |
-| Workload backups | [Encrypted PostgreSQL backups](workload-backups.md) support owned PostgreSQL 17+ services on Docker, scheduled fresh capture and isolated verification, reviewed same-target restore and archive deletion. Capture policies expose missed captures and the last verified recovery point. Retention protects the latest usable archive; revoked authority stops unattended work. Generic volume archives, other engines and Helm remain outside this path. |
+| Workload backups | [Encrypted PostgreSQL backups](workload-backups.md) support owned PostgreSQL 17+ services on Docker, scheduled fresh capture and isolated verification, and reviewed restore. Approved S3-compatible destinations accept encrypted exports up to 4 GiB. A confirmed export supports verification and restore on another authorized target without the source. Capture policies expose missed captures and the last verified recovery point. Retention protects the latest usable archive and exported copies; revoked authority stops unattended work. Generic volume archives, other engines and Helm remain outside this path. |
 | Temporary environments | [Finite-lifetime environments](temporary-environments.md) clone a same-project Dockerfile template onto an assigned outbound Docker target. Acceptance pins source, template, selected service credentials, agent identity and routing. It reserves a reviewed unique hostname when the target has managed routing. Expiry removes owned runtime resources and routes while retaining shared servers, selected services, data and history. Unversioned external secret-store references are rejected. |
 | PR previews and source automation | [Durable webhook receipts](events.md), [repository recovery](repository-recovery.md), [preview cleanup](preview-lifecycle.md), scoped source approval and [GitHub Check Runs](application-config.md#github-check-runs) are implemented. Previews deploy on comments by default; automatic updates remain opt-in. |
 | Neon preview databases | [Project-scoped Neon connections](neon-preview-databases.md) create schema-only branches and retain a preview's database across commits. Source trust runs before provisioning or releasing connection values. Reviewed policies can retain, suspend or delete the branch after preview cleanup. A reviewed schema-only reset switches to a new generation while retaining the old branch. |
@@ -51,9 +51,10 @@ an untested provider. Feature documents describe the supported paths; the
 
 ## Remaining feature work
 
-- Extend workload backups beyond the same-target PostgreSQL path: offsite
-  destinations, cross-target restore, Helm databases, volume archives and other
-  engines, #18.
+- Extend workload backups with reviewed offsite deletion, local-copy retirement,
+  multipart transfer beyond 4 GiB, Helm databases, volume archives and other
+  engines, #18. Current exports remain protected from deletion and are requested
+  explicitly; capture policies create target-local archives.
 - Add policy-driven rollback after promotion, #17. Current health policies gate
   promotion; retained rollback remains an explicit reviewed action.
 - Add optional outbound mTLS, #6. Existing agents use enrolled keys and
