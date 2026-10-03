@@ -75,6 +75,7 @@ type ServerCreateReview struct {
 	SourceSnapshotID string          `json:"sourceSnapshotId,omitempty"`
 }
 type Arguments struct {
+	StoreID        string          `json:"storeId,omitempty"`
 	TemplateID     string          `json:"templateId,omitempty"`
 	PolicyID       string          `json:"policyId,omitempty"`
 	RunID          string          `json:"runId,omitempty"`
@@ -204,7 +205,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 	}
 	path := op.Path
-	for f, v := range map[string]string{"templateId": args.TemplateID, "policyId": args.PolicyID, "runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
+	for f, v := range map[string]string{"storeId": args.StoreID, "templateId": args.TemplateID, "policyId": args.PolicyID, "runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
 		if v != "" && !identifier.MatchString(v) {
 			return Failure("invalid_input", "Invalid resource identifier")
 		}
@@ -296,7 +297,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	if args.Limit < 0 || args.Limit > 500 || args.After < 0 {
 		return Failure("invalid_input", "Log limit must be 1 to 500 and the cursor must not be negative")
 	}
-	if (name == "backups_list" || name == "backup_policies_list") && args.ProjectID != "" {
+	if (name == "backups_list" || name == "backup_policies_list" || name == "backup_stores_list") && args.ProjectID != "" {
 		path += "?projectId=" + url.QueryEscape(args.ProjectID)
 	}
 	if name == "deployment_logs" {

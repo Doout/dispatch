@@ -157,6 +157,8 @@ func TestRecoveryRequestPropertiesMatchOpenAPI(t *testing.T) {
 		"backup_delete":    RecoveryConfirmation{ResourceConfirmation{}},
 		"backup_restore":   RecoveryConfirmation{ResourceConfirmation{}},
 		"backup_create":    WorkloadBackupCreateInput{Checks: []core.BackupIntegrityCheck{{}}},
+		"backup_export":    WorkloadBackupExportInput{},
+		"backup_verify":    WorkloadBackupVerificationInput{},
 		"retention_review": RuntimeRetentionReviewInput{ExpectedPolicy: &recoveryPolicy},
 		"retention_apply":  RuntimeRetentionApplyInput{ExpectedPolicy: &recoveryPolicy},
 	}

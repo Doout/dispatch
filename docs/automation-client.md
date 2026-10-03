@@ -483,7 +483,8 @@ policy edits remain outside these commands.
 
 Scheduled policies create fresh native PostgreSQL backups on an owned Docker
 service. They use the original actor's current grants and assigned target.
-Archives stay on that target, so these policies do not provide offsite recovery.
+Scheduled captures stay on that target. Offsite recovery requires a separate
+export; the policy does not export archives automatically.
 
 Write `capture-policy.json` with an explicit interval, retained verified count and
 the exact policy name to acknowledge removal of older verified policy archives:
@@ -537,8 +538,9 @@ owned by the old policy.
 ## Capture, verify and restore a workload backup
 
 The current native adapter supports owned PostgreSQL 17+ services on Docker.
-Archives stay encrypted on their original target and are retained by default. This is
-separate from machine snapshots and controller database backups. Mutations
+Archives are encrypted and retained by default. Export can copy them to an
+approved project object store. Workload backups are separate from machine
+snapshots and controller database backups. Mutations
 require `project.configure` and `deployment.run` in the owning project.
 
 Prepare `backup.json` with the source service provision run ID:
@@ -580,8 +582,40 @@ verification resources. It does not repeat a restore whose outcome is unknown.
 It has no idempotency-key API and returns the original backup operation. Inspect
 that operation again if the response is lost.
 
-To restore, explicitly select a ready owned destination service on the same
-project and original target. Resolve its active consumers first:
+To export encrypted archive bytes, inspect the stores registered by an owner.
+Store registration and signing credentials remain outside ordinary agent tools.
+Write `export.json` with the selected `storeId`:
+
+```sh
+dispatchctl backup stores list --project PROJECT_ID
+dispatchctl backup store get --store STORE_ID
+printf '{"storeId":"STORE_ID"}\n' > export.json
+dispatchctl backup export --backup BACKUP_ID --key database-export-001 --input export.json
+dispatchctl receipt wait --receipt RECEIPT_ID
+```
+
+Keep the original backup ID, input and key after a lost response. Export preserves
+the target archive and records confirmed offsite metadata only after success.
+The server issues bounded runtime access; client results contain no signed URLs
+or signing secrets. An offsite copy alone does not prove recoverability.
+
+After export, verify on a ready owned PostgreSQL service in the same project,
+including a fresh target when the original server is unavailable. Write
+`verify-target.json` with `destinationRunId`:
+
+```sh
+printf '{"destinationRunId":"FRESH_SERVICE_RUN_ID"}\n' > verify-target.json
+dispatchctl backup verify --backup BACKUP_ID --key database-fresh-verify-001 --input verify-target.json
+```
+
+The selected service identifies the verification target. Verification uses an
+isolated temporary database and preserves its live service data. Inspect the
+operation's target, integrity checks and cleanup before relying on the archive.
+Omitting verification input continues to select the original target.
+
+To restore, explicitly select a ready owned destination service in the same
+project. A different target requires a confirmed offsite copy. Resolve the
+destination's active consumers first:
 
 ```sh
 dispatchctl backup restore review --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID > restore-review.json
@@ -600,7 +634,8 @@ Save the destination, input file and key. If the response is lost, recover the
 same receipt and inspect its operation; a new key would request another restore.
 An unresolved result requires inspection before any new reviewed restore.
 
-To remove retained archive bytes, run `backup delete review --backup BACKUP_ID`.
+Exported archives currently block deletion until reviewed offsite deletion is
+supported. For a target-local archive, run `backup delete review --backup BACKUP_ID`.
 After reviewing blockers, supply its version and backup ID confirmation in
 `delete-backup.json`, with `action: "delete"`, then run:
 

@@ -33,8 +33,17 @@ type WorkloadBackupCreateInput struct {
 	VerificationIntervalHours int                         `json:"verificationIntervalHours"`
 	Checks                    []core.BackupIntegrityCheck `json:"checks,omitempty"`
 }
+type WorkloadBackupExportInput struct {
+	StoreID string `json:"storeId"`
+}
+type WorkloadBackupVerificationInput struct {
+	DestinationRunID string `json:"destinationRunId"`
+}
 
 var recoveryOperations = []Operation{
+	{Name: "backup_stores_list", Method: "GET", Path: "/workload-backup-stores", Description: "List approved backup store metadata visible to the current project. Does not expose signing credentials or administer stores.", Fields: []string{"projectId"}},
+	{Name: "backup_store_get", Method: "GET", Path: "/workload-backup-stores/{storeId}", Description: "Inspect a project-visible backup store before requesting encrypted archive export. Store registration remains owner-only.", Fields: []string{"storeId"}, Required: []string{"storeId"}},
+	{Name: "backup_export", Method: "POST", Path: "/workload-backups/{backupId}/export", Description: "Copy an encrypted backup archive to the explicitly selected approved store with a stable retry key. Requires project.configure and deployment.run in the store's project. Preserve the original operation after response loss.", Fields: []string{"backupId", "key", "input"}, Required: []string{"backupId", "key", "input"}, Mutation: true, InputSchema: "WorkloadBackupExportInput", Response: "receipt_or_backup_operation"},
 	{Name: "service_get", Method: "GET", Path: "/service-provision-runs/{runId}/resource", Description: "Inspect the original owned service resource, operation ID and recovery timing.", Fields: []string{"runId"}, Required: []string{"runId"}, Response: "service_resource"},
 	{Name: "service_inspect", Method: "POST", Path: "/service-provision-runs/{runId}/resource/inspect", Description: "Inspect current ownership and readiness of the same service resource without provisioning or executing scripts.", Fields: []string{"runId"}, Required: []string{"runId"}, Response: "service_resource"},
 	{Name: "service_reconcile", Method: "POST", Path: "/service-provision-runs/{runId}/resource/reconcile", Description: "Explicitly recover the original service binding or cleanup after inspecting its operation. Active leases and ownership conflicts remain blocking. Inspect again if the response is lost.", Fields: []string{"runId"}, Required: []string{"runId"}, Mutation: true, NonIdempotent: true, Destructive: true, Response: "service_resource"},
@@ -50,7 +59,7 @@ var recoveryOperations = []Operation{
 	{Name: "backup_get", Method: "GET", Path: "/workload-backups/{backupId}", Description: "Inspect retained backup metadata and verification freshness without retrieving archive keys or credentials.", Fields: []string{"backupId"}, Required: []string{"backupId"}, Response: "workload_backup"},
 	{Name: "backup_operations", Method: "GET", Path: "/workload-backups/{backupId}/operations", Description: "List original backup operations, cleanup evidence and recovery timing.", Fields: []string{"backupId"}, Required: []string{"backupId"}},
 	{Name: "backup_operation_get", Method: "GET", Path: "/workload-backup-operations/{operationId}", Description: "Inspect a native backup operation without repeating backup, verification or restore.", Fields: []string{"operationId"}, Required: []string{"operationId"}, Response: "backup_operation"},
-	{Name: "backup_verify", Method: "POST", Path: "/workload-backups/{backupId}/verify", Description: "Accept isolated restore verification of a retained backup with a stable retry key. Verification requires integrity checks and cleanup; source data is unchanged.", Fields: []string{"backupId", "key"}, Required: []string{"backupId", "key"}, Mutation: true, Response: "receipt_or_backup_operation"},
+	{Name: "backup_verify", Method: "POST", Path: "/workload-backups/{backupId}/verify", Description: "Accept isolated restore verification with a stable retry key. Optional input selects a ready owned same-project destinationRunId purely as a verification target; its live service data is unchanged. Verification requires integrity checks and cleanup.", Fields: []string{"backupId", "key", "input"}, Required: []string{"backupId", "key"}, Mutation: true, InputSchema: "WorkloadBackupVerificationInput", Response: "receipt_or_backup_operation"},
 	{Name: "backup_reconcile", Method: "POST", Path: "/workload-backups/{backupId}/operations/{operationId}/reconcile", Description: "Inspect original operation evidence after its recovery deadline and clean owned verification resources. Never replays an unknown restore. Inspect the original operation if interrupted.", Fields: []string{"backupId", "operationId"}, Required: []string{"backupId", "operationId"}, Mutation: true, NonIdempotent: true, Destructive: true, Response: "backup_operation"},
 	{Name: "backup_delete_review", Method: "POST", Path: "/workload-backups/{backupId}/delete-preview", Description: "Review permanent archive-byte deletion and current operation blockers. Does not accept deletion.", Fields: []string{"backupId"}, Required: []string{"backupId"}},
 	{Name: "backup_delete", Method: "POST", Path: "/workload-backups/{backupId}/delete", Description: "Accept the supplied backup deletion confirmation with a stable retry key. Retained encrypted history remains.", Fields: []string{"backupId", "key", "input"}, Required: []string{"backupId", "key", "input"}, Mutation: true, Destructive: true, InputSchema: "RecoveryConfirmation", Response: "receipt_or_backup_operation"},
@@ -61,6 +70,21 @@ var recoveryOperations = []Operation{
 func recoveryInput(op Operation, args Arguments) (any, error) {
 	fail := func(message string) (any, error) { return nil, errors.New(message) }
 	switch op.InputSchema {
+	case "WorkloadBackupExportInput":
+		var input WorkloadBackupExportInput
+		if decodeStrict(args.Input, &input) != nil || !identifier.MatchString(input.StoreID) {
+			return fail("Supply the approved project backup store ID explicitly")
+		}
+		return input, nil
+	case "WorkloadBackupVerificationInput":
+		if len(args.Input) == 0 {
+			return nil, nil
+		}
+		var input WorkloadBackupVerificationInput
+		if decodeStrict(args.Input, &input) != nil || !identifier.MatchString(input.DestinationRunID) {
+			return fail("Supply a ready owned destination service run for isolated verification, or omit input to use the source target")
+		}
+		return input, nil
 	case "RecoveryConfirmation":
 		var v RecoveryConfirmation
 		if decodeStrict(args.Input, &v) != nil {
@@ -158,7 +182,7 @@ func recoveryContinuation(op Operation, args Arguments, out Result) Result {
 		if id != "" {
 			out.Continuation = &Continuation{Kind: kind, ID: id, ResourceID: resource, ProjectID: project, Key: args.Key}
 		} else if args.Key != "" {
-			out.Continuation = &Continuation{Kind: op.Name, Key: args.Key}
+			out.Continuation = &Continuation{Kind: op.Name, Key: args.Key, ResourceID: resource, OperationID: operation, ProjectID: project}
 		}
 		if op.Mutation && args.Key == "" && out.Error != nil {
 			switch out.Error.Code {

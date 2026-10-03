@@ -202,3 +202,56 @@ func TestCLIBackupPolicyPauseRequiresExplicitEnabled(t *testing.T) {
 		t.Fatal("explicit pause failed", code, out.String())
 	}
 }
+
+func TestCLIOffsiteSelectionAndContinuation(t *testing.T) {
+	credential := filepath.Join(t.TempDir(), "credential")
+	if err := os.WriteFile(credential, []byte("dsa_cli_fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/workload-backup-stores/store-1":
+			io.WriteString(w, `{"id":"store-1","projectId":"project-1"}`)
+		case "/api/v1/workload-backups/backup-1/export", "/api/v1/workload-backups/backup-1/verify":
+			var input map[string]string
+			if json.NewDecoder(r.Body).Decode(&input) != nil {
+				t.Error("missing explicit selection")
+			}
+			if strings.HasSuffix(r.URL.Path, "/export") && input["storeId"] != "store-1" {
+				t.Error("changed store selection")
+			}
+			if strings.HasSuffix(r.URL.Path, "/verify") && input["destinationRunId"] != "fresh-service" {
+				t.Error("changed verification target")
+			}
+			if r.Header.Get("Idempotency-Key") != "offsite-once" {
+				t.Error("lost retry identity")
+			}
+			w.Header().Set("Location", "/api/v1/mutation-receipts/receipt-1")
+			w.WriteHeader(202)
+			io.WriteString(w, `{"id":"receipt-1","operationId":"original-operation","operationKind":"workload_backup","resourceId":"backup-1"}`)
+		default:
+			t.Error("unexpected offsite CLI route", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	prefix := []string{"--url", server.URL, "--token-file", credential}
+	for _, tc := range []struct {
+		args  []string
+		input string
+	}{
+		{[]string{"backup", "store", "get", "--store", "store-1"}, ""},
+		{[]string{"backup", "export", "--backup", "backup-1", "--key", "offsite-once", "--input", "-"}, `{"storeId":"store-1"}`},
+		{[]string{"backup", "verify", "--backup", "backup-1", "--key", "offsite-once", "--input", "-"}, `{"destinationRunId":"fresh-service"}`},
+	} {
+		var out, diagnostics bytes.Buffer
+		code := run(context.Background(), append(prefix, tc.args...), strings.NewReader(tc.input), &out, &diagnostics)
+		var result automationclient.Result
+		if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK {
+			t.Fatal("offsite CLI failed", tc.args, out.String(), diagnostics.String())
+		}
+		if tc.input != "" && (result.Continuation == nil || result.Continuation.OperationID != "original-operation" || result.Continuation.ResourceID != "backup-1") {
+			t.Fatal("lost accepted offsite identity", out.String())
+		}
+	}
+}
