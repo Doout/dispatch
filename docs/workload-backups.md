@@ -354,9 +354,19 @@ To verify on a fresh target without modifying its live database, use
 `{"destinationRunId":"owned-fresh-postgresql-run-id"}`. Verification pulls the
 export's pinned image digest and creates an isolated temporary database with
 separate storage. The empty verification body keeps the original target behavior.
-Both export and recovery require agents advertising the new
+Both export and recovery require agents advertising the
 `workload_backup_offsite` and `workload_backup_offsite_inspect` capabilities.
 Older generic backup agents cannot claim those jobs.
+
+Recovery on another target, or after the original local copy retires, also
+requires `workload_backup_retire` for verification and restore, and
+`workload_backup_retire_inspect` for reconciliation. The controller checks these
+capabilities before releasing a job and on lease renewal. If an agent loses a
+required capability, the controller fences its lease and keeps the outcome
+unknown until reconciliation confirms cleanup. Install the current agent release
+before recovery so it also removes interrupted download staging. Recovery on the
+original target with a retained local copy continues to use the existing offsite
+capabilities.
 
 Local copies protect their source target until a reviewed retirement confirms that
 archive bytes are absent. Offsite-only backups retain their controller metadata
