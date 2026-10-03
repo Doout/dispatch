@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Partition Go-discovered API roots and check their execution, without test lists.
 
-The ordinary suite retains its four existing opt-in Docker fixtures. Their
-dedicated CI jobs still use check-test-results.py to reject every skip.
+The ordinary suite preserves four existing opt-in Docker fixture skips. The
+required Docker and PostgreSQL jobs keep their existing fixture selections and
+use check-test-results.py to reject every skip in those selections.
 Issue #96 timing baseline: PR #95, run 37135882037, API 2299.959 seconds.
 Compare runner timings against primary release CI run 37131689522.
 """

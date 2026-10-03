@@ -26,3 +26,5 @@
 !/web/dist/.gitkeep
 
 /release/
+/api-race-results/
+/scripts/__pycache__/
