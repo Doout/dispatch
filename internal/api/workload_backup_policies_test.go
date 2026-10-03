@@ -344,3 +344,119 @@ func TestBackupCapturePolicyAutomationRevocationStopsUnattendedWork(t *testing.T
 		t.Fatal("revoked automation credential performed capture", err, calls, p.State)
 	}
 }
+
+type backupExecutionTargetStore struct {
+	*store.SQLStore
+	targetID        string
+	mu              sync.Mutex
+	reads           int
+	executionLookup chan struct{}
+}
+
+func (s *backupExecutionTargetStore) GetServer(ctx context.Context, id string) (core.Server, error) {
+	server, err := s.SQLStore.GetServer(ctx, id)
+	if id == s.targetID {
+		s.mu.Lock()
+		s.reads++
+		// The first read validates policy authority. The second prepares dispatch
+		// after that check has passed and before waiting for the target lock.
+		if s.reads == 2 {
+			close(s.executionLookup)
+		}
+		s.mu.Unlock()
+	}
+	return server, err
+}
+
+func TestBackupCapturePolicyPauseWhileWaitingForTargetStopsDispatch(t *testing.T) {
+	a, source := backupAPIFixture(t)
+	ctx := context.Background()
+	response := mutationRequest(a, "secret", "POST", "/api/v1/workload-backup-policies", "queued-capture-policy", map[string]any{"name": "queued-capture", "sourceRunId": source.RunID, "intervalHours": 1, "keepLast": 1, "confirmRetention": "queued-capture"})
+	if response.Code != 201 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	policies := a.store.(store.WorkloadBackupPolicyStore)
+	backups := a.store.(store.WorkloadBackupStore)
+	p, err := policies.GetWorkloadBackupPolicy(ctx, decodeMutation(t, response).OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := a.decryptWorkloadBackup(p.ID, "policy", p.EncryptedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := request.Backup
+	b.ID, b.ArtifactID, b.CapturePolicyID = "queued-policy-capture", "queued-policy-capture", p.ID
+	b.State, b.Revision = "creating", 1
+	b.CreatedAt, b.UpdatedAt = time.Now().UTC(), time.Now().UTC()
+	request.Backup, request.OperationID = b, b.ID
+	b.EncryptedInput, err = a.encryptWorkloadBackup(b.ID, "accepted", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := newBackupOperation(b.ID, b, "backup")
+	op.CapturePolicyID = p.ID
+	op.EncryptedInput, err = a.encryptWorkloadBackup(op.ID, "operation", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = backups.CreateWorkloadBackup(ctx, b, op); err != nil {
+		t.Fatal(err)
+	}
+	data := &backupExecutionTargetStore{SQLStore: a.store.(*store.SQLStore), targetID: p.ServerID, executionLookup: make(chan struct{})}
+	a.store = data
+	dispatched := make(chan struct{}, 1)
+	a.workloadBackupBackend = func(_ context.Context, _ core.WorkloadBackupRequest, _ core.Server) (core.WorkloadBackupResult, error) {
+		dispatched <- struct{}{}
+		return core.WorkloadBackupResult{State: "ready", CleanupState: "complete"}, nil
+	}
+	locked, release, unlocked := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	releaseTarget := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseTarget)
+	go func() {
+		defer close(unlocked)
+		_ = a.deploy.Storage.WithTarget(ctx, p.ServerID, func() error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("target lock was not acquired")
+	}
+	finished := make(chan struct{})
+	go func() { defer close(finished); a.executeWorkloadBackupOperation(op, false) }()
+	select {
+	case <-data.executionLookup:
+	case <-time.After(5 * time.Second):
+		t.Fatal("accepted policy authority did not pass before dispatch preparation")
+	}
+	// Pausing after the first authority check must still stop queued execution.
+	p.Enabled = false
+	if err = policies.UpdateWorkloadBackupPolicy(ctx, p, p.Revision); err != nil {
+		t.Fatal(err)
+	}
+	releaseTarget()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued capture did not finish after releasing the target lock")
+	}
+	<-unlocked
+	select {
+	case <-dispatched:
+		t.Fatal("paused policy dispatched a backup after waiting for the target lock")
+	default:
+	}
+	saved, err := backups.GetWorkloadBackupOperation(ctx, op.ID)
+	if err != nil || saved.State != "failed" || saved.CleanupState != "complete" {
+		t.Fatal("undispatched capture lost its confirmed cleanup outcome", saved.State, saved.CleanupState, err)
+	}
+	retained, err := backups.GetWorkloadBackup(ctx, b.ID)
+	if err != nil || retained.State != "failed" {
+		t.Fatal("undispatched capture was reported as a recovery point", retained.State, err)
+	}
+}
