@@ -149,7 +149,7 @@ func TestOffsiteBackupVerificationUsesFreshDestinationAfterSourceLoss(t *testing
 	var destinationStore core.BackupObjectStore
 	json.Unmarshal(automationRequest(t, a, "secret", "POST", "/api/v1/workload-backup-stores", offsiteRegistration(t, a, source.ProjectID, "disaster-recovery"), 201).Body.Bytes(), &destinationStore)
 	var mu sync.Mutex
-	verified := 0
+	verified, restored := 0, 0
 	freshID := "offsite-fresh-target"
 	a.workloadBackupBackend = func(_ context.Context, r core.WorkloadBackupRequest, s core.Server) (core.WorkloadBackupResult, error) {
 		result := core.WorkloadBackupResult{BackupID: r.Backup.ID, ProjectID: r.Backup.ProjectID, OperationID: r.OperationID, ArtifactID: r.Backup.ID, State: "ready", Checksum: strings.Repeat("a", 64), PlaintextChecksum: strings.Repeat("b", 64), ImageID: "sha256:" + strings.Repeat("c", 64), Bytes: 42, CleanupState: "complete"}
@@ -165,6 +165,14 @@ func TestOffsiteBackupVerificationUsesFreshDestinationAfterSourceLoss(t *testing
 			verified++
 			mu.Unlock()
 			result.State = "verified"
+		case "restore":
+			if s.ID != freshID || r.Destination == nil || r.OffsiteAccess == nil || r.OffsiteAccess.Archive.Put != "" {
+				return result, errors.New("reviewed restore did not use the frozen fresh target")
+			}
+			mu.Lock()
+			restored++
+			mu.Unlock()
+			result.State = "restored"
 		}
 		return result, nil
 	}
@@ -226,5 +234,27 @@ func TestOffsiteBackupVerificationUsesFreshDestinationAfterSourceLoss(t *testing
 	retained, err := a.store.(store.ServiceResourceStore).GetServiceResource(ctx, destination.RunID)
 	if err != nil || retained.State != "ready" || retained.ResourceID != destination.ResourceID {
 		t.Fatal("verification altered live destination", retained, err)
+	}
+	restorePath := base + "/restore/" + destination.RunID
+	serviceRequestTest(t, a, "POST", restorePath, map[string]any{}, 422)
+	var review destructiveReview
+	json.Unmarshal(serviceRequestTest(t, a, "POST", restorePath+"/preview", nil, 200), &review)
+	if review.BlockedReason != "" || review.Name != destination.Name {
+		t.Fatal("fresh destination restore review unavailable", review)
+	}
+	confirmation := map[string]any{"confirmation": destructiveConfirmation{ResourceID: receipt.OperationID, Action: "restore", ExpectedVersion: review.Version, ConfirmName: destination.Name}}
+	restore := mutationRequest(a, "secret", "POST", restorePath, "fresh-target-reviewed-restore", confirmation)
+	if restore.Code != 202 {
+		t.Fatal(restore.Code, restore.Body.String())
+	}
+	restoredOperation := awaitBackupOperation(t, a, decodeMutation(t, restore).OperationID, "succeeded")
+	if restoredOperation.TargetRunID != destination.RunID || restoredOperation.ExecutionServerID != fresh.ID {
+		t.Fatal("reviewed restore changed target", restoredOperation)
+	}
+	mu.Lock()
+	restores := restored
+	mu.Unlock()
+	if restores != 1 {
+		t.Fatal("reviewed restore was not executed once", restores)
 	}
 }
