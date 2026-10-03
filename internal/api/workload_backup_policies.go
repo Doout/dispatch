@@ -53,10 +53,10 @@ func (a *API) listWorkloadBackupPolicies(w http.ResponseWriter, r *http.Request)
 	result := []core.WorkloadBackupPolicy{}
 	for _, p := range items {
 		if visible[p.ProjectID] || currentIdentity(r.Context()).SystemRole == core.UserRoleOwner {
-			p = a.inspectBackupPolicyOffsite(r.Context(), p)
 			result = append(result, p)
 		}
 	}
+	result = a.inspectBackupPoliciesOffsite(r.Context(), result)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, result)
 }

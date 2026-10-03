@@ -217,35 +217,84 @@ func verifiedPolicyOffsite(p core.WorkloadBackupPolicy, b core.WorkloadBackup) b
 
 // Public inspection reflects current retained copies without accepting jobs or changing revisions.
 func (a *API) inspectBackupPolicyOffsite(ctx context.Context, p core.WorkloadBackupPolicy) core.WorkloadBackupPolicy {
-	if p.OffsiteStoreID == "" {
-		p.OffsiteFreshness = p.OffsiteFreshnessAt(time.Now().UTC())
-		return p
-	}
-	backups, err := a.workloadBackupStore()
-	if err != nil {
-		return p
-	}
-	items, err := backups.ListWorkloadBackups(ctx, p.ProjectID)
-	if err != nil {
-		return p
-	}
-	operations := map[string][]core.WorkloadBackupOperation{}
-	for _, b := range items {
-		if b.CapturePolicyID != p.ID {
+	return a.inspectBackupPoliciesOffsite(ctx, []core.WorkloadBackupPolicy{p})[0]
+}
+
+type backupPolicyInspectionStore interface {
+	ListWorkloadBackups(context.Context, string) ([]core.WorkloadBackup, error)
+	ListWorkloadBackupOperations(context.Context, string) ([]core.WorkloadBackupOperation, error)
+}
+
+type backupPolicyOffsiteInspection struct {
+	policies       map[string]bool
+	items          []core.WorkloadBackup
+	operations     map[string][]core.WorkloadBackupOperation
+	failedPolicies map[string]bool
+	available      bool
+}
+
+// Callers filter policies for visibility before loading this request's inspection evidence.
+func (a *API) inspectBackupPoliciesOffsite(ctx context.Context, policies []core.WorkloadBackupPolicy) []core.WorkloadBackupPolicy {
+	projects := map[string]*backupPolicyOffsiteInspection{}
+	projectIDs := []string{}
+	for _, p := range policies {
+		if p.OffsiteStoreID == "" {
 			continue
 		}
-		operations[b.ID], err = backups.ListWorkloadBackupOperations(ctx, b.ID)
-		if err != nil {
-			return p
+		inspection := projects[p.ProjectID]
+		if inspection == nil {
+			inspection = &backupPolicyOffsiteInspection{policies: map[string]bool{}, operations: map[string][]core.WorkloadBackupOperation{}, failedPolicies: map[string]bool{}}
+			projects[p.ProjectID] = inspection
+			projectIDs = append(projectIDs, p.ProjectID)
+		}
+		inspection.policies[p.ID] = true
+	}
+	if backups, ok := a.store.(backupPolicyInspectionStore); ok {
+		for _, projectID := range projectIDs {
+			inspection := projects[projectID]
+			items, err := backups.ListWorkloadBackups(ctx, projectID)
+			if err != nil {
+				continue
+			}
+			inspection.items, inspection.available = items, true
+			for _, b := range items {
+				if !inspection.policies[b.CapturePolicyID] || inspection.failedPolicies[b.CapturePolicyID] {
+					continue
+				}
+				if _, loaded := inspection.operations[b.ID]; loaded {
+					continue
+				}
+				operations, err := backups.ListWorkloadBackupOperations(ctx, b.ID)
+				if err != nil {
+					// A failed read retains this policy's recorded projection, not its siblings'.
+					inspection.failedPolicies[b.CapturePolicyID] = true
+					continue
+				}
+				inspection.operations[b.ID] = operations
+			}
 		}
 	}
+	for i, p := range policies {
+		policies[i] = projectBackupPolicyOffsite(p, projects[p.ProjectID], time.Now().UTC())
+	}
+	return policies
+}
+
+func projectBackupPolicyOffsite(p core.WorkloadBackupPolicy, inspection *backupPolicyOffsiteInspection, now time.Time) core.WorkloadBackupPolicy {
+	if p.OffsiteStoreID == "" {
+		p.OffsiteFreshness = p.OffsiteFreshnessAt(now)
+		return p
+	}
+	if inspection == nil || !inspection.available || inspection.failedPolicies[p.ID] {
+		return p
+	}
 	oldState, oldMessage := p.OffsiteState, p.OffsiteMessage
-	p = describeBackupPolicyOffsite(p, items, operations)
+	p = describeBackupPolicyOffsite(p, inspection.items, inspection.operations)
 	// Inspection does not silently clear a recorded unattended authority blocker.
 	if oldState == "blocked" && p.OffsiteState != "blocked" && p.State == "blocked" {
 		p.OffsiteState, p.OffsiteMessage = oldState, oldMessage
 	}
-	p.OffsiteFreshness = p.OffsiteFreshnessAt(time.Now().UTC())
+	p.OffsiteFreshness = p.OffsiteFreshnessAt(now)
 	p.RetentionBlockedReason = p.RetentionBlocker()
 	return p
 }
