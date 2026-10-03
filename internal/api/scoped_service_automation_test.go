@@ -56,6 +56,11 @@ func TestScopedServiceProvisionRequiresApprovalTargetQuotaAndReceipt(t *testing.
 	automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/assignments/"+template.ProjectID, map[string]any{"kind": "target", "resourceId": "resource-target"}, 200)
 	denied := request("quota-required", "scoped-db")
 	requireScopedStatus(t, denied, 409)
+	rejected := request("quota-required", "scoped-db")
+	requireScopedStatus(t, rejected, 422)
+	if decodeMutation(t, rejected).State != "failed" {
+		t.Fatal("failed acceptance did not retain terminal rejection", rejected.Body.String())
+	}
 	policy := core.InfrastructureQuotaPolicy{MaxServices: 1, Providers: []core.InfrastructureProviderRule{}}
 	automationRequest(t, a, "secret", "PUT", "/api/v1/projects/"+template.ProjectID+"/infrastructure/quota", policy, 200)
 	w := request("scoped-create", "scoped-db")

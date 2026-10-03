@@ -96,7 +96,9 @@ the caller supplies only its declared inputs and the service name.
 
 Every automation request needs a stable `Idempotency-Key`. The controller saves
 its encrypted request, owned resource and receipt together before runtime work.
-A repeated acceptance returns the original operation. A changed template digest
+A repeated acceptance returns the original operation. Admission failures retain a
+terminal rejected receipt. After the owner fixes approval or quota, inspect that
+receipt and use a new key for a new attempt. A changed template digest
 or changed request cannot reuse that key. Inspect the run and resource when an
 outcome needs recovery; retrying acceptance does not allocate a replacement.
 

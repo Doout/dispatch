@@ -40,6 +40,13 @@ func testScopedServiceAdmission(t *testing.T, url string) {
 	if err := s.SaveInfrastructureAssignment(ctx, core.InfrastructureAssignment{ProjectID: project.ID, Kind: "service_template", ResourceID: template + "@" + digest, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
+	saved := core.SavedServiceTemplate{ID: template, ProjectID: project.ID, Name: "approved-template", Document: "approved-template-document", Digest: digest, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if err := s.CreateSavedServiceTemplate(ctx, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveInfrastructureAssignment(ctx, core.InfrastructureAssignment{ProjectID: project.ID, Kind: "target", ResourceID: server.ID, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
 	scoped := core.WithScopedServiceAdmission(ctx, core.ScopedServiceAdmission{TemplateID: template, Digest: digest})
 	create := func(ctx context.Context, suffix string) error {
 		run := core.ServiceProvisionRun{ID: id + suffix, TemplateID: template, ProjectID: project.ID, ServiceName: "service-" + suffix, State: "queued", Target: &core.ServiceProvisionTarget{Provider: "docker", ServerID: server.ID, ResourceName: "owned-" + suffix}, CreatedAt: now}
@@ -95,6 +102,75 @@ func testScopedServiceAdmission(t *testing.T, url string) {
 	if err = s.SaveInfrastructureQuotaPolicy(ctx, policy, 1); err != nil {
 		t.Fatal(err)
 	}
+	// Model a reviewed API preflight followed by a concurrent template edit.
+	saved.Revision++
+	saved.Digest = "edited-digest"
+	if err = s.UpdateSavedServiceTemplate(ctx, saved, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = create(scoped, "stale-template"); !errors.Is(err, ErrServiceResourceChanged) {
+		t.Fatal("stale definition accepted", err)
+	}
+	saved.Revision++
+	saved.Digest = digest
+	if err = s.UpdateSavedServiceTemplate(ctx, saved, 2); err != nil {
+		t.Fatal(err)
+	}
+	// A target revoked after preflight must also fail at the transaction boundary.
+	if err = s.DeleteInfrastructureAssignment(ctx, project.ID, "target", server.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = create(scoped, "revoked-target"); !errors.Is(err, ErrServiceResourceChanged) {
+		t.Fatal("revoked target accepted", err)
+	}
+	if err = s.SaveInfrastructureAssignment(ctx, core.InfrastructureAssignment{ProjectID: project.ID, Kind: "target", ResourceID: server.ID, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	// Repository-backed definitions use the same current-digest and active-source guard.
+	previousTemplate := template
+	template = id + "repo-template"
+	if err = s.CreateSecret(ctx, core.Secret{ID: id + "source-credential", Name: id + "credential", Type: core.SecretTypeGitHubToken, EncryptedValue: "fixture", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	source := core.ConfigSource{CredentialSecretID: id + "source-credential", ID: id + "config", ProjectID: project.ID, Name: "repository", Active: true, CreatedAt: now, UpdatedAt: now}
+	if err = s.CreateConfigSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	resource := core.WorkflowResource{ID: template, ConfigSourceID: source.ID, Kind: "ServiceTemplate", Name: "repository-template", Active: true, ConfigSHA: digest, Document: "reviewed-document", CreatedAt: now, UpdatedAt: now}
+	if err = s.CreateWorkflowResource(ctx, resource); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SaveInfrastructureAssignment(ctx, core.InfrastructureAssignment{ProjectID: project.ID, Kind: "service_template", ResourceID: template + "@" + digest, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	repoScope := core.WithScopedServiceAdmission(ctx, core.ScopedServiceAdmission{TemplateID: template, Digest: digest})
+	resource.ConfigSHA = "changed-repository-revision"
+	if err = s.UpdateWorkflowResource(ctx, resource); err != nil {
+		t.Fatal(err)
+	}
+	if err = create(repoScope, "stale-repository"); !errors.Is(err, ErrServiceResourceChanged) {
+		t.Fatal("stale repository accepted", err)
+	}
+	resource.ConfigSHA = digest
+	resource.Active = false
+	if err = s.UpdateWorkflowResource(ctx, resource); err != nil {
+		t.Fatal(err)
+	}
+	if err = create(repoScope, "inactive-repository"); !errors.Is(err, ErrServiceResourceChanged) {
+		t.Fatal("inactive repository accepted", err)
+	}
+	resource.Active = true
+	if err = s.UpdateWorkflowResource(ctx, resource); err != nil {
+		t.Fatal(err)
+	}
+	source.Active = false
+	if err = s.UpdateConfigSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	if err = create(repoScope, "inactive-source"); !errors.Is(err, ErrServiceResourceChanged) {
+		t.Fatal("disabled source accepted", err)
+	}
+	template = previousTemplate
 	if err = s.DeleteInfrastructureAssignment(ctx, project.ID, "service_template", template+"@"+digest); err != nil {
 		t.Fatal(err)
 	}

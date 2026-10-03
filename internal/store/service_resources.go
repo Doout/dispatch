@@ -64,6 +64,42 @@ func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServicePr
 		if err != nil {
 			return err
 		}
+		// Approval authorizes a particular definition, not an older document that
+		// survived an edit between API preflight and this acceptance transaction.
+		if _, err = tx.ExecContext(ctx, s.q(`UPDATE saved_service_templates SET revision=revision WHERE id=?`), admission.TemplateID); err != nil {
+			return err
+		}
+		var templateProject, currentDigest string
+		err = tx.QueryRowContext(ctx, s.q(`SELECT project_id,digest FROM saved_service_templates WHERE id=?`), admission.TemplateID).Scan(&templateProject, &currentDigest)
+		if errors.Is(err, sql.ErrNoRows) {
+			if _, err = tx.ExecContext(ctx, s.q(`UPDATE workflow_resources SET config_sha=config_sha WHERE id=?`), admission.TemplateID); err != nil {
+				return err
+			}
+			query := `SELECT c.project_id,w.config_sha FROM workflow_resources w JOIN config_sources c ON c.id=w.config_source_id WHERE w.id=? AND w.active=TRUE AND c.active=TRUE AND w.kind='ServiceTemplate'`
+			if s.postgres {
+				query += ` FOR UPDATE`
+			}
+			err = tx.QueryRowContext(ctx, s.q(query), admission.TemplateID).Scan(&templateProject, &currentDigest)
+		}
+		if err != nil || templateProject != r.ProjectID || currentDigest != admission.Digest {
+			return ErrServiceResourceChanged
+		}
+		if _, err = tx.ExecContext(ctx, s.q(`UPDATE servers SET state=state WHERE id=?`), r.Target.ServerID); err != nil {
+			return err
+		}
+		var targetProject string
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT project_id FROM servers WHERE id=?`), r.Target.ServerID).Scan(&targetProject); err != nil || targetProject != "" && targetProject != r.ProjectID {
+			return ErrServiceResourceChanged
+		}
+		if targetProject != r.ProjectID {
+			var assigned int
+			if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM infrastructure_assignments WHERE project_id=? AND kind='target' AND resource_id=?`), r.ProjectID, r.Target.ServerID).Scan(&assigned); err != nil {
+				return err
+			}
+			if assigned != 1 {
+				return ErrServiceResourceChanged
+			}
+		}
 		var approved int
 		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM infrastructure_assignments WHERE project_id=? AND kind='service_template' AND resource_id=?`), r.ProjectID, admission.TemplateID+"@"+admission.Digest).Scan(&approved); err != nil {
 			return err
