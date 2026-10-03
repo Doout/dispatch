@@ -73,6 +73,13 @@ func TestTemporaryEnvironmentDockerRestartExpiryIntegration(t *testing.T) {
 			for _, id := range strings.Fields(string(out)) {
 				remove("rm", "-f", id)
 			}
+			out, err = exec.CommandContext(cleanup, "docker", "network", "ls", "-q", "--filter", "label=dispatch.app="+ownedApp).Output()
+			if err != nil {
+				t.Error("inspect fixture networks during cleanup", err)
+			}
+			for _, id := range strings.Fields(string(out)) {
+				remove("network", "rm", id)
+			}
 		}
 		for _, name := range []string{sharedContainer, prefix + "-proxy"} {
 			if exec.CommandContext(cleanup, "docker", "container", "inspect", name).Run() == nil {
@@ -112,7 +119,7 @@ func TestTemporaryEnvironmentDockerRestartExpiryIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"Dockerfile": "FROM busybox:1.37\nCOPY serve.sh /serve.sh\nCMD [\"sh\",\"/serve.sh\"]\n",
+		"Dockerfile": "FROM busybox:1.37\nLABEL dispatch.test.owner=" + prefix + "\nCOPY serve.sh /serve.sh\nCMD [\"sh\",\"/serve.sh\"]\n",
 		"serve.sh":   "set -eu\ntest \"$SHARED_TOKEN\" = captured-fixture-value\nmkdir -p /www\nwget -qO /www/index.html \"$SHARED_URL\"\nexec httpd -f -p 8080 -h /www\n",
 	}
 	for name, content := range files {
