@@ -124,6 +124,47 @@ paths:
               schema: { $ref: '#/components/schemas/WorkloadBackupPolicy' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /workload-backup-stores:
+    get:
+      operationId: listWorkloadBackupStores
+      description: Lists approved S3-compatible destinations visible through project.view. Signing credentials and object access URLs are never returned.
+      parameters:
+        - { in: query, name: projectId, schema: { type: string } }
+      responses:
+        '200':
+          description: Project-scoped offsite destination metadata
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/BackupObjectStore' } }
+    post:
+      operationId: registerWorkloadBackupStore
+      description: Owner-only immutable project-scoped registration using an existing write-only JSON secret. Credentials contain accessKeyId, secretAccessKey and optional sessionToken. Use a bucket/prefix-scoped credential allowing HEAD, GET and create-only PUT; this API grants no object deletion. HTTPS is required. Maximum encrypted object size is 4 GiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackupObjectStoreInput' }
+      responses:
+        '201':
+          description: Registered destination metadata without credential values
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupObjectStore' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backup-stores/{storeId}:
+    get:
+      operationId: getWorkloadBackupStore
+      description: Requires project.view in the destination's project. Does not release signing credentials or signed object access.
+      parameters:
+        - { in: path, name: storeId, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Approved destination metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupObjectStore' }
+        '404': { $ref: '#/components/responses/Problem' }
   /workload-backups:
     get:
       operationId: listWorkloadBackups
@@ -200,13 +241,43 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/WorkloadBackupOperation' }
         '404': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/export:
+    post:
+      operationId: exportWorkloadBackup
+      description: Requires project.configure and deployment.run. Copies the complete encrypted archive and encrypted manifest to an approved same-project store using conditional create-only PUT. Lost replies reconcile the same objects and exact bytes. A confirmed manifest pins the original pullable image digest. Maximum encrypted archive size is the store limit, capped at 4 GiB; manifests are capped at 1 MiB. Exported archives remain protected from deletion until reviewed offsite deletion is supported.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [storeId]
+              properties:
+                storeId: { type: string }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /workload-backups/{id}/verify:
     post:
       operationId: verifyWorkloadBackup
-      description: Requires project.configure and deployment.run. Authenticates and restores into isolated temporary storage without connecting to the source. Success requires integrity checks and owned temporary-resource cleanup.
+      description: Requires project.configure and deployment.run. Authenticates and restores into isolated temporary storage without connecting to the source. Optional destinationRunId selects a ready same-project Docker PostgreSQL target without overwriting its live service. Another target requires a confirmed offsite copy and current target authorization. Success requires integrity checks and owned temporary-resource cleanup.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                destinationRunId: { type: string, description: Owned PostgreSQL service provision run used only to select the verification target. }
       responses:
         '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
         '409': { $ref: '#/components/responses/Problem' }
@@ -251,7 +322,7 @@ paths:
   /workload-backups/{id}/restore/{destinationId}/preview:
     post:
       operationId: reviewWorkloadBackupRestore
-      description: Requires project.configure. Binds a same-project, same-target owned destination's container and volume identity. Confirmation name is the destination service name. Active consumers block overwrite.
+      description: Requires project.configure. Binds a same-project owned destination's container, volume and current enrolled identity. Another target requires a confirmed offsite copy. Confirmation name is the destination service name. Active consumers block overwrite. Source availability is not required for offsite recovery.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: destinationId, required: true, schema: { type: string }, description: Owned service provision run ID. }
@@ -5007,6 +5078,45 @@ components:
               kind: { type: string }
               id: { type: string }
               ownership: { type: string, enum: [owned, shared, retained] }
+    BackupObjectStoreInput:
+      type: object
+      additionalProperties: false
+      required: [projectId, name, credentialSecretId, config]
+      properties:
+        projectId: { type: string }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        credentialSecretId: { type: string, description: Write-only JSON secret reference. No credential value is returned. }
+        config: { $ref: '#/components/schemas/BackupObjectStoreConfig' }
+    BackupObjectStoreConfig:
+      type: object
+      additionalProperties: false
+      required: [endpoint, bucket, region, prefix, maxBytes]
+      properties:
+        endpoint: { type: string, format: uri, description: Bare HTTPS S3-compatible endpoint without user info, query, fragment or additional path. }
+        bucket: { type: string }
+        region: { type: string }
+        prefix: { type: string, description: Relative object prefix with no traversal components. }
+        maxBytes: { type: integer, format: int64, minimum: 1, maximum: 4294967296 }
+    BackupObjectStore:
+      type: object
+      required: [id, projectId, name, credentialSecretId, config, createdAt]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        name: { type: string }
+        credentialSecretId: { type: string }
+        config: { $ref: '#/components/schemas/BackupObjectStoreConfig' }
+        createdAt: { type: string, format: date-time }
+    BackupOffsiteArtifact:
+      type: object
+      required: [storeId, archiveKey, manifestKey, manifestChecksum, imageReference, confirmedAt]
+      properties:
+        storeId: { type: string }
+        archiveKey: { type: string }
+        manifestKey: { type: string }
+        manifestChecksum: { type: string }
+        imageReference: { type: string, description: Original image repository with immutable sha256 pull digest. }
+        confirmedAt: { type: string, format: date-time }
     WorkloadBackupConfirmation:
       type: object
       required: [confirmation]
@@ -5042,6 +5152,7 @@ components:
         keyId: { type: string }
         location: { type: string, const: target-local }
         imageId: { type: string }
+        offsite: { $ref: '#/components/schemas/BackupOffsiteArtifact' }
         policy: { type: string, enum: [retain, suspend, delete] }
         checkCount: { type: integer }
         verificationState: { type: string }
@@ -5059,11 +5170,15 @@ components:
         id: { type: string }
         backupId: { type: string }
         projectId: { type: string }
-        action: { type: string, enum: [backup, verify, restore, delete] }
+        action: { type: string, enum: [backup, verify, restore, delete, export] }
         state: { type: string, enum: [running, succeeded, failed, unknown, unresolved] }
         targetRunId: { type: string }
         targetName: { type: string }
         targetResourceId: { type: string }
+        offsiteStoreId: { type: string }
+        executionServerId: { type: string }
+        executionNodeId: { type: string }
+        executionGeneration: { type: integer }
         revision: { type: integer }
         recoveryAfter: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
