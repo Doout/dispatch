@@ -46,6 +46,94 @@ dispatchctl deployment diagnose --deployment DEPLOYMENT_ID
 
 A wait timeout or Ctrl-C stops the client. It does not cancel accepted work. The result includes a `continuation` with the receipt or deployment ID. Resume with that ID. Log entry IDs are continuation cursors; pass the last received ID as `--after` for the next bounded page.
 
+## Define and configure an application
+
+After a target has enrolled and become ready, an account with `project.configure`
+can create an application on that project's assigned target. Write `app.json`
+with explicit project, target and source settings:
+
+```json
+{
+  "projectId": "PROJECT_ID",
+  "serverId": "SERVER_ID",
+  "name": "example-api",
+  "sourceRepo": "https://github.com/example/api.git",
+  "buildType": "dockerfile",
+  "branch": "main",
+  "containerPort": 8080
+}
+```
+
+The client also accepts inline Compose definitions and Helm chart configuration.
+It excludes global source credentials and deployment hooks. Private-source
+credentials must be configured through the approved owner workflow or inherited
+from an existing template.
+
+```sh
+dispatchctl app create --key app-definition-001 --input app.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+dispatchctl app get --app APP_ID
+dispatchctl app sync --app APP_ID
+```
+
+Keep the creation file and key. Repeating the exact request returns its original
+receipt and application. Creating an application does not deploy it.
+
+Service mappings, Helm overrides and health policy have separate inspect and
+replace commands:
+
+```sh
+dispatchctl app bindings get --app APP_ID
+dispatchctl app bindings set --app APP_ID --input bindings.json
+dispatchctl app helm values get --app APP_ID
+dispatchctl app helm values set --app APP_ID --input helm-values.json
+dispatchctl app health get --app APP_ID
+dispatchctl app health set --app APP_ID --input health-policy.json
+```
+
+`bindings.json` is the complete service-binding array. `helm-values.json` contains
+an `overrides` object. `health-policy.json` contains the explicit health policy.
+Use `[]` or `{"overrides":{}}` to clear the corresponding setting. These commands
+require an idle editable application and never trigger deployment. They have no
+mutation receipt or retry key. Inspect the current configuration after a lost
+response before making another change. Repository-managed configuration must be
+edited in its source.
+
+## Cancel or roll back a deployment
+
+```sh
+dispatchctl deployment cancel --deployment DEPLOYMENT_ID
+dispatchctl deployment get --deployment DEPLOYMENT_ID
+dispatchctl app deployments --app APP_ID
+dispatchctl deployment rollback review --deployment RETAINED_DEPLOYMENT_ID
+```
+
+Cancellation requires `deployment.cancel`. It requests a stop and does not
+promise that accepted external changes were undone. The client preserves the
+original deployment ID and does not automatically retry cancellation.
+
+Review rollback availability, retained artifacts, current release and its digest.
+Write `rollback.json` with the exact review evidence and explicit acknowledgment
+that the rollback does not revert database migrations:
+
+```json
+{
+  "confirmDeploymentId": "RETAINED_DEPLOYMENT_ID",
+  "expectedCurrentDeploymentId": "CURRENT_DEPLOYMENT_ID",
+  "expectedReviewDigest": "RETURNED_REVIEW_DIGEST",
+  "confirmDatabaseNotReverted": true
+}
+```
+
+```sh
+dispatchctl deployment rollback --deployment RETAINED_DEPLOYMENT_ID --key rollback-release-001 --input rollback.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+```
+
+Rollback requires `deployment.run`, retained supported artifacts and unchanged
+review evidence. Preserve the exact file and key across response loss. The client
+returns the receipt and the newly accepted rollback deployment ID.
+
 ## Review, create and remove a server
 
 The owner must register a provider, assign it and an SSH public key to the project, and set an allocation policy. Verify those prerequisites with `quota get --project PROJECT_ID`.
@@ -104,6 +192,60 @@ Read the consequences and resolve any protected storage. Supply the reviewed `di
 dispatchctl server delete --server SERVER_ID --key delete-environment-001 --input delete-server.json
 dispatchctl receipt wait --receipt DELETE_RECEIPT_ID --timeout 120
 ```
+
+## Recover server allocation and enrollment
+
+Inspect the original server's operations before choosing a recovery action:
+
+```sh
+dispatchctl server operations --server SERVER_ID
+dispatchctl server retry --server SERVER_ID --operation OPERATION_ID
+dispatchctl server cancel --server SERVER_ID --operation OPERATION_ID
+```
+
+Retry and cancel require the operation's current infrastructure permission.
+The client verifies that the selected operation belongs to the selected server.
+Retry keeps the original provider request and deadline. Cancellation after
+submission may leave an unknown allocation that still consumes quota. Neither
+command automatically repeats a request after response loss. Inspect the same
+server and operation again.
+
+When provider inspection finds the originally reviewed machine, write
+`adopt.json` with its exact provider resource ID, current Dispatch server revision
+and reviewed name:
+
+```json
+{
+  "resourceId": "ORIGINAL_PROVIDER_RESOURCE_ID",
+  "revision": 3,
+  "confirmName": "EXACT_REVIEWED_SERVER_NAME"
+}
+```
+
+```sh
+dispatchctl server adopt --server SERVER_ID --input adopt.json
+dispatchctl servers list --project PROJECT_ID
+```
+
+Adoption requires `infrastructure.modify` and verified original ownership.
+Active leases and foreign resources remain blocking. A restored clone also
+requires `infrastructure.restore`. If the reply is lost, inspect the current
+server before submitting another adoption.
+
+An allocated machine without an approved bootstrap can request its first
+enrollment credential explicitly:
+
+```sh
+dispatchctl server enrollment --server SERVER_ID > enrollment.json
+```
+
+Create the destination file privately, for example with `umask 077`, before
+issuing this command. Its response contains a short-lived single-use token for
+the target installer, distinct from the API credential. This action requires
+`infrastructure.modify`; it cannot replace an enrolled identity. For an approved
+bootstrap, recover the original installation through its owner workflow instead.
+The client never retries issuance automatically. After a lost reply, inspect the
+server's enrollment state before deliberately issuing a replacement unused token.
 
 ## Capture and inspect a machine snapshot
 

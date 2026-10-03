@@ -11,6 +11,9 @@ import (
 )
 
 func inputSchema(kind string) any {
+	if schema := workflowSchema(kind); schema != nil {
+		return schema
+	}
 	if schema := recoverySchema(kind); schema != nil {
 		return schema
 	}

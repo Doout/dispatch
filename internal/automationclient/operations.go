@@ -103,7 +103,7 @@ type Operation struct {
 	InputSchema                               string
 }
 
-var Operations = append([]Operation{
+var Operations = append(append([]Operation{
 	{Name: "projects_list", Method: "GET", Path: "/projects", Description: "List projects visible to the current scoped identity."},
 	{Name: "apps_list", Method: "GET", Path: "/apps", Description: "List visible applications, optionally filtered by project.", Fields: []string{"projectId"}},
 	{Name: "deployment_preview", Method: "POST", Path: "/apps/{appId}/release-preview", Description: "Inspect release inputs and obtain the server's point-in-time deployment review.", Fields: []string{"appId", "revision"}, Required: []string{"appId"}},
@@ -136,7 +136,7 @@ var Operations = append([]Operation{
 	{Name: "environment_extend", Method: "POST", Path: "/temporary-environments/{environmentId}/extend", Description: "Set an explicit expiration using the current environment revision. If the response is lost, inspect the environment before another edit. Does not extend beyond project policy.", Fields: []string{"environmentId", "input"}, Required: []string{"environmentId", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentExtension"},
 	{Name: "environment_cleanup_review", Method: "POST", Path: "/temporary-environments/{environmentId}/cleanup-review", Description: "Review removal of owned workload resources and retention of shared infrastructure and data.", Fields: []string{"environmentId"}, Required: []string{"environmentId"}},
 	{Name: "environment_destroy", Method: "POST", Path: "/temporary-environments/{environmentId}/destroy", Description: "Submit the reviewed revision, digest and exact name with a stable cleanup key. Uncertain operations require inspection; shared servers and protected data remain.", Fields: []string{"environmentId", "key", "input"}, Required: []string{"environmentId", "key", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentCleanup"},
-}, recoveryOperations...)
+}, recoveryOperations...), workflowOperations...)
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$`)
 var fullCommit = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 var environmentName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,39}$`)
@@ -211,6 +211,9 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		return Failure("invalid_input", "Use a stable retry key of 8 to 128 printable ASCII characters without spaces")
 	}
 	body, inputErr := recoveryInput(op, args)
+	if inputErr == nil && body == nil {
+		body, inputErr = workflowInput(op, args)
+	}
 	if inputErr != nil {
 		return Failure("invalid_input", inputErr.Error())
 	}
@@ -294,6 +297,9 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	if args.TimeoutSeconds < 0 || args.TimeoutSeconds > 600 {
 		return Failure("invalid_input", "Wait timeout must be 1 to 600 seconds")
 	}
+	if failure := c.checkInfrastructureAction(ctx, op, args); failure != nil {
+		return *failure
+	}
 	continuation := &Continuation{Kind: "deployment", ID: args.DeploymentID, Key: args.Key}
 	if args.ReceiptID != "" {
 		continuation.Kind = "receipt"
@@ -329,7 +335,11 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 			}
 		}
 
-		out = recoveryContinuation(op, args, out)
+		if isWorkflowOperation(name) {
+			out = workflowContinuation(op, args, out)
+		} else {
+			out = recoveryContinuation(op, args, out)
+		}
 
 		if !out.OK {
 			return out

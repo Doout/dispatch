@@ -88,7 +88,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	var a automationclient.Arguments
 	flags.StringVar(&a.RunID, "run", "", "Owned service provision run ID")
 	flags.StringVar(&a.BackupID, "backup", "", "Native workload backup ID")
-	flags.StringVar(&a.OperationID, "operation", "", "Original workload backup operation ID")
+	flags.StringVar(&a.OperationID, "operation", "", "Original infrastructure or workload backup operation ID")
 	flags.StringVar(&a.DestinationID, "destination", "", "Reviewed destination service provision run ID")
 	flags.StringVar(&a.ReviewID, "review", "", "Original runtime retention review ID")
 	flags.StringVar(&a.ProjectID, "project", "", "Project ID")
