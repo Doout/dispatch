@@ -145,6 +145,12 @@ func compareResponseSchema(t *testing.T, path string, typ reflect.Type, schema m
 	if required, ok := schema["required"].([]any); ok {
 		for _, entry := range required {
 			name := entry.(string)
+			if _, ok := fields[name]; !ok {
+				t.Errorf("%s.%s: required OpenAPI field absent from public JSON", path, name)
+			}
+			if _, ok := properties[name]; !ok {
+				t.Errorf("%s.%s: required OpenAPI field has no property schema", path, name)
+			}
 			if optional[name] {
 				t.Errorf("%s.%s: required OpenAPI field can be omitted", path, name)
 			}
