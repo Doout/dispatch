@@ -28,6 +28,9 @@ type TemporaryEnvironment struct {
 	CleanupOperationID string              `json:"cleanupOperationId"`
 	CleanupJobID       string              `json:"cleanupJobId"`
 	Resources          []TemporaryResource `json:"resources"`
+	AppSpecDigest      string              `json:"appSpecDigest,omitempty"`
+	Hostname           string              `json:"hostname,omitempty"`
+	Routing            *RoutingConfig      `json:"routing,omitempty"`
 }
 type TemporaryResource struct {
 	Kind      string `json:"kind"`
@@ -35,12 +38,13 @@ type TemporaryResource struct {
 	Ownership string `json:"ownership"`
 }
 type TemporaryEnvironmentInput struct {
-	ProjectID       string `json:"projectId"`
-	TemplateID      string `json:"templateId"`
-	ServerID        string `json:"serverId"`
-	Name            string `json:"name"`
-	SourceSHA       string `json:"sourceSha"`
-	LifetimeSeconds int64  `json:"lifetimeSeconds"`
+	ProjectID       string           `json:"projectId"`
+	TemplateID      string           `json:"templateId"`
+	ServerID        string           `json:"serverId"`
+	Name            string           `json:"name"`
+	SourceSHA       string           `json:"sourceSha"`
+	LifetimeSeconds int64            `json:"lifetimeSeconds"`
+	ServiceBindings []ServiceBinding `json:"serviceBindings,omitempty"`
 }
 type TemporaryEnvironmentReview struct {
 	TargetNodeID     string                    `json:"targetNodeId"`
@@ -55,4 +59,7 @@ type TemporaryEnvironmentReview struct {
 	State            string                    `json:"state"`
 	ExpiresAt        time.Time                 `json:"expiresAt"`
 	CreatedAt        time.Time                 `json:"createdAt"`
+	ServiceRevisions map[string]int64          `json:"serviceRevisions,omitempty"`
+	Routing          *RoutingConfig            `json:"routing,omitempty"`
+	Route            *ApplicationRoute         `json:"route,omitempty"`
 }

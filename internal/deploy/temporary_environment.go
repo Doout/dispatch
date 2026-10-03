@@ -41,7 +41,11 @@ func (s *Service) DispatchAccepted(ctx context.Context, id string) error {
 		return errors.New("temporary environment storage unavailable")
 	}
 	e, err := data.TemporaryEnvironmentForApp(ctx, app.ID)
-	if err != nil || e.DeploymentID != id || e.SourceSHA != d.CommitSHA || app.SpecDigest() != d.SpecDigest {
+	expected := e.AppSpecDigest
+	if expected == "" {
+		expected = d.SpecDigest
+	}
+	if err != nil || e.DeploymentID != id || e.SourceSHA != d.CommitSHA || app.SpecDigest() != expected {
 		return store.ErrTemporaryEnvironmentChanged
 	}
 	if d.State.Terminal() {
