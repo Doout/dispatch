@@ -2,20 +2,24 @@
 
 This file records the current roadmap implementation and the evidence still needed
 before release. Implemented code does not close an issue or establish support for
-an untested provider. Feature documents describe the supported paths; the
-[product priorities](product-priorities.md) track the broader product backlog.
+an untested provider. The [live acceptance checklist](paas-release-acceptance.md)
+records the provider, host, routing and storage evidence still required. Feature
+documents describe supported paths; the [product priorities](product-priorities.md)
+track the broader product backlog. The new provisioning and recovery contracts
+are available through APIs, CLI and MCP. Their UI follows this release.
 
 ## Implemented behavior
 
 | Area | Available behavior and limits |
 | --- | --- |
 | Runtime and deployment recovery | A [versioned runtime contract](runtime-contract.md), immutable source commits, and [enrolled Docker agents](remote-runtime.md) support typed execution and durable receipts. Retained Docker, Compose and Helm releases have [reviewed rollback](release-tools.md). Interrupted mutations require inspection before another operation. |
-| Infrastructure | [Provider registration](infrastructure-providers.md), schema discovery, [packaging](provider-packaging.md), [on-demand server operations](on-demand-servers.md), and [pinned agent bootstrap](target-bootstrap.md) share reviewed ownership and recovery records. The bundled infrastructure adapter is a mock; it allocates no real machines. |
+| Infrastructure | [Provider registration](infrastructure-providers.md), schema discovery, [packaging](provider-packaging.md), [on-demand server operations](on-demand-servers.md), and [pinned agent bootstrap](target-bootstrap.md) share reviewed ownership and recovery records. Scoped server inspection and bounded CLI/MCP waits separate allocation, enrollment and runtime readiness, #93. Timeout preserves the original IDs; a verified isolated clone remains non-deployable. The bundled infrastructure adapter is a mock; it allocates no real machines. |
 | Automation access | [Expiring automation credentials](automation-identities.md), explicit project grants, provider/target/template assignments, [quotas](infrastructure-quotas.md), and [mutation receipts](mutation-receipts.md) apply to accepted operations and authorized retries. Scoped PostgreSQL provisioning requires an approved template digest, assigned target and service quota. The separate runtime.cleanup grant permits reviewed artifact removal. [CLI and MCP commands](automation-client.md) cover application configuration, deployment recovery, approved service provisioning and backup schedules through the same APIs and confirmations. |
 | Routing and health | [Managed Docker routes](application-routing.md) publish a candidate after its [captured health policy](deployment-health.md) passes. Workload, route and certificate evidence remain separate. Helm uses native readiness and its rollout behavior. Automatic rollback of an already promoted release is still future work. |
 | Storage and services | [Storage ownership](storage.md) protects retained Docker volumes and Kubernetes PVCs. [Owned service recovery](service-resource-lifecycle.md) preserves accepted credentials and blocks deletion while consumers remain. [Runtime retention](operations.md#runtime-artifacts) reviews images and stopped revisions separately from data deletion. |
 | Machine snapshots | [Snapshot capture, retention and isolated restore](machine-snapshots.md) use provider capabilities, exact disk evidence, fresh identities and quota reservations. Mock conformance exercises this contract. Real snapshot capture and safe clone boot remain release gates. |
-| Workload backups | [Encrypted PostgreSQL backups](workload-backups.md) support owned PostgreSQL 17+ services on Docker, scheduled fresh capture and isolated verification, and reviewed restore. Approved S3-compatible destinations accept encrypted exports up to 4 GiB. A confirmed export supports verification and restore on another authorized target without the source. Capture policies expose missed captures and the last verified recovery point. Retention protects the latest usable archive and exported copies; revoked authority stops unattended work. Generic volume archives, other engines and Helm remain outside this path. |
+| Workload backups | [Encrypted PostgreSQL backups](workload-backups.md) support owned PostgreSQL 17+ services on Docker, scheduled capture and isolated verification, and reviewed restore. An explicitly approved S3-compatible destination receives each verified capture through a durable export operation, #92. Policies report independently verified offsite recovery points, capture age, missed exports and failures. Failure and recovery notifications require an explicitly configured destination. Revoked authority stops unattended work. Exports remain bounded to 4 GiB. |
+| Backup retention and source loss | Local retirement requires independent offsite verification and preserves controller keys, exact object identities and history, #88. Automatic local retirement requires separate policy opt-in, #92. Reviewed offsite deletion requires a store that enforces conditional unversioned deletion; versioned objects remain protected. Admission preserves the last usable recovery point and artifacts needed by active or uncertain operations. An authorized fresh destination can verify and restore offsite data after source loss; independent-host live acceptance remains #90. |
 | Temporary environments | [Finite-lifetime environments](temporary-environments.md) clone a same-project Dockerfile template onto an assigned outbound Docker target. Acceptance pins source, template, selected service credentials, agent identity and routing. It reserves a reviewed unique hostname when the target has managed routing. Expiry removes owned runtime resources and routes while retaining shared servers, selected services, data and history. Unversioned external secret-store references are rejected. |
 | PR previews and source automation | [Durable webhook receipts](events.md), [repository recovery](repository-recovery.md), [preview cleanup](preview-lifecycle.md), scoped source approval and [GitHub Check Runs](application-config.md#github-check-runs) are implemented. Previews deploy on comments by default; automatic updates remain opt-in. |
 | Neon preview databases | [Project-scoped Neon connections](neon-preview-databases.md) create schema-only branches and retain a preview's database across commits. Source trust runs before provisioning or releasing connection values. Reviewed policies can retain, suspend or delete the branch after preview cleanup. A reviewed schema-only reset switches to a new generation while retaining the old branch. |
@@ -29,33 +33,39 @@ an untested provider. Feature documents describe the supported paths; the
    test does not replace the combined checks. The repeatable Kubernetes matrix
    and in-place upgrade passed; retain their [cluster evidence](kubernetes-targets.md)
    with the release.
-2. Choose and validate the first real infrastructure adapter, #74. The choice of
+2. Validate the outbound runtime and offsite recovery on independent hosts, #90.
+   Use two separately enrolled Linux hosts and an approved isolated object store.
+   Prove recognizable PostgreSQL data survives source-host loss and restores on
+   the second host. Exercise reviewed retirement, lost replies, revoked authority
+   and final cleanup. Nested Docker fixtures share a physical host and do not
+   close this gate. Follow the [acceptance checklist](paas-release-acceptance.md).
+3. Choose and validate the first real infrastructure adapter, #74. The choice of
    provider and isolated account is still pending. Complete allocation, lost-reply
    recovery, pinned bootstrap, enrolled workload execution and reviewed deletion
    through the versioned provider boundary. Mock records do not prove a real VM
    was created or became usable.
-3. Prove real snapshot and clone behavior, #75. Run capture, retention, independent
+4. Prove real snapshot and clone behavior, #75. Run capture, retention, independent
    deletion and restore against that adapter. Demonstrate that copied agent keys,
    private receipts and workloads cannot start before identity reset and network
    quarantine. Verify fresh enrollment, the reviewed agent artifact and an
    isolated guest boot. Keep real-provider snapshot and clone support pending
    until this evidence exists.
-4. Exercise public routing with an operator-controlled domain, #5. Real local Docker
+5. Exercise public routing with an operator-controlled domain, #5. Real local Docker
    and Traefik checks cover healthy promotion, failed candidates, retained releases
    and controller/proxy restart recovery. Public DNS, ACME
    issuance and certificate renewal need their own live checks.
-5. Validate the Neon lifecycle in an isolated project, #1. Reviewed retention,
+6. Validate the Neon lifecycle in an isolated project, #1. Reviewed retention,
    suspension, deletion and schema-only replacement pass local API fixtures.
    Verify interrupted operations and retained consumers against a live Neon
    account before claiming live provider support.
 
 ## Remaining feature work
 
-- Extend workload backups with reviewed offsite deletion, local-copy retirement,
+- Extend workload backups beyond the current PostgreSQL-on-Docker path with
   multipart transfer beyond 4 GiB, Helm databases, volume archives and other
-  engines, #18. Current exports remain protected from deletion and are requested
-  explicitly; capture policies create target-local archives.
-- Add policy-driven rollback after promotion, #17. Current health policies gate
+  engines. Scheduled exports and reviewed retirement are implemented in #92 and
+  #88. Independent-host and live object-store acceptance remain open in #90.
+- Add policy-driven rollback after promotion, #89. Current health policies gate
   promotion; retained rollback remains an explicit reviewed action.
 - Add optional outbound mTLS, #6. Existing agents use enrolled keys and
   short-lived sessions over authenticated HTTPS.
