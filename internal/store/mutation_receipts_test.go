@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -38,7 +37,7 @@ func TestMutationReceiptSQLite(t *testing.T) {
 	testMutationReceipt(t, mutationStore(t, filepath.Join(t.TempDir(), "receipts.db")))
 }
 func TestMutationReceiptPostgres(t *testing.T) {
-	url := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	url := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if url == "" {
 		t.Skip("set DISPATCH_TEST_POSTGRES_URL to a disposable PostgreSQL database")
 	}

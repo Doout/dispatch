@@ -27,9 +27,17 @@ func (s *SQLStore) ReserveApplicationRoute(ctx context.Context, plan core.Applic
 		return plan, err
 	}
 	defer tx.Rollback()
+	saved, err := s.reserveApplicationRoute(ctx, tx, plan)
+	if err != nil {
+		return saved, err
+	}
+	return saved, tx.Commit()
+}
+
+func (s *SQLStore) reserveApplicationRoute(ctx context.Context, tx *changeTx, plan core.ApplicationRoute) (core.ApplicationRoute, error) {
 	var current core.ApplicationRoute
 	var raw string
-	err = tx.QueryRowContext(ctx, s.q(`SELECT record FROM application_routes WHERE app_id=?`), plan.AppID).Scan(&raw)
+	err := tx.QueryRowContext(ctx, s.q(`SELECT record FROM application_routes WHERE app_id=?`), plan.AppID).Scan(&raw)
 	if err == nil {
 		if json.Unmarshal([]byte(raw), &current) != nil {
 			return plan, ErrRouteConflict
@@ -41,7 +49,7 @@ func (s *SQLStore) ReserveApplicationRoute(ctx context.Context, plan core.Applic
 			return plan, ErrRouteConflict
 		}
 		if current.RequestedDeploymentID == plan.RequestedDeploymentID {
-			return current, tx.Commit()
+			return current, nil
 		}
 		plan.DeploymentID, plan.Destination = current.DeploymentID, current.Destination
 		plan.PreviousDeploymentID, plan.PreviousDestination = current.PreviousDeploymentID, current.PreviousDestination
@@ -66,7 +74,7 @@ func (s *SQLStore) ReserveApplicationRoute(ctx context.Context, plan core.Applic
 	if err != nil {
 		return plan, err
 	}
-	return plan, tx.Commit()
+	return plan, nil
 }
 
 func (s *SQLStore) SaveApplicationRoute(ctx context.Context, route core.ApplicationRoute) error {

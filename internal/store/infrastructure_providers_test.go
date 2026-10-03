@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ func TestInfrastructureProviderPersistence(t *testing.T) {
 	testInfrastructureProviders(t, filepath.Join(t.TempDir(), "providers.db"))
 }
 func TestInfrastructureProviderPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_PROVIDER_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_PROVIDER_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_PROVIDER_POSTGRES_URL to a disposable database")
 	}

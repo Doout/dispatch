@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"github.com/doout/dispatch/internal/core"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,7 +14,7 @@ func TestRuntimeRetentionDurableFences(t *testing.T) {
 	testRuntimeRetentionDurableFences(t, filepath.Join(t.TempDir(), "retention.db"))
 }
 func TestRuntimeRetentionPostgresFences(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_RETENTION_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_RETENTION_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_RETENTION_POSTGRES_URL to a disposable database")
 	}

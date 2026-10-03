@@ -10,6 +10,8 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/routing"
+	"github.com/doout/dispatch/internal/serviceconn"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
@@ -111,7 +113,7 @@ func (a *API) temporaryEnvironmentOptions(w http.ResponseWriter, r *http.Request
 	writeJSON(w, 200, map[string]any{"templates": templates, "targets": targets, "runtime": "outbound Dockerfile", "omissions": temporaryOmissions()})
 }
 func temporaryOmissions() []string {
-	return []string{"Deployment hooks and hook variables are not copied.", "Service bindings and data are not copied.", "Production domains and routes are not copied; workload health checks are preserved.", "The assigned server is shared and is retained. Named volumes and backup archives are retained.", "The approved source revision is immutable. Local Docker, Compose, Helm and snapshot restores are not supported by this environment path."}
+	return []string{"Deployment hooks and hook variables are not copied.", "Template service bindings and data are not copied. Only selected services are bound and remain shared.", "Production domains are not copied. A configured target routing zone supplies a reviewed unique hostname; workload health checks are preserved.", "The assigned server and selected services are shared and retained. Named volumes and backup archives are retained.", "The approved source revision is immutable. Local Docker, Compose, Helm and snapshot restores are not supported by this environment path."}
 }
 func (a *API) reviewTemporaryEnvironment(w http.ResponseWriter, r *http.Request) {
 	d, ok := a.temporaryStore(w)
@@ -168,12 +170,56 @@ func (a *API) reviewTemporaryEnvironment(w http.ResponseWriter, r *http.Request)
 		a.internal(w, err)
 		return
 	}
+	if len(input.ServiceBindings) > 32 {
+		problem(w, 422, "Too many service bindings", "Select at most 32 same-project service bindings.")
+		return
+	}
+	services := map[string]core.Service{}
+	serviceRevisions := map[string]int64{}
+	for _, binding := range input.ServiceBindings {
+		service, err := a.store.GetService(r.Context(), binding.ServiceRef)
+		if err != nil || service.ProjectID != input.ProjectID {
+			problem(w, 422, "Service unavailable", "Select a service in this project.")
+			return
+		}
+		if service.ProvisionTarget != nil && service.ProvisionTarget.ServerID != "" && service.ProvisionTarget.ServerID != input.ServerID {
+			problem(w, 422, "Service target unavailable", "Built-in service bindings require the environment's target. Register an externally reachable connection separately.")
+			return
+		}
+		for _, field := range service.Fields {
+			if field.SecretRef == "" {
+				continue
+			}
+			secret, err := a.store.GetSecret(r.Context(), field.SecretRef)
+			if err != nil {
+				problem(w, 422, "Service credential unavailable", "A selected service credential cannot be captured.")
+				return
+			}
+			if secret.Source != "" && secret.Source != core.SecretSourceLocal {
+				problem(w, 422, "Immutable service credential required", "External secret-store references need immutable version support. Use encrypted service fields or local secret references for this environment.")
+				return
+			}
+		}
+		services[service.ID], serviceRevisions[service.ID] = service, service.Revision
+	}
+	if err := serviceconn.ValidateBindings(input.ServiceBindings, core.BuildTypeDockerfile, services); err != nil {
+		problem(w, 422, "Invalid service bindings", err.Error())
+		return
+	}
+	plan, err := routing.Plan(core.Deployment{}, clone, target)
+	if err != nil {
+		problem(w, 422, "Managed route unavailable", err.Error())
+		return
+	}
+	if plan != nil {
+		clone.Domain = plan.Hostname
+	}
 	credential, err := d.GetEdgeCredential(r.Context(), target.AgentNodeID)
 	if err != nil || credential.Revoked || credential.PublicKey == "" {
 		problem(w, 422, "Target enrollment unavailable", "Choose a current enrolled runtime identity.")
 		return
 	}
-	review := core.TemporaryEnvironmentReview{TargetNodeID: target.AgentNodeID, TargetGeneration: credential.Generation, ID: ulid.Make().String(), EnvironmentID: ulid.Make().String(), Input: input, TemplateDigest: template.SpecDigest(), Clone: clone, Omissions: temporaryOmissions(), State: "prepared", CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute)}
+	review := core.TemporaryEnvironmentReview{ServiceRevisions: serviceRevisions, Routing: target.Routing, Route: plan, TargetNodeID: target.AgentNodeID, TargetGeneration: credential.Generation, ID: ulid.Make().String(), EnvironmentID: ulid.Make().String(), Input: input, TemplateDigest: template.SpecDigest(), Clone: clone, Omissions: temporaryOmissions(), State: "prepared", CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute)}
 	review.Digest = mutationHash(review)
 	if err = d.CreateTemporaryEnvironmentReview(r.Context(), review); err != nil {
 		a.internal(w, err)

@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -81,7 +80,7 @@ func TestAnalyticsOutboxAtomicCompletionAndExactAck(t *testing.T) {
 }
 
 func TestPostgresAnalyticsCompletionWhenConfigured(t *testing.T) {
-	url := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	url := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if url == "" {
 		t.Skip("PostgreSQL not configured")
 	}

@@ -302,6 +302,9 @@ func (s *SQLStore) captureServiceBindings(ctx context.Context, tx *changeTx, d c
 			if core.PlainSecretType(core.SecretType(secretType)) {
 				return errors.New("plain variables cannot be used as service credentials")
 			}
+			if frozen, _ := ctx.Value(frozenServiceBindingsKey{}).(bool); frozen && source != "" && source != string(core.SecretSourceLocal) {
+				return errors.New("external service credentials require immutable secret versions")
+			}
 			if source == "" || source == string(core.SecretSourceLocal) {
 				field.CapturedSecretID = field.SecretRef
 				field.CapturedSecretValue = cipher

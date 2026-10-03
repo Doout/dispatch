@@ -37,6 +37,134 @@ paths:
               schema: { $ref: '#/components/schemas/NeonProvider' }
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+  /workload-backup-policies:
+    get:
+      operationId: listWorkloadBackupPolicies
+      description: Lists project-visible scheduled capture policies. Requests, archive keys and integrity assertions stay encrypted and are not returned.
+      parameters:
+        - { in: query, name: projectId, schema: { type: string } }
+      responses:
+        '200':
+          description: Capture policies with cadence, missed captures and last verified recovery point.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/WorkloadBackupPolicy' } }
+    post:
+      operationId: createWorkloadBackupPolicy
+      description: Requires project.configure and deployment.run on the owned PostgreSQL source. Immutable cadence, source ownership and actor authority are captured before acceptance. Scheduled archives verify in isolation before older verified policy archives become retention candidates. The newest keepLast verified captures remain protected while enabled. Current grants and original enrollment are checked before unattended mutation.
+      parameters:
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, sourceRunId, intervalHours, keepLast, confirmRetention]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 80 }
+                sourceRunId: { type: string }
+                intervalHours: { type: integer, minimum: 1, maximum: 8760 }
+                keepLast: { type: integer, minimum: 1, maximum: 1000 }
+                confirmRetention: { type: string, description: Exact policy name approving automatic removal of older policy archives after newer verified recovery points exist. }
+                checks:
+                  type: array
+                  maxItems: 16
+                  writeOnly: true
+                  items:
+                    type: object
+                    required: [query, expected]
+                    properties:
+                      query: { type: string, maxLength: 4096, writeOnly: true }
+                      expected: { type: string, maxLength: 4096, writeOnly: true }
+      responses:
+        '201':
+          description: Durable policy acceptance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
+        '202':
+          description: Original policy acceptance replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backup-policies/{policyId}:
+    parameters:
+      - { in: path, name: policyId, required: true, schema: { type: string } }
+    get:
+      operationId: getWorkloadBackupPolicy
+      description: Requires project.view. Inspects the original policy and latest recovery-point metadata.
+      responses:
+        '200':
+          description: Capture policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkloadBackupPolicy' }
+    put:
+      operationId: updateWorkloadBackupPolicy
+      description: Requires project.configure and deployment.run. Explicitly pauses or resumes the current policy by revision and exact name. Resume rechecks the frozen source, target identity and original actor. Lost responses require inspection; do not automatically retry a changed revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, enabled, confirmName]
+              properties:
+                revision: { type: integer, minimum: 1 }
+                enabled: { type: boolean }
+                confirmName: { type: string }
+      responses:
+        '200':
+          description: Updated policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkloadBackupPolicy' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backup-stores:
+    get:
+      operationId: listWorkloadBackupStores
+      description: Lists approved S3-compatible destinations visible through project.view. Signing credentials and object access URLs are never returned.
+      parameters:
+        - { in: query, name: projectId, schema: { type: string } }
+      responses:
+        '200':
+          description: Project-scoped offsite destination metadata
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/BackupObjectStore' } }
+    post:
+      operationId: registerWorkloadBackupStore
+      description: Owner-only immutable project-scoped registration using an existing write-only JSON secret. Credentials contain accessKeyId, secretAccessKey and optional sessionToken. Use a bucket/prefix-scoped credential allowing HEAD, GET and create-only PUT; this API grants no object deletion. HTTPS is required. Maximum encrypted object size is 4 GiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackupObjectStoreInput' }
+      responses:
+        '201':
+          description: Registered destination metadata without credential values
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupObjectStore' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backup-stores/{storeId}:
+    get:
+      operationId: getWorkloadBackupStore
+      description: Requires project.view in the destination's project. Does not release signing credentials or signed object access.
+      parameters:
+        - { in: path, name: storeId, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Approved destination metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupObjectStore' }
+        '404': { $ref: '#/components/responses/Problem' }
   /workload-backups:
     get:
       operationId: listWorkloadBackups
@@ -113,13 +241,43 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/WorkloadBackupOperation' }
         '404': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/export:
+    post:
+      operationId: exportWorkloadBackup
+      description: Requires project.configure and deployment.run. Copies the complete encrypted archive and encrypted manifest to an approved same-project store using conditional create-only PUT. Lost replies reconcile the same objects and exact bytes. A confirmed manifest pins the original pullable image digest. Maximum encrypted archive size is the store limit, capped at 4 GiB; manifests are capped at 1 MiB. Exported archives remain protected from deletion until reviewed offsite deletion is supported.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [storeId]
+              properties:
+                storeId: { type: string }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /workload-backups/{id}/verify:
     post:
       operationId: verifyWorkloadBackup
-      description: Requires project.configure and deployment.run. Authenticates and restores into isolated temporary storage without connecting to the source. Success requires integrity checks and owned temporary-resource cleanup.
+      description: Requires project.configure and deployment.run. Authenticates and restores into isolated temporary storage without connecting to the source. Optional destinationRunId selects a ready same-project Docker PostgreSQL target without overwriting its live service. Another target requires a confirmed offsite copy and current target authorization. Success requires integrity checks and owned temporary-resource cleanup.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                destinationRunId: { type: string, description: Owned PostgreSQL service provision run used only to select the verification target. }
       responses:
         '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
         '409': { $ref: '#/components/responses/Problem' }
@@ -164,7 +322,7 @@ paths:
   /workload-backups/{id}/restore/{destinationId}/preview:
     post:
       operationId: reviewWorkloadBackupRestore
-      description: Requires project.configure. Binds a same-project, same-target owned destination's container and volume identity. Confirmation name is the destination service name. Active consumers block overwrite.
+      description: Requires project.configure. Binds a same-project owned destination's container, volume and current enrolled identity. Another target requires a confirmed offsite copy. Confirmation name is the destination service name. Active consumers block overwrite. Source availability is not required for offsite recovery.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: destinationId, required: true, schema: { type: string }, description: Owned service provision run ID. }
@@ -188,10 +346,42 @@ paths:
         '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /service-templates:
+    get:
+      operationId: listServiceTemplates
+      description: Lists saved and repository templates in projects visible to the caller, including configSha for exact owner approval. Does not provision resources or expose service credentials.
+      responses:
+        '200': { description: Visible service templates and typed input metadata. }
+  /service-templates/{id}:
+    get:
+      operationId: getServiceTemplate
+      description: Requires project.view. Returns the selected saved or repository template and current configSha.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Visible service template. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs:
+    get:
+      operationId: listServiceProvisionRuns
+      description: Lists provision runs in projects visible through project.view. Generated credentials and encrypted accepted requests are excluded.
+      responses:
+        '200': { description: Visible provision run history. }
+  /service-provision-runs/{id}:
+    get:
+      operationId: getServiceProvisionRun
+      description: Requires project.view. Inspects the original provision run and sanitized outcome.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Original provision run. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /service-templates/{id}/runs:
     post:
       operationId: provisionServiceTemplate
-      description: Requires a direct user with project.configure and deployment.run. Built-in requests capture encrypted configuration and generated credentials before mutation. Idempotency-Key replays the original accepted run; custom scripts remain manual after uncertain outcomes. Neon parent-data templates require owner confirmation through confirmDataCopy; automatic previews require schema-only.
+      description: Direct users require project.configure and deployment.run. Scoped automation requires project.view and service.provision, a mandatory Idempotency-Key, an assigned target, exact owner-approved template ID@digest, and available maxServices capacity. Automation supports built-in PostgreSQL Docker and Helm templates without script or repository execution. Built-in requests capture encrypted configuration and generated credentials before mutation. Identical retries return the original run; custom scripts require manual recovery after uncertain outcomes. Neon parent-data templates require owner confirmation through confirmDataCopy; automatic previews require schema-only.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -450,6 +640,58 @@ paths:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
         '200': { description: Owned server operation history and recovery state }
+  /infrastructure/operations/{id}/{action}:
+    post:
+      operationId: changeInfrastructureOperation
+      description: Requires current project infrastructure.modify and provider assignment. Retry continues the original operation and request identity; cancel does not undo an allocation. Inspect uncertain outcomes before further mutation.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: action, required: true, schema: { type: string, enum: [retry, cancel] } }
+      responses:
+        '204': { description: Original operation updated. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}/adopt:
+    post:
+      operationId: adoptManagedServer
+      description: Requires current project infrastructure.modify and provider assignment. Inspects the exact reviewed provider resource and ownership before adoption; foreign resources and active leases block adoption.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resourceId, revision, confirmName]
+              properties:
+                resourceId: { type: string }
+                revision: { type: integer, minimum: 1 }
+                confirmName: { type: string }
+      responses:
+        '200': { description: Original owned managed server adopted. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}/enrollment:
+    post:
+      operationId: enrollManagedServer
+      description: Requires current project infrastructure.modify and provider assignment. Explicitly issues a short-lived single-use token for an allocated unenrolled machine. Does not replace an enrolled identity or refresh an approved bootstrap. Tokens must be stored privately; do not automatically retry after losing a response.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '201':
+          description: Single-use enrollment credential, returned once with Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodeId, token, expiresAt]
+                properties:
+                  nodeId: { type: string }
+                  token: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers/{id}/delete-review:
     post:
       parameters:
@@ -576,6 +818,7 @@ paths:
                 maxServers: { type: integer, minimum: -1 }
                 maxTemporaryEnvironments: { type: integer, minimum: -1 }
                 maxSnapshots: { type: integer, minimum: -1 }
+                maxServices: { type: integer, minimum: -1, description: Project-wide bound on nondeleted owned service resources for scoped provisioning. Zero blocks new scoped provisioning; -1 explicitly allows unlimited resources. Omitted fields preserve the current value for older clients. }
                 maxTemporaryLifetimeSeconds: { type: integer, minimum: 0, maximum: 31536000 }
                 providers:
                   type: array
@@ -1490,6 +1733,8 @@ paths:
         type: string
     post:
       operationId: rollbackDeploymentRelease
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       description: Requires deployment.run. Rechecks the expected current release and creates an audited deployment
         using retained artifacts. Does not undo database migrations or external side effects.
       responses:
@@ -1498,7 +1743,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Deployment'
+                oneOf:
+                  - { $ref: '#/components/schemas/Deployment' }
+                  - { $ref: '#/components/schemas/MutationReceipt' }
         '400':
           $ref: '#/components/responses/Problem'
         '403':
@@ -1515,6 +1762,7 @@ paths:
               - confirmDeploymentId
               - expectedCurrentDeploymentId
               - confirmDatabaseNotReverted
+              - expectedReviewDigest
               properties:
                 confirmDeploymentId:
                   type: string
@@ -1523,6 +1771,8 @@ paths:
                 confirmDatabaseNotReverted:
                   type: boolean
                   const: true
+                expectedReviewDigest:
+                  type: string
   /deployments/{id}/diagnosis:
     parameters:
     - name: id
@@ -1879,7 +2129,7 @@ paths:
         type: string
     get:
       operationId: getProjectRetention
-      description: Requires project.manage. Read an explicit history policy; no automatic cleanup is enabled.
+      description: Requires project.manage or runtime.cleanup. Read the saved project policy; runtime.cleanup does not grant policy editing or history pruning.
         Requires Operations to be enabled; otherwise returns 403 Operations disabled.
       responses:
         '200':
@@ -1928,7 +2178,7 @@ paths:
       operationId: previewProjectRetention
       description: >-
         Requires Operations to be enabled; otherwise returns 403 Operations disabled.
-        Requires project.manage. Count eligible historical logs/runs while preserving
+        Requires project.manage for history or runtime.cleanup for scope runtime. Count eligible historical logs/runs while preserving
         current, successful, baseline, and workflow dependencies. Optional expectedPolicy
         is compared with the saved policy in the same transaction that evaluates
         eligibility. A mismatch returns 409. This does not save policy changes or
@@ -1962,7 +2212,7 @@ paths:
       operationId: applyProjectRetention
       description: >-
         Requires Operations to be enabled; otherwise returns 403 Operations disabled.
-        Requires project.manage and explicit project confirmation. Reevaluate eligibility
+        Requires project.manage for history or runtime.cleanup for scope runtime, and explicit project confirmation. Reevaluate eligibility
         and delete only unprotected data in this project. Optional expectedPolicy is
         compared transactionally with the saved policy; a mismatch returns 409 without
         cleanup. The reviewed policy is applied without substituting a newer policy.
@@ -1991,7 +2241,7 @@ paths:
   /projects/{id}/retention/runtime-reviews/{reviewId}:
     get:
       operationId: getRuntimeRetentionReview
-      description: Requires project.manage and Operations enabled. Reads the original runtime cleanup candidates and per-item outcomes without scheduling work.
+      description: Requires project.manage or runtime.cleanup and Operations enabled. Reads the original runtime cleanup candidates and per-item outcomes without scheduling work.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: reviewId, required: true, schema: { type: string } }
@@ -3725,7 +3975,7 @@ paths:
       responses:
         '200': { description: Assigned provider and target references }
     put:
-      summary: Assign an existing provider or target (controller owner)
+      summary: Assign an existing provider, target, public SSH key or exact service template digest (controller owner)
       requestBody:
         required: true
         content:
@@ -3734,15 +3984,15 @@ paths:
               type: object
               required: [kind, resourceId]
               properties:
-                kind: { type: string, enum: [provider, target, ssh_key] }
-                resourceId: { type: string }
+                kind: { type: string, enum: [provider, target, ssh_key, service_template] }
+                resourceId: { type: string, description: Service template approvals use the exact template ID@configSha returned by the template inventory. }
       responses:
         '200': { description: Resource assigned }
         '422': { description: Resource missing or owned by another project }
   /infrastructure/assignments/{projectId}/{kind}/{resourceId}:
     parameters:
       - { in: path, name: projectId, required: true, schema: { type: string } }
-      - { in: path, name: kind, required: true, schema: { type: string, enum: [provider, target, ssh_key] } }
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [provider, target, ssh_key, service_template] } }
       - { in: path, name: resourceId, required: true, schema: { type: string } }
     delete:
       summary: Remove an explicit resource assignment (controller owner)
@@ -3911,6 +4161,9 @@ paths:
         "200": { $ref: "#/components/responses/JSONList" }
     post:
       operationId: createApp
+      description: Requires project.configure and a ready assigned target. With Idempotency-Key, atomically creates one application and returns its durable receipt. Identical authorized retries inspect the original application instead of creating another.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -3942,6 +4195,12 @@ paths:
                   description: Docker Compose definition stored and deployed without Git.
                 branch: { type: string, default: main }
                 buildType: { type: string, enum: [dockerfile, compose, helm] }
+                contextPath: { type: string, default: '.' }
+                dockerfilePath: { type: string, default: Dockerfile }
+                composePath: { type: string, default: compose.yml }
+                domain: { type: string }
+                containerPort: { type: integer }
+                healthPolicy: { $ref: '#/components/schemas/HealthPolicy' }
                 helmChart:
                   type: string
                   description: OCI or HTTPS chart reference, a relative chart name when helmRepository is set, or a relative path when sourceRepo is set.
@@ -3972,6 +4231,11 @@ paths:
                   description: Legacy default for manual deployments. Event rules should define their own hook.
       responses:
         "201": { description: Application specification created. }
+        "202":
+          description: Application created once or original acceptance replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
         "400": { $ref: "#/components/responses/Problem" }
         "413": { $ref: "#/components/responses/Problem" }
   /helm/inspect:
@@ -4020,6 +4284,13 @@ paths:
   /apps/{appId}:
     parameters:
       - $ref: "#/components/parameters/AppID"
+    get:
+      operationId: getApp
+      description: Requires project.view. Returns the accepted application by ID; scoped callers receive redacted credential fields.
+      responses:
+        "200": { description: Current application specification. }
+        "403": { $ref: '#/components/responses/Problem' }
+        "404": { $ref: '#/components/responses/Problem' }
     delete:
       operationId: deleteApp
       description: Cleans deployed resources, then transactionally deletes the application and its deployment history.
@@ -4510,19 +4781,23 @@ paths:
   /temporary-environments/review:
     post:
       summary: Review a pinned Application template clone and finite lifetime
-      description: Captures the full source SHA, template digest and current enrolled target identity. Omits hooks, hook variables, service bindings, data and production routing; rejects route or certificate health policies. Requires project.view, project.configure and deployment.run plus target assignment. Templates with global source credentials require an owner.
+      description: Captures the full source SHA, template digest and current enrolled target identity. Select service bindings explicitly; acceptance freezes their revisions and encrypted connection values. Built-in services must share the target. External secret-store references require immutable version support and are rejected. Hooks, template bindings, data and production domains are omitted. A configured target routing zone supplies a reviewed unique hostname. Workload health checks remain; route and certificate checks are separate. Requires project.view, project.configure and deployment.run plus target assignment. Templates with global source credentials require an owner.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/TemporaryEnvironmentInput' }
       responses:
-        '201': { description: Saved review with digest, pinned clone, explicit omissions and 15-minute review deadline }
+        '201':
+          description: Saved review with digest, pinned clone and services, routing, explicit omissions and 15-minute review deadline
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemporaryEnvironmentReview' }
         '422': { description: Unsupported template, unavailable target, invalid source SHA or disallowed lifetime }
   /temporary-environments:
     post:
       summary: Atomically accept a reviewed temporary environment
-      description: Requires current project permissions and target assignment. Atomically records quota ownership, generated app, fixed deployment and public receipt. Same-key retries replay before checking the consumed review. Receipt resourceId is the environment ID and operationKind is deployment.
+      description: Requires current project permissions and target assignment. Atomically rechecks template, selected services, target identity and routing, reserves the hostname and quota, and records the generated app, fixed deployment and public receipt. Same-key retries replay before checking the consumed review. Receipt resourceId is the environment ID and operationKind is deployment.
       parameters:
         - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
       requestBody:
@@ -4729,6 +5004,30 @@ components:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{1,39}$' }
         sourceSha: { type: string, pattern: '^([a-f0-9]{40}|[a-f0-9]{64})$' }
         lifetimeSeconds: { type: integer, minimum: 1, maximum: 31536000 }
+        serviceBindings:
+          type: array
+          maxItems: 32
+          description: Explicit same-project Dockerfile environment mappings. Omission copies no template bindings. Selected services remain shared and retained.
+          items: { $ref: '#/components/schemas/ServiceBinding' }
+    TemporaryEnvironmentReview:
+      type: object
+      required: [id, environmentId, input, templateDigest, clone, omissions, digest, state, expiresAt, createdAt, targetNodeId, targetGeneration]
+      properties:
+        id: { type: string }
+        environmentId: { type: string }
+        input: { $ref: '#/components/schemas/TemporaryEnvironmentInput' }
+        templateDigest: { type: string }
+        clone: { type: object, description: Captured generated application configuration with credential values redacted. }
+        omissions: { type: array, items: { type: string } }
+        digest: { type: string }
+        state: { type: string }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        targetNodeId: { type: string }
+        targetGeneration: { type: integer }
+        serviceRevisions: { type: object, additionalProperties: { type: integer } }
+        routing: { $ref: '#/components/schemas/RoutingConfig' }
+        route: { $ref: '#/components/schemas/ApplicationRoute' }
     TemporaryEnvironmentExtension:
       type: object
       additionalProperties: false
@@ -4754,6 +5053,9 @@ components:
         templateId: { type: string }
         templateDigest: { type: string }
         sourceSha: { type: string }
+        appSpecDigest: { type: string }
+        hostname: { type: string, description: Reviewed unique hostname when managed routing is configured. }
+        routing: { $ref: '#/components/schemas/RoutingConfig' }
         appId: { type: string }
         deploymentId: { type: string }
         serverId: { type: string }
@@ -4776,6 +5078,45 @@ components:
               kind: { type: string }
               id: { type: string }
               ownership: { type: string, enum: [owned, shared, retained] }
+    BackupObjectStoreInput:
+      type: object
+      additionalProperties: false
+      required: [projectId, name, credentialSecretId, config]
+      properties:
+        projectId: { type: string }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        credentialSecretId: { type: string, description: Write-only JSON secret reference. No credential value is returned. }
+        config: { $ref: '#/components/schemas/BackupObjectStoreConfig' }
+    BackupObjectStoreConfig:
+      type: object
+      additionalProperties: false
+      required: [endpoint, bucket, region, prefix, maxBytes]
+      properties:
+        endpoint: { type: string, format: uri, description: Bare HTTPS S3-compatible endpoint without user info, query, fragment or additional path. }
+        bucket: { type: string }
+        region: { type: string }
+        prefix: { type: string, description: Relative object prefix with no traversal components. }
+        maxBytes: { type: integer, format: int64, minimum: 1, maximum: 4294967296 }
+    BackupObjectStore:
+      type: object
+      required: [id, projectId, name, credentialSecretId, config, createdAt]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        name: { type: string }
+        credentialSecretId: { type: string }
+        config: { $ref: '#/components/schemas/BackupObjectStoreConfig' }
+        createdAt: { type: string, format: date-time }
+    BackupOffsiteArtifact:
+      type: object
+      required: [storeId, archiveKey, manifestKey, manifestChecksum, imageReference, confirmedAt]
+      properties:
+        storeId: { type: string }
+        archiveKey: { type: string }
+        manifestKey: { type: string }
+        manifestChecksum: { type: string }
+        imageReference: { type: string, description: Original image repository with immutable sha256 pull digest. }
+        confirmedAt: { type: string, format: date-time }
     WorkloadBackupConfirmation:
       type: object
       required: [confirmation]
@@ -4811,6 +5152,7 @@ components:
         keyId: { type: string }
         location: { type: string, const: target-local }
         imageId: { type: string }
+        offsite: { $ref: '#/components/schemas/BackupOffsiteArtifact' }
         policy: { type: string, enum: [retain, suspend, delete] }
         checkCount: { type: integer }
         verificationState: { type: string }
@@ -4828,11 +5170,15 @@ components:
         id: { type: string }
         backupId: { type: string }
         projectId: { type: string }
-        action: { type: string, enum: [backup, verify, restore, delete] }
+        action: { type: string, enum: [backup, verify, restore, delete, export] }
         state: { type: string, enum: [running, succeeded, failed, unknown, unresolved] }
         targetRunId: { type: string }
         targetName: { type: string }
         targetResourceId: { type: string }
+        offsiteStoreId: { type: string }
+        executionServerId: { type: string }
+        executionNodeId: { type: string }
+        executionGeneration: { type: integer }
         revision: { type: integer }
         recoveryAfter: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
@@ -5611,6 +5957,33 @@ components:
         digest: { type: string, description: Exact digest returned by the current creation or deletion review. }
         confirmName: { type: string, description: Exact reviewed server or snapshot name. }
         requestKey: { type: string, description: Legacy retry key, required only when Idempotency-Key is omitted. }
+    WorkloadBackupPolicy:
+      type: object
+      required: [id, projectId, sourceRunId, serverId, name, enabled, revision, intervalHours, keepLast, nextCaptureAt, missedCaptures, state]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        sourceRunId: { type: string }
+        sourceResourceId: { type: string }
+        serverId: { type: string }
+        nodeId: { type: string }
+        nodeGeneration: { type: integer }
+        name: { type: string }
+        enabled: { type: boolean }
+        revision: { type: integer }
+        intervalHours: { type: integer }
+        keepLast: { type: integer }
+        nextCaptureAt: { type: string, format: date-time }
+        lastScheduledAt: { type: string, format: date-time }
+        lastAttemptAt: { type: string, format: date-time }
+        lastSuccessAt: { type: string, format: date-time }
+        lastBackupId: { type: string }
+        lastVerifiedBackupId: { type: string }
+        missedCaptures: { type: integer }
+        state: { type: string }
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     MutationReceipt:
       type: object
       required: [id, projectId, action, operationKind, operationId, state, retryUntil, recoveryActions]
@@ -5618,7 +5991,7 @@ components:
         id: { type: string }
         projectId: { type: string }
         action: { type: string }
-        operationKind: { type: string, enum: [deployment, infrastructure_operation, service_provision, service_resource, temporary_environment, workload_backup] }
+        operationKind: { type: string, enum: [application, deployment, infrastructure_operation, service_provision, service_resource, temporary_environment, workload_backup, workload_backup_policy] }
         operationId: { type: string }
         operationUrl: { type: string }
         resourceId: { type: string }

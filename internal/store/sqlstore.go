@@ -882,6 +882,12 @@ func (s *SQLStore) CreateApp(ctx context.Context, app core.App) error {
 	if err = s.insertApp(ctx, tx, app); err != nil {
 		return err
 	}
+	if err = s.BindMutationAcceptance(ctx, tx.Tx, "application", app.ID); err != nil {
+		return err
+	}
+	if err = s.UpdateMutationOutcome(ctx, tx.Tx, "application", app.ID, "succeeded"); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 func (s *SQLStore) insertApp(ctx context.Context, target *changeTx, app core.App) error {

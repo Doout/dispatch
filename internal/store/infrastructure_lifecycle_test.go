@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,7 +19,7 @@ func TestInfrastructureLifecycleSQLite(t *testing.T) {
 	testInfrastructureLifecycle(t, filepath.Join(t.TempDir(), "lifecycle.db"))
 }
 func TestInfrastructureLifecyclePostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_PROVIDER_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_PROVIDER_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_PROVIDER_POSTGRES_URL to a disposable database")
 	}

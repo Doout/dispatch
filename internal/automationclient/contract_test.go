@@ -40,7 +40,7 @@ func TestSupportedOpenAPIContract(t *testing.T) {
 	}
 	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
 	values := map[string]any{"DeploymentReview": core.DeploymentReview{ServiceRevisions: map[string]int64{}}, "InfrastructureAcceptance": InfrastructureAcceptance{ReviewID: "review"}, "ServerCreateReview": ServerCreateReview{Bootstrap: &BootstrapInput{}, SourceSnapshotID: "snapshot"}, "ProviderOptionsInput": ProviderOptionsInput{}, "SnapshotReviewInput": SnapshotReviewInput{RetainUntil: "2030-01-01T00:00:00Z"}}
-	values["TemporaryEnvironmentInput"] = TemporaryEnvironmentInput{}
+	values["TemporaryEnvironmentInput"] = TemporaryEnvironmentInput{ServiceBindings: []core.ServiceBinding{{Alias: "db", ServiceRef: "service-1", Environment: map[string]string{"DATABASE_URL": "connectionUrl"}}}}
 	values["TemporaryEnvironmentExtension"] = TemporaryEnvironmentExtension{}
 	values["TemporaryEnvironmentCleanup"] = TemporaryEnvironmentCleanup{}
 	for name, value := range values {
@@ -157,6 +157,8 @@ func TestRecoveryRequestPropertiesMatchOpenAPI(t *testing.T) {
 		"backup_delete":    RecoveryConfirmation{ResourceConfirmation{}},
 		"backup_restore":   RecoveryConfirmation{ResourceConfirmation{}},
 		"backup_create":    WorkloadBackupCreateInput{Checks: []core.BackupIntegrityCheck{{}}},
+		"backup_export":    WorkloadBackupExportInput{},
+		"backup_verify":    WorkloadBackupVerificationInput{},
 		"retention_review": RuntimeRetentionReviewInput{ExpectedPolicy: &recoveryPolicy},
 		"retention_apply":  RuntimeRetentionApplyInput{ExpectedPolicy: &recoveryPolicy},
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ func TestOperationsPersistenceAndProtection(t *testing.T) {
 	testOperations(t, filepath.Join(t.TempDir(), "operations.db"))
 }
 func TestOperationsPostgresIntegration(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_OPERATIONS_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_OPERATIONS_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_OPERATIONS_POSTGRES_URL to a disposable database")
 	}

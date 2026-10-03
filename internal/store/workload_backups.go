@@ -113,7 +113,7 @@ func (s *SQLStore) insertWorkloadBackupOperation(ctx context.Context, tx *sql.Tx
 			q += ` FOR UPDATE`
 		}
 		resource, err := scanServiceResource(tx.QueryRowContext(ctx, s.q(q), target))
-		if err != nil || resource.ProjectID != b.ProjectID || resource.Target.ServerID != b.ServerID || resource.State != "ready" || resource.LeaseUntil.After(time.Now()) {
+		if err != nil || resource.ProjectID != b.ProjectID || resource.Target.ServerID != backupOperationServer(b, o) || resource.State != "ready" || resource.LeaseUntil.After(time.Now()) {
 			return ErrWorkloadBackupChanged
 		}
 		var active int
@@ -141,7 +141,7 @@ func (s *SQLStore) insertWorkloadBackupOperation(ctx context.Context, tx *sql.Tx
 			}
 		}
 	}
-	_, err := tx.ExecContext(ctx, s.q(`INSERT INTO workload_backup_operations(id,backup_id,project_id,source_run_id,target_run_id,action,state,revision,lease_token,lease_until,input_cipher,payload,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`), o.ID, b.ID, b.ProjectID, b.SourceRunID, o.TargetRunID, o.Action, o.State, o.Revision, o.LeaseToken, stamp(o.LeaseUntil), o.EncryptedInput, jsonText(o), stamp(o.CreatedAt))
+	_, err := tx.ExecContext(ctx, s.q(`INSERT INTO workload_backup_operations(id,backup_id,project_id,source_run_id,target_run_id,action,state,revision,lease_token,lease_until,input_cipher,payload,created_at,offsite_store_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), o.ID, b.ID, b.ProjectID, b.SourceRunID, o.TargetRunID, o.Action, o.State, o.Revision, o.LeaseToken, stamp(o.LeaseUntil), o.EncryptedInput, jsonText(o), stamp(o.CreatedAt), backupStoreReference(o.OffsiteStoreID))
 	if err != nil {
 		return err
 	}
@@ -166,11 +166,37 @@ func (s *SQLStore) CreateWorkloadBackup(ctx context.Context, b core.WorkloadBack
 	return tx.Commit()
 }
 func (s *SQLStore) CreateWorkloadBackupOperation(ctx context.Context, o core.WorkloadBackupOperation, revision int64) error {
+	original, err := s.GetWorkloadBackup(ctx, o.BackupID)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if original.CapturePolicyID != "" {
+		policy, e := s.lockBackupPolicy(ctx, tx.Tx, original.CapturePolicyID)
+		if e != nil {
+			return e
+		}
+		var active int
+		if e = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backup_operations o JOIN workload_backups b ON b.id=o.backup_id WHERE b.capture_policy_id=? AND o.state IN ('running','unknown')`), policy.ID).Scan(&active); e != nil {
+			return e
+		}
+		if active > 0 {
+			return ErrWorkloadBackupChanged
+		}
+		if policy.Enabled && o.Action == "delete" {
+			protected, e := s.protectedPolicyBackup(ctx, tx.Tx, policy, original.ID)
+			if e != nil {
+				return e
+			}
+			if protected {
+				return ErrWorkloadBackupChanged
+			}
+		}
+	}
 	q := `SELECT payload,input_cipher,revision FROM workload_backups WHERE id=?`
 	if s.postgres {
 		q += ` FOR UPDATE`
@@ -179,7 +205,10 @@ func (s *SQLStore) CreateWorkloadBackupOperation(ctx context.Context, o core.Wor
 	if err != nil {
 		return err
 	}
-	if b.Revision != revision || b.State == "deleted" || (o.Action == "verify" || o.Action == "restore") && b.State != "ready" {
+	if o.Action == "delete" && b.Offsite != nil {
+		return ErrWorkloadBackupChanged
+	}
+	if b.Revision != revision || b.State == "deleted" || (o.Action == "verify" || o.Action == "restore" || o.Action == "export") && b.State != "ready" {
 		return ErrWorkloadBackupChanged
 	}
 	if err = s.insertWorkloadBackupOperation(ctx, tx.Tx, b, o); err != nil {
@@ -207,7 +236,7 @@ func (s *SQLStore) CompleteWorkloadBackupOperation(ctx context.Context, b core.W
 	before = b.Revision
 	b.Revision++
 	b.UpdatedAt = o.UpdatedAt
-	result, err = tx.ExecContext(ctx, s.q(`UPDATE workload_backups SET state=?,revision=?,payload=? WHERE id=? AND revision=?`), b.State, b.Revision, jsonText(b), b.ID, before)
+	result, err = tx.ExecContext(ctx, s.q(`UPDATE workload_backups SET state=?,revision=?,payload=?,offsite_store_id=? WHERE id=? AND revision=?`), b.State, b.Revision, jsonText(b), backupOffsiteStore(b), b.ID, before)
 	if err = changed(result, err); err != nil {
 		return err
 	}
@@ -248,12 +277,12 @@ func (s *SQLStore) ClaimWorkloadBackupRecovery(ctx context.Context, id string, n
 
 // Reconciliation acknowledges only expired uncertain data operations on the same current agent.
 func (s *SQLStore) ReconcileWorkloadBackupRuntime(ctx context.Context, run, operation, inspection string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state='acknowledged',updated_at=? WHERE service_run_id=? AND id=? AND operation='workload_backup' AND state='unknown' AND lease_until<=? AND EXISTS (SELECT 1 FROM runtime_jobs i WHERE i.id=? AND i.service_run_id=runtime_jobs.service_run_id AND i.server_id=runtime_jobs.server_id AND i.node_id=runtime_jobs.node_id AND i.node_generation>=runtime_jobs.node_generation AND i.operation='workload_backup_inspect' AND i.state='succeeded' AND i.created_at>runtime_jobs.updated_at AND i.created_at>runtime_jobs.lease_until AND EXISTS (SELECT 1 FROM edge_node_credentials c WHERE c.network_id=i.node_id AND c.generation=i.node_generation AND c.revoked=FALSE AND c.public_key<>'')) AND EXISTS (SELECT 1 FROM servers s WHERE s.id=runtime_jobs.server_id AND s.agent_node_id=runtime_jobs.node_id)`), stamp(now), run, "backup-"+operation, stamp(now), inspection)
+	_, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state='acknowledged',updated_at=? WHERE service_run_id=? AND id=? AND operation IN ('workload_backup','workload_backup_offsite') AND state='unknown' AND lease_until<=? AND EXISTS (SELECT 1 FROM runtime_jobs i WHERE i.id=? AND i.service_run_id=runtime_jobs.service_run_id AND i.server_id=runtime_jobs.server_id AND i.node_id=runtime_jobs.node_id AND i.node_generation>=runtime_jobs.node_generation AND i.operation IN ('workload_backup_inspect','workload_backup_offsite_inspect') AND i.state='succeeded' AND i.created_at>runtime_jobs.updated_at AND i.created_at>runtime_jobs.lease_until AND EXISTS (SELECT 1 FROM edge_node_credentials c WHERE c.network_id=i.node_id AND c.generation=i.node_generation AND c.revoked=FALSE AND c.public_key<>'')) AND EXISTS (SELECT 1 FROM servers s WHERE s.id=runtime_jobs.server_id AND s.agent_node_id=runtime_jobs.node_id)`), stamp(now), run, "backup-"+operation, stamp(now), inspection)
 	if err != nil {
 		return err
 	}
 	var n int
-	err = s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM runtime_jobs WHERE service_run_id=? AND operation='workload_backup' AND state IN ('pending','running','unknown')`), run).Scan(&n)
+	err = s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM runtime_jobs WHERE service_run_id=? AND operation IN ('workload_backup','workload_backup_offsite') AND state IN ('pending','running','unknown')`), run).Scan(&n)
 	if err != nil {
 		return err
 	}
@@ -261,4 +290,23 @@ func (s *SQLStore) ReconcileWorkloadBackupRuntime(ctx context.Context, run, oper
 		return ErrRuntimeJobConflict
 	}
 	return nil
+}
+
+func backupOperationServer(b core.WorkloadBackup, o core.WorkloadBackupOperation) string {
+	if o.ExecutionServerID != "" {
+		return o.ExecutionServerID
+	}
+	return b.ServerID
+}
+func backupOffsiteStore(b core.WorkloadBackup) any {
+	if b.Offsite != nil {
+		return b.Offsite.StoreID
+	}
+	return nil
+}
+func backupStoreReference(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
 }

@@ -62,4 +62,10 @@ Run `go test ./internal/store` after schema changes. Set
 `DISPATCH_TEST_POSTGRES_URL` to a disposable PostgreSQL database to exercise that
 dialect too.
 
+Set `DISPATCH_STORE_POSTGRES_URL` to run every store PostgreSQL fixture against
+one disposable database. Each fixture creates and removes a separate schema,
+so fixed IDs and restart checks do not affect other fixtures. The database user
+needs permission to create schemas. CI runs this suite separately and rejects
+skipped fixtures.
+
 Contributions use the repository's [Apache 2.0 license](LICENSE).

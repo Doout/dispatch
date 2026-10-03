@@ -1,6 +1,27 @@
 package core
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+const (
+	PermissionServiceProvision Permission = "service.provision"
+	PermissionRuntimeCleanup   Permission = "runtime.cleanup"
+)
+
+type scopedServiceAdmissionKey struct{}
+
+// ScopedServiceAdmission binds approved template evidence to transactional admission.
+type ScopedServiceAdmission struct{ TemplateID, Digest string }
+
+func WithScopedServiceAdmission(ctx context.Context, admission ScopedServiceAdmission) context.Context {
+	return context.WithValue(ctx, scopedServiceAdmissionKey{}, admission)
+}
+func ScopedServiceAdmissionFromContext(ctx context.Context) (ScopedServiceAdmission, bool) {
+	value, ok := ctx.Value(scopedServiceAdmissionKey{}).(ScopedServiceAdmission)
+	return value, ok
+}
 
 const PrincipalServiceAccount = "service_account"
 const (
@@ -46,5 +67,5 @@ type InfrastructureAssignment struct {
 }
 
 func AssignableProjectPermissions() []Permission {
-	return []Permission{PermissionProjectView, PermissionProjectConfigure, PermissionDeploymentRun, PermissionDeploymentCancel, PermissionInfrastructureInspect, PermissionInfrastructureCreate, PermissionInfrastructureModify, PermissionInfrastructureDelete, PermissionSnapshotCreate, PermissionSnapshotRestore}
+	return []Permission{PermissionProjectView, PermissionProjectConfigure, PermissionDeploymentRun, PermissionDeploymentCancel, PermissionInfrastructureInspect, PermissionInfrastructureCreate, PermissionInfrastructureModify, PermissionInfrastructureDelete, PermissionSnapshotCreate, PermissionSnapshotRestore, PermissionServiceProvision, PermissionRuntimeCleanup}
 }

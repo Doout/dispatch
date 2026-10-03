@@ -10,6 +10,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
 )
@@ -263,12 +264,20 @@ func (a *API) saveInfrastructureAssignment(w http.ResponseWriter, r *http.Reques
 	case "ssh_key":
 		key, err := a.store.GetSecret(r.Context(), in.ResourceID)
 		valid = err == nil && key.Type == core.SecretTypeSSHPrivateKey && strings.TrimSpace(key.PublicValue) != ""
+	case "service_template":
+		id, digest, ok := strings.Cut(in.ResourceID, "@")
+		resource, project, _, err := a.serviceTemplateResource(r.Context(), id)
+		valid = ok && digest != "" && err == nil && project == in.ProjectID && resource.ConfigSHA == digest
+		if valid {
+			docs, err := workflow.Parse(resource.Path, []byte(resource.Document))
+			valid = err == nil && len(docs) == 1 && docs[0].ServiceTemplate != nil && safeAutomationServiceTemplate(*docs[0].ServiceTemplate)
+		}
 	case "target":
 		target, err := a.store.GetServer(r.Context(), in.ResourceID)
 		valid = err == nil && (target.ProjectID == "" || target.ProjectID == in.ProjectID)
 	}
 	if !valid {
-		problem(w, 422, "Invalid assignment", "Choose an existing provider, an SSH key with a public key, or a target that is unowned or owned by this project.")
+		problem(w, 422, "Invalid assignment", "Choose an existing provider, public SSH key, permitted target, or exact built-in service template ID@digest in this project.")
 		return
 	}
 	in.UpdatedAt = time.Now().UTC()

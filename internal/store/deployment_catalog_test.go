@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,7 +14,7 @@ func TestDeploymentCatalogPersistence(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			dsn := filepath.Join(t.TempDir(), "catalog.db")
 			if backend == "postgres" {
-				dsn = os.Getenv("DISPATCH_HISTORY_POSTGRES_URL")
+				dsn = isolatedPostgresURL(t, "DISPATCH_HISTORY_POSTGRES_URL")
 				if dsn == "" {
 					t.Skip("set DISPATCH_HISTORY_POSTGRES_URL to a disposable database")
 				}
@@ -74,7 +73,7 @@ func TestDeploymentCompletionWindow(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			dsn := filepath.Join(t.TempDir(), "completion.db")
 			if backend == "postgres" {
-				dsn = os.Getenv("DISPATCH_HISTORY_POSTGRES_URL")
+				dsn = isolatedPostgresURL(t, "DISPATCH_HISTORY_POSTGRES_URL")
 				if dsn == "" {
 					t.Skip("set DISPATCH_HISTORY_POSTGRES_URL to a disposable database")
 				}

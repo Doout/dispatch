@@ -4,6 +4,11 @@
 
 Build with `go build -o dispatchctl ./cmd/dispatchctl`. Linux release archives include the client. Run `dispatchctl --help` for its supported commands. The underscore form, such as `deployment_preview`, is also accepted and matches the MCP tool name.
 
+An executable integration test exercises the CLI and MCP against an isolated
+controller using simulated deployment and an owned service fixture. It verifies
+request replay, current grants and cross-project denials. It does not establish
+support for a real infrastructure provider.
+
 ## Credentials
 
 Have a controller owner create a service account with only the required project grants. Inspection needs `project.view`; deployment needs `deployment.run`. Infrastructure uses its separate inspect, create and delete grants and assigned providers and SSH public keys. An owner credential is not needed for ordinary automation. See [automation identities](automation-identities.md).
@@ -45,6 +50,94 @@ dispatchctl deployment diagnose --deployment DEPLOYMENT_ID
 ```
 
 A wait timeout or Ctrl-C stops the client. It does not cancel accepted work. The result includes a `continuation` with the receipt or deployment ID. Resume with that ID. Log entry IDs are continuation cursors; pass the last received ID as `--after` for the next bounded page.
+
+## Define and configure an application
+
+After a target has enrolled and become ready, an account with `project.configure`
+can create an application on that project's assigned target. Write `app.json`
+with explicit project, target and source settings:
+
+```json
+{
+  "projectId": "PROJECT_ID",
+  "serverId": "SERVER_ID",
+  "name": "example-api",
+  "sourceRepo": "https://github.com/example/api.git",
+  "buildType": "dockerfile",
+  "branch": "main",
+  "containerPort": 8080
+}
+```
+
+The client also accepts inline Compose definitions and Helm chart configuration.
+It excludes global source credentials and deployment hooks. Private-source
+credentials must be configured through the approved owner workflow or inherited
+from an existing template.
+
+```sh
+dispatchctl app create --key app-definition-001 --input app.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+dispatchctl app get --app APP_ID
+dispatchctl app sync --app APP_ID
+```
+
+Keep the creation file and key. Repeating the exact request returns its original
+receipt and application. Creating an application does not deploy it.
+
+Service mappings, Helm overrides and health policy have separate inspect and
+replace commands:
+
+```sh
+dispatchctl app bindings get --app APP_ID
+dispatchctl app bindings set --app APP_ID --input bindings.json
+dispatchctl app helm values get --app APP_ID
+dispatchctl app helm values set --app APP_ID --input helm-values.json
+dispatchctl app health get --app APP_ID
+dispatchctl app health set --app APP_ID --input health-policy.json
+```
+
+`bindings.json` is the complete service-binding array. `helm-values.json` contains
+an `overrides` object. `health-policy.json` contains the explicit health policy.
+Use `[]` or `{"overrides":{}}` to clear the corresponding setting. These commands
+require an idle editable application and never trigger deployment. They have no
+mutation receipt or retry key. Inspect the current configuration after a lost
+response before making another change. Repository-managed configuration must be
+edited in its source.
+
+## Cancel or roll back a deployment
+
+```sh
+dispatchctl deployment cancel --deployment DEPLOYMENT_ID
+dispatchctl deployment get --deployment DEPLOYMENT_ID
+dispatchctl app deployments --app APP_ID
+dispatchctl deployment rollback review --deployment RETAINED_DEPLOYMENT_ID
+```
+
+Cancellation requires `deployment.cancel`. It requests a stop and does not
+promise that accepted external changes were undone. The client preserves the
+original deployment ID and does not automatically retry cancellation.
+
+Review rollback availability, retained artifacts, current release and its digest.
+Write `rollback.json` with the exact review evidence and explicit acknowledgment
+that the rollback does not revert database migrations:
+
+```json
+{
+  "confirmDeploymentId": "RETAINED_DEPLOYMENT_ID",
+  "expectedCurrentDeploymentId": "CURRENT_DEPLOYMENT_ID",
+  "expectedReviewDigest": "RETURNED_REVIEW_DIGEST",
+  "confirmDatabaseNotReverted": true
+}
+```
+
+```sh
+dispatchctl deployment rollback --deployment RETAINED_DEPLOYMENT_ID --key rollback-release-001 --input rollback.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+```
+
+Rollback requires `deployment.run`, retained supported artifacts and unchanged
+review evidence. Preserve the exact file and key across response loss. The client
+returns the receipt and the newly accepted rollback deployment ID.
 
 ## Review, create and remove a server
 
@@ -105,6 +198,60 @@ dispatchctl server delete --server SERVER_ID --key delete-environment-001 --inpu
 dispatchctl receipt wait --receipt DELETE_RECEIPT_ID --timeout 120
 ```
 
+## Recover server allocation and enrollment
+
+Inspect the original server's operations before choosing a recovery action:
+
+```sh
+dispatchctl server operations --server SERVER_ID
+dispatchctl server retry --server SERVER_ID --operation OPERATION_ID
+dispatchctl server cancel --server SERVER_ID --operation OPERATION_ID
+```
+
+Retry and cancel require the operation's current infrastructure permission.
+The client verifies that the selected operation belongs to the selected server.
+Retry keeps the original provider request and deadline. Cancellation after
+submission may leave an unknown allocation that still consumes quota. Neither
+command automatically repeats a request after response loss. Inspect the same
+server and operation again.
+
+When provider inspection finds the originally reviewed machine, write
+`adopt.json` with its exact provider resource ID, current Dispatch server revision
+and reviewed name:
+
+```json
+{
+  "resourceId": "ORIGINAL_PROVIDER_RESOURCE_ID",
+  "revision": 3,
+  "confirmName": "EXACT_REVIEWED_SERVER_NAME"
+}
+```
+
+```sh
+dispatchctl server adopt --server SERVER_ID --input adopt.json
+dispatchctl servers list --project PROJECT_ID
+```
+
+Adoption requires `infrastructure.modify` and verified original ownership.
+Active leases and foreign resources remain blocking. A restored clone also
+requires `infrastructure.restore`. If the reply is lost, inspect the current
+server before submitting another adoption.
+
+An allocated machine without an approved bootstrap can request its first
+enrollment credential explicitly:
+
+```sh
+dispatchctl server enrollment --server SERVER_ID > enrollment.json
+```
+
+Create the destination file privately, for example with `umask 077`, before
+issuing this command. Its response contains a short-lived single-use token for
+the target installer, distinct from the API credential. This action requires
+`infrastructure.modify`; it cannot replace an enrolled identity. For an approved
+bootstrap, recover the original installation through its owner workflow instead.
+The client never retries issuance automatically. After a lost reply, inspect the
+server's enrollment state before deliberately issuing a replacement unused token.
+
 ## Capture and inspect a machine snapshot
 
 The assigned provider must advertise snapshot support and the project must permit capture and have available snapshot capacity. Prepare `snapshot.json` with explicit capture policy:
@@ -158,8 +305,16 @@ Choose a listed template and target. Write `environment.json` with `projectId`,
 dispatchctl environment review --input environment.json > environment-review.json
 ```
 
-Read the clone settings and omissions in the review. Production routes, service
-bindings and hooks are not copied. Supply its `reviewId`, `digest` and exact
+Read the clone settings and omissions in the review. Production routes, template
+service bindings and hooks are not copied. Optional `serviceBindings` explicitly
+selects up to 32 same-project services through Dockerfile environment mappings.
+For example, a binding may use `alias: db`, an approved `serviceRef`, and
+`environment: {DATABASE_URL: connectionUrl}`. Services and their data remain
+shared owned resources; cleanup does not delete them.
+
+If the target has managed routing, the server generates a fresh hostname. Inspect
+the review's routing and route evidence, service revisions and expiration.
+The client cannot request a production hostname. Supply its `reviewId`, `digest` and exact
 `confirmName` in `accept-environment.json`:
 
 ```sh
@@ -198,6 +353,43 @@ Preserve the cleanup request and key across retries. Unknown runtime outcomes
 block cleanup until inspected. The shared server, named volumes, backups and
 execution history remain. The client exposes no arbitrary command execution,
 secret administration or human-approval tool.
+
+## Provision an approved service
+
+An owner must approve the exact built-in service template digest, assign its
+target and enable service quota for the project. Automation needs `project.view`
+and `service.provision`. Custom scripts and production-data copy remain outside
+this path.
+
+```sh
+dispatchctl service templates list --project PROJECT_ID
+dispatchctl service template get --template TEMPLATE_ID
+```
+
+Inspect the template's inputs and approved target before writing `service.json`:
+
+```json
+{
+  "name": "review-database",
+  "description": "Database for the review environment",
+  "inputs": {}
+}
+```
+
+Supply the exact inputs required by the chosen template. Then:
+
+```sh
+dispatchctl service provision --template TEMPLATE_ID --key provision-database-001 --input service.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+dispatchctl service run get --run SERVICE_RUN_ID
+dispatchctl service get --run SERVICE_RUN_ID
+```
+
+Keep the template ID, request file and key until the original run is resolved.
+An identical retry returns its original receipt instead of another service.
+A changed template digest needs a fresh owner approval before new provisioning.
+Recovery and deletion use the owned service resource, its original credentials
+and the separate permissions below.
 
 ## Recover an owned service
 
@@ -252,14 +444,14 @@ dispatchctl service get --run SERVICE_RUN_ID
 ```
 
 Keep the same request and key across retries. Protected storage, credentials and
-history remain. New service-template provisioning remains a direct-user API;
-this client exposes recovery of existing owned resources and does not bypass
-that restriction. Custom scripts without an owned recovery adapter remain manual.
+history remain. Custom scripts without an owned recovery adapter remain manual.
 
 ## Review runtime artifact retention
 
-These commands require `project.manage` and Operations enabled. Read the saved
-policy and prepare a runtime review without changing that policy:
+These commands require `runtime.cleanup` or `project.manage` and Operations
+enabled. An automation account with `runtime.cleanup` can inspect and apply the
+owner's saved runtime policy. It cannot change policy or delete history. Read the
+saved policy and prepare a runtime review without changing it:
 
 ```sh
 dispatchctl retention policy --project PROJECT_ID > policy.json
@@ -287,11 +479,68 @@ candidate set. Follow a `supersededBy` reference instead of resuming an older
 review. Storage and workload backups are excluded. History cleanup and retention
 policy edits remain outside these commands.
 
+## Schedule workload backups
+
+Scheduled policies create fresh native PostgreSQL backups on an owned Docker
+service. They use the original actor's current grants and assigned target.
+Scheduled captures stay on that target. Offsite recovery requires a separate
+export; the policy does not export archives automatically.
+
+Write `capture-policy.json` with an explicit interval, retained verified count and
+the exact policy name to acknowledge removal of older verified policy archives:
+
+```json
+{
+  "name": "daily-postgres",
+  "sourceRunId": "SERVICE_RUN_ID",
+  "intervalHours": 24,
+  "keepLast": 7,
+  "confirmRetention": "daily-postgres",
+  "checks": [{ "query": "SELECT 1", "expected": "1" }]
+}
+```
+
+```sh
+dispatchctl backup policy create --key daily-postgres-policy-001 --input capture-policy.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+dispatchctl backup policies list --project PROJECT_ID
+dispatchctl backup policy get --policy POLICY_ID
+```
+
+Creation needs `project.view`, `project.configure` and `deployment.run`, an
+assigned target and verified owned source storage. Keep the original file and key
+across a lost response. Inspect capture and verification timestamps, missed
+captures, blockers and the latest verified archive before relying on the policy.
+Failed capture or verification must not replace the last usable backup.
+
+Pause or resume with the current revision, an explicit `enabled` value and the
+exact policy name. For example, `pause-policy.json` contains:
+
+```json
+{"revision": 3, "enabled": false, "confirmName": "daily-postgres"}
+```
+
+```sh
+dispatchctl backup policy set --policy POLICY_ID --input pause-policy.json
+dispatchctl backup policy get --policy POLICY_ID
+```
+
+Pause and resume have no mutation receipt. Inspect the policy after response loss
+before requesting another change. Resume rechecks the original actor and frozen
+target. Source, cadence and retention cannot be changed through this command.
+
+The policy keeps the credential identity that accepted it. Rotating or revoking
+that credential stops unattended work. A fresh credential can pause the old
+policy, then create a new explicitly reviewed policy with a new key. Resuming the
+old policy does not transfer it to the fresh credential. Existing archives remain
+owned by the old policy.
+
 ## Capture, verify and restore a workload backup
 
 The current native adapter supports owned PostgreSQL 17+ services on Docker.
-Archives stay encrypted on their original target and are retained by default. This is
-separate from machine snapshots and controller database backups. Mutations
+Archives are encrypted and retained by default. Export can copy them to an
+approved project object store. Workload backups are separate from machine
+snapshots and controller database backups. Mutations
 require `project.configure` and `deployment.run` in the owning project.
 
 Prepare `backup.json` with the source service provision run ID:
@@ -333,8 +582,40 @@ verification resources. It does not repeat a restore whose outcome is unknown.
 It has no idempotency-key API and returns the original backup operation. Inspect
 that operation again if the response is lost.
 
-To restore, explicitly select a ready owned destination service on the same
-project and original target. Resolve its active consumers first:
+To export encrypted archive bytes, inspect the stores registered by an owner.
+Store registration and signing credentials remain outside ordinary agent tools.
+Write `export.json` with the selected `storeId`:
+
+```sh
+dispatchctl backup stores list --project PROJECT_ID
+dispatchctl backup store get --store STORE_ID
+printf '{"storeId":"STORE_ID"}\n' > export.json
+dispatchctl backup export --backup BACKUP_ID --key database-export-001 --input export.json
+dispatchctl receipt wait --receipt RECEIPT_ID
+```
+
+Keep the original backup ID, input and key after a lost response. Export preserves
+the target archive and records confirmed offsite metadata only after success.
+The server issues bounded runtime access; client results contain no signed URLs
+or signing secrets. An offsite copy alone does not prove recoverability.
+
+After export, verify on a ready owned PostgreSQL service in the same project,
+including a fresh target when the original server is unavailable. Write
+`verify-target.json` with `destinationRunId`:
+
+```sh
+printf '{"destinationRunId":"FRESH_SERVICE_RUN_ID"}\n' > verify-target.json
+dispatchctl backup verify --backup BACKUP_ID --key database-fresh-verify-001 --input verify-target.json
+```
+
+The selected service identifies the verification target. Verification uses an
+isolated temporary database and preserves its live service data. Inspect the
+operation's target, integrity checks and cleanup before relying on the archive.
+Omitting verification input continues to select the original target.
+
+To restore, explicitly select a ready owned destination service in the same
+project. A different target requires a confirmed offsite copy. Resolve the
+destination's active consumers first:
 
 ```sh
 dispatchctl backup restore review --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID > restore-review.json
@@ -353,7 +634,8 @@ Save the destination, input file and key. If the response is lost, recover the
 same receipt and inspect its operation; a new key would request another restore.
 An unresolved result requires inspection before any new reviewed restore.
 
-To remove retained archive bytes, run `backup delete review --backup BACKUP_ID`.
+Exported archives currently block deletion until reviewed offsite deletion is
+supported. For a target-local archive, run `backup delete review --backup BACKUP_ID`.
 After reviewing blockers, supply its version and backup ID confirmation in
 `delete-backup.json`, with `action: "delete"`, then run:
 

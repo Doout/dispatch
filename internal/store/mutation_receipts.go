@@ -125,6 +125,8 @@ func (s *SQLStore) MutationOperationState(ctx context.Context, kind, id string) 
 	var cancelled bool
 	var err error
 	switch kind {
+	case "application":
+		err = s.db.QueryRowContext(ctx, s.q(`SELECT 'succeeded' FROM apps WHERE id=?`), id).Scan(&state)
 	case "workload_backup":
 		err = s.db.QueryRowContext(ctx, s.q(`SELECT state FROM workload_backup_operations WHERE id=?`), id).Scan(&state)
 	case "service_provision":

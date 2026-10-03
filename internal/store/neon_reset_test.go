@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/doout/dispatch/internal/core"
 	"github.com/oklog/ulid/v2"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ func TestNeonReplacementSQLite(t *testing.T) {
 	testNeonReplacement(t, filepath.Join(t.TempDir(), "neon.db"))
 }
 func TestNeonReplacementPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_TEST_POSTGRES_URL")
 	}

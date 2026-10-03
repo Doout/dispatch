@@ -60,6 +60,57 @@ func awaitMutationDeployment(t *testing.T, a *API, id string) {
 	t.Fatal("accepted deployment did not finish")
 }
 
+func TestApplicationCreateReceiptConcurrentLostResponse(t *testing.T) {
+	a := serviceTestAPI(t)
+	ctx := context.Background()
+	projects, _ := a.store.ListProjects(ctx)
+	servers, _ := a.store.ListServers(ctx)
+	before, _ := a.store.ListApps(ctx)
+	input := map[string]any{"projectId": projects[0].ID, "serverId": servers[0].ID, "name": "Created once", "composeContent": "services: {}"}
+	var wg sync.WaitGroup
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			responses <- mutationRequest(a, "secret", "POST", "/api/v1/apps", "create-application-once", input)
+		}()
+	}
+	wg.Wait()
+	close(responses)
+	appID, receiptID := "", ""
+	for w := range responses {
+		if w.Code != 202 {
+			t.Fatalf("create acceptance: %d %s", w.Code, w.Body.String())
+		}
+		r := decodeMutation(t, w)
+		if appID == "" {
+			appID, receiptID = r.OperationID, r.ID
+		}
+		if r.OperationID != appID || r.ID != receiptID || appID == "" || r.OperationKind != "application" {
+			t.Fatal("competing calls created separate application identities")
+		}
+	}
+	apps, err := a.store.ListApps(ctx)
+	if err != nil || len(apps) != len(before)+1 {
+		t.Fatal("duplicate application created", err)
+	}
+	w := mutationRequest(a, "secret", "POST", "/api/v1/apps", "create-application-once", input)
+	r := decodeMutation(t, w)
+	if w.Code != 202 || r.State != "succeeded" || r.ResourceID != appID || r.OperationURL != "/api/v1/apps/"+appID || w.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("lost-response continuation: %d %s", w.Code, w.Body.String())
+	}
+	w = mutationRequest(a, "secret", "GET", r.OperationURL, "", nil)
+	var app core.App
+	if err := json.Unmarshal(w.Body.Bytes(), &app); err != nil || w.Code != 200 || app.ID != appID {
+		t.Fatal("accepted application cannot be inspected", err)
+	}
+	input["name"] = "Changed input"
+	if w = mutationRequest(a, "secret", "POST", "/api/v1/apps", "create-application-once", input); w.Code != 409 {
+		t.Fatal("changed input reused application acceptance", w.Code)
+	}
+}
+
 func TestMutationReceiptConcurrentRetryCompletionAndAudit(t *testing.T) {
 	a := serviceTestAPI(t)
 	app := mutationApp(t, a)

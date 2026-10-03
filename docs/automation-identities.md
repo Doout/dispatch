@@ -41,6 +41,8 @@ The grant API accepts these explicit permissions:
 | `project.configure` | Configure applications and their permitted bindings |
 | `deployment.run` | Start deployments and supported runtime mutations |
 | `deployment.cancel` | Request cancellation |
+| `service.provision` | Provision an approved built-in service on an assigned target |
+| `runtime.cleanup` | Review and confirm runtime artifact cleanup under the saved project policy |
 | `infrastructure.inspect` | Inspect assigned providers and targets |
 | `infrastructure.create` | Request server allocation through an assigned provider |
 | `infrastructure.modify` | Request supported changes to owned infrastructure |
@@ -78,3 +80,38 @@ The project grant must still be valid when a prepared infrastructure review is
 accepted. The immutable project owner accompanies the accepted operation and
 its resulting server. Requests and operation inspection use current project
 permissions, even when a token was rotated after the operation began.
+
+## Scoped service provisioning
+
+Automation may call `POST /api/v1/service-templates/{id}/runs` with `project.view`
+and `service.provision`. The controller owner first assigns the exact template
+with `kind: service_template` and `resourceId: "<template-id>@<configSha>"` through
+the project assignment endpoint. Read `configSha` from the template API. An edited
+definition requires a new approval. The target must also be assigned to the project.
+
+Only built-in PostgreSQL Docker or Helm templates are supported. Scripts,
+repository execution, Neon provisioning and template editing remain unavailable
+through this grant. The approved template fixes the provisioner and target;
+the caller supplies only its declared inputs and the service name.
+
+Every automation request needs a stable `Idempotency-Key`. The controller saves
+its encrypted request, owned resource and receipt together before runtime work.
+A repeated acceptance returns the original operation. Admission failures retain a
+terminal rejected receipt. After the owner fixes approval or quota, inspect that
+receipt and use a new key for a new attempt. A changed template digest
+or changed request cannot reuse that key. Inspect the run and resource when an
+outcome needs recovery; retrying acceptance does not allocate a replacement.
+
+The owner must configure `maxServices` in the project's infrastructure policy.
+It defaults to zero. Pending, ready, failed and unresolved owned resources count
+until verified deletion, including resources created by people. The limit applies
+to new automation provisioning; existing human provisioning behavior is unchanged.
+Use the existing resource inspection, reviewed deletion and recovery permissions
+for lifecycle management. Provisioning alone does not grant those permissions.
+
+`runtime.cleanup` permits reading the saved retention policy, requesting a runtime
+review, inspecting its receipt and applying that exact reviewed candidate set.
+Apply still requires the project-ID confirmation field, saved policy, review ID
+and digest. This grant cannot change policy or prune deployment history. Active
+releases, shared images, protected rollback revisions, volumes and backups keep
+their existing protections. Operations must be enabled by the controller owner.

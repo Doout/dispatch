@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -42,7 +43,18 @@ func (a *API) getInfrastructureQuota(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	usage := map[string]int64{"servers": 0, "reserved": 0, "allocated": 0, "unknown": 0}
+	var serviceCount int64
+	if resources, ok := a.store.(interface {
+		CountServiceResources(context.Context, string) (int64, error)
+	}); ok {
+		count, err := resources.CountServiceResources(r.Context(), project)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		serviceCount = count
+	}
+	usage := map[string]int64{"services": serviceCount, "servers": 0, "reserved": 0, "allocated": 0, "unknown": 0}
 	for _, v := range reservations {
 		if v.State != "released" {
 			usage["servers"]++
@@ -83,16 +95,30 @@ func (a *API) saveInfrastructureQuota(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var p core.InfrastructureQuotaPolicy
-	if !decode(w, r, &p) {
+	var input struct {
+		core.InfrastructureQuotaPolicy
+		MaxServices *int64 `json:"maxServices"`
+	}
+	if !decode(w, r, &input) {
 		return
 	}
+	p := input.InfrastructureQuotaPolicy
 	p.ProjectID = chi.URLParam(r, "id")
+	if input.MaxServices != nil {
+		p.MaxServices = *input.MaxServices
+	} else {
+		current, err := d.GetInfrastructureQuotaPolicy(r.Context(), p.ProjectID)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		p.MaxServices = current.MaxServices
+	}
 	if _, err := a.store.GetProject(r.Context(), p.ProjectID); err != nil {
 		a.notFoundOrInternal(w, err, "Project")
 		return
 	}
-	if p.Revision < 0 || p.MaxServers < -1 || p.MaxTemporaryEnvironments < -1 || p.MaxSnapshots < -1 || p.MaxTemporaryLifetimeSeconds < 0 || p.MaxTemporaryLifetimeSeconds > 365*24*3600 || (p.MaxTemporaryEnvironments != 0 && p.MaxTemporaryLifetimeSeconds == 0) || len(p.Providers) > 100 {
+	if p.Revision < 0 || p.MaxServers < -1 || p.MaxTemporaryEnvironments < -1 || p.MaxSnapshots < -1 || p.MaxServices < -1 || p.MaxTemporaryLifetimeSeconds < 0 || p.MaxTemporaryLifetimeSeconds > 365*24*3600 || (p.MaxTemporaryEnvironments != 0 && p.MaxTemporaryLifetimeSeconds == 0) || len(p.Providers) > 100 {
 		problem(w, 422, "Invalid resource policy", "Use nonnegative limits, or -1 explicitly for unlimited counts. Temporary environments require a maximum lifetime of up to 365 days.")
 		return
 	}

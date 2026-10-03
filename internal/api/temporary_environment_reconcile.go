@@ -105,7 +105,16 @@ func (a *API) checkTemporaryExecution(ctx context.Context, app core.App, sha str
 	if err != nil {
 		return err
 	}
-	if d.SpecDigest != app.SpecDigest() {
+	server, err := a.store.GetServer(ctx, e.ServerID)
+	if err != nil {
+		return err
+	}
+	currentRouting := server.Routing
+	matches, err := a.deploymentAppInputsMatch(ctx, app, d)
+	if err != nil {
+		return err
+	}
+	if !matches || e.AppSpecDigest != "" && (e.AppSpecDigest != app.SpecDigest() || mutationHash(currentRouting) != mutationHash(e.Routing)) {
 		return store.ErrTemporaryEnvironmentChanged
 	}
 	if err = a.temporaryAuthority(ctx, e); err != nil {
@@ -264,6 +273,12 @@ func (a *API) reconcileTemporaryEnvironment(ctx context.Context, data *store.SQL
 			d.Message = "Reviewed source deployed and required workload health checks passed."
 			d.Health = *result.Health
 		}
+		if waitErr == nil && result.Route != nil {
+			if err := data.SaveApplicationRoute(ctx, *result.Route); err != nil {
+				e.State, e.Message = "deploying", "Workload is ready; saved route evidence needs reconciliation."
+				return
+			}
+		}
 		if originalState != d.State || originalFinished == nil || originalHealth != d.Health.State {
 			if result.Health != nil {
 				_ = data.UpdateDeploymentHealth(ctx, d.ID, d.Health)
@@ -277,7 +292,20 @@ func (a *API) reconcileTemporaryEnvironment(ctx context.Context, data *store.SQL
 			e.State, e.Message = "failed", "Real workload health evidence is required before readiness."
 			return
 		}
-		e.State, e.Message = "ready", "Reviewed source is running and workload health checks passed. No production route was created."
+		if e.Hostname != "" {
+			route, err := data.GetApplicationRoute(ctx, e.AppID)
+			if err != nil || route.Hostname != e.Hostname || route.ProjectID != e.ProjectID || route.ServerID != e.ServerID || route.DeploymentID != e.DeploymentID {
+				e.State, e.Message = "deploying", "Workload is ready; the reviewed managed route is awaiting publication."
+				return
+			}
+			if route.State != "active" || route.DNS != "resolved" || route.RequireTLS && route.Certificate.State != "verified" && route.Certificate.State != "renewal_due" {
+				e.State, e.Message = "deploying", "Workload is ready; DNS and certificate verification for the isolated hostname are pending."
+				return
+			}
+			e.State, e.Message = "ready", "Reviewed source and shared service bindings are running at the isolated managed hostname."
+		} else {
+			e.State, e.Message = "ready", "Reviewed source is running and workload health checks passed."
+		}
 	case core.DeploymentFailed, core.DeploymentCancelled:
 		e.State, e.Message = "failed", "Deployment did not finish successfully. Inspect the deployment and runtime; the finite cleanup deadline still applies."
 	default:

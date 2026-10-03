@@ -15,6 +15,7 @@ type InfrastructureQuotaPolicy struct {
 	Revision                    int64                        `json:"revision"`
 	MaxServers                  int64                        `json:"maxServers"`
 	MaxTemporaryEnvironments    int64                        `json:"maxTemporaryEnvironments"`
+	MaxServices                 int64                        `json:"maxServices"`
 	MaxSnapshots                int64                        `json:"maxSnapshots"`
 	MaxTemporaryLifetimeSeconds int64                        `json:"maxTemporaryLifetimeSeconds"`
 	Providers                   []InfrastructureProviderRule `json:"providers"`

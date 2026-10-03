@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ func TestObservationPersistence(t *testing.T) {
 	testObservationPersistence(t, filepath.Join(t.TempDir(), "observations.db"))
 }
 func TestObservationPostgresPersistenceIntegration(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_OBSERVATIONS_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_OBSERVATIONS_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_OBSERVATIONS_POSTGRES_URL to a disposable database")
 	}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"github.com/doout/dispatch/internal/runtimecontract"
@@ -68,7 +69,7 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	node.Details["runtimeVersion"] = remoteruntime.APIVersion
 	node.Details["runtimeCheckedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 	advertised := strings.Split(r.Header.Get("X-Dispatch-Runtime-Capabilities"), ",")
-	if len(advertised) > 16 || len(r.Header.Get("X-Dispatch-Runtime-Capabilities")) > 512 {
+	if len(advertised) > 20 || len(r.Header.Get("X-Dispatch-Runtime-Capabilities")) > 512 {
 		problem(w, 422, "Invalid capabilities", "The capability list exceeds its limit.")
 		return
 	}
@@ -90,11 +91,16 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !supported {
-		_ = broker.Complete(r.Context(), node.ID, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: remoteruntime.Result{State: "failed", Code: runtimecontract.Unsupported, Message: "The enrolled agent does not advertise this runtime capability."}})
+		a.rejectRuntimeDispatch(r.Context(), broker, node.ID, job, runtimecontract.Unsupported, "The enrolled agent does not advertise this runtime capability.")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if err := a.checkTemporaryRuntimeAuthority(r.Context(), job.ID); err != nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := a.checkBackupPolicyRuntimeAuthority(r.Context(), job.ID); err != nil {
+		a.rejectRuntimeDispatch(r.Context(), broker, node.ID, job, runtimecontract.OwnershipConflict, "Scheduled backup authority changed before runtime dispatch.")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -127,6 +133,21 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, job)
 }
 
+func (a *API) rejectRuntimeDispatch(ctx context.Context, broker *remoteruntime.Broker, node string, job *remoteruntime.LeasedJob, code runtimecontract.Code, message string) {
+	// No first-attempt payload has left the controller. A later attempt may
+	// already have effects, so stop delivery without claiming those effects absent.
+	if job.Attempt == 1 {
+		result := remoteruntime.Result{State: "failed", Code: code, Message: message}
+		if request := job.Request.WorkloadBackup; request != nil {
+			result.WorkloadBackup = &core.WorkloadBackupResult{BackupID: request.Backup.ID, ProjectID: request.Backup.ProjectID, OperationID: request.OperationID, ArtifactID: request.Backup.ArtifactID, State: "failed", CleanupState: "complete", Message: message}
+		}
+		if err := broker.Complete(ctx, node, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: result}); err == nil {
+			return
+		}
+	}
+	_ = broker.Store.FenceRuntimeJob(ctx, node, job.ID, job.LeaseToken, time.Now().UTC())
+}
+
 func (a *API) renewRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	node, broker, ok := a.runtimeNode(w, r)
 	if !ok {
@@ -136,7 +157,26 @@ func (a *API) renewRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+	jobID := chi.URLParam(r, "jobId")
+	job, err := broker.Store.GetRuntimeJob(r.Context(), jobID)
+	if err != nil || job.NodeID != node.ID {
+		a.runtimeJobProblem(w, store.ErrNotFound)
+		return
+	}
+	now := time.Now().UTC()
+	if job.State != "running" || input.LeaseToken == "" || job.LeaseToken != input.LeaseToken || !job.LeaseUntil.After(now) || !job.ExpiresAt.After(now) {
+		a.runtimeJobProblem(w, store.ErrRuntimeJobConflict)
+		return
+	}
 	if err := a.checkTemporaryRuntimeAuthority(r.Context(), chi.URLParam(r, "jobId")); err != nil {
+		a.runtimeJobProblem(w, err)
+		return
+	}
+	if err := a.checkBackupPolicyRuntimeAuthority(r.Context(), chi.URLParam(r, "jobId")); err != nil {
+		if cancelErr := broker.Store.CancelLeasedRuntimeJob(r.Context(), node.ID, jobID, input.LeaseToken, time.Now().UTC()); cancelErr != nil {
+			a.runtimeJobProblem(w, cancelErr)
+			return
+		}
 		a.runtimeJobProblem(w, err)
 		return
 	}

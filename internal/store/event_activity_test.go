@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -16,7 +15,7 @@ func TestEventActivityScopesDeduplicatesAndPreservesRunLinks(t *testing.T) {
 	testEventActivityContract(t, filepath.Join(t.TempDir(), "events.db"))
 }
 func TestPostgresEventActivityWhenConfigured(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_TEST_POSTGRES_URL to a disposable database")
 	}

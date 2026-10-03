@@ -31,6 +31,8 @@ func (a *API) workloadBackupStore() (store.WorkloadBackupStore, error) {
 	return s, nil
 }
 func (a *API) workloadBackupRoutes(r chi.Router) {
+	a.workloadBackupPolicyRoutes(r)
+	a.workloadBackupOffsiteRoutes(r)
 	r.Get("/workload-backups", a.listWorkloadBackups)
 	r.Get("/workload-backup-operations/{operationId}", a.getWorkloadBackupOperation)
 	r.Post("/workload-backups", a.createWorkloadBackup)
@@ -41,6 +43,7 @@ func (a *API) workloadBackupRoutes(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(a.workloadBackupPermission(core.PermissionProjectConfigure))
 			r.Post("/verify", a.verifyWorkloadBackup)
+			r.Post("/export", a.exportWorkloadBackup)
 			r.Post("/operations/{operationId}/reconcile", a.reconcileWorkloadBackup)
 			r.Post("/delete-preview", a.previewDestructiveAction("workload-backup", "delete"))
 			r.Post("/delete", a.deleteWorkloadBackup)
@@ -274,7 +277,18 @@ func (a *API) verifyWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	if !a.requireProject(w, r, core.PermissionDeploymentRun, b.ProjectID) {
 		return
 	}
-	r, receipt, proceed := a.reserveMutation(w, r, b.ProjectID, "workload.backup.verify", struct{ ID string }{b.ID}, "workload_backup", b.ID)
+	var input struct {
+		DestinationRunID string `json:"destinationRunId"`
+	}
+	if r.Body != nil {
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+			problem(w, 422, "Invalid verification input", "Supply an owned destination run ID.")
+			return
+		}
+	}
+	r, receipt, proceed := a.reserveMutation(w, r, b.ProjectID, "workload.backup.verify", struct{ ID, Destination string }{b.ID, input.DestinationRunID}, "workload_backup", b.ID)
 	if !proceed {
 		return
 	}
@@ -282,7 +296,7 @@ func (a *API) verifyWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	if receipt != nil {
 		id = receipt.OperationID
 	}
-	op, err := a.acceptWorkloadBackupOperation(r.Context(), b, "verify", id, "")
+	op, err := a.acceptWorkloadBackupOperation(r.Context(), b, "verify", id, input.DestinationRunID)
 	if err != nil {
 		a.failMutationAcceptance(r.Context(), 409, "Verification was not accepted; inspect the original backup operation.")
 		problem(w, 409, "Verification unavailable", err.Error())
@@ -292,24 +306,68 @@ func (a *API) verifyWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	go a.executeWorkloadBackupOperation(op, false)
 	a.writeBackupAcceptance(w, r, op, receipt)
 }
-func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.WorkloadBackup, action, id, destination string) (core.WorkloadBackupOperation, error) {
+func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.WorkloadBackup, action, id, destination string, policyIDs ...string) (core.WorkloadBackupOperation, error) {
 	op := newBackupOperation(id, b, action)
+	if len(policyIDs) > 0 {
+		op.CapturePolicyID = policyIDs[0]
+	}
 	input, err := a.decryptWorkloadBackup(b.ID, "accepted", b.EncryptedInput)
 	if err != nil {
 		return op, err
 	}
 	input.Backup = b
 	input.OperationID, input.Action = id, action
-	if action == "restore" {
+	if action == "restore" || action == "verify" && destination != "" {
 		record, accepted, server, storage, err := a.backupSource(ctx, destination)
 		if err != nil {
 			return op, err
 		}
-		if record.ProjectID != b.ProjectID || server.ID != b.ServerID {
-			return op, errors.New("restore requires an owned destination in the same project and target")
+		if record.ProjectID != b.ProjectID || server.ID != b.ServerID && b.Offsite == nil {
+			return op, errors.New("recovery requires an owned destination in the same project and an exported archive for another target")
 		}
 		input.Destination, input.DestinationStorage, input.ExpectedDestination = &accepted.Request, &storage, record.ResourceID
 		op.TargetRunID, op.TargetName, op.TargetResourceID = record.RunID, record.Name, record.ResourceID
+		op.ExecutionServerID = server.ID
+		op.ExecutionNodeID = server.AgentNodeID
+		if server.AgentNodeID != "" {
+			data, ok := a.store.(*store.SQLStore)
+			if !ok {
+				return op, errors.New("target identity unavailable")
+			}
+			credential, e := data.GetEdgeCredential(ctx, server.AgentNodeID)
+			if e != nil || credential.Revoked || credential.PublicKey == "" {
+				return op, errors.New("destination enrollment is unavailable")
+			}
+			op.ExecutionGeneration = credential.Generation
+			input.ExecutionNodeGeneration = credential.Generation
+		}
+	}
+	if b.Offsite != nil && (action == "verify" || action == "restore") {
+		access, grantErr := a.grantBackupObjects(ctx, b, b.Offsite.StoreID, false, false)
+		input.OffsiteAccess, err = &access, grantErr
+		if err != nil {
+			return op, err
+		}
+		op.OffsiteStoreID = b.Offsite.StoreID
+		if op.ExecutionServerID == "" {
+			server, e := a.store.GetServer(ctx, b.ServerID)
+			if e != nil || server.AgentNodeID != b.NodeID {
+				return op, errors.New("accepted source target changed")
+			}
+			op.ExecutionServerID, op.ExecutionNodeID = server.ID, server.AgentNodeID
+			if server.AgentNodeID != "" {
+				data, ok := a.store.(*store.SQLStore)
+				if !ok {
+					return op, errors.New("target identity unavailable")
+				}
+				credential, e := data.GetEdgeCredential(ctx, server.AgentNodeID)
+				if e != nil || credential.Revoked || credential.PublicKey == "" {
+					return op, errors.New("target enrollment unavailable")
+				}
+				op.ExecutionGeneration = credential.Generation
+				input.ExecutionNodeGeneration = credential.Generation
+			}
+		}
 	}
 	op.EncryptedInput, err = a.encryptWorkloadBackup(op.ID, "operation", input)
 	if err != nil {
@@ -413,7 +471,7 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 			return out, err
 		}
 		_ = accepted
-		if record.ProjectID != b.ProjectID || server.ID != b.ServerID || server.AgentNodeID != b.NodeID {
+		if record.ProjectID != b.ProjectID || b.Offsite == nil && (server.ID != b.ServerID || server.AgentNodeID != b.NodeID) {
 			return out, errors.New("restore destination is outside the backup project or original target")
 		}
 		busy, err := a.store.(store.ServiceResourceStore).ServiceResourceConsumers(ctx, record.ServiceID)
@@ -438,6 +496,22 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 		out.Summary = "Overwrite database objects present in this backup in one PostgreSQL transaction. Objects absent from the archive remain. Detach consumers first; no deployment rollback is triggered."
 		out.Resources = []string{"Destination: " + record.Name, "Target: " + server.Name, "Archive: " + b.ID, "Retain the encrypted backup after restore"}
 	} else {
+		if b.Offsite != nil {
+			out.BlockedReason = "Exported archives are protected until reviewed offsite deletion is supported."
+		}
+		if b.CapturePolicyID != "" && b.VerificationState == "verified" {
+			policies, e := a.backupPolicyStore()
+			if e != nil {
+				return out, e
+			}
+			p, e := policies.GetWorkloadBackupPolicy(ctx, b.CapturePolicyID)
+			if e != nil {
+				return out, e
+			}
+			if p.Enabled {
+				out.BlockedReason = "Pause the capture policy before deleting a protected verified archive. Automatic retention separately preserves the policy recovery points."
+			}
+		}
 		out.Summary = "Permanently delete this retained workload backup archive. Workload data and encrypted operation history remain."
 		out.StoragePolicy = "destroy"
 		out.Resources = []string{"Encrypted archive: " + b.ID, "Target-local bytes: " + fmt.Sprint(b.Bytes), "This backup will no longer protect target deletion"}
@@ -496,17 +570,53 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 		return
 	}
 	input, err := a.decryptWorkloadBackup(op.ID, "operation", op.EncryptedInput)
-	var result core.WorkloadBackupResult
+	if err == nil && op.CapturePolicyID != "" && !recovering {
+		policies, e := a.backupPolicyStore()
+		if e == nil {
+			policy, lookup := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
+			if lookup != nil || !policy.Enabled {
+				e = store.ErrWorkloadBackupChanged
+			} else {
+				e = a.backupPolicyAuthority(ctx, policy)
+			}
+		}
+		err = e
+	}
+	// Preparation has not dispatched a runtime job. Unknown evidence is introduced only after execution begins.
+	result := core.WorkloadBackupResult{State: "failed", CleanupState: "complete"}
+	if recovering {
+		result.State, result.CleanupState = "unknown", "pending"
+	}
 	if err == nil {
-		server, e := a.store.GetServer(ctx, b.ServerID)
-		if e != nil || server.AgentNodeID != b.NodeID {
+		executionServer := b.ServerID
+		if op.ExecutionServerID != "" {
+			executionServer = op.ExecutionServerID
+		}
+		server, e := a.store.GetServer(ctx, executionServer)
+		if e != nil || executionServer == b.ServerID && server.AgentNodeID != b.NodeID || op.ExecutionServerID != "" && (server.AgentNodeID != op.ExecutionNodeID || !a.backupExecutionGenerationMatches(ctx, op)) {
 			err = errors.New("backup target identity changed")
 		} else {
 			input.Backup = b
+			if input.OffsiteAccess != nil {
+				access, grantErr := a.grantBackupObjects(ctx, b, op.OffsiteStoreID, op.Action == "export" && !recovering, false)
+				input.OffsiteAccess, e = &access, grantErr
+				if e != nil {
+					err = e
+				}
+			}
 			if recovering {
 				input.RecoveryAction, input.Action = op.Action, "reconcile"
 			}
-			err = a.deploy.Storage.WithTarget(ctx, server.ID, func() error { var e error; result, e = a.runWorkloadBackup(ctx, input, server); return e })
+			if err == nil {
+				err = a.deploy.Storage.WithTarget(ctx, server.ID, func() error {
+					if op.ExecutionServerID != "" && !a.backupExecutionGenerationMatches(ctx, op) {
+						return errors.New("accepted destination enrollment changed")
+					}
+					var e error
+					result, e = a.runWorkloadBackup(ctx, input, server)
+					return e
+				})
+			}
 		}
 	}
 	now := time.Now().UTC()
@@ -532,6 +642,10 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 		}
 	}
 	switch op.Action {
+	case "export":
+		if op.State == "succeeded" && result.State == "exported" && result.Offsite != nil {
+			b.Offsite = result.Offsite
+		}
 	case "backup":
 		b.State = "unknown"
 		if op.State == "succeeded" && result.State == "ready" {
@@ -560,6 +674,9 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 	if b.VerificationIntervalHours > 0 {
 		next := now.Add(time.Duration(b.VerificationIntervalHours) * time.Hour)
 		b.NextVerificationAt = &next
+		if op.Action == "backup" && b.CapturePolicyID != "" && b.State == "ready" {
+			b.NextVerificationAt = &now
+		}
 	}
 	b.Message = op.Message
 	if err = s.CompleteWorkloadBackupOperation(context.WithoutCancel(ctx), b, op); err != nil {
@@ -596,6 +713,7 @@ func (a *API) RunWorkloadBackupVerification(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
+		a.scheduleWorkloadBackupCaptures(ctx)
 		a.scheduleWorkloadBackupVerification(ctx)
 		select {
 		case <-ctx.Done():
@@ -620,7 +738,19 @@ func (a *API) scheduleWorkloadBackupVerification(ctx context.Context) {
 		if b.State != "ready" || b.VerificationIntervalHours == 0 || b.NextVerificationAt == nil || b.NextVerificationAt.After(time.Now()) {
 			continue
 		}
-		op, err := a.acceptWorkloadBackupOperation(ctx, b, "verify", ulid.Make().String(), "")
+		policyID := ""
+		if b.CapturePolicyID != "" {
+			policies, e := a.backupPolicyStore()
+			if e != nil {
+				continue
+			}
+			policy, e := policies.GetWorkloadBackupPolicy(ctx, b.CapturePolicyID)
+			if e != nil || !policy.Enabled || a.backupPolicyAuthority(ctx, policy) != nil {
+				continue
+			}
+			policyID = policy.ID
+		}
+		op, err := a.acceptWorkloadBackupOperation(ctx, b, "verify", ulid.Make().String(), "", policyID)
 		if err == nil {
 			go a.executeWorkloadBackupOperation(op, false)
 		}

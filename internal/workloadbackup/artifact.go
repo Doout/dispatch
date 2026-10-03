@@ -29,6 +29,7 @@ type Artifact struct {
 	PlaintextChecksum string `json:"plaintextChecksum"`
 	Bytes             int64  `json:"bytes"`
 	PlaintextBytes    int64  `json:"plaintextBytes"`
+	ImageReference    string `json:"imageReference,omitempty"`
 	ImageID           string `json:"imageId"`
 	RequestDigest     string `json:"requestDigest"`
 	Encryption        string `json:"encryption"`

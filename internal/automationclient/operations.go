@@ -44,12 +44,13 @@ type SnapshotReviewInput struct {
 	RetainUntil string `json:"retainUntil,omitempty"`
 }
 type TemporaryEnvironmentInput struct {
-	ProjectID       string `json:"projectId"`
-	TemplateID      string `json:"templateId"`
-	ServerID        string `json:"serverId"`
-	Name            string `json:"name"`
-	SourceSHA       string `json:"sourceSha"`
-	LifetimeSeconds int64  `json:"lifetimeSeconds"`
+	ProjectID       string                `json:"projectId"`
+	TemplateID      string                `json:"templateId"`
+	ServerID        string                `json:"serverId"`
+	Name            string                `json:"name"`
+	SourceSHA       string                `json:"sourceSha"`
+	LifetimeSeconds int64                 `json:"lifetimeSeconds"`
+	ServiceBindings []core.ServiceBinding `json:"serviceBindings,omitempty"`
 }
 type TemporaryEnvironmentExtension struct {
 	Revision  int64  `json:"revision"`
@@ -74,6 +75,9 @@ type ServerCreateReview struct {
 	SourceSnapshotID string          `json:"sourceSnapshotId,omitempty"`
 }
 type Arguments struct {
+	StoreID        string          `json:"storeId,omitempty"`
+	TemplateID     string          `json:"templateId,omitempty"`
+	PolicyID       string          `json:"policyId,omitempty"`
 	RunID          string          `json:"runId,omitempty"`
 	BackupID       string          `json:"backupId,omitempty"`
 	OperationID    string          `json:"operationId,omitempty"`
@@ -103,7 +107,7 @@ type Operation struct {
 	InputSchema                               string
 }
 
-var Operations = append([]Operation{
+var Operations = append(append([]Operation{
 	{Name: "projects_list", Method: "GET", Path: "/projects", Description: "List projects visible to the current scoped identity."},
 	{Name: "apps_list", Method: "GET", Path: "/apps", Description: "List visible applications, optionally filtered by project.", Fields: []string{"projectId"}},
 	{Name: "deployment_preview", Method: "POST", Path: "/apps/{appId}/release-preview", Description: "Inspect release inputs and obtain the server's point-in-time deployment review.", Fields: []string{"appId", "revision"}, Required: []string{"appId"}},
@@ -136,7 +140,7 @@ var Operations = append([]Operation{
 	{Name: "environment_extend", Method: "POST", Path: "/temporary-environments/{environmentId}/extend", Description: "Set an explicit expiration using the current environment revision. If the response is lost, inspect the environment before another edit. Does not extend beyond project policy.", Fields: []string{"environmentId", "input"}, Required: []string{"environmentId", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentExtension"},
 	{Name: "environment_cleanup_review", Method: "POST", Path: "/temporary-environments/{environmentId}/cleanup-review", Description: "Review removal of owned workload resources and retention of shared infrastructure and data.", Fields: []string{"environmentId"}, Required: []string{"environmentId"}},
 	{Name: "environment_destroy", Method: "POST", Path: "/temporary-environments/{environmentId}/destroy", Description: "Submit the reviewed revision, digest and exact name with a stable cleanup key. Uncertain operations require inspection; shared servers and protected data remain.", Fields: []string{"environmentId", "key", "input"}, Required: []string{"environmentId", "key", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentCleanup"},
-}, recoveryOperations...)
+}, recoveryOperations...), workflowOperations...)
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$`)
 var fullCommit = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 var environmentName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,39}$`)
@@ -201,7 +205,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 	}
 	path := op.Path
-	for f, v := range map[string]string{"runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
+	for f, v := range map[string]string{"storeId": args.StoreID, "templateId": args.TemplateID, "policyId": args.PolicyID, "runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
 		if v != "" && !identifier.MatchString(v) {
 			return Failure("invalid_input", "Invalid resource identifier")
 		}
@@ -211,6 +215,9 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		return Failure("invalid_input", "Use a stable retry key of 8 to 128 printable ASCII characters without spaces")
 	}
 	body, inputErr := recoveryInput(op, args)
+	if inputErr == nil && body == nil {
+		body, inputErr = workflowInput(op, args)
+	}
 	if inputErr != nil {
 		return Failure("invalid_input", inputErr.Error())
 	}
@@ -231,6 +238,14 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		var input TemporaryEnvironmentInput
 		if decodeStrict(args.Input, &input) != nil || !identifier.MatchString(input.ProjectID) || !identifier.MatchString(input.TemplateID) || !identifier.MatchString(input.ServerID) || !environmentName.MatchString(input.Name) || !fullCommit.MatchString(input.SourceSHA) || input.LifetimeSeconds < 1 || input.LifetimeSeconds > 365*24*3600 {
 			return Failure("invalid_input", "Supply the project, template, target, lowercase environment name, full Git commit SHA and finite lifetime in seconds")
+		}
+		if len(input.ServiceBindings) > 32 {
+			return Failure("invalid_input", "Supply at most 32 explicit service bindings")
+		}
+		for _, binding := range input.ServiceBindings {
+			if strings.TrimSpace(binding.Alias) == "" || strings.TrimSpace(binding.ServiceRef) == "" || len(binding.Environment) == 0 || binding.Compose != nil || binding.Helm != nil {
+				return Failure("invalid_input", "Temporary environments accept explicit same-project service references with Dockerfile environment mappings only")
+			}
 		}
 		body = input
 	case "TemporaryEnvironmentExtension":
@@ -282,7 +297,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	if args.Limit < 0 || args.Limit > 500 || args.After < 0 {
 		return Failure("invalid_input", "Log limit must be 1 to 500 and the cursor must not be negative")
 	}
-	if name == "backups_list" && args.ProjectID != "" {
+	if (name == "backups_list" || name == "backup_policies_list" || name == "backup_stores_list") && args.ProjectID != "" {
 		path += "?projectId=" + url.QueryEscape(args.ProjectID)
 	}
 	if name == "deployment_logs" {
@@ -293,6 +308,9 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	}
 	if args.TimeoutSeconds < 0 || args.TimeoutSeconds > 600 {
 		return Failure("invalid_input", "Wait timeout must be 1 to 600 seconds")
+	}
+	if failure := c.checkInfrastructureAction(ctx, op, args); failure != nil {
+		return *failure
 	}
 	continuation := &Continuation{Kind: "deployment", ID: args.DeploymentID, Key: args.Key}
 	if args.ReceiptID != "" {
@@ -329,12 +347,16 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 			}
 		}
 
-		out = recoveryContinuation(op, args, out)
+		if isWorkflowOperation(name) {
+			out = workflowContinuation(op, args, out)
+		} else {
+			out = recoveryContinuation(op, args, out)
+		}
 
 		if !out.OK {
 			return out
 		}
-		if (name == "apps_list" || name == "servers_list") && args.ProjectID != "" {
+		if (name == "apps_list" || name == "servers_list" || name == "service_templates_list" || name == "service_runs_list") && args.ProjectID != "" {
 			var items []map[string]any
 			decoder := json.NewDecoder(bytes.NewReader(out.Data))
 			decoder.UseNumber()

@@ -111,6 +111,18 @@ func TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration(t *test
 	if _, err = executor.RunWorkloadBackup(ctx, wrong, server); err == nil {
 		t.Fatal("wrong encryption key accepted")
 	}
+
+	objectServer, access := backupObjectFixture(t, record.ProjectID, backupID)
+	executor.BackupObjectClient = objectServer.Client()
+	exporting := request
+	exporting.Destination, exporting.DestinationStorage = nil, nil
+	exporting.ExpectedDestination = ""
+	exporting.Action, exporting.OperationID = "export", ulid.Make().String()
+	exporting.OffsiteAccess = &access
+	exported, err := executor.RunWorkloadBackup(ctx, exporting, server)
+	if err != nil || exported.State != "exported" || exported.Offsite == nil {
+		t.Fatal("encrypted object export failed", exported, err)
+	}
 	dir, _ := workloadbackup.Path(executor.WorkloadBackupDirectory, backupID)
 	f, err := os.OpenFile(filepath.Join(dir, "archive.enc"), os.O_WRONLY, 0)
 	if err != nil {
@@ -127,5 +139,36 @@ func TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration(t *test
 	}
 	if query(target, "SELECT value FROM backup_marker") != "original" {
 		t.Fatal("failed validation mutated destination")
+	}
+
+	// The source container and its entire local archive directory disappear before recovery.
+	if err = exec.CommandContext(ctx, "docker", "rm", "-f", container).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	freshServer := core.Server{ID: "fresh-recovery-target", Address: "local", Runtime: "docker"}
+	freshDestination := destination
+	freshTarget := *destination.Run.Target
+	freshTarget.ServerID = freshServer.ID
+	freshDestination.Run.Target = &freshTarget
+	freshStorage := destinationStorage
+	freshStorage.ServerID = freshServer.ID
+	request.Backup.Offsite = exported.Offsite
+	request.OffsiteAccess = &access
+	request.Destination = &freshDestination
+	request.DestinationStorage = &freshStorage
+	freshExecutor := DockerExecutor{WorkloadBackupDirectory: filepath.Join(t.TempDir(), "fresh-backups"), BackupObjectClient: objectServer.Client()}
+	request.Action, request.OperationID = "verify", ulid.Make().String()
+	offsiteVerified, err := freshExecutor.RunWorkloadBackup(ctx, request, freshServer)
+	if err != nil || offsiteVerified.State != "verified" || offsiteVerified.CleanupState != "complete" {
+		t.Fatal("source-independent offsite verification failed", offsiteVerified, err)
+	}
+	query(target, "UPDATE backup_marker SET value='fresh-target-change'")
+	request.Action, request.OperationID = "restore", ulid.Make().String()
+	offsiteRestored, err := freshExecutor.RunWorkloadBackup(ctx, request, freshServer)
+	if err != nil || offsiteRestored.State != "restored" || query(target, "SELECT value FROM backup_marker") != "original" {
+		t.Fatal("source-independent offsite restore failed", offsiteRestored, err)
 	}
 }

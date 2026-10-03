@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -14,7 +13,7 @@ func TestControllerSettingsSQLite(t *testing.T) {
 }
 
 func TestControllerSettingsPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_SETTINGS_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_SETTINGS_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_SETTINGS_POSTGRES_URL to a disposable database")
 	}

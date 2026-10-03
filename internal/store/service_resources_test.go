@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ func TestServiceResourceSQLite(t *testing.T) {
 	testServiceResourceStore(t, filepath.Join(t.TempDir(), "resources.db"))
 }
 func TestServiceResourcePostgres(t *testing.T) {
-	url := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	url := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if url == "" {
 		t.Skip("set DISPATCH_TEST_POSTGRES_URL")
 	}

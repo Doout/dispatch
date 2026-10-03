@@ -11,6 +11,9 @@ import (
 )
 
 func inputSchema(kind string) any {
+	if schema := workflowSchema(kind); schema != nil {
+		return schema
+	}
 	if schema := recoverySchema(kind); schema != nil {
 		return schema
 	}
@@ -38,6 +41,15 @@ func inputSchema(kind string) any {
 		props["name"] = map[string]any{"type": "string", "pattern": environmentName.String()}
 		props["sourceSha"] = map[string]any{"type": "string", "pattern": fullCommit.String()}
 		props["lifetimeSeconds"] = map[string]any{"type": "integer", "minimum": 1, "maximum": 365 * 24 * 3600}
+		bindings := workflowSchema("ServiceBindings")
+		bindings["maxItems"] = 32
+		item := bindings["items"].(map[string]any)
+		item["required"] = []string{"alias", "serviceRef", "environment"}
+		bindingProperties := item["properties"].(map[string]any)
+		delete(bindingProperties, "compose")
+		delete(bindingProperties, "helm")
+		bindingProperties["environment"].(map[string]any)["minProperties"] = 1
+		props["serviceBindings"] = bindings
 		required = []string{"projectId", "templateId", "serverId", "name", "sourceSha", "lifetimeSeconds"}
 	case "TemporaryEnvironmentExtension":
 		props["revision"] = map[string]any{"type": "integer", "minimum": 1}

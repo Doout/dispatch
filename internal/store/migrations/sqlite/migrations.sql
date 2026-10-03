@@ -1723,3 +1723,31 @@ BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
 CREATE TRIGGER neon_suspend_dependency_update BEFORE UPDATE ON service_resource_dependencies
 WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
 BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+-- dispatch:migration 094_workload_backup_policies
+CREATE TABLE workload_backup_policies (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ source_run_id TEXT NOT NULL, server_id TEXT NOT NULL,
+ enabled BOOLEAN NOT NULL, revision BIGINT NOT NULL,
+ input_cipher TEXT NOT NULL, payload TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX workload_backup_policy_source ON workload_backup_policies(source_run_id) WHERE enabled=TRUE;
+ALTER TABLE workload_backups ADD COLUMN capture_policy_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE workload_backups ADD COLUMN scheduled_at TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX workload_backup_capture_slot ON workload_backups(capture_policy_id,scheduled_at) WHERE capture_policy_id<>'';
+CREATE INDEX workload_backup_policy_history ON workload_backups(capture_policy_id,created_at);
+
+-- dispatch:migration 095_service_admission
+ALTER TABLE project_infrastructure_policies ADD COLUMN max_services BIGINT NOT NULL DEFAULT 0 CHECK(max_services >= -1);
+
+-- dispatch:migration 096_workload_backup_offsite
+CREATE TABLE workload_backup_object_stores (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ credential_secret_id TEXT NOT NULL REFERENCES secrets(id), payload TEXT NOT NULL
+);
+ALTER TABLE workload_backups ADD COLUMN offsite_store_id TEXT REFERENCES workload_backup_object_stores(id);
+ALTER TABLE workload_backup_operations ADD COLUMN offsite_store_id TEXT REFERENCES workload_backup_object_stores(id);
+
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect','workload_backup_offsite_inspect','retention_inspect');

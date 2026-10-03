@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/doout/dispatch/internal/core"
 	"github.com/oklog/ulid/v2"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +15,7 @@ func TestWorkloadBackupSQLiteAdmissionAndRestart(t *testing.T) {
 	testWorkloadBackupStore(t, filepath.Join(t.TempDir(), "backups.db"))
 }
 func TestWorkloadBackupPostgresAdmissionAndRestart(t *testing.T) {
-	url := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	url := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if url == "" {
 		t.Skip("set DISPATCH_TEST_POSTGRES_URL")
 	}

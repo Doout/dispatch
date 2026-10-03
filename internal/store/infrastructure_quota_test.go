@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -18,7 +17,7 @@ func TestInfrastructureQuotaSQLite(t *testing.T) {
 	testInfrastructureQuota(t, filepath.Join(t.TempDir(), "quota.db"))
 }
 func TestInfrastructureQuotaPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_QUOTA_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_QUOTA_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_QUOTA_POSTGRES_URL to a disposable database")
 	}
@@ -233,7 +232,7 @@ func TestInfrastructureQuotaMigrationCountsExistingAllocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reapply the quota migration to a database that already has owned machines.
-	for _, query := range []string{`DROP TABLE infrastructure_quota_reservations`, `DROP TABLE project_infrastructure_policies`, `DELETE FROM schema_migrations WHERE version='079_infrastructure_quotas'`} {
+	for _, query := range []string{`DROP TABLE infrastructure_quota_reservations`, `DROP TABLE project_infrastructure_policies`, `DELETE FROM schema_migrations WHERE version IN ('079_infrastructure_quotas','095_service_admission')`} {
 		if _, err = s.db.ExecContext(ctx, query); err != nil {
 			t.Fatal(err)
 		}

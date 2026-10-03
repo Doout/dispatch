@@ -42,6 +42,18 @@ func (a *API) listApps(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, filtered)
 }
 
+func (a *API) getApp(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.GetApp(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Application")
+		return
+	}
+	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
+		item = redactAppCredentials(item)
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
 type createAppRequest struct {
 	HealthPolicy                                                                                                               core.HealthPolicy `json:"healthPolicy"`
 	ProjectID, ServerID, Name, SourceRepo, Branch, BuildType, ContextPath, DockerfilePath, ComposePath, ComposeContent, Domain string
@@ -218,6 +230,10 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	if input.Template {
 		state = "template"
 	}
+	r, receipt, proceed := a.reserveMutation(w, r, input.ProjectID, "application.create", input, "application", "")
+	if !proceed {
+		return
+	}
 	item := core.App{ID: ulid.Make().String(), ProjectID: input.ProjectID, ServerID: input.ServerID, Name: input.Name,
 		SourceRepo: input.SourceRepo, Branch: input.Branch, SourceAuthType: input.SourceAuthType, SourceCredentialID: input.SourceCredentialID,
 		BuildType: core.BuildType(input.BuildType), ContextPath: input.ContextPath,
@@ -225,8 +241,26 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 		HelmChart: input.HelmChart, HelmVersion: input.HelmVersion, HelmRepository: input.HelmRepository, HelmValues: input.HelmValues,
 		HelmNamespace: input.HelmNamespace, HelmRelease: input.HelmRelease, PreDeployHook: input.PreDeployHook,
 		PostDeployHook: input.PostDeployHook, Domain: strings.TrimSpace(input.Domain), Template: input.Template, State: state, CreatedAt: time.Now().UTC()}
+	if receipt != nil {
+		item.ID = receipt.OperationID
+	}
 	if err := a.store.CreateApp(r.Context(), item); err != nil {
+		if errors.Is(err, store.ErrMutationClaimLost) {
+			problem(w, 409, "Acceptance changed", "Retry the identical request to inspect its original receipt.")
+			return
+		}
+		a.failMutationAcceptance(r.Context(), 500, "Application acceptance failed; inspect the original receipt.")
 		a.internal(w, err)
+		return
+	}
+	core.RecordAcceptedOperation(r.Context(), item.ID)
+	if receipt != nil {
+		saved, err := a.store.(store.MutationReceiptStore).GetMutationReceipt(r.Context(), receipt.ID)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		a.writeMutationReceipt(w, r, saved, http.StatusAccepted)
 		return
 	}
 	writeJSON(w, http.StatusCreated, item)

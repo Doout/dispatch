@@ -5,13 +5,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/routing"
 	"github.com/oklog/ulid/v2"
 )
 
 var ErrTemporaryEnvironmentChanged = errors.New("temporary environment review, ownership, deadline or revision changed")
+
+type frozenServiceBindingsKey struct{}
 
 func (s *SQLStore) CreateTemporaryEnvironmentReview(ctx context.Context, r core.TemporaryEnvironmentReview) error {
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO temporary_environment_reviews(id,project_id,state,payload) VALUES(?,?,'prepared',?)`), r.ID, r.Input.ProjectID, jsonText(r))
@@ -120,11 +124,18 @@ func (s *SQLStore) AcceptTemporaryEnvironment(ctx context.Context, review core.T
 	if !current.Template || current.ProjectID != review.Input.ProjectID || current.SpecDigest() != review.TemplateDigest {
 		return e, ErrTemporaryEnvironmentChanged
 	}
-	var runtime, node, state string
-	if err = tx.QueryRowContext(ctx, s.q(`SELECT runtime,agent_node_id,state FROM servers WHERE id=?`), review.Input.ServerID).Scan(&runtime, &node, &state); err != nil {
+	if _, err = tx.ExecContext(ctx, s.q(`UPDATE servers SET state=state WHERE id=?`), review.Input.ServerID); err != nil {
+		return e, err
+	}
+	var runtime, node, state, routingRaw string
+	if err = tx.QueryRowContext(ctx, s.q(`SELECT runtime,agent_node_id,state,routing_config FROM servers WHERE id=?`), review.Input.ServerID).Scan(&runtime, &node, &state, &routingRaw); err != nil {
 		return e, err
 	}
 	if runtime != "docker" || node == "" || node != review.TargetNodeID || state != "ready" {
+		return e, ErrTemporaryEnvironmentChanged
+	}
+	var currentRouting *core.RoutingConfig
+	if json.Unmarshal([]byte(routingRaw), &currentRouting) != nil || jsonText(currentRouting) != jsonText(review.Routing) {
 		return e, ErrTemporaryEnvironmentChanged
 	}
 	var generation int64
@@ -141,15 +152,68 @@ func (s *SQLStore) AcceptTemporaryEnvironment(ctx context.Context, review core.T
 	if err = s.insertApp(ctx, tx, app); err != nil {
 		return e, err
 	}
+	// Match ordinary binding acceptance: lock services before inserting consumers
+	// so a concurrently reviewed deletion observes the accepted environment.
+	refs := []string{}
+	selectedRefs := map[string]bool{}
+	for _, binding := range review.Input.ServiceBindings {
+		if !selectedRefs[binding.ServiceRef] {
+			refs = append(refs, binding.ServiceRef)
+			selectedRefs[binding.ServiceRef] = true
+		}
+	}
+	if len(selectedRefs) != len(review.ServiceRevisions) {
+		return e, ErrDeploymentReviewChanged
+	}
+	sort.Strings(refs)
+	for _, ref := range refs {
+		var raw string
+		if err = tx.QueryRowContext(ctx, s.q(s.serviceLockQuery()), ref).Scan(&raw); err != nil {
+			return e, ErrDeploymentReviewChanged
+		}
+		service, err := decodeService(raw)
+		if err != nil || service.ProjectID != app.ProjectID || service.Revision != review.ServiceRevisions[ref] {
+			return e, ErrDeploymentReviewChanged
+		}
+	}
+	for _, binding := range review.Input.ServiceBindings {
+		if _, err = tx.ExecContext(ctx, s.q(`INSERT INTO app_service_bindings(app_id,alias,service_id,payload) VALUES(?,?,?,?)`), app.ID, binding.Alias, binding.ServiceRef, jsonText(binding)); err != nil {
+			return e, err
+		}
+	}
 	policy, err := core.NormalizeHealthPolicy(app.HealthPolicy)
 	if err != nil {
 		return e, err
 	}
-	d := core.Deployment{ID: deploymentID, AppID: app.ID, CommitSHA: review.Input.SourceSHA, SpecDigest: app.SpecDigest(), State: core.DeploymentQueued, Message: "Temporary environment accepted", CreatedAt: now, Health: core.DeploymentHealth{Policy: policy, State: "pending", Checks: []core.HealthCheckResult{}}, Acceptance: &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), BindingsDigest: core.ServiceBindingConfigurationDigest(nil), ServiceRevisions: map[string]int64{}}, ExecutionAppName: app.Name, ExecutionGenerated: true}
-	if err = s.insertDeployment(ctx, tx, d); err != nil {
+	d := core.Deployment{ID: deploymentID, AppID: app.ID, CommitSHA: review.Input.SourceSHA, SpecDigest: app.SpecDigest(), State: core.DeploymentQueued, Message: "Temporary environment accepted", CreatedAt: now, Health: core.DeploymentHealth{Policy: policy, State: "pending", Checks: []core.HealthCheckResult{}}, Acceptance: &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest(), BindingsDigest: core.ServiceBindingConfigurationDigest(review.Input.ServiceBindings), ServiceRevisions: review.ServiceRevisions}, ExecutionAppName: app.Name, ExecutionGenerated: true}
+	if err = s.insertDeployment(context.WithValue(ctx, frozenServiceBindingsKey{}, true), tx, d); err != nil {
 		return e, err
 	}
-	e = core.TemporaryEnvironment{ID: review.EnvironmentID, ProjectID: app.ProjectID, Name: app.Name, TemplateID: review.Input.TemplateID, TemplateDigest: review.TemplateDigest, SourceSHA: d.CommitSHA, AppID: app.ID, DeploymentID: d.ID, ServerID: app.ServerID, TargetNodeID: review.TargetNodeID, TargetGeneration: review.TargetGeneration, Actor: actor, State: "accepted", Revision: 1, ExpiresAt: now.Add(time.Duration(review.Input.LifetimeSeconds) * time.Second), CreatedAt: now, UpdatedAt: now, CleanupOperationID: review.EnvironmentID, CleanupJobID: "cleanup-environment-" + review.EnvironmentID, Resources: []core.TemporaryResource{{Kind: "application", ID: app.ID, Ownership: "owned"}, {Kind: "deployment", ID: d.ID, Ownership: "owned"}, {Kind: "server", ID: app.ServerID, Ownership: "shared"}}}
+	plan, err := routing.Plan(d, app, core.Server{ID: app.ServerID, Routing: currentRouting})
+	if err != nil {
+		return e, ErrTemporaryEnvironmentChanged
+	}
+	if plan != nil {
+		if review.Route == nil || plan.Hostname != review.Route.Hostname || app.Domain != plan.Hostname {
+			return e, ErrTemporaryEnvironmentChanged
+		}
+		if _, err = s.reserveApplicationRoute(ctx, tx, *plan); err != nil {
+			return e, err
+		}
+	} else if review.Route != nil {
+		return e, ErrTemporaryEnvironmentChanged
+	}
+	e = core.TemporaryEnvironment{AppSpecDigest: app.SpecDigest(), Hostname: app.Domain, Routing: currentRouting, ID: review.EnvironmentID, ProjectID: app.ProjectID, Name: app.Name, TemplateID: review.Input.TemplateID, TemplateDigest: review.TemplateDigest, SourceSHA: d.CommitSHA, AppID: app.ID, DeploymentID: d.ID, ServerID: app.ServerID, TargetNodeID: review.TargetNodeID, TargetGeneration: review.TargetGeneration, Actor: actor, State: "accepted", Revision: 1, ExpiresAt: now.Add(time.Duration(review.Input.LifetimeSeconds) * time.Second), CreatedAt: now, UpdatedAt: now, CleanupOperationID: review.EnvironmentID, CleanupJobID: "cleanup-environment-" + review.EnvironmentID, Resources: []core.TemporaryResource{{Kind: "application", ID: app.ID, Ownership: "owned"}, {Kind: "deployment", ID: d.ID, Ownership: "owned"}, {Kind: "server", ID: app.ServerID, Ownership: "shared"}}}
+	seenServices := map[string]bool{}
+	for _, binding := range review.Input.ServiceBindings {
+		if !seenServices[binding.ServiceRef] {
+			e.Resources = append(e.Resources, core.TemporaryResource{Kind: "service", ID: binding.ServiceRef, Ownership: "shared"})
+			seenServices[binding.ServiceRef] = true
+		}
+	}
+	if plan != nil {
+		e.Resources = append(e.Resources, core.TemporaryResource{Kind: "route", ID: plan.Hostname, Ownership: "owned"})
+	}
 	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO temporary_environments(id,project_id,app_id,deployment_id,state,revision,expires_at,created_at,updated_at,cleanup_operation_id,cleanup_job_id,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`), e.ID, e.ProjectID, e.AppID, e.DeploymentID, e.State, e.Revision, stamp(e.ExpiresAt), stamp(now), stamp(now), e.CleanupOperationID, e.CleanupJobID, jsonText(e))
 	if err != nil {
 		return e, err
@@ -215,8 +279,22 @@ func (s *SQLStore) SaveTemporaryEnvironment(ctx context.Context, e core.Temporar
 		if err = tx.QueryRowContext(ctx, s.q(`SELECT state FROM apps WHERE id=?`), e.AppID).Scan(&appState); err != nil {
 			return err
 		}
+		if e.Hostname != "" {
+			var routes int
+			if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM application_routes WHERE app_id=?`), e.AppID).Scan(&routes); err != nil {
+				return err
+			}
+			if routes != 0 {
+				return ErrTemporaryEnvironmentChanged
+			}
+		}
 		if jobState != "succeeded" || appState != "closed" {
 			return ErrTemporaryEnvironmentChanged
+		}
+		// The stopped workload no longer consumes shared services. Frozen deployment
+		// captures and the environment's shared-resource history remain retained.
+		if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM app_service_bindings WHERE app_id=?`), e.AppID); err != nil {
+			return err
 		}
 	}
 	outcome := e.State

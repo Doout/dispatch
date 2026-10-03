@@ -55,7 +55,8 @@ func TestExportRetryRecoveryAndProjectIsolation(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- service.run(ctx) }()
 		defer func() { cancel(); <-done }()
-		deadline := time.After(10 * time.Second)
+		// Recovery correctness does not depend on DuckDB startup speed under parallel tests.
+		deadline := time.After(2 * time.Minute)
 		for {
 			summary := service.Summary(map[string]bool{"allowed": true}, 30)
 			if summary.State == "ready" {

@@ -48,6 +48,9 @@ func (b *Broker) Submit(ctx context.Context, id string, r Request) (core.Runtime
 	if err != nil || credential.Revoked || credential.PublicKey == "" {
 		return core.RuntimeJob{}, errors.New("runtime target requires a current enrolled identity")
 	}
+	if r.WorkloadBackup != nil && r.WorkloadBackup.OffsiteAccess != nil && (r.WorkloadBackup.ExecutionNodeGeneration <= 0 || r.WorkloadBackup.ExecutionNodeGeneration != credential.Generation) {
+		return core.RuntimeJob{}, errors.New("accepted offsite runtime enrollment changed")
+	}
 	now := time.Now().UTC()
 	j := core.RuntimeJob{ID: id, ServerID: r.Server.ID, NodeID: r.Server.AgentNodeID, NodeGeneration: credential.Generation, ProjectID: r.Application.ProjectID, AppID: r.Application.ID, DeploymentID: r.Deployment.ID, Operation: string(r.Operation), RequestDigest: hex.EncodeToString(digest[:]), EncryptedRequest: encrypted, CreatedAt: now, ExpiresAt: now.Add(MaxDuration)}
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(j.ExpiresAt) {

@@ -9,6 +9,10 @@ func recoverySchema(kind string) map[string]any {
 		return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
 	}
 	switch kind {
+	case "WorkloadBackupExportInput":
+		return object(map[string]any{"storeId": text()}, []string{"storeId"})
+	case "WorkloadBackupVerificationInput":
+		return object(map[string]any{"destinationRunId": text()}, []string{"destinationRunId"})
 	case "RecoveryConfirmation":
 		confirmation := object(map[string]any{"resourceId": text(), "action": map[string]any{"type": "string", "enum": []string{"delete", "restore"}}, "expectedVersion": text(), "confirmName": text()}, []string{"resourceId", "action", "expectedVersion", "confirmName"})
 		return object(map[string]any{"confirmation": confirmation}, []string{"confirmation"})

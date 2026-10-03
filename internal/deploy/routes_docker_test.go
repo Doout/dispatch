@@ -148,3 +148,40 @@ func TestManagedCandidatePruningKeepsCurrentAndPrevious(t *testing.T) {
 		t.Fatal("candidate retention changed serving resources", removed)
 	}
 }
+
+func TestManagedCleanupRemovesCandidatesWithoutArtifactStore(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(map[bool]string{false: "owned", true: "foreign-project"}[foreign], func(t *testing.T) {
+			app := core.App{ID: "app", ProjectID: "project", ServerID: "target", Name: "App", BuildType: core.BuildTypeDockerfile, ContainerPort: 8080}
+			server := core.Server{ID: "target", Runtime: "docker", Address: "local", Routing: &core.RoutingConfig{BaseDomain: "apps.example.test"}}
+			publisher := &routing.FilePublisher{Directory: t.TempDir()}
+			plan, _ := routing.Plan(core.Deployment{ID: "current"}, app, server)
+			if _, err := publisher.Prepare(context.Background(), *plan); err != nil {
+				t.Fatal(err)
+			}
+			removed := []string{}
+			executor := DockerExecutor{Routes: publisher, run: func(_ context.Context, _ io.Reader, out io.Writer, _ string, args ...string) error {
+				if args[0] == "ps" {
+					_, _ = io.WriteString(out, "candidate-current candidate-previous")
+				} else if args[0] == "inspect" {
+					project := app.ProjectID
+					if foreign {
+						project = "other-project"
+					}
+					_, _ = io.WriteString(out, app.ID+"|"+project+"|"+args[len(args)-1])
+				} else if args[0] == "rm" {
+					removed = append(removed, args[len(args)-1])
+				}
+				return nil
+			}}
+			err := executor.Cleanup(context.Background(), app, server, func(core.DeploymentState, string) error { return nil })
+			if foreign {
+				if err == nil || len(removed) != 0 {
+					t.Fatal("foreign candidate cleanup was allowed", removed, err)
+				}
+			} else if err != nil || len(removed) != 3 || removed[0] != "candidate-current" || removed[1] != "candidate-previous" {
+				t.Fatal("current or retained candidate leaked after cleanup", removed, err)
+			}
+		})
+	}
+}

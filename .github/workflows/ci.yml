@@ -9,6 +9,53 @@ permissions:
   contents: read
 
 jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: dispatch_test
+          POSTGRES_PASSWORD: dispatch_test_password
+          POSTGRES_DB: dispatch_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dispatch_test -d dispatch_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DISPATCH_STORE_POSTGRES_URL: postgres://dispatch_test:dispatch_test_password@127.0.0.1:5432/dispatch_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Exercise isolated PostgreSQL persistence fixtures
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -timeout 40m -json ./internal/store | python3 scripts/check-test-results.py --require-name postgres
+  docker-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DISPATCH_RUNTIME_INTEGRATION: '1'
+      DISPATCH_ROUTING_DOCKER_INTEGRATION: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify real Docker routing, backup restore and agent restart
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -timeout 20m -json ./internal/deploy ./internal/agentruntime \
+            -run '^(TestManagedDockerTraefikPromotionAndRestartIntegration|TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration|TestRemoteManagedRouteCandidateIntegration|TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration)$' \
+            | python3 scripts/check-test-results.py
   test:
     runs-on: ubuntu-latest
     steps:
