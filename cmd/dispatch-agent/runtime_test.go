@@ -22,6 +22,30 @@ func (f runtimeWorkerFunc) Run(ctx context.Context, j remoteruntime.LeasedJob, p
 	return f(ctx, j, p)
 }
 
+func TestRuntimeRequestsAdvertiseCapabilitiesAtEveryBoundary(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Dispatch-Runtime-Version") != remoteruntime.APIVersion || r.Header.Get("X-Dispatch-Runtime-Capabilities") != remoteruntime.CapabilityHeader() {
+			t.Errorf("missing runtime negotiation for %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	if job, err := leaseRuntime(context.Background(), server.Client(), server.URL, "node", "session"); err != nil || job != nil {
+		t.Fatalf("empty runtime poll failed: %v", err)
+	}
+	for _, tc := range []struct {
+		path  string
+		input any
+	}{
+		{"job/heartbeat", remoteruntime.Heartbeat{LeaseToken: "lease"}},
+		{"job/complete", remoteruntime.Completion{LeaseToken: "lease", Result: remoteruntime.Result{State: "succeeded"}}},
+	} {
+		if err := runtimeRequest(context.Background(), server.Client(), server.URL, "node", "session", http.MethodPost, tc.path, tc.input, nil); err != nil {
+			t.Fatalf("runtime %s failed: %v", tc.path, err)
+		}
+	}
+}
+
 func TestRuntimeLeaseLossCancelsExecutionBeforeAnotherJob(t *testing.T) {
 	previous := runtimeHeartbeatInterval
 	runtimeHeartbeatInterval = 5 * time.Millisecond

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"github.com/doout/dispatch/internal/runtimecontract"
 	"net/http"
 	"slices"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -69,8 +69,8 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	node.Details["agentArtifactSHA256"] = artifact
 	node.Details["runtimeVersion"] = remoteruntime.APIVersion
 	node.Details["runtimeCheckedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-	advertised := strings.Split(r.Header.Get("X-Dispatch-Runtime-Capabilities"), ",")
-	if len(advertised) > 20 || len(r.Header.Get("X-Dispatch-Runtime-Capabilities")) > 512 {
+	advertised, err := remoteruntime.ParseCapabilities(r.Header.Get("X-Dispatch-Runtime-Capabilities"))
+	if err != nil {
 		problem(w, 422, "Invalid capabilities", "The capability list exceeds its limit.")
 		return
 	}
@@ -172,9 +172,8 @@ func (a *API) renewRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		a.runtimeJobProblem(w, err)
 		return
 	}
-	advertised := r.Header.Get("X-Dispatch-Runtime-Capabilities")
-	capabilities := strings.Split(advertised, ",")
-	if required != "" && (r.Header.Get("X-Dispatch-Runtime-Version") != remoteruntime.APIVersion || len(advertised) > 512 || len(capabilities) > 20 || !slices.Contains(capabilities, job.Operation) || !slices.Contains(capabilities, string(required))) {
+	capabilities, capabilityErr := remoteruntime.ParseCapabilities(r.Header.Get("X-Dispatch-Runtime-Capabilities"))
+	if required != "" && (r.Header.Get("X-Dispatch-Runtime-Version") != remoteruntime.APIVersion || capabilityErr != nil || !slices.Contains(capabilities, job.Operation) || !slices.Contains(capabilities, string(required))) {
 		if err := broker.Store.FenceRuntimeJob(r.Context(), node.ID, jobID, input.LeaseToken, now); err != nil {
 			a.runtimeJobProblem(w, err)
 			return

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,4 +117,30 @@ func TestRemoteRuntimeAPIRejectsLegacyAndUnknownProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeNodeRequest(t, a, http.MethodGet, "/api/v1/edge/nodes/legacy/runtime/jobs/next", token, nil, 401)
+}
+
+func TestRemoteRuntimeOrdinaryRenewalDoesNotRequireCleanupNegotiation(t *testing.T) {
+	a, node, session, app := runtimeAPIFixture(t)
+	job := submitRuntimeTest(t, a, app, "inspect", "ordinary-renewal", 202)
+	path := "/api/v1/edge/nodes/" + node.ID + "/runtime/jobs/"
+	var leased remoteruntime.LeasedJob
+	if err := json.Unmarshal(runtimeNodeRequest(t, a, "GET", path+"next", session.Token, nil, 200), &leased); err != nil {
+		t.Fatal(err)
+	}
+	for _, header := range []string{"", strings.Repeat("inspect,", 20) + "inspect", strings.Repeat("x", 513)} {
+		raw, err := json.Marshal(remoteruntime.Heartbeat{LeaseToken: leased.LeaseToken})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("POST", path+job.ID+"/heartbeat", bytes.NewReader(raw))
+		req.Header.Set("Authorization", "Bearer "+session.Token)
+		req.Header.Set("X-Dispatch-Runtime-Version", "unknown")
+		req.Header.Set("X-Dispatch-Runtime-Capabilities", header)
+		rr := httptest.NewRecorder()
+		a.ServeHTTP(rr, req)
+		if rr.Code != 200 {
+			t.Fatalf("ordinary renewal acquired a cleanup requirement: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	runtimeNodeRequest(t, a, "POST", path+job.ID+"/complete", session.Token, remoteruntime.Completion{LeaseToken: leased.LeaseToken, Result: remoteruntime.Result{State: "succeeded"}}, 204)
 }

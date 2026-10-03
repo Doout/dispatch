@@ -28,9 +28,7 @@ func (b *Broker) BackupAuthority(ctx context.Context, id string) (*BackupAuthori
 	if err != nil {
 		return nil, err
 	}
-	switch runtimecontract.Operation(job.Operation) {
-	case WorkloadBackup, WorkloadBackupInspect, WorkloadBackupOffsite, WorkloadBackupOffsiteInspect, runtimecontract.Operation("workload_backup_retire"), runtimecontract.Operation("workload_backup_retire_inspect"):
-	default:
+	if !IsWorkloadBackupOperation(runtimecontract.Operation(job.Operation)) {
 		return nil, nil
 	}
 	request, err := b.request(job)
