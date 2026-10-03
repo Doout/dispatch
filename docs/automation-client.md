@@ -717,4 +717,4 @@ Every command returns `version: "dispatch.client/v1"`, `ok`, HTTP `status` when 
 | 4 | Client timeout or cancellation, accepted work may continue |
 | 5 | Operation failed, was cancelled, paused for recovery or has an unresolved external outcome |
 
-A returned approval or paused state does not grant permission to execute. Use the server's review identifier and approval process, then inspect the same operation again.
+Pending approval requires the reviewed approval process. A paused provider operation requires inspection and an explicit retry of its original operation ID. Inspect the same operation afterward.

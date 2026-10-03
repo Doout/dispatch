@@ -364,8 +364,10 @@ and encrypted key. These APIs do not import a lost controller database or master
 
 ## Retire local copies and remove offsite objects
 
-Use `POST /api/v1/workload-backups/{id}/retire-local-preview`, then submit the
-exact returned confirmation to `/retire-local` with a stable `Idempotency-Key`.
+Use `POST /api/v1/workload-backups/{id}/retire-local-preview` to inspect the review.
+Build the confirmation using its `resourceId` and `action`, with `version` as
+`expectedVersion` and `name` as `confirmName`. Submit it to `/retire-local` with a
+stable `Idempotency-Key`.
 Retirement requires independently verified offsite preservation. The worker
 again downloads both remote objects into a fresh directory, checks their frozen
 checksums, decrypts the manifest and authenticates the archive plaintext. It then
@@ -407,5 +409,8 @@ and operation identity across retries.
 The PostgreSQL fixture captures and exports an archive, removes the source
 container and its archive directory, verifies in a fresh backup directory, and
 restores a separately owned destination. It uses one disposable Docker daemon
-with separate logical target identities. Independent host and live cloud recovery
+with separate logical target identities. Another fixture removes a source daemon
+and its storage before recovering through a second nested Docker daemon. Both
+daemons share a physical host and use a TLS object-store fixture.
+Independent host and live cloud recovery
 remain deployment validation steps.
