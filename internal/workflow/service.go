@@ -494,6 +494,9 @@ func normalizeRepository(repository string) string {
 		if len(parts) == 2 {
 			repository = parts[1]
 		}
+	} else if marker := strings.Index(repository, ":"); marker >= 0 && !strings.Contains(repository[:marker], "/") {
+		// Git's scp-style SSH clone URLs have no scheme or slash before the path.
+		repository = repository[marker+1:]
 	}
 	repository = strings.TrimSuffix(strings.Trim(repository, "/"), ".git")
 	return strings.ToLower(repository)

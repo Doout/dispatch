@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
@@ -351,30 +353,35 @@ func previewServerScope(kind string, server core.Server) string {
 type previewTrustParentKey struct{}
 
 func (s *Service) checkRevisionTrust(ctx context.Context, revision core.WorkflowRevision) error {
+	_, err := s.checkRevisionSourceTrust(ctx, revision)
+	return err
+}
+
+func (s *Service) checkRevisionSourceTrust(ctx context.Context, revision core.WorkflowRevision) (*core.PreviewSourceTrustDecision, error) {
 	if revision.ResourceID == "" {
-		return nil
+		return nil, nil
 	}
 	if parent, ok := ctx.Value(previewTrustParentKey{}).(core.WorkflowRevision); ok && parent.ID != revision.ID {
 		if err := s.checkRevisionTrust(context.WithValue(ctx, previewTrustParentKey{}, nil), parent); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	resource, err := s.Store.GetWorkflowResource(ctx, revision.ResourceID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resource.Temporary && (!resource.Active || resource.State == "expiring" || resource.State == "expired" || resource.State == "removed") {
-		return store.ErrPreviewClosing
+		return nil, store.ErrPreviewClosing
 	}
 	decision, err := s.SourceTrust(ctx, resource, revision)
 	if decision != nil {
 		if data, ok := s.Store.(store.PreviewSourceTrustStore); ok {
 			if saveErr := data.UpdatePreviewSourceTrustDecision(ctx, revision.ID, decision); saveErr != nil {
-				return saveErr
+				return nil, saveErr
 			}
 		}
 	}
-	return err
+	return decision, err
 }
 
 // CheckDeploymentTrust also protects direct API starts on generated preview apps.
@@ -420,11 +427,31 @@ func (s *Service) CheckDeploymentTrust(ctx context.Context, app core.App, commit
 	if revision.ResourceID != resource.ID {
 		return ErrPreviewSourceTrust
 	}
-	if err := s.checkRevisionTrust(ctx, revision); err != nil {
+	decision, err := s.checkRevisionSourceTrust(ctx, revision)
+	if err != nil {
 		return err
 	}
 	for _, pinned := range revision.Sources {
-		if normalizeRepository(pinned.Repository) == normalizeRepository(app.SourceRepo) && pinned.CommitSHA == commit {
+		if normalizeRepository(pinned.Repository) != normalizeRepository(app.SourceRepo) {
+			continue
+		}
+		// Default same-repository previews may resolve their chart during a direct
+		// deployment. Only explicit source approvals bind the chart to a run's SHA.
+		if decision != nil && decision.Allowed && decision.Policy == "same_repository" && decision.ApprovalID == "" {
+			source, err := s.Store.GetConfigSource(ctx, resource.ConfigSourceID)
+			if err != nil {
+				return err
+			}
+			expected, err := s.repositoryCloneURL(ctx, source, pinned.Repository)
+			if err != nil {
+				return err
+			}
+			if host := cloneRepositoryHost(expected); host == "" || host != cloneRepositoryHost(app.SourceRepo) {
+				return fmt.Errorf("%w: preview chart source no longer matches its configured repository", ErrPreviewSourceTrust)
+			}
+			return nil
+		}
+		if pinned.CommitSHA == commit {
 			return nil
 		}
 	}
@@ -436,4 +463,22 @@ func (s *Service) resolvePreviewSource(ctx context.Context, appID, repository st
 		return s.ResolvePreviewSource(ctx, appID, repository, number)
 	}
 	return s.GitHub.PullRequestHead(ctx, appID, repository, number)
+}
+
+func cloneRepositoryHost(repository string) string {
+	if strings.Contains(repository, "://") {
+		parsed, err := url.Parse(repository)
+		if err != nil {
+			return ""
+		}
+		return strings.ToLower(parsed.Hostname())
+	}
+	if marker := strings.Index(repository, ":"); marker >= 0 && !strings.Contains(repository[:marker], "/") {
+		host := repository[:marker]
+		if user := strings.LastIndex(host, "@"); user >= 0 {
+			host = host[user+1:]
+		}
+		return strings.ToLower(host)
+	}
+	return ""
 }

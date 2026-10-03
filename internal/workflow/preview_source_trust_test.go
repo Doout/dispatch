@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/store"
 )
 
 func sourceTrustFixture(t *testing.T) (workflowNoopFixture, *map[string]githubapp.PullRequestHead) {
@@ -260,12 +262,21 @@ func TestPreviewTrustRechecksOwnerAndMissingOrigin(t *testing.T) {
 func TestPreviewTrustAppliesToDirectDeploymentsAndCheckPipelines(t *testing.T) {
 	f, heads := sourceTrustFixture(t)
 	ctx := context.Background()
-	app := core.App{SourceRepo: "https://github.example/example/gitops", HelmProvenance: core.HelmProvenance{WorkflowResourceID: f.resource.ID, WorkflowRevisionID: f.previous.ID}}
+	app := f.app
 	if err := f.service.CheckDeploymentTrust(ctx, app, f.previous.Sources["gitops"].CommitSHA); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.CheckDeploymentTrust(ctx, app, "unreviewed-commit"); !errors.Is(err, ErrPreviewSourceTrust) {
-		t.Fatal("direct deploy changed the chart commit")
+	host := cloneRepositoryHost(f.app.SourceRepo)
+	for _, repository := range []string{"https://" + host + "/example/gitops.git", "ssh://git@" + host + "/example/gitops.git", "git@" + host + ":example/gitops.git"} {
+		app.SourceRepo = repository
+		if err := f.service.CheckDeploymentTrust(ctx, app, "chart"); err != nil {
+			t.Fatalf("same-host chart %q denied: %v", repository, err)
+		}
+	}
+	for _, commit := range []string{"", "chart", "HEAD", strings.Repeat("d", 40)} {
+		if err := f.service.CheckDeploymentTrust(ctx, app, commit); err != nil {
+			t.Fatalf("default preview requires chart approval for %q: %v", commit, err)
+		}
 	}
 	head := (*heads)["example/service"]
 	head.Head.Repo = &githubapp.PullRequestRepository{ID: 999, FullName: "outsider/service"}
@@ -347,5 +358,131 @@ func TestSavedServiceTemplateTrustKeepsParentBoundary(t *testing.T) {
 	template.Temporary = true
 	if err := runtime.checkExecutionTrust(context.Background()); err == nil {
 		t.Fatal("temporary resource skipped source trust")
+	}
+}
+
+func TestDefaultPreviewDirectDeploymentResolvesChartWithoutApproval(t *testing.T) {
+	f, _ := sourceTrustFixture(t)
+	ctx := context.Background()
+	service := deploy.NewService(f.data, deploy.SimulationExecutor{Delay: time.Millisecond})
+	service.CheckExecution = f.service.CheckDeploymentTrust
+	deployment, err := service.Start(ctx, f.app.ID, "")
+	if err != nil {
+		t.Fatalf("default chart placeholder was denied before source resolution: %v", err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			current, err := f.data.GetDeployment(ctx, deployment.ID)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if current.FinishedAt != nil {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Error("direct preview deployment did not finish")
+	})
+	if deployment.ID == "" || deployment.CommitSHA != "chart" {
+		t.Fatalf("direct preview deployment was not accepted: %+v", deployment)
+	}
+	revision, err := f.data.GetWorkflowRevision(ctx, f.previous.ID)
+	if err != nil || revision.SourceTrust == nil || !revision.SourceTrust.Allowed || revision.SourceTrust.ApprovalID != "" {
+		t.Fatalf("automatic source decision was not retained: %+v %v", revision.SourceTrust, err)
+	}
+}
+
+func TestApprovedPreviewStillBindsChartRevision(t *testing.T) {
+	for _, policy := range []string{"same_repository", "approval_required"} {
+		t.Run(policy, func(t *testing.T) {
+			f, heads := sourceTrustFixture(t)
+			ctx := context.Background()
+			if policy == "same_repository" {
+				head := (*heads)["example/service"]
+				head.Head.Repo = &githubapp.PullRequestRepository{ID: 999, FullName: "outside/service", Fork: true}
+				(*heads)["example/service"] = head
+			} else {
+				triggers, err := f.data.ListWorkflowPreviewTriggers(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				trigger := triggers[0]
+				if err := f.data.CloseWorkflowPreviewTrigger(ctx, trigger.ID, time.Now().UTC()); err != nil {
+					t.Fatal(err)
+				}
+				trigger.ID = "strict-direct-trigger"
+				trigger.Command = "/strict-direct"
+				trigger.SourceTrustPolicy = policy
+				trigger.ClosedAt = nil
+				if err := f.data.CreateWorkflowPreviewTrigger(ctx, trigger); err != nil {
+					t.Fatal(err)
+				}
+			}
+			app := f.app
+			app.SourceRepo = "git@github.example:example/gitops.git"
+			commit := f.previous.Sources["gitops"].CommitSHA
+			if err := f.service.CheckDeploymentTrust(ctx, app, commit); !errors.Is(err, ErrPreviewSourceTrust) {
+				t.Fatalf("explicit approval was bypassed: %v", err)
+			}
+			decision, _ := f.service.SourceTrust(ctx, f.resource, f.previous)
+			approval := core.PreviewSourceTrustApproval{ID: "chart-grant", ResourceID: f.resource.ID, Digest: decision.Digest, ActorID: "controller-owner", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
+			if err := f.data.CreatePreviewSourceTrustApproval(ctx, approval); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.service.CheckDeploymentTrust(ctx, app, commit); err != nil {
+				t.Fatal(err)
+			}
+			for _, changed := range []string{"", "chart", "HEAD", strings.Repeat("d", 40)} {
+				if err := f.service.CheckDeploymentTrust(ctx, app, changed); !errors.Is(err, ErrPreviewSourceTrust) {
+					t.Fatalf("approved preview accepted chart %q: %v", changed, err)
+				}
+			}
+			if err := f.data.RevokePreviewSourceTrustApproval(ctx, f.resource.ID, approval.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.service.CheckDeploymentTrust(ctx, app, commit); !errors.Is(err, ErrPreviewSourceTrust) {
+				t.Fatalf("revoked chart approval remained usable: %v", err)
+			}
+		})
+	}
+}
+
+func TestDefaultPreviewDirectDeploymentKeepsSourceAndLifetimeChecks(t *testing.T) {
+	f, heads := sourceTrustFixture(t)
+	ctx := context.Background()
+	app := f.app
+	app.SourceRepo = "https://github.example/outside/chart.git"
+	if err := f.service.CheckDeploymentTrust(ctx, app, "chart"); !errors.Is(err, ErrPreviewSourceTrust) {
+		t.Fatalf("unconfigured chart source accepted: %v", err)
+	}
+	app.SourceRepo = "https://other-host.invalid/example/gitops.git"
+	if err := f.service.CheckDeploymentTrust(ctx, app, "chart"); !errors.Is(err, ErrPreviewSourceTrust) {
+		t.Fatalf("chart source on another host accepted: %v", err)
+	}
+	app = f.app
+	head := (*heads)["example/service"]
+	head.Head.SHA = strings.Repeat("d", 40)
+	(*heads)["example/service"] = head
+	if err := f.service.CheckDeploymentTrust(ctx, app, "chart"); !errors.Is(err, ErrPreviewSourceTrust) {
+		t.Fatalf("stale PR source evidence accepted: %v", err)
+	}
+	head.Head.SHA = f.previous.Sources["service"].CommitSHA
+	(*heads)["example/service"] = head
+	f.resource.State = "expiring"
+	if err := f.data.UpdateWorkflowResource(ctx, f.resource); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.CheckDeploymentTrust(ctx, app, "chart"); !errors.Is(err, store.ErrPreviewClosing) {
+		t.Fatalf("closing preview accepted: %v", err)
+	}
+}
+
+func TestRepositoryIdentityAcceptsCloneURLForms(t *testing.T) {
+	for _, repository := range []string{"Example/Gitops", "https://github.example/Example/Gitops.git", "ssh://git@github.example/Example/Gitops.git", "git@github.example:Example/Gitops.git", "github.example:Example/Gitops.git"} {
+		if got := normalizeRepository(repository); got != "example/gitops" {
+			t.Errorf("%q normalized to %q", repository, got)
+		}
 	}
 }

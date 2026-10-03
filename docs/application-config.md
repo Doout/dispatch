@@ -464,11 +464,14 @@ The template uses the Application `spec` schema for sources, jobs, deployments, 
 Preview source trust is independent of the comment author's permission. The default
 `sourceTrustPolicy: same_repository` permits PR code only when GitHub reports that
 the head and base have the same repository identity. Every linked PR is checked.
+These previews need no source approval or extra workflow run to select a chart
+revision. Direct deployments resolve the configured chart source normally.
 Set `sourceTrustPolicy: approval_required` under `spec.triggers.pullRequestComment`
 to require approval for all PR revisions. Saved templates without YAML trigger
 settings expose the same policy in the template editor. Policy changes apply to
 existing instances before further execution; deleting a template preserves the
-instance's last source policy.
+instance's last source policy. Explicit approvals also bind generated-application
+charts to the revision selected by the approved workflow run.
 
 Fork code is blocked before any job, hook, check or deployment receives workload
 credentials, including production service bindings. Current runners are not
