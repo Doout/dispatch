@@ -188,10 +188,42 @@ paths:
         '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /service-templates:
+    get:
+      operationId: listServiceTemplates
+      description: Lists saved and repository templates in projects visible to the caller, including configSha for exact owner approval. Does not provision resources or expose service credentials.
+      responses:
+        '200': { description: Visible service templates and typed input metadata. }
+  /service-templates/{id}:
+    get:
+      operationId: getServiceTemplate
+      description: Requires project.view. Returns the selected saved or repository template and current configSha.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Visible service template. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /service-provision-runs:
+    get:
+      operationId: listServiceProvisionRuns
+      description: Lists provision runs in projects visible through project.view. Generated credentials and encrypted accepted requests are excluded.
+      responses:
+        '200': { description: Visible provision run history. }
+  /service-provision-runs/{id}:
+    get:
+      operationId: getServiceProvisionRun
+      description: Requires project.view. Inspects the original provision run and sanitized outcome.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Original provision run. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /service-templates/{id}/runs:
     post:
       operationId: provisionServiceTemplate
-      description: Requires a direct user with project.configure and deployment.run. Built-in requests capture encrypted configuration and generated credentials before mutation. Idempotency-Key replays the original accepted run; custom scripts remain manual after uncertain outcomes. Neon parent-data templates require owner confirmation through confirmDataCopy; automatic previews require schema-only.
+      description: Direct users require project.configure and deployment.run. Scoped automation requires project.view and service.provision, a mandatory Idempotency-Key, an assigned target, exact owner-approved template ID@digest, and available maxServices capacity. Automation supports built-in PostgreSQL Docker and Helm templates without script or repository execution. Built-in requests capture encrypted configuration and generated credentials before mutation. Identical retries return the original run; custom scripts require manual recovery after uncertain outcomes. Neon parent-data templates require owner confirmation through confirmDataCopy; automatic previews require schema-only.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -628,6 +660,7 @@ paths:
                 maxServers: { type: integer, minimum: -1 }
                 maxTemporaryEnvironments: { type: integer, minimum: -1 }
                 maxSnapshots: { type: integer, minimum: -1 }
+                maxServices: { type: integer, minimum: -1, description: Project-wide bound on nondeleted owned service resources for scoped provisioning. Zero blocks new scoped provisioning; -1 explicitly allows unlimited resources. Omitted fields preserve the current value for older clients. }
                 maxTemporaryLifetimeSeconds: { type: integer, minimum: 0, maximum: 31536000 }
                 providers:
                   type: array
@@ -1938,7 +1971,7 @@ paths:
         type: string
     get:
       operationId: getProjectRetention
-      description: Requires project.manage. Read an explicit history policy; no automatic cleanup is enabled.
+      description: Requires project.manage or runtime.cleanup. Read the saved project policy; runtime.cleanup does not grant policy editing or history pruning.
         Requires Operations to be enabled; otherwise returns 403 Operations disabled.
       responses:
         '200':
@@ -1987,7 +2020,7 @@ paths:
       operationId: previewProjectRetention
       description: >-
         Requires Operations to be enabled; otherwise returns 403 Operations disabled.
-        Requires project.manage. Count eligible historical logs/runs while preserving
+        Requires project.manage for history or runtime.cleanup for scope runtime. Count eligible historical logs/runs while preserving
         current, successful, baseline, and workflow dependencies. Optional expectedPolicy
         is compared with the saved policy in the same transaction that evaluates
         eligibility. A mismatch returns 409. This does not save policy changes or
@@ -2021,7 +2054,7 @@ paths:
       operationId: applyProjectRetention
       description: >-
         Requires Operations to be enabled; otherwise returns 403 Operations disabled.
-        Requires project.manage and explicit project confirmation. Reevaluate eligibility
+        Requires project.manage for history or runtime.cleanup for scope runtime, and explicit project confirmation. Reevaluate eligibility
         and delete only unprotected data in this project. Optional expectedPolicy is
         compared transactionally with the saved policy; a mismatch returns 409 without
         cleanup. The reviewed policy is applied without substituting a newer policy.
@@ -2050,7 +2083,7 @@ paths:
   /projects/{id}/retention/runtime-reviews/{reviewId}:
     get:
       operationId: getRuntimeRetentionReview
-      description: Requires project.manage and Operations enabled. Reads the original runtime cleanup candidates and per-item outcomes without scheduling work.
+      description: Requires project.manage or runtime.cleanup and Operations enabled. Reads the original runtime cleanup candidates and per-item outcomes without scheduling work.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: path, name: reviewId, required: true, schema: { type: string } }
@@ -3784,7 +3817,7 @@ paths:
       responses:
         '200': { description: Assigned provider and target references }
     put:
-      summary: Assign an existing provider or target (controller owner)
+      summary: Assign an existing provider, target, public SSH key or exact service template digest (controller owner)
       requestBody:
         required: true
         content:
@@ -3793,15 +3826,15 @@ paths:
               type: object
               required: [kind, resourceId]
               properties:
-                kind: { type: string, enum: [provider, target, ssh_key] }
-                resourceId: { type: string }
+                kind: { type: string, enum: [provider, target, ssh_key, service_template] }
+                resourceId: { type: string, description: Service template approvals use the exact template ID@configSha returned by the template inventory. }
       responses:
         '200': { description: Resource assigned }
         '422': { description: Resource missing or owned by another project }
   /infrastructure/assignments/{projectId}/{kind}/{resourceId}:
     parameters:
       - { in: path, name: projectId, required: true, schema: { type: string } }
-      - { in: path, name: kind, required: true, schema: { type: string, enum: [provider, target, ssh_key] } }
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [provider, target, ssh_key, service_template] } }
       - { in: path, name: resourceId, required: true, schema: { type: string } }
     delete:
       summary: Remove an explicit resource assignment (controller owner)
