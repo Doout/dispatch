@@ -37,7 +37,25 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -race -count=1 -timeout 40m -json ./internal/store | python3 scripts/check-postgres-results.py
+          go test -race -count=1 -timeout 40m -json ./internal/store | python3 scripts/check-test-results.py --require-name postgres
+  docker-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DISPATCH_RUNTIME_INTEGRATION: '1'
+      DISPATCH_ROUTING_DOCKER_INTEGRATION: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify real Docker routing, backup restore and agent restart
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -timeout 20m -json ./internal/deploy ./internal/agentruntime \
+            -run '^(TestManagedDockerTraefikPromotionAndRestartIntegration|TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration|TestRemoteManagedRouteCandidateIntegration|TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration)$' \
+            | python3 scripts/check-test-results.py
   test:
     runs-on: ubuntu-latest
     steps:
