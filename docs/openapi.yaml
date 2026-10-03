@@ -4710,19 +4710,23 @@ paths:
   /temporary-environments/review:
     post:
       summary: Review a pinned Application template clone and finite lifetime
-      description: Captures the full source SHA, template digest and current enrolled target identity. Omits hooks, hook variables, service bindings, data and production routing; rejects route or certificate health policies. Requires project.view, project.configure and deployment.run plus target assignment. Templates with global source credentials require an owner.
+      description: Captures the full source SHA, template digest and current enrolled target identity. Select service bindings explicitly; acceptance freezes their revisions and encrypted connection values. Built-in services must share the target. External secret-store references require immutable version support and are rejected. Hooks, template bindings, data and production domains are omitted. A configured target routing zone supplies a reviewed unique hostname. Workload health checks remain; route and certificate checks are separate. Requires project.view, project.configure and deployment.run plus target assignment. Templates with global source credentials require an owner.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/TemporaryEnvironmentInput' }
       responses:
-        '201': { description: Saved review with digest, pinned clone, explicit omissions and 15-minute review deadline }
+        '201':
+          description: Saved review with digest, pinned clone and services, routing, explicit omissions and 15-minute review deadline
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemporaryEnvironmentReview' }
         '422': { description: Unsupported template, unavailable target, invalid source SHA or disallowed lifetime }
   /temporary-environments:
     post:
       summary: Atomically accept a reviewed temporary environment
-      description: Requires current project permissions and target assignment. Atomically records quota ownership, generated app, fixed deployment and public receipt. Same-key retries replay before checking the consumed review. Receipt resourceId is the environment ID and operationKind is deployment.
+      description: Requires current project permissions and target assignment. Atomically rechecks template, selected services, target identity and routing, reserves the hostname and quota, and records the generated app, fixed deployment and public receipt. Same-key retries replay before checking the consumed review. Receipt resourceId is the environment ID and operationKind is deployment.
       parameters:
         - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
       requestBody:
@@ -4929,6 +4933,30 @@ components:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{1,39}$' }
         sourceSha: { type: string, pattern: '^([a-f0-9]{40}|[a-f0-9]{64})$' }
         lifetimeSeconds: { type: integer, minimum: 1, maximum: 31536000 }
+        serviceBindings:
+          type: array
+          maxItems: 32
+          description: Explicit same-project Dockerfile environment mappings. Omission copies no template bindings. Selected services remain shared and retained.
+          items: { $ref: '#/components/schemas/ServiceBinding' }
+    TemporaryEnvironmentReview:
+      type: object
+      required: [id, environmentId, input, templateDigest, clone, omissions, digest, state, expiresAt, createdAt, targetNodeId, targetGeneration]
+      properties:
+        id: { type: string }
+        environmentId: { type: string }
+        input: { $ref: '#/components/schemas/TemporaryEnvironmentInput' }
+        templateDigest: { type: string }
+        clone: { type: object, description: Captured generated application configuration with credential values redacted. }
+        omissions: { type: array, items: { type: string } }
+        digest: { type: string }
+        state: { type: string }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        targetNodeId: { type: string }
+        targetGeneration: { type: integer }
+        serviceRevisions: { type: object, additionalProperties: { type: integer } }
+        routing: { $ref: '#/components/schemas/RoutingConfig' }
+        route: { $ref: '#/components/schemas/ApplicationRoute' }
     TemporaryEnvironmentExtension:
       type: object
       additionalProperties: false
@@ -4954,6 +4982,9 @@ components:
         templateId: { type: string }
         templateDigest: { type: string }
         sourceSha: { type: string }
+        appSpecDigest: { type: string }
+        hostname: { type: string, description: Reviewed unique hostname when managed routing is configured. }
+        routing: { $ref: '#/components/schemas/RoutingConfig' }
         appId: { type: string }
         deploymentId: { type: string }
         serverId: { type: string }
