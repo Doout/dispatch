@@ -92,21 +92,14 @@ func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServicePr
 			return ErrServiceResourceChanged
 		}
 		if targetProject != r.ProjectID {
-			var assigned int
-			if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM infrastructure_assignments WHERE project_id=? AND kind='target' AND resource_id=?`), r.ProjectID, r.Target.ServerID).Scan(&assigned); err != nil {
+			if err = s.lockServiceAssignment(ctx, tx.Tx, r.ProjectID, "target", r.Target.ServerID); err != nil {
 				return err
 			}
-			if assigned != 1 {
-				return ErrServiceResourceChanged
-			}
 		}
-		var approved int
-		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM infrastructure_assignments WHERE project_id=? AND kind='service_template' AND resource_id=?`), r.ProjectID, admission.TemplateID+"@"+admission.Digest).Scan(&approved); err != nil {
+		if err = s.lockServiceAssignment(ctx, tx.Tx, r.ProjectID, "service_template", admission.TemplateID+"@"+admission.Digest); err != nil {
 			return err
 		}
-		if approved != 1 {
-			return ErrServiceResourceChanged
-		}
+
 		var used int64
 		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM service_resources WHERE project_id=? AND state<>'deleted'`), r.ProjectID).Scan(&used); err != nil {
 			return err
@@ -184,6 +177,20 @@ func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServicePr
 		return err
 	}
 	return tx.Commit()
+}
+
+// Lock exact approvals until acceptance commits so concurrent revocation is ordered.
+func (s *SQLStore) lockServiceAssignment(ctx context.Context, tx *sql.Tx, project, kind, id string) error {
+	query := `SELECT resource_id FROM infrastructure_assignments WHERE project_id=? AND kind=? AND resource_id=?`
+	if s.postgres {
+		query += ` FOR SHARE`
+	}
+	var assigned string
+	err := tx.QueryRowContext(ctx, s.q(query), project, kind, id).Scan(&assigned)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrServiceResourceChanged
+	}
+	return err
 }
 
 // Owned resources remain counted through failed or uncertain provisioning until verified deletion.

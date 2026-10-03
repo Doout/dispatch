@@ -178,3 +178,49 @@ func testScopedServiceAdmission(t *testing.T, url string) {
 		t.Fatal("revoked template accepted", err)
 	}
 }
+
+func TestServiceAssignmentRevocationWaitsForAcceptedTransactionPostgres(t *testing.T) {
+	url := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
+	if url == "" {
+		t.Skip("set DISPATCH_TEST_POSTGRES_URL")
+	}
+	s := mutationStore(t, url)
+	ctx := context.Background()
+	project := core.Project{ID: ulid.Make().String(), Name: "Lock boundary", CreatedAt: time.Now().UTC()}
+	if err := s.CreateProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"target", "service_template"} {
+		id := ulid.Make().String()
+		if err := s.SaveInfrastructureAssignment(ctx, core.InfrastructureAssignment{ProjectID: project.ID, Kind: kind, ResourceID: id, UpdatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.lockServiceAssignment(ctx, tx.Tx, project.ID, kind, id); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		result := make(chan error, 1)
+		go func() { result <- s.DeleteInfrastructureAssignment(ctx, project.ID, kind, id) }()
+		select {
+		case err := <-result:
+			tx.Rollback()
+			t.Fatalf("%s revocation passed active acceptance: %v", kind, err)
+		case <-time.After(150 * time.Millisecond):
+		}
+		if err = tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("revocation did not resume after acceptance")
+		}
+	}
+}
