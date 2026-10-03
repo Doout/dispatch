@@ -4,6 +4,8 @@ import "time"
 
 type WorkloadBackup struct {
 	ID                        string     `json:"id"`
+	CapturePolicyID           string     `json:"capturePolicyId,omitempty"`
+	ScheduledAt               *time.Time `json:"scheduledAt,omitempty"`
 	ProjectID                 string     `json:"projectId"`
 	SourceRunID               string     `json:"sourceRunId"`
 	StorageID                 string     `json:"storageId"`
@@ -40,6 +42,7 @@ type BackupIntegrityCheck struct {
 }
 type WorkloadBackupOperation struct {
 	ID               string    `json:"id"`
+	CapturePolicyID  string    `json:"capturePolicyId,omitempty"`
 	BackupID         string    `json:"backupId"`
 	ProjectID        string    `json:"projectId"`
 	Action           string    `json:"action"`

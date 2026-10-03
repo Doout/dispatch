@@ -166,11 +166,37 @@ func (s *SQLStore) CreateWorkloadBackup(ctx context.Context, b core.WorkloadBack
 	return tx.Commit()
 }
 func (s *SQLStore) CreateWorkloadBackupOperation(ctx context.Context, o core.WorkloadBackupOperation, revision int64) error {
+	original, err := s.GetWorkloadBackup(ctx, o.BackupID)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if original.CapturePolicyID != "" {
+		policy, e := s.lockBackupPolicy(ctx, tx.Tx, original.CapturePolicyID)
+		if e != nil {
+			return e
+		}
+		var active int
+		if e = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backup_operations o JOIN workload_backups b ON b.id=o.backup_id WHERE b.capture_policy_id=? AND o.state IN ('running','unknown')`), policy.ID).Scan(&active); e != nil {
+			return e
+		}
+		if active > 0 {
+			return ErrWorkloadBackupChanged
+		}
+		if policy.Enabled && o.Action == "delete" {
+			protected, e := s.protectedPolicyBackup(ctx, tx.Tx, policy, original.ID)
+			if e != nil {
+				return e
+			}
+			if protected {
+				return ErrWorkloadBackupChanged
+			}
+		}
+	}
 	q := `SELECT payload,input_cipher,revision FROM workload_backups WHERE id=?`
 	if s.postgres {
 		q += ` FOR UPDATE`

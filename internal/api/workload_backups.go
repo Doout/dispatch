@@ -31,6 +31,7 @@ func (a *API) workloadBackupStore() (store.WorkloadBackupStore, error) {
 	return s, nil
 }
 func (a *API) workloadBackupRoutes(r chi.Router) {
+	a.workloadBackupPolicyRoutes(r)
 	r.Get("/workload-backups", a.listWorkloadBackups)
 	r.Get("/workload-backup-operations/{operationId}", a.getWorkloadBackupOperation)
 	r.Post("/workload-backups", a.createWorkloadBackup)
@@ -292,8 +293,11 @@ func (a *API) verifyWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	go a.executeWorkloadBackupOperation(op, false)
 	a.writeBackupAcceptance(w, r, op, receipt)
 }
-func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.WorkloadBackup, action, id, destination string) (core.WorkloadBackupOperation, error) {
+func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.WorkloadBackup, action, id, destination string, policyIDs ...string) (core.WorkloadBackupOperation, error) {
 	op := newBackupOperation(id, b, action)
+	if len(policyIDs) > 0 {
+		op.CapturePolicyID = policyIDs[0]
+	}
 	input, err := a.decryptWorkloadBackup(b.ID, "accepted", b.EncryptedInput)
 	if err != nil {
 		return op, err
@@ -438,6 +442,19 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 		out.Summary = "Overwrite database objects present in this backup in one PostgreSQL transaction. Objects absent from the archive remain. Detach consumers first; no deployment rollback is triggered."
 		out.Resources = []string{"Destination: " + record.Name, "Target: " + server.Name, "Archive: " + b.ID, "Retain the encrypted backup after restore"}
 	} else {
+		if b.CapturePolicyID != "" && b.VerificationState == "verified" {
+			policies, e := a.backupPolicyStore()
+			if e != nil {
+				return out, e
+			}
+			p, e := policies.GetWorkloadBackupPolicy(ctx, b.CapturePolicyID)
+			if e != nil {
+				return out, e
+			}
+			if p.Enabled {
+				out.BlockedReason = "Pause the capture policy before deleting a protected verified archive. Automatic retention separately preserves the policy recovery points."
+			}
+		}
 		out.Summary = "Permanently delete this retained workload backup archive. Workload data and encrypted operation history remain."
 		out.StoragePolicy = "destroy"
 		out.Resources = []string{"Encrypted archive: " + b.ID, "Target-local bytes: " + fmt.Sprint(b.Bytes), "This backup will no longer protect target deletion"}
@@ -496,6 +513,18 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 		return
 	}
 	input, err := a.decryptWorkloadBackup(op.ID, "operation", op.EncryptedInput)
+	if err == nil && op.CapturePolicyID != "" && !recovering {
+		policies, e := a.backupPolicyStore()
+		if e == nil {
+			policy, lookup := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
+			if lookup != nil || !policy.Enabled {
+				e = store.ErrWorkloadBackupChanged
+			} else {
+				e = a.backupPolicyAuthority(ctx, policy)
+			}
+		}
+		err = e
+	}
 	var result core.WorkloadBackupResult
 	if err == nil {
 		server, e := a.store.GetServer(ctx, b.ServerID)
@@ -560,6 +589,9 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 	if b.VerificationIntervalHours > 0 {
 		next := now.Add(time.Duration(b.VerificationIntervalHours) * time.Hour)
 		b.NextVerificationAt = &next
+		if op.Action == "backup" && b.CapturePolicyID != "" && b.State == "ready" {
+			b.NextVerificationAt = &now
+		}
 	}
 	b.Message = op.Message
 	if err = s.CompleteWorkloadBackupOperation(context.WithoutCancel(ctx), b, op); err != nil {
@@ -596,6 +628,7 @@ func (a *API) RunWorkloadBackupVerification(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
+		a.scheduleWorkloadBackupCaptures(ctx)
 		a.scheduleWorkloadBackupVerification(ctx)
 		select {
 		case <-ctx.Done():
@@ -620,7 +653,19 @@ func (a *API) scheduleWorkloadBackupVerification(ctx context.Context) {
 		if b.State != "ready" || b.VerificationIntervalHours == 0 || b.NextVerificationAt == nil || b.NextVerificationAt.After(time.Now()) {
 			continue
 		}
-		op, err := a.acceptWorkloadBackupOperation(ctx, b, "verify", ulid.Make().String(), "")
+		policyID := ""
+		if b.CapturePolicyID != "" {
+			policies, e := a.backupPolicyStore()
+			if e != nil {
+				continue
+			}
+			policy, e := policies.GetWorkloadBackupPolicy(ctx, b.CapturePolicyID)
+			if e != nil || !policy.Enabled || a.backupPolicyAuthority(ctx, policy) != nil {
+				continue
+			}
+			policyID = policy.ID
+		}
+		op, err := a.acceptWorkloadBackupOperation(ctx, b, "verify", ulid.Make().String(), "", policyID)
 		if err == nil {
 			go a.executeWorkloadBackupOperation(op, false)
 		}

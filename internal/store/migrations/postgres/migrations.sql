@@ -1662,5 +1662,19 @@ CREATE TRIGGER neon_suspend_workflow BEFORE INSERT OR UPDATE ON workflow_service
 CREATE TRIGGER neon_suspend_deployment BEFORE INSERT OR UPDATE ON deployment_service_bindings FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();
 CREATE TRIGGER neon_suspend_dependency BEFORE INSERT OR UPDATE ON service_resource_dependencies FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();
 
+-- dispatch:migration 094_workload_backup_policies
+CREATE TABLE workload_backup_policies (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ source_run_id TEXT NOT NULL, server_id TEXT NOT NULL,
+ enabled BOOLEAN NOT NULL, revision BIGINT NOT NULL,
+ input_cipher TEXT NOT NULL, payload TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX workload_backup_policy_source ON workload_backup_policies(source_run_id) WHERE enabled=TRUE;
+ALTER TABLE workload_backups ADD COLUMN capture_policy_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE workload_backups ADD COLUMN scheduled_at TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX workload_backup_capture_slot ON workload_backups(capture_policy_id,scheduled_at) WHERE capture_policy_id<>'';
+CREATE INDEX workload_backup_policy_history ON workload_backups(capture_policy_id,created_at);
+
 -- dispatch:migration 095_service_admission
 ALTER TABLE project_infrastructure_policies ADD COLUMN max_services BIGINT NOT NULL DEFAULT 0 CHECK(max_services >= -1);
