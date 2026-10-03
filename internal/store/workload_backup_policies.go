@@ -155,6 +155,9 @@ func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.Wor
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.lockBackupDestructiveProject(ctx, tx.Tx, b); err != nil {
+		return err
+	}
 	current, err := s.lockBackupPolicy(ctx, tx.Tx, p.ID)
 	if err != nil {
 		return err
@@ -194,7 +197,7 @@ func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.Wor
 			rows.Close()
 			return ErrWorkloadBackupChanged
 		}
-		if item.State == "ready" && item.VerificationState == "verified" && item.CleanupState == "complete" {
+		if usableRecoveryBackup(item) {
 			verified = append(verified, item)
 		}
 	}
@@ -225,6 +228,9 @@ func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.Wor
 	if !allowed {
 		return ErrWorkloadBackupChanged
 	}
+	if err = s.guardBackupDestructiveCohort(ctx, tx.Tx, b); err != nil {
+		return err
+	}
 	if err = s.insertWorkloadBackupOperation(ctx, tx.Tx, b, o); err != nil {
 		return err
 	}
@@ -244,7 +250,7 @@ func (s *SQLStore) protectedPolicyBackup(ctx context.Context, tx *sql.Tx, p core
 		if err != nil {
 			return true, err
 		}
-		if b.State == "ready" && b.VerificationState == "verified" && b.CleanupState == "complete" {
+		if usableRecoveryBackup(b) {
 			verified = append(verified, b)
 		}
 	}

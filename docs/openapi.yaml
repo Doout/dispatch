@@ -138,7 +138,7 @@ paths:
               schema: { type: array, items: { $ref: '#/components/schemas/BackupObjectStore' } }
     post:
       operationId: registerWorkloadBackupStore
-      description: Owner-only immutable project-scoped registration using an existing write-only JSON secret. Credentials contain accessKeyId, secretAccessKey and optional sessionToken. Use a bucket/prefix-scoped credential allowing HEAD, GET and create-only PUT; this API grants no object deletion. HTTPS is required. Maximum encrypted object size is 4 GiB.
+      description: Owner-only immutable project-scoped registration using an existing write-only JSON secret. Credentials contain accessKeyId, secretAccessKey and optional sessionToken. Use a bucket/prefix-scoped credential allowing HEAD, GET and create-only PUT. Reviewed object deletion also needs DELETE and an explicit conditionalDelete declaration. HTTPS is required. Maximum encrypted object size is 4 GiB.
       requestBody:
         required: true
         content:
@@ -165,6 +165,33 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/BackupObjectStore' }
         '404': { $ref: '#/components/responses/Problem' }
+  /workload-backup-stores/{storeId}/conditional-delete:
+    put:
+      operationId: setWorkloadBackupStoreConditionalDeletion
+      description: Owner-only declaration that the registered unversioned store enforces If-Match DELETE. The endpoint, prefix and credential identity stay fixed. Active or uncertain object operations block changes.
+      parameters:
+        - { in: path, name: storeId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled, expectedEnabled, confirmName]
+              properties:
+                enabled: { type: boolean }
+                expectedEnabled: { type: boolean }
+                confirmName: { type: string }
+      responses:
+        '200':
+          description: Registered store with updated conditional deletion declaration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupObjectStore' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /workload-backups:
     get:
       operationId: listWorkloadBackups
@@ -244,7 +271,7 @@ paths:
   /workload-backups/{id}/export:
     post:
       operationId: exportWorkloadBackup
-      description: Requires project.configure and deployment.run. Copies the complete encrypted archive and encrypted manifest to an approved same-project store using conditional create-only PUT. Lost replies reconcile the same objects and exact bytes. A confirmed manifest pins the original pullable image digest. Maximum encrypted archive size is the store limit, capped at 4 GiB; manifests are capped at 1 MiB. Exported archives remain protected from deletion until reviewed offsite deletion is supported.
+      description: Requires project.configure and deployment.run. Copies the complete encrypted archive and encrypted manifest to an approved same-project store using conditional create-only PUT. Lost replies reconcile the same objects and exact bytes. A confirmed manifest pins the original pullable image digest. Maximum encrypted archive size is the store limit, capped at 4 GiB; manifests are capped at 1 MiB. Exported archives require separately reviewed local retirement or conditional offsite deletion.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
@@ -307,6 +334,54 @@ paths:
     post:
       operationId: deleteWorkloadBackup
       description: Requires project.configure and deployment.run. Deletes retained archive bytes only after current typed confirmation; encrypted operation history remains.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkloadBackupConfirmation' }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/retire-local-preview:
+    post:
+      operationId: reviewWorkloadBackupLocalRetirement
+      description: Requires project.configure. Freezes exact backup, store, object checksums, policy and recovery points. Confirmation name is the backup ID.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Current destructive review with exact identity and blockers. }
+  /workload-backups/{id}/retire-local:
+    post:
+      operationId: acceptWorkloadBackupLocalRetirement
+      description: Requires project.configure and deployment.run. Authenticate offsite archive and encrypted manifest before retiring original local archive bytes. Controller key and recovery metadata remain. Requires independently verified offsite preservation. Supply a stable retry key and exact current confirmation.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkloadBackupConfirmation' }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/delete-offsite-preview:
+    post:
+      operationId: reviewWorkloadBackupOffsiteDeletion
+      description: Requires project.configure. Freezes exact backup, store, object checksums, policy and recovery points. Confirmation name is the backup ID.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Current destructive review with exact identity and blockers. }
+  /workload-backups/{id}/delete-offsite:
+    post:
+      operationId: acceptWorkloadBackupOffsiteDeletion
+      description: Requires project.configure and deployment.run. Conditionally delete only reviewed owned encrypted archive and manifest objects. Versioned objects and unsupported conditional stores remain protected. Keep a usable recovery point. Supply a stable retry key and exact current confirmation.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -5141,6 +5216,7 @@ components:
         region: { type: string }
         prefix: { type: string, description: Relative object prefix with no traversal components. }
         maxBytes: { type: integer, format: int64, minimum: 1, maximum: 4294967296 }
+        conditionalDelete: { type: boolean, default: false, description: Owner declaration that this unversioned destination enforces exact ETag If-Match DELETE. }
     BackupObjectStore:
       type: object
       required: [id, projectId, name, credentialSecretId, config, createdAt]
@@ -5161,6 +5237,9 @@ components:
         manifestChecksum: { type: string }
         imageReference: { type: string, description: Original image repository with immutable sha256 pull digest. }
         confirmedAt: { type: string, format: date-time }
+        verifiedAt: { type: string, format: date-time }
+        verificationState: { type: string, description: Independent offsite restore verification state. }
+        deletedAt: { type: string, format: date-time, description: Confirmed exact object deletion tombstone. }
     WorkloadBackupConfirmation:
       type: object
       required: [confirmation]
@@ -5170,13 +5249,14 @@ components:
           required: [resourceId, action, expectedVersion, confirmName]
           properties:
             resourceId: { type: string, description: Backup ID. }
-            action: { type: string, enum: [restore, delete] }
+            action: { type: string, enum: [restore, delete, retire-local, delete-offsite] }
             expectedVersion: { type: string }
             confirmName: { type: string }
     WorkloadBackup:
       type: object
       required: [id, projectId, sourceRunId, storageId, serverId, sourceResourceId, state, revision, artifactId, consistency, format, bytes, encryption, keyId, location, policy, verificationState, cleanupState, verificationIntervalHours, createdAt, updatedAt]
       properties:
+        localState: { type: string, enum: [present, retired], description: Omitted legacy value means the local copy is present. }
         id: { type: string }
         projectId: { type: string }
         sourceRunId: { type: string }
@@ -5216,7 +5296,7 @@ components:
         id: { type: string }
         backupId: { type: string }
         projectId: { type: string }
-        action: { type: string, enum: [backup, verify, restore, delete, export] }
+        action: { type: string, enum: [backup, verify, restore, delete, export, retire-local, delete-offsite] }
         state: { type: string, enum: [running, succeeded, failed, unknown, unresolved] }
         targetRunId: { type: string }
         targetName: { type: string }

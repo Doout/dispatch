@@ -90,7 +90,7 @@ func (e dockerEngine) Execute(ctx context.Context, request remoteruntime.Request
 	var err error
 	var result remoteruntime.Result
 	switch request.Operation {
-	case remoteruntime.WorkloadBackup, remoteruntime.WorkloadBackupInspect, remoteruntime.WorkloadBackupOffsite, remoteruntime.WorkloadBackupOffsiteInspect:
+	case remoteruntime.WorkloadBackup, remoteruntime.WorkloadBackupInspect, remoteruntime.WorkloadBackupOffsite, remoteruntime.WorkloadBackupOffsiteInspect, remoteruntime.WorkloadBackupRetire, remoteruntime.WorkloadBackupRetireInspect:
 		output, backupErr := e.executor.RunWorkloadBackup(ctx, *request.WorkloadBackup, server)
 		result.WorkloadBackup = &output
 		if backupErr != nil {

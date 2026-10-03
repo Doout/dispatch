@@ -4,6 +4,7 @@ import "time"
 import "github.com/doout/dispatch/internal/backupstore"
 
 type WorkloadBackup struct {
+	LocalState                string                 `json:"localState,omitempty"`
 	ID                        string                 `json:"id"`
 	Offsite                   *BackupOffsiteArtifact `json:"offsite,omitempty"`
 	CapturePolicyID           string                 `json:"capturePolicyId,omitempty"`

@@ -10,6 +10,8 @@ const WorkloadBackup runtimecontract.Operation = "workload_backup"
 const WorkloadBackupInspect runtimecontract.Operation = "workload_backup_inspect"
 const WorkloadBackupOffsite runtimecontract.Operation = "workload_backup_offsite"
 const WorkloadBackupOffsiteInspect runtimecontract.Operation = "workload_backup_offsite_inspect"
+const WorkloadBackupRetire runtimecontract.Operation = "workload_backup_retire"
+const WorkloadBackupRetireInspect runtimecontract.Operation = "workload_backup_retire_inspect"
 
 func NewWorkloadBackupRequest(input core.WorkloadBackupRequest, server core.Server) Request {
 	subject := input.Source
@@ -29,6 +31,12 @@ func NewWorkloadBackupRequest(input core.WorkloadBackupRequest, server core.Serv
 			r.Operation = WorkloadBackupOffsite
 		}
 	}
+	if input.Action == "retire-local" {
+		r.Operation = WorkloadBackupRetire
+	}
+	if input.Action == "reconcile" && input.RecoveryAction == "retire-local" {
+		r.Operation = WorkloadBackupRetireInspect
+	}
 	return r
 }
 func (r Request) validateWorkloadBackup() error {
@@ -36,14 +44,17 @@ func (r Request) validateWorkloadBackup() error {
 		return err
 	}
 	b := r.WorkloadBackup
-	if b != nil && (b.OffsiteAccess != nil) != (r.Operation == WorkloadBackupOffsite || r.Operation == WorkloadBackupOffsiteInspect) {
+	if b != nil && (b.OffsiteAccess != nil) != (r.Operation == WorkloadBackupOffsite || r.Operation == WorkloadBackupOffsiteInspect || r.Operation == WorkloadBackupRetire || r.Operation == WorkloadBackupRetireInspect) {
 		return errors.New("offsite operation requires explicit runtime capability")
 	}
 	if b == nil || !identityPattern.MatchString(b.Backup.ID) || !identityPattern.MatchString(b.OperationID) || b.Backup.ProjectID != r.Application.ProjectID || (b.Backup.ServerID != r.Server.ID && !offsiteRuntimeRecovery(b, r.Server)) || b.Source.Run.ProjectID != r.Application.ProjectID || b.Source.Run.ID != b.Backup.SourceRunID || (b.Backup.ServerID == r.Server.ID && b.Backup.NodeID != r.Server.AgentNodeID) || b.Backup.ArtifactID != b.Backup.ID || b.Storage.ProjectID != r.Application.ProjectID || b.Storage.ServerID != b.Backup.ServerID || len(b.Key) != 64 {
 		return errors.New("backup ownership or encryption inputs do not match runtime target")
 	}
-	if (r.Operation == WorkloadBackupInspect || r.Operation == WorkloadBackupOffsiteInspect) != (b.Action == "inspect" || b.Action == "reconcile") {
+	if (r.Operation == WorkloadBackupInspect || r.Operation == WorkloadBackupOffsiteInspect || r.Operation == WorkloadBackupRetireInspect) != (b.Action == "inspect" || b.Action == "reconcile") {
 		return errors.New("backup inspection cannot contain a data mutation")
+	}
+	if (b.Action == "retire-local" || b.Action == "reconcile" && b.RecoveryAction == "retire-local") != (r.Operation == WorkloadBackupRetire || r.Operation == WorkloadBackupRetireInspect) {
+		return errors.New("local archive retirement requires explicit runtime capability")
 	}
 	return nil
 }
@@ -71,7 +82,7 @@ func (r Request) ValidateWorkloadBackupResult(result Result) error {
 		}
 	}
 	switch item.State {
-	case "ready", "verified", "restored", "deleted", "failed", "unknown", "unresolved", "exported":
+	case "ready", "verified", "restored", "deleted", "failed", "unknown", "unresolved", "exported", "local-retired":
 	default:
 		return errors.New("invalid backup outcome")
 	}
@@ -79,7 +90,7 @@ func (r Request) ValidateWorkloadBackupResult(result Result) error {
 	if action == "reconcile" {
 		action = r.WorkloadBackup.RecoveryAction
 	}
-	expected := map[string]string{"backup": "ready", "inspect": "ready", "verify": "verified", "restore": "restored", "delete": "deleted", "export": "exported"}[action]
+	expected := map[string]string{"backup": "ready", "inspect": "ready", "verify": "verified", "restore": "restored", "delete": "deleted", "export": "exported", "retire-local": "local-retired"}[action]
 	if item.State != "failed" && item.State != "unknown" && item.State != "unresolved" && item.State != expected {
 		return errors.New("backup evidence does not match the accepted action")
 	}

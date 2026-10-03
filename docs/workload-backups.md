@@ -294,11 +294,51 @@ Both export and recovery require agents advertising the new
 `workload_backup_offsite` and `workload_backup_offsite_inspect` capabilities.
 Older generic backup agents cannot claim those jobs.
 
-Exported archives are protected from deletion until reviewed conditional offsite
-deletion is supported. Capture-policy retention skips those extra copies and
-prunes eligible older local archives while preserving its newest verified set.
-Target registration deletion remains blocked by retained backup records. These
-APIs do not expose an import flow for a lost controller database or master key.
+Local copies protect their source target until a reviewed retirement confirms that
+archive bytes are absent. Offsite-only backups retain their controller metadata
+and encrypted key. These APIs do not import a lost controller database or master key.
+
+## Retire local copies and remove offsite objects
+
+Use `POST /api/v1/workload-backups/{id}/retire-local-preview`, then submit the
+exact returned confirmation to `/retire-local` with a stable `Idempotency-Key`.
+Retirement requires independently verified offsite preservation. The worker
+again downloads both remote objects into a fresh directory, checks their frozen
+checksums, decrypts the manifest and authenticates the archive plaintext. It then
+removes the owned local archive bytes, syncs the directory and saves the bound
+receipt. Local manifests and operation history remain. An uncertain outcome
+keeps the target protected until reconciliation confirms absence and offsite
+preservation. Reconciliation does not resume deleting an intact local archive.
+
+`/delete-offsite-preview` and `/delete-offsite` use the same confirmation and key
+contract. The review includes the exact store, keys, checksums, policy and other
+recovery points. Active or unresolved operations retain their artifacts. A paused
+policy still cannot lose its sole usable recovery point. Concurrent destructive
+operations for one source are serialized. No prefix listing or bulk delete occurs.
+
+Offsite deletion runs at the controller and therefore works after source-target
+removal. Each object is checked for ownership and authenticated bytes, then
+removed with its exact ETag in `If-Match`. A missing object settles a lost reply;
+changed or unavailable evidence remains uncertain. Metadata and the encrypted
+key remain as a tombstone after confirmed deletion.
+
+Object deletion defaults to disabled. An owner must verify that the unversioned
+store enforces conditional DELETE, then set `config.conditionalDelete` at
+registration or use `PUT /api/v1/workload-backup-stores/{storeId}/conditional-delete`
+with explicit `enabled`, `expectedEnabled` and the exact `confirmName`. This
+updates only the declaration, never the endpoint, prefix or credential identity.
+Versioned objects are rejected. AWS documents that
+[conditional deletion checks the current ETag](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-deletes.html)
+and that [versioned deletion can leave previous versions behind](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html).
+Compatible stores need their own conditional-delete validation before enabling
+this declaration. The local fixtures do not prove live cloud behavior.
+
+Remote retirement needs the `workload_backup_retire` and
+`workload_backup_retire_inspect` capabilities. Older agents cannot claim these
+jobs. CLI and MCP expose `backup_retire_local_review`, `backup_retire_local`,
+`backup_delete_offsite_review` and `backup_delete_offsite`. The mutation tools
+require the exact action-specific confirmation and retain the original receipt
+and operation identity across retries.
 
 The PostgreSQL fixture captures and exports an archive, removes the source
 container and its archive directory, verifies in a fresh backup directory, and

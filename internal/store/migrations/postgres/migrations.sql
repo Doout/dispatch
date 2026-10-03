@@ -1689,3 +1689,12 @@ ALTER TABLE workload_backup_operations ADD COLUMN offsite_store_id TEXT REFERENC
 
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect','workload_backup_offsite_inspect','retention_inspect');
+
+-- dispatch:migration 097_workload_backup_retirement
+ALTER TABLE workload_backups ADD COLUMN local_state TEXT NOT NULL DEFAULT 'present';
+ALTER TABLE workload_backups ADD COLUMN offsite_usable BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE OR REPLACE FUNCTION protect_backup_target() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN IF EXISTS(SELECT 1 FROM workload_backups WHERE server_id=OLD.id AND state<>'deleted' AND (local_state<>'retired' OR offsite_usable=FALSE)) THEN RAISE EXCEPTION 'server retains workload backup archives'; END IF; RETURN OLD; END;
+$$;
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect','workload_backup_offsite_inspect','workload_backup_retire_inspect','retention_inspect');

@@ -4,6 +4,7 @@ import "time"
 
 // WorkloadBackupPolicy authorizes captures and retention for one frozen owned source.
 type WorkloadBackupPolicy struct {
+	OffsiteStoreID       string     `json:"offsiteStoreId,omitempty"`
 	ID                   string     `json:"id"`
 	ProjectID            string     `json:"projectId"`
 	SourceRunID          string     `json:"sourceRunId"`

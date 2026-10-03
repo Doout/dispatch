@@ -26,11 +26,12 @@ type Credentials struct {
 	SessionToken    string `json:"sessionToken,omitempty"`
 }
 type Config struct {
-	Endpoint string `json:"endpoint"`
-	Bucket   string `json:"bucket"`
-	Region   string `json:"region"`
-	Prefix   string `json:"prefix"`
-	MaxBytes int64  `json:"maxBytes"`
+	Endpoint          string `json:"endpoint"`
+	Bucket            string `json:"bucket"`
+	Region            string `json:"region"`
+	Prefix            string `json:"prefix"`
+	MaxBytes          int64  `json:"maxBytes"`
+	ConditionalDelete bool   `json:"conditionalDelete,omitempty"`
 }
 type ObjectAccess struct {
 	Key     string            `json:"key"`
@@ -125,11 +126,11 @@ func Presign(raw, method, region string, credential Credentials, headers map[str
 }
 func formatSeconds(d time.Duration) string { return strconv.FormatInt(int64(d/time.Second), 10) }
 func Grant(c Config, credential Credentials, store, project, backup string, write, remove bool, now time.Time) (Access, error) {
-	if remove {
-		return Access{}, errors.New("reviewed offsite deletion is not supported")
-	}
 	if err := c.Validate(); err != nil {
 		return Access{}, err
+	}
+	if remove && !c.ConditionalDelete {
+		return Access{}, errors.New("destination has not enabled conditional unversioned object deletion")
 	}
 	if !safeComponent.MatchString(project) || !safeComponent.MatchString(backup) || !safeComponent.MatchString(store) {
 		return Access{}, errors.New("object ownership identity is invalid")
@@ -164,6 +165,12 @@ func Grant(c Config, credential Credentials, store, project, backup string, writ
 			}
 		}
 
+		if remove {
+			item.dst.Delete, err = Presign(u.String(), http.MethodDelete, c.Region, credential, nil, now, time.Hour)
+			if err != nil {
+				return Access{}, err
+			}
+		}
 	}
 	return access, nil
 }

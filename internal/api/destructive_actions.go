@@ -276,7 +276,7 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 				return out, backupErr
 			}
 			for _, backup := range items {
-				if backup.ServerID == item.ID && backup.State != "deleted" {
+				if backup.ServerID == item.ID && backup.State != "deleted" && (backup.LocalState != "retired" || !intactVerifiedOffsite(backup)) {
 					out.Resources = append(out.Resources, "Retained workload backup "+backup.ID)
 					out.BlockedReason = "Retained workload backups require this target. Review and explicitly delete their archive bytes before removing the target."
 				}

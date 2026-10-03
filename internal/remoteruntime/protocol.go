@@ -114,7 +114,7 @@ func (r Request) Validate() error {
 	if IsStorageOperation(r.Operation) {
 		return r.validateStorage()
 	}
-	if r.WorkloadBackup != nil && r.Operation != WorkloadBackup && r.Operation != WorkloadBackupInspect && r.Operation != WorkloadBackupOffsite && r.Operation != WorkloadBackupOffsiteInspect {
+	if r.WorkloadBackup != nil && r.Operation != WorkloadBackup && r.Operation != WorkloadBackupInspect && r.Operation != WorkloadBackupOffsite && r.Operation != WorkloadBackupOffsiteInspect && r.Operation != WorkloadBackupRetire && r.Operation != WorkloadBackupRetireInspect {
 		return errors.New("unexpected backup inputs")
 	}
 	if r.Storage != nil {
@@ -133,7 +133,7 @@ func (r Request) Validate() error {
 		return errors.New("unexpected retention inputs")
 	}
 	switch r.Operation {
-	case WorkloadBackup, WorkloadBackupInspect, WorkloadBackupOffsite, WorkloadBackupOffsiteInspect:
+	case WorkloadBackup, WorkloadBackupInspect, WorkloadBackupOffsite, WorkloadBackupOffsiteInspect, WorkloadBackupRetire, WorkloadBackupRetireInspect:
 		if err := r.validateWorkloadBackup(); err != nil {
 			return err
 		}
