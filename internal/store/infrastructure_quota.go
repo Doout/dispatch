@@ -25,7 +25,7 @@ type InfrastructureQuotaStore interface {
 func scanQuotaPolicy(row scanner) (core.InfrastructureQuotaPolicy, error) {
 	var p core.InfrastructureQuotaPolicy
 	var raw, updated string
-	err := row.Scan(&p.ProjectID, &p.Revision, &p.MaxServers, &p.MaxTemporaryEnvironments, &p.MaxSnapshots, &p.MaxTemporaryLifetimeSeconds, &raw, &updated)
+	err := row.Scan(&p.ProjectID, &p.Revision, &p.MaxServers, &p.MaxTemporaryEnvironments, &p.MaxSnapshots, &p.MaxServices, &p.MaxTemporaryLifetimeSeconds, &raw, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -40,7 +40,7 @@ func scanQuotaPolicy(row scanner) (core.InfrastructureQuotaPolicy, error) {
 	return p, nil
 }
 
-const quotaPolicyColumns = `project_id,revision,max_servers,max_temporary_environments,max_snapshots,max_temporary_lifetime_seconds,providers,updated_at`
+const quotaPolicyColumns = `project_id,revision,max_servers,max_temporary_environments,max_snapshots,max_services,max_temporary_lifetime_seconds,providers,updated_at`
 
 func (s *SQLStore) GetInfrastructureQuotaPolicy(ctx context.Context, project string) (core.InfrastructureQuotaPolicy, error) {
 	p, err := scanQuotaPolicy(s.db.QueryRowContext(ctx, s.q(`SELECT `+quotaPolicyColumns+` FROM project_infrastructure_policies WHERE project_id=?`), project))
@@ -50,7 +50,7 @@ func (s *SQLStore) GetInfrastructureQuotaPolicy(ctx context.Context, project str
 	return p, err
 }
 func (s *SQLStore) SaveInfrastructureQuotaPolicy(ctx context.Context, p core.InfrastructureQuotaPolicy, expected int64) error {
-	if expected < 0 || p.Revision != expected+1 || p.MaxServers < -1 || p.MaxTemporaryEnvironments < -1 || p.MaxSnapshots < -1 || p.MaxTemporaryLifetimeSeconds < 0 {
+	if expected < 0 || p.Revision != expected+1 || p.MaxServers < -1 || p.MaxTemporaryEnvironments < -1 || p.MaxSnapshots < -1 || p.MaxServices < -1 || p.MaxTemporaryLifetimeSeconds < 0 {
 		return ErrQuotaPolicyChanged
 	}
 	raw, err := json.Marshal(p.Providers)
@@ -59,9 +59,9 @@ func (s *SQLStore) SaveInfrastructureQuotaPolicy(ctx context.Context, p core.Inf
 	}
 	var result sql.Result
 	if expected == 0 {
-		result, err = s.db.ExecContext(ctx, s.q(`INSERT INTO project_infrastructure_policies(`+quotaPolicyColumns+`)VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(project_id) DO NOTHING`), p.ProjectID, p.Revision, p.MaxServers, p.MaxTemporaryEnvironments, p.MaxSnapshots, p.MaxTemporaryLifetimeSeconds, string(raw), stamp(p.UpdatedAt))
+		result, err = s.db.ExecContext(ctx, s.q(`INSERT INTO project_infrastructure_policies(`+quotaPolicyColumns+`)VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id) DO NOTHING`), p.ProjectID, p.Revision, p.MaxServers, p.MaxTemporaryEnvironments, p.MaxSnapshots, p.MaxServices, p.MaxTemporaryLifetimeSeconds, string(raw), stamp(p.UpdatedAt))
 	} else {
-		result, err = s.db.ExecContext(ctx, s.q(`UPDATE project_infrastructure_policies SET revision=?,max_servers=?,max_temporary_environments=?,max_snapshots=?,max_temporary_lifetime_seconds=?,providers=?,updated_at=? WHERE project_id=? AND revision=?`), p.Revision, p.MaxServers, p.MaxTemporaryEnvironments, p.MaxSnapshots, p.MaxTemporaryLifetimeSeconds, string(raw), stamp(p.UpdatedAt), p.ProjectID, expected)
+		result, err = s.db.ExecContext(ctx, s.q(`UPDATE project_infrastructure_policies SET revision=?,max_servers=?,max_temporary_environments=?,max_snapshots=?,max_services=?,max_temporary_lifetime_seconds=?,providers=?,updated_at=? WHERE project_id=? AND revision=?`), p.Revision, p.MaxServers, p.MaxTemporaryEnvironments, p.MaxSnapshots, p.MaxServices, p.MaxTemporaryLifetimeSeconds, string(raw), stamp(p.UpdatedAt), p.ProjectID, expected)
 	}
 	if err != nil {
 		return err

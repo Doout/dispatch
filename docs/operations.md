@@ -164,6 +164,10 @@ Images shared across applications, external tags, build-cache tags and images wi
 multiple tags stay protected. Retire revision inputs first, then create a new image
 review once their final retained reference is gone.
 
+A scoped `runtime.cleanup` grant permits runtime preview, confirmed apply and
+receipt inspection under the saved policy. It does not grant policy editing or
+history deletion, which still require `project.manage`.
+
 The existing retention preview and apply endpoints accept `scope: "runtime"`.
 Preview requires `expectedPolicy` and returns `runtime` with a durable review ID,
 digest, policy, expiry, candidate items and per-item results. Each review contains

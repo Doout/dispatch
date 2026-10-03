@@ -103,10 +103,16 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		a.notFoundOrInternal(w, err, "Service template")
 		return
 	}
-	if !a.requireProject(w, r, core.PermissionProjectConfigure, projectID) {
-		return
-	}
-	if !a.requireProject(w, r, core.PermissionDeploymentRun, projectID) {
+	scoped := currentIdentity(r.Context()).Kind == core.PrincipalServiceAccount
+	if scoped {
+		if !a.requireProject(w, r, core.PermissionProjectView, projectID) || !a.requireProject(w, r, core.PermissionServiceProvision, projectID) {
+			return
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			problem(w, 422, "Idempotency key required", "Scoped provisioning requires a stable Idempotency-Key.")
+			return
+		}
+	} else if !a.requireProject(w, r, core.PermissionProjectConfigure, projectID) || !a.requireProject(w, r, core.PermissionDeploymentRun, projectID) {
 		return
 	}
 	if a.workflows == nil {
@@ -128,6 +134,21 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spec := documents[0].ServiceTemplate
+	if scoped {
+		if !safeAutomationServiceTemplate(*spec) {
+			problem(w, 403, "Unsupported automation provisioner", "Automation supports approved built-in PostgreSQL Docker and Helm templates without script or repository execution.")
+			return
+		}
+		approved, err := a.assignedInfrastructure(r.Context(), projectID, "service_template", resource.ID+"@"+resource.ConfigSHA)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		if !approved {
+			problem(w, 403, "Template approval required", "A controller owner must assign this exact template digest to the project.")
+			return
+		}
+	}
 	if len(spec.Sources) > 0 {
 		source, err := a.store.GetConfigSource(r.Context(), resource.ConfigSourceID)
 		if err != nil || source.ProjectID != projectID {
@@ -140,6 +161,18 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Invalid provisioner target", err.Error())
 		return
 	}
+	if scoped {
+		assigned, err := a.assignedInfrastructure(r.Context(), projectID, "target", target.ServerID)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		if !assigned {
+			problem(w, 403, "Target assignment required", "Choose an assigned target in this project.")
+			return
+		}
+		r = r.WithContext(core.WithScopedServiceAdmission(r.Context(), core.ScopedServiceAdmission{TemplateID: resource.ID, Digest: resource.ConfigSHA}))
+	}
 	if spec.Provision.Neon != nil && spec.Provision.Neon.DataMode == "parent-data" {
 		if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner || input.ConfirmDataCopy != "Copy parent rows into "+input.Name {
 			problem(w, 403, "Data copy requires approval", "A controller owner must explicitly confirm copying parent rows into this named service.")
@@ -147,10 +180,18 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 		}
 		r = r.WithContext(context.WithValue(r.Context(), neonDataCopyApprovalKey{}, true))
 	}
-	r, receipt, proceed := a.reserveMutation(w, r, projectID, "service.provision", struct {
+	var mutationInput any = struct {
 		TemplateID string
 		Input      serviceProvisionRequest
-	}{resource.ID, input}, "service_provision", resource.ID)
+	}{resource.ID, input}
+	if scoped {
+		mutationInput = struct {
+			TemplateID     string
+			TemplateDigest string
+			Input          serviceProvisionRequest
+		}{resource.ID, resource.ConfigSHA, input}
+	}
+	r, receipt, proceed := a.reserveMutation(w, r, projectID, "service.provision", mutationInput, "service_provision", resource.ID)
 	if !proceed {
 		return
 	}
@@ -225,6 +266,9 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 	}
 	if run.Target != nil {
 		if err := a.captureServiceResource(r.Context(), resource, *spec, input.Description, values, run, dependencies); err != nil {
+			if infrastructureQuotaProblem(w, err) {
+				return
+			}
 			problem(w, 409, "Service acceptance unavailable", "The service name or dependencies changed, or encrypted recovery storage is unavailable.")
 			return
 		}
@@ -269,6 +313,10 @@ func (a *API) startServiceProvision(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJSON(w, http.StatusAccepted, run)
 	}
+}
+
+func safeAutomationServiceTemplate(spec workflow.ServiceTemplateSpec) bool {
+	return spec.ServiceType == "postgresql" && len(spec.Sources) == 0 && (spec.Provision.Docker != nil || spec.Provision.Helm != nil) && spec.Provision.Neon == nil
 }
 
 func (a *API) executeServiceProvision(resource core.WorkflowResource, spec workflow.ServiceTemplateSpec, description string, inputs map[string]string, run core.ServiceProvisionRun) {

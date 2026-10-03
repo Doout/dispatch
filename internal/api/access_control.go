@@ -49,6 +49,7 @@ func controllerPermissions() []core.Permission {
 		core.PermissionStageApprove,
 		core.PermissionInfrastructureManage,
 		core.PermissionInfrastructureInspect, core.PermissionInfrastructureCreate, core.PermissionInfrastructureModify, core.PermissionInfrastructureDelete, core.PermissionSnapshotCreate, core.PermissionSnapshotRestore,
+		core.PermissionServiceProvision, core.PermissionRuntimeCleanup,
 		core.PermissionSecretsManage,
 		core.PermissionConnectionsManage,
 	}

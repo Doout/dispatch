@@ -1723,3 +1723,6 @@ BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
 CREATE TRIGGER neon_suspend_dependency_update BEFORE UPDATE ON service_resource_dependencies
 WHEN EXISTS(SELECT 1 FROM workflow_preview_cleanup_services e JOIN service_resources r ON r.run_id=e.run_id WHERE r.service_id=NEW.service_id AND e.policy='suspend' AND e.action_started=TRUE AND e.state<>'succeeded')
 BEGIN SELECT RAISE(ABORT,'service compute suspension is unresolved'); END;
+
+-- dispatch:migration 095_service_admission
+ALTER TABLE project_infrastructure_policies ADD COLUMN max_services BIGINT NOT NULL DEFAULT 0 CHECK(max_services >= -1);

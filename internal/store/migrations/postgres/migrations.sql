@@ -1661,3 +1661,6 @@ CREATE TRIGGER neon_suspend_app BEFORE INSERT OR UPDATE ON app_service_bindings 
 CREATE TRIGGER neon_suspend_workflow BEFORE INSERT OR UPDATE ON workflow_service_references FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();
 CREATE TRIGGER neon_suspend_deployment BEFORE INSERT OR UPDATE ON deployment_service_bindings FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();
 CREATE TRIGGER neon_suspend_dependency BEFORE INSERT OR UPDATE ON service_resource_dependencies FOR EACH ROW EXECUTE FUNCTION guard_neon_suspension_binding();
+
+-- dispatch:migration 095_service_admission
+ALTER TABLE project_infrastructure_policies ADD COLUMN max_services BIGINT NOT NULL DEFAULT 0 CHECK(max_services >= -1);

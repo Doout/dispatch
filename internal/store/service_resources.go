@@ -49,6 +49,36 @@ func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServicePr
 		return err
 	}
 	defer tx.Rollback()
+	if admission, scoped := core.ScopedServiceAdmissionFromContext(ctx); scoped {
+		if admission.TemplateID != run.TemplateID || admission.Digest == "" || r.Target.ServerID == "" || r.Target.Provider != "docker" && r.Target.Provider != "helm" {
+			return ErrServiceResourceChanged
+		}
+		// The policy row serializes admissions across controllers, including policy updates.
+		if _, err = tx.ExecContext(ctx, s.q(`UPDATE project_infrastructure_policies SET revision=revision WHERE project_id=?`), r.ProjectID); err != nil {
+			return err
+		}
+		p, err := scanQuotaPolicy(tx.QueryRowContext(ctx, s.q(`SELECT `+quotaPolicyColumns+` FROM project_infrastructure_policies WHERE project_id=?`), r.ProjectID))
+		if errors.Is(err, ErrNotFound) {
+			return &core.InfrastructureQuotaViolation{Code: "policy_required", Limit: "maxServices", Maximum: 0, Requested: 1}
+		}
+		if err != nil {
+			return err
+		}
+		var approved int
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM infrastructure_assignments WHERE project_id=? AND kind='service_template' AND resource_id=?`), r.ProjectID, admission.TemplateID+"@"+admission.Digest).Scan(&approved); err != nil {
+			return err
+		}
+		if approved != 1 {
+			return ErrServiceResourceChanged
+		}
+		var used int64
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM service_resources WHERE project_id=? AND state<>'deleted'`), r.ProjectID).Scan(&used); err != nil {
+			return err
+		}
+		if p.MaxServices >= 0 && used+1 > p.MaxServices {
+			return &core.InfrastructureQuotaViolation{Code: "quota_exceeded", Limit: "maxServices", Maximum: p.MaxServices, Usage: used, Requested: 1}
+		}
+	}
 	if r.Target.Provider == "neon" {
 		q := `SELECT project_id FROM neon_providers WHERE id=?`
 		if s.postgres {
@@ -118,6 +148,13 @@ func (s *SQLStore) CreateServiceResource(ctx context.Context, run core.ServicePr
 		return err
 	}
 	return tx.Commit()
+}
+
+// Owned resources remain counted through failed or uncertain provisioning until verified deletion.
+func (s *SQLStore) CountServiceResources(ctx context.Context, project string) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM service_resources WHERE project_id=? AND state<>'deleted'`), project).Scan(&count)
+	return count, err
 }
 func (s *SQLStore) serviceResourceConsumers(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
 	var n int

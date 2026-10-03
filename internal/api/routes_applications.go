@@ -71,7 +71,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			r.Get("/", a.getServiceTemplate)
 			r.With(a.directUserOnly).Put("/", a.updateServiceTemplate)
 			a.destructiveRoute(r.With(a.directUserOnly), "DELETE", "/", "service-template", "delete", a.deleteServiceTemplate)
-			r.With(a.directUserOnly).Post("/runs", a.startServiceProvision)
+			r.Post("/runs", a.startServiceProvision)
 		})
 	})
 	r.Get("/service-provision-runs", a.listServiceProvisionRuns)

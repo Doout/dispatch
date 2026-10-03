@@ -279,8 +279,19 @@ func (a *API) removeTeamMapping(w http.ResponseWriter, r *http.Request) {
 func (a *API) retentionProject(w http.ResponseWriter, r *http.Request) bool {
 	return a.requireProject(w, r, core.PermissionProjectManage, chi.URLParam(r, "id"))
 }
+func (a *API) retentionRuntimeProject(w http.ResponseWriter, r *http.Request) bool {
+	allowed, err := a.canProject(r.Context(), core.PermissionProjectManage, chi.URLParam(r, "id"))
+	if err != nil {
+		a.internal(w, err)
+		return false
+	}
+	if allowed {
+		return true
+	}
+	return a.requireProject(w, r, core.PermissionRuntimeCleanup, chi.URLParam(r, "id"))
+}
 func (a *API) getRetention(w http.ResponseWriter, r *http.Request) {
-	if !a.retentionProject(w, r) {
+	if !a.retentionRuntimeProject(w, r) {
 		return
 	}
 	data, ok := a.ops(w)
@@ -327,7 +338,7 @@ func validRetentionPolicy(p core.RetentionPolicy) bool {
 func (a *API) previewRetention(w http.ResponseWriter, r *http.Request) { a.runRetention(w, r, false) }
 func (a *API) applyRetention(w http.ResponseWriter, r *http.Request)   { a.runRetention(w, r, true) }
 func (a *API) runRetention(w http.ResponseWriter, r *http.Request, apply bool) {
-	if !a.retentionProject(w, r) {
+	if !a.retentionRuntimeProject(w, r) {
 		return
 	}
 	data, ok := a.ops(w)
@@ -350,6 +361,9 @@ func (a *API) runRetention(w http.ResponseWriter, r *http.Request, apply bool) {
 		if !decode(w, r, &input) {
 			return
 		}
+	}
+	if input.Scope != "runtime" && !a.retentionProject(w, r) {
+		return
 	}
 	if apply && input.Confirm != p.ProjectID {
 		problem(w, 400, "Confirmation required", "Confirm the selected project before removing history.")
@@ -463,7 +477,7 @@ func (a *API) runtimeRetentionError(w http.ResponseWriter, err error) {
 	a.internal(w, err)
 }
 func (a *API) getRuntimeRetentionReview(w http.ResponseWriter, r *http.Request) {
-	if !a.retentionProject(w, r) {
+	if !a.retentionRuntimeProject(w, r) {
 		return
 	}
 	review, err := a.deploy.GetRuntimeRetentionReview(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "reviewId"))

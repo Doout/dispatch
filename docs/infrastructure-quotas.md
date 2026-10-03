@@ -22,6 +22,7 @@ providers. Counts accept `-1` only as an explicit unlimited setting.
   "maxServers": 3,
   "maxTemporaryEnvironments": 0,
   "maxSnapshots": 0,
+  "maxServices": 0,
   "maxTemporaryLifetimeSeconds": 0,
   "providers": [
     {
@@ -83,3 +84,17 @@ as its generated app, deployment and receipt. Failed and cleanup-blocked
 environments remain counted; completed workload cleanup releases capacity.
 Extensions stay within the maximum total lifetime measured from acceptance. See
 [temporary environments](temporary-environments.md).
+
+## Service admission
+
+`maxServices` limits new scoped automation provisioning through built-in Docker
+and Helm ServiceTemplates. Zero disables it until the owner sets a limit; `-1`
+explicitly removes the count limit. Approval of the exact template digest and a
+target assignment remain required. The quota response includes `usage.services`.
+
+The acceptance transaction serializes on the project policy and counts every
+nondeleted owned service resource in the project. Pending, ready, failed and
+unresolved resources remain counted. Verified deletion releases the count;
+removing a connection registration does not. Existing human provisioning remains
+unchanged. An update that omits `maxServices` preserves its current setting so
+older policy clients can continue managing server limits.
