@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,7 +17,7 @@ func TestStorageInventoryPersistenceAndProtection(t *testing.T) {
 			ctx := context.Background()
 			dsn := filepath.Join(t.TempDir(), "storage.db")
 			if dialect == "postgres" {
-				dsn = os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+				dsn = isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 				if dsn == "" {
 					t.Skip("set DISPATCH_TEST_POSTGRES_URL to exercise PostgreSQL storage")
 				}

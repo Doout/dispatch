@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,7 +11,7 @@ import (
 )
 
 func TestPostgresMigrationsWhenConfigured(t *testing.T) {
-	databaseURL := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	databaseURL := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if databaseURL == "" {
 		t.Skip("set DISPATCH_TEST_POSTGRES_URL to exercise PostgreSQL migrations")
 	}

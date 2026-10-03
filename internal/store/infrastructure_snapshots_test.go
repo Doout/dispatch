@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,7 +20,7 @@ func TestSnapshotAdmissionSQLite(t *testing.T) {
 	testSnapshotAdmission(t, filepath.Join(t.TempDir(), "snapshots.db"))
 }
 func TestSnapshotAdmissionPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_PROVIDER_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_PROVIDER_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_PROVIDER_POSTGRES_URL for disposable PostgreSQL")
 	}

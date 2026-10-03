@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -17,7 +16,7 @@ func TestWebhookReceiptsSurviveRestartRetentionAndConcurrentDelivery(t *testing.
 	testWebhookReceipts(t, filepath.Join(t.TempDir(), "deliveries.db"))
 }
 func TestWebhookReceiptsPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("disposable PostgreSQL database required")
 	}

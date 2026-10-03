@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/doout/dispatch/internal/core"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -59,7 +58,7 @@ func TestHelmEquivalenceSQLite(t *testing.T) {
 	testHelmEquivalence(t, filepath.Join(t.TempDir(), "equivalence.db"))
 }
 func TestHelmEquivalencePostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_EQUIVALENCE_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_EQUIVALENCE_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_EQUIVALENCE_POSTGRES_URL to a disposable database")
 	}

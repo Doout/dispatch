@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/doout/dispatch/internal/core"
 	"github.com/oklog/ulid/v2"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -16,7 +15,7 @@ func TestWorkflowCheckReceiptPersistence(t *testing.T) {
 	testWorkflowCheckReceipt(t, filepath.Join(t.TempDir(), "checks.db"))
 }
 func TestWorkflowCheckReceiptPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_TEST_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("disposable PostgreSQL database required")
 	}

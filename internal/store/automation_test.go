@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,7 +17,7 @@ func TestAutomationPersistence(t *testing.T) {
 	testAutomationPersistence(t, filepath.Join(t.TempDir(), "automation.db"))
 }
 func TestAutomationPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_AUTOMATION_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_AUTOMATION_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_AUTOMATION_POSTGRES_URL to a disposable database")
 	}

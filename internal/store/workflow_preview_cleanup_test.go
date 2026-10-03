@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,7 +19,7 @@ func TestPreviewCleanupFencesSQLite(t *testing.T) {
 	testPreviewCleanupFences(t, filepath.Join(t.TempDir(), "preview.db"))
 }
 func TestPreviewCleanupFencesPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_PROVIDER_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_PROVIDER_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("disposable PostgreSQL not configured")
 	}

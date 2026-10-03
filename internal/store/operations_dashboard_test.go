@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ func TestOperationsDashboardSQLite(t *testing.T) {
 	testOperationsDashboard(t, filepath.Join(t.TempDir(), "ops.db"))
 }
 func TestOperationsDashboardPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_OPERATIONS_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_OPERATIONS_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_OPERATIONS_POSTGRES_URL to a disposable database")
 	}

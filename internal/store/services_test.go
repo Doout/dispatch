@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,7 +14,7 @@ func TestServicePersistenceAndDeploymentIsolation(t *testing.T) {
 	testServicePersistence(t, filepath.Join(t.TempDir(), "services.db"))
 }
 func TestServicePostgresPersistenceIntegration(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_SERVICES_STORE_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_SERVICES_STORE_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_SERVICES_STORE_POSTGRES_URL to a disposable empty database")
 	}

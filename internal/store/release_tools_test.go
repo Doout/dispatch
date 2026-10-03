@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ func TestReleasePersistence(t *testing.T) {
 	testReleasePersistence(t, filepath.Join(t.TempDir(), "release.db"))
 }
 func TestReleasePostgresPersistenceIntegration(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_RELEASE_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_RELEASE_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_RELEASE_POSTGRES_URL to a disposable database")
 	}

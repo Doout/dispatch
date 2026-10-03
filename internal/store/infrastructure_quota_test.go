@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -18,7 +17,7 @@ func TestInfrastructureQuotaSQLite(t *testing.T) {
 	testInfrastructureQuota(t, filepath.Join(t.TempDir(), "quota.db"))
 }
 func TestInfrastructureQuotaPostgres(t *testing.T) {
-	dsn := os.Getenv("DISPATCH_QUOTA_POSTGRES_URL")
+	dsn := isolatedPostgresURL(t, "DISPATCH_QUOTA_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("set DISPATCH_QUOTA_POSTGRES_URL to a disposable database")
 	}
