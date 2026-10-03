@@ -97,8 +97,14 @@ func testWorkloadBackupPolicyOffsite(t *testing.T, dsn string) {
 	if b.ScheduledExportOperationID == "" || p.LastOffsiteOperationID != b.ScheduledExportOperationID {
 		t.Fatal("restart lost original export identity")
 	}
+	if b.EncryptedInput != "encrypted-archive-key" || b.CapturePolicyID != p.ID || b.ScheduledAt == nil || !b.ScheduledAt.Equal(now) || b.State != "ready" {
+		t.Fatal("scheduled export changed archive recovery input or capture provenance")
+	}
 	op, err := s.GetWorkloadBackupOperation(ctx, b.ScheduledExportOperationID)
 	check(err)
+	if op.EncryptedInput != "encrypted-object-grants" {
+		t.Fatal("scheduled export lost its original encrypted grants")
+	}
 	op.State, op.CleanupState = "failed", "complete"
 	check(s.CompleteWorkloadBackupOperation(ctx, b, op))
 	b, err = s.GetWorkloadBackup(ctx, b.ID)
@@ -125,6 +131,9 @@ func testWorkloadBackupPolicyOffsite(t *testing.T, dsn string) {
 	check(err)
 	if marked != 1 || p.MissedExports != 1 || !b.ScheduledExportMissed {
 		t.Fatal("missed export counted more than once", marked, p.MissedExports)
+	}
+	if b.EncryptedInput != "encrypted-archive-key" || b.CapturePolicyID != p.ID || b.ScheduledAt == nil || !b.ScheduledAt.Equal(now) || b.State != "ready" {
+		t.Fatal("missed export changed archive recovery input or capture provenance")
 	}
 	check(s.Close())
 	s, err = Open(ctx, dsn)

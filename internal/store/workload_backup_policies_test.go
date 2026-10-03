@@ -94,13 +94,25 @@ func testWorkloadBackupPolicyStore(t *testing.T, dsn string) {
 	check(err)
 	slot, _, _ = p.DueCapture(now)
 	b, o := makeCapture(prefix+"next", slot)
-	if err = s.AcceptWorkloadBackupCapture(ctx, p, b, o); err == nil {
-		t.Fatal("unknown previous mutation allowed another capture")
-	}
 	old, err := s.GetWorkloadBackup(ctx, p.LastBackupID)
 	check(err)
 	oldOp, err := s.GetWorkloadBackupOperation(ctx, old.ID)
 	check(err)
+	for _, state := range []string{"running", "unknown", "unresolved"} {
+		prior := oldOp
+		prior.State = state
+		_, err = s.db.ExecContext(ctx, s.q(`UPDATE workload_backup_operations SET state=?,payload=? WHERE id=?`), state, jsonText(prior), oldOp.ID)
+		check(err)
+		if err = s.AcceptWorkloadBackupCapture(ctx, p, b, o); err == nil {
+			t.Fatalf("%s previous mutation allowed another capture", state)
+		}
+		if _, err = s.GetWorkloadBackup(ctx, b.ID); err != ErrNotFound {
+			t.Fatalf("rejected %s capture left an archive record: %v", state, err)
+		}
+		if _, err = s.GetWorkloadBackupOperation(ctx, o.ID); err != ErrNotFound {
+			t.Fatalf("rejected %s capture left an operation record: %v", state, err)
+		}
+	}
 	old.State, old.VerificationState = "ready", "verified"
 	old.CleanupState = "complete"
 	oldOp.State = "succeeded"

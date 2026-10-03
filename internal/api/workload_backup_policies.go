@@ -261,6 +261,23 @@ func (a *API) updateWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, p)
 }
 
+// Reload the accepted policy at each execution boundary, including after waiting
+// for the target lock. Manual operations use their own accepted authority.
+func (a *API) backupOperationPolicyAuthority(ctx context.Context, op core.WorkloadBackupOperation) error {
+	if op.CapturePolicyID == "" {
+		return nil
+	}
+	policies, err := a.backupPolicyStore()
+	if err != nil {
+		return err
+	}
+	policy, err := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
+	if err != nil || !policy.Enabled {
+		return store.ErrWorkloadBackupChanged
+	}
+	return a.backupPolicyAuthority(ctx, policy)
+}
+
 // Each unattended mutation rechecks the original actor and frozen target enrollment.
 func (a *API) backupPolicyAuthority(ctx context.Context, p core.WorkloadBackupPolicy) error {
 	actor := p.Actor

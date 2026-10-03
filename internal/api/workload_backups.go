@@ -609,17 +609,8 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 		return
 	}
 	input, err := a.decryptWorkloadBackup(op.ID, "operation", op.EncryptedInput)
-	if err == nil && op.CapturePolicyID != "" {
-		policies, e := a.backupPolicyStore()
-		if e == nil {
-			policy, lookup := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
-			if lookup != nil || !policy.Enabled {
-				e = store.ErrWorkloadBackupChanged
-			} else {
-				e = a.backupPolicyAuthority(ctx, policy)
-			}
-		}
-		err = e
+	if err == nil {
+		err = a.backupOperationPolicyAuthority(ctx, op)
 	}
 	// Preparation has not dispatched a runtime job. Unknown evidence is introduced only after execution begins.
 	result := core.WorkloadBackupResult{State: "failed", CleanupState: "complete"}
@@ -661,18 +652,8 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 					if op.ExecutionServerID != "" && !a.backupExecutionGenerationMatches(ctx, op) {
 						return errors.New("accepted destination enrollment changed")
 					}
-					if op.CapturePolicyID != "" {
-						policies, policyErr := a.backupPolicyStore()
-						if policyErr != nil {
-							return policyErr
-						}
-						policy, policyErr := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
-						if policyErr != nil || !policy.Enabled {
-							return store.ErrWorkloadBackupChanged
-						}
-						if policyErr = a.backupPolicyAuthority(ctx, policy); policyErr != nil {
-							return policyErr
-						}
+					if policyErr := a.backupOperationPolicyAuthority(ctx, op); policyErr != nil {
+						return policyErr
 					}
 					var e error
 					result, e = a.runWorkloadBackup(ctx, input, server)

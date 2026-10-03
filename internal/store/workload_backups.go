@@ -51,6 +51,22 @@ func scanWorkloadBackupOperation(row scanner) (core.WorkloadBackupOperation, err
 func (s *SQLStore) GetWorkloadBackup(ctx context.Context, id string) (core.WorkloadBackup, error) {
 	return scanWorkloadBackup(s.db.QueryRowContext(ctx, s.q(`SELECT payload,input_cipher,revision FROM workload_backups WHERE id=?`), id))
 }
+
+func (s *SQLStore) lockWorkloadBackup(ctx context.Context, tx *sql.Tx, id string) (core.WorkloadBackup, error) {
+	query := `SELECT payload,input_cipher,revision FROM workload_backups WHERE id=?`
+	if s.postgres {
+		query += ` FOR UPDATE`
+	}
+	return scanWorkloadBackup(tx.QueryRowContext(ctx, s.q(query), id))
+}
+
+// Schedule provenance does not change the indexed lifecycle state or archive key.
+// The caller advances the revision and owns the surrounding policy transaction.
+func (s *SQLStore) updateWorkloadBackupProvenance(ctx context.Context, tx *sql.Tx, b core.WorkloadBackup, revision int64) error {
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workload_backups SET revision=?,payload=? WHERE id=? AND revision=?`), b.Revision, jsonText(b), b.ID, revision)
+	return changed(result, err)
+}
+
 func (s *SQLStore) GetWorkloadBackupOperation(ctx context.Context, id string) (core.WorkloadBackupOperation, error) {
 	return scanWorkloadBackupOperation(s.db.QueryRowContext(ctx, s.q(`SELECT payload,input_cipher,lease_token,lease_until,revision FROM workload_backup_operations WHERE id=?`), id))
 }
@@ -203,11 +219,7 @@ func (s *SQLStore) CreateWorkloadBackupOperation(ctx context.Context, o core.Wor
 			}
 		}
 	}
-	q := `SELECT payload,input_cipher,revision FROM workload_backups WHERE id=?`
-	if s.postgres {
-		q += ` FOR UPDATE`
-	}
-	b, err := scanWorkloadBackup(tx.QueryRowContext(ctx, s.q(q), o.BackupID))
+	b, err := s.lockWorkloadBackup(ctx, tx.Tx, o.BackupID)
 	if err != nil {
 		return err
 	}

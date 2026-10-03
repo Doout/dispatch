@@ -58,3 +58,58 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Stage promotion reuses one immutable revision and its versioned outputs. It does not rebuild between targets.
 - A stage starts only after the prior stage and all of its checks succeed. Required approval pauses before deployment.
 - Webhooks and polling use the same event deduplication and source snapshot code. Either method can detect a source change.
+
+## Backend responsibilities
+
+Provisioning, services, storage, backups and temporary environments follow the same
+durable operation sequence. Their approval and recovery rules differ. Keep those
+rules within each domain when extracting shared code.
+
+| Code | Responsibility |
+| --- | --- |
+| `internal/api` | Authenticate public requests, enforce roles and project grants, review mutations, retain idempotency receipts and coordinate domain operations. The API currently also owns backup scheduling and reconciliation. |
+| `internal/core` | Define persisted records and public data shapes. Keep command execution and database access out of these types. |
+| `internal/store` | Enforce atomic admission, revision checks, lease ownership, protected-resource constraints and durable transitions for SQLite and PostgreSQL. |
+| `internal/remoteruntime` | Bind encrypted requests to a node and operation, recheck ownership at execution boundaries, validate typed evidence and retain uncertain outcomes. |
+| `internal/deploy` and `internal/agentruntime` | Execute bounded operations, record effects and cleanup evidence, and journal outcomes before acknowledging them. An interrupted mutation requires inspection. |
+| `internal/provider`, `internal/provision` and `internal/bootstrap` | Allocate through provider adapters, track the original operation and enroll pinned agent artifacts. Snapshot isolation and deployable target readiness have separate acceptance rules. |
+| `internal/workflow` | Capture source revisions, schedule jobs and stage promotion, and preserve the workflow's owned resources and outputs. |
+| `internal/automationclient` and `cmd/dispatchctl` | Use the public API contracts, retain continuation IDs and report approval or reconciliation requirements to callers. |
+
+SQL helpers may share a locked read or a compare-and-swap write. Their callers
+must continue to own the transaction, lock order and domain predicates. A helper
+must not silently expand which operations block admission or which recovery
+points qualify for deletion.
+
+Runtime execution validates current service, storage and retention ownership
+through `Broker.executionRequest` before lease payload release, renewal and
+completion. Request admission keeps its existing validation sequence. API checks
+for temporary environments, backup policy authority and agent capabilities remain
+separate at their existing boundaries. Do not replace these fresh checks with the
+approval captured when an operation was first accepted.
+
+## Maintainability review
+
+The review starting at `0d5debe` on 2026-10-03 found these priorities:
+
+| Order | Finding and next change |
+| --- | --- |
+| First pass | Remove repeated backup policy authority checks, scheduled backup SQL primitives and runtime ownership validation. Preserve error precedence, lock scope, fresh checks after waiting and uncertain-operation recovery. |
+| First pass | Split the complete API race suite into bounded CI shards and verify discovered roots against executed roots. The previous passing API run took 2,299.959 seconds under a 40-minute timeout. Required Docker and PostgreSQL fixtures remain separate checks. |
+| Next | Separate backup operation preparation, execution and reconciliation from HTTP handlers. `workload_backups.go` has 893 lines and mixes those responsibilities. Start with one domain service and consumer-owned interfaces while retaining the public review and receipt contracts. |
+| Next | Batch backup policy inspection inputs per visible project. Policy listing currently reloads project backups and each backup's operations for each policy. Keep the projection read-only and retain project filtering and cleanup-aware freshness. |
+| Next | Reduce dependencies on the base `store.Store`, which has 255 directly declared context methods plus embedded domain interfaces. New domain services should depend on the smallest interface they use. Preserve the current optional-feature error behavior during migration. |
+| Next | Define runtime capability advertisement and controller bounds together. Adding an operation currently requires changes to request validation, executor dispatch, the agent advertisement and controller admission limits. Check old and current agent contracts in the same regression suite. |
+| Before expanding the UI | Extract feature state and dialogs from `web/src/App.tsx`, which has 3,996 lines, and group the 1,708-line `web/src/api.ts` by domain behind its existing exports. Keep route handling, authentication and overview subscriptions in the application shell. |
+| As contracts grow | Check OpenAPI, shipped clients and wire examples together. A JSON shape change can affect saved encrypted requests and agent digest checks even when a UI does not use the endpoint. |
+
+These sizes describe the reviewed revision. Use them to locate responsibilities,
+then assess coupling and repeated rules before deciding what to move. File size
+alone does not justify a refactor.
+
+Each refactor should preserve observable behavior and include the relevant
+existing lifecycle tests. Add a regression when a boundary lacks coverage, such
+as revocation while execution waits for a target lock. PostgreSQL tests must
+exercise transaction and concurrency changes. Recovery tests must continue to
+retain original IDs, keys, receipts and protected data. Keep schema migrations
+and public contract changes separate from behavior-preserving extraction.
