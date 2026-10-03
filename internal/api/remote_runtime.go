@@ -99,7 +99,14 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.checkBackupPolicyRuntimeAuthority(r.Context(), job.ID); err != nil {
-		_ = broker.Store.CancelRuntimeJob(r.Context(), job.ID, time.Now().UTC())
+		// No first-attempt payload has left the controller. A later attempt may
+		// already have effects, so stop delivery without claiming those effects absent.
+		if job.Attempt == 1 {
+			err = broker.Complete(r.Context(), node.ID, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: remoteruntime.Result{State: "failed", Code: runtimecontract.OwnershipConflict, Message: "Scheduled backup authority changed before runtime dispatch."}})
+		}
+		if job.Attempt > 1 || err != nil {
+			_ = broker.Store.FenceRuntimeJob(r.Context(), node.ID, job.ID, job.LeaseToken, time.Now().UTC())
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
