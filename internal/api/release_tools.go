@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -195,13 +196,42 @@ func (a *API) rollbackDeploymentRelease(w http.ResponseWriter, r *http.Request) 
 		problem(w, 422, "Review rollback first", "Confirm the selected deployment, current release, and that database migrations are not reverted.")
 		return
 	}
+	source, err := a.store.GetDeployment(r.Context(), id)
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Deployment")
+		return
+	}
+	app, err := a.store.GetApp(r.Context(), source.AppID)
+	if err != nil {
+		a.notFoundOrInternal(w, err, "Application")
+		return
+	}
+	r, receipt, proceed := a.reserveMutation(w, r, app.ProjectID, "deployment.rollback", input, "deployment", source.AppID)
+	if !proceed {
+		return
+	}
 	var capture deploy.ReleaseCapture
 	if a.drift != nil {
 		capture = a.drift.Capture
 	}
 	d, err := a.deploy.StartRollback(r.Context(), id, input.ExpectedCurrentDeploymentID, input.ExpectedReviewDigest, currentIdentity(r.Context()).ID, capture)
 	if err != nil {
+		if errors.Is(err, store.ErrMutationClaimLost) {
+			problem(w, 409, "Acceptance changed", "Retry the identical request to inspect its original receipt.")
+			return
+		}
+		a.failMutationAcceptance(r.Context(), 409, "Rollback stopped before acceptance. Review the current release before submitting another request.")
 		problem(w, 409, "Rollback stopped", err.Error())
+		return
+	}
+	core.RecordAcceptedOperation(r.Context(), d.ID)
+	if receipt != nil {
+		saved, err := a.store.(store.MutationReceiptStore).GetMutationReceipt(r.Context(), receipt.ID)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		a.writeMutationReceipt(w, r, saved, http.StatusAccepted)
 		return
 	}
 	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner && d.App != nil {

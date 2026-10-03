@@ -405,6 +405,9 @@ func (s *Service) StartRollback(ctx context.Context, id, expectedCurrent, expect
 		Acceptance:        &core.DeploymentReview{ExpectedAppName: app.Name, ProjectID: app.ProjectID, AppSpecDigest: app.SpecDigest()},
 		ExecutionAppName:  app.Name, ExecutionTemplate: app.Template, ExecutionGenerated: app.Generated,
 	}
+	if claim, ok := core.MutationAcceptanceFromContext(ctx); ok {
+		d.ID = claim.OperationID
+	}
 	action := core.ReleaseAction{ID: ulid.Make().String(), ProjectID: prepared.app.ProjectID, AppID: source.AppID, DeploymentID: d.ID, SourceDeploymentID: source.ID, Actor: actor, Action: "deployment.rollback", Message: "Rollback accepted from retained successful deployment " + source.ID, CreatedAt: now}
 	if err := s.reserveRoute(ctx, d, app, server); err != nil {
 		return core.Deployment{}, err

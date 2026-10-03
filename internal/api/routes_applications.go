@@ -13,6 +13,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 		r.Route("/{id}", func(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(a.appPermission(core.PermissionProjectView))
+				r.Get("/", a.getApp)
 				r.Get("/sync", a.getApplicationSync)
 				r.Get("/route", a.getApplicationRoute)
 				r.Get("/service-bindings", a.getAppServiceBindings)

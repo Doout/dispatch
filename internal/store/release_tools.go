@@ -144,5 +144,8 @@ func (s *SQLStore) CreateRollbackDeployment(ctx context.Context, d, source core.
 	if err = s.insertReleaseAction(ctx, tx, action); err != nil {
 		return err
 	}
+	if err = s.BindMutationAcceptance(ctx, tx.Tx, "deployment", d.ID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

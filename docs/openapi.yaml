@@ -450,6 +450,58 @@ paths:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
         '200': { description: Owned server operation history and recovery state }
+  /infrastructure/operations/{id}/{action}:
+    post:
+      operationId: changeInfrastructureOperation
+      description: Requires current project infrastructure.modify and provider assignment. Retry continues the original operation and request identity; cancel does not undo an allocation. Inspect uncertain outcomes before further mutation.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: action, required: true, schema: { type: string, enum: [retry, cancel] } }
+      responses:
+        '204': { description: Original operation updated. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}/adopt:
+    post:
+      operationId: adoptManagedServer
+      description: Requires current project infrastructure.modify and provider assignment. Inspects the exact reviewed provider resource and ownership before adoption; foreign resources and active leases block adoption.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resourceId, revision, confirmName]
+              properties:
+                resourceId: { type: string }
+                revision: { type: integer, minimum: 1 }
+                confirmName: { type: string }
+      responses:
+        '200': { description: Original owned managed server adopted. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}/enrollment:
+    post:
+      operationId: enrollManagedServer
+      description: Requires current project infrastructure.modify and provider assignment. Explicitly issues a short-lived single-use token for an allocated unenrolled machine. Does not replace an enrolled identity or refresh an approved bootstrap. Tokens must be stored privately; do not automatically retry after losing a response.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '201':
+          description: Single-use enrollment credential, returned once with Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodeId, token, expiresAt]
+                properties:
+                  nodeId: { type: string }
+                  token: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers/{id}/delete-review:
     post:
       parameters:
@@ -1490,6 +1542,8 @@ paths:
         type: string
     post:
       operationId: rollbackDeploymentRelease
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       description: Requires deployment.run. Rechecks the expected current release and creates an audited deployment
         using retained artifacts. Does not undo database migrations or external side effects.
       responses:
@@ -1498,7 +1552,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Deployment'
+                oneOf:
+                  - { $ref: '#/components/schemas/Deployment' }
+                  - { $ref: '#/components/schemas/MutationReceipt' }
         '400':
           $ref: '#/components/responses/Problem'
         '403':
@@ -1515,6 +1571,7 @@ paths:
               - confirmDeploymentId
               - expectedCurrentDeploymentId
               - confirmDatabaseNotReverted
+              - expectedReviewDigest
               properties:
                 confirmDeploymentId:
                   type: string
@@ -1523,6 +1580,8 @@ paths:
                 confirmDatabaseNotReverted:
                   type: boolean
                   const: true
+                expectedReviewDigest:
+                  type: string
   /deployments/{id}/diagnosis:
     parameters:
     - name: id
@@ -3911,6 +3970,9 @@ paths:
         "200": { $ref: "#/components/responses/JSONList" }
     post:
       operationId: createApp
+      description: Requires project.configure and a ready assigned target. With Idempotency-Key, atomically creates one application and returns its durable receipt. Identical authorized retries inspect the original application instead of creating another.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -3942,6 +4004,12 @@ paths:
                   description: Docker Compose definition stored and deployed without Git.
                 branch: { type: string, default: main }
                 buildType: { type: string, enum: [dockerfile, compose, helm] }
+                contextPath: { type: string, default: '.' }
+                dockerfilePath: { type: string, default: Dockerfile }
+                composePath: { type: string, default: compose.yml }
+                domain: { type: string }
+                containerPort: { type: integer }
+                healthPolicy: { $ref: '#/components/schemas/HealthPolicy' }
                 helmChart:
                   type: string
                   description: OCI or HTTPS chart reference, a relative chart name when helmRepository is set, or a relative path when sourceRepo is set.
@@ -3972,6 +4040,11 @@ paths:
                   description: Legacy default for manual deployments. Event rules should define their own hook.
       responses:
         "201": { description: Application specification created. }
+        "202":
+          description: Application created once or original acceptance replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
         "400": { $ref: "#/components/responses/Problem" }
         "413": { $ref: "#/components/responses/Problem" }
   /helm/inspect:
@@ -4020,6 +4093,13 @@ paths:
   /apps/{appId}:
     parameters:
       - $ref: "#/components/parameters/AppID"
+    get:
+      operationId: getApp
+      description: Requires project.view. Returns the accepted application by ID; scoped callers receive redacted credential fields.
+      responses:
+        "200": { description: Current application specification. }
+        "403": { $ref: '#/components/responses/Problem' }
+        "404": { $ref: '#/components/responses/Problem' }
     delete:
       operationId: deleteApp
       description: Cleans deployed resources, then transactionally deletes the application and its deployment history.
@@ -5618,7 +5698,7 @@ components:
         id: { type: string }
         projectId: { type: string }
         action: { type: string }
-        operationKind: { type: string, enum: [deployment, infrastructure_operation, service_provision, service_resource, temporary_environment, workload_backup] }
+        operationKind: { type: string, enum: [application, deployment, infrastructure_operation, service_provision, service_resource, temporary_environment, workload_backup, workload_backup_policy] }
         operationId: { type: string }
         operationUrl: { type: string }
         resourceId: { type: string }
