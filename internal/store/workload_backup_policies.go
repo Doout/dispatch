@@ -147,6 +147,9 @@ func (s *SQLStore) AcceptWorkloadBackupCapture(ctx context.Context, p core.Workl
 	return tx.Commit()
 }
 func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.WorkloadBackupPolicy, b core.WorkloadBackup, o core.WorkloadBackupOperation) error {
+	if b.Offsite != nil {
+		return ErrWorkloadBackupChanged
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -187,6 +190,10 @@ func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.Wor
 	}
 	verified := []core.WorkloadBackup{}
 	for _, item := range items {
+		if item.ID == b.ID && item.Offsite != nil {
+			rows.Close()
+			return ErrWorkloadBackupChanged
+		}
 		if item.State == "ready" && item.VerificationState == "verified" && item.CleanupState == "complete" {
 			verified = append(verified, item)
 		}

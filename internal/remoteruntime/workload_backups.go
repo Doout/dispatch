@@ -8,10 +8,12 @@ import (
 
 const WorkloadBackup runtimecontract.Operation = "workload_backup"
 const WorkloadBackupInspect runtimecontract.Operation = "workload_backup_inspect"
+const WorkloadBackupOffsite runtimecontract.Operation = "workload_backup_offsite"
+const WorkloadBackupOffsiteInspect runtimecontract.Operation = "workload_backup_offsite_inspect"
 
 func NewWorkloadBackupRequest(input core.WorkloadBackupRequest, server core.Server) Request {
 	subject := input.Source
-	if input.Destination != nil && (input.Action == "restore" || input.Action == "reconcile" && input.RecoveryAction == "restore") {
+	if input.Destination != nil && (input.Action == "restore" || input.Action == "verify" || input.Action == "reconcile" && (input.RecoveryAction == "restore" || input.RecoveryAction == "verify")) {
 		subject = *input.Destination
 	}
 	r := NewServiceRequest(subject, core.DockerServiceProvision{ServerRef: server.ID}, server)
@@ -20,6 +22,13 @@ func NewWorkloadBackupRequest(input core.WorkloadBackupRequest, server core.Serv
 	if input.Action == "inspect" || input.Action == "reconcile" {
 		r.Operation = WorkloadBackupInspect
 	}
+	if input.OffsiteAccess != nil {
+		if r.Operation == WorkloadBackupInspect {
+			r.Operation = WorkloadBackupOffsiteInspect
+		} else {
+			r.Operation = WorkloadBackupOffsite
+		}
+	}
 	return r
 }
 func (r Request) validateWorkloadBackup() error {
@@ -27,10 +36,13 @@ func (r Request) validateWorkloadBackup() error {
 		return err
 	}
 	b := r.WorkloadBackup
-	if b == nil || !identityPattern.MatchString(b.Backup.ID) || !identityPattern.MatchString(b.OperationID) || b.Backup.ProjectID != r.Application.ProjectID || b.Backup.ServerID != r.Server.ID || b.Source.Run.ProjectID != r.Application.ProjectID || b.Source.Run.ID != b.Backup.SourceRunID || b.Backup.NodeID != r.Server.AgentNodeID || b.Backup.ArtifactID != b.Backup.ID || b.Storage.ProjectID != r.Application.ProjectID || b.Storage.ServerID != r.Server.ID || len(b.Key) != 64 {
+	if b != nil && (b.OffsiteAccess != nil) != (r.Operation == WorkloadBackupOffsite || r.Operation == WorkloadBackupOffsiteInspect) {
+		return errors.New("offsite operation requires explicit runtime capability")
+	}
+	if b == nil || !identityPattern.MatchString(b.Backup.ID) || !identityPattern.MatchString(b.OperationID) || b.Backup.ProjectID != r.Application.ProjectID || (b.Backup.ServerID != r.Server.ID && !offsiteRuntimeRecovery(b, r.Server)) || b.Source.Run.ProjectID != r.Application.ProjectID || b.Source.Run.ID != b.Backup.SourceRunID || (b.Backup.ServerID == r.Server.ID && b.Backup.NodeID != r.Server.AgentNodeID) || b.Backup.ArtifactID != b.Backup.ID || b.Storage.ProjectID != r.Application.ProjectID || b.Storage.ServerID != b.Backup.ServerID || len(b.Key) != 64 {
 		return errors.New("backup ownership or encryption inputs do not match runtime target")
 	}
-	if (r.Operation == WorkloadBackupInspect) != (b.Action == "inspect" || b.Action == "reconcile") {
+	if (r.Operation == WorkloadBackupInspect || r.Operation == WorkloadBackupOffsiteInspect) != (b.Action == "inspect" || b.Action == "reconcile") {
 		return errors.New("backup inspection cannot contain a data mutation")
 	}
 	return nil
@@ -52,8 +64,14 @@ func (r Request) ValidateWorkloadBackupResult(result Result) error {
 	if item.BackupID != r.WorkloadBackup.Backup.ID || item.ProjectID != r.Application.ProjectID || item.OperationID != r.WorkloadBackup.OperationID || item.ArtifactID != r.WorkloadBackup.Backup.ID || item.Bytes < 0 || len(item.Message) > 2048 {
 		return errors.New("backup evidence ownership is invalid")
 	}
+	if item.State == "exported" {
+		a := r.WorkloadBackup.OffsiteAccess
+		if item.Offsite == nil || a == nil || item.Offsite.StoreID != a.StoreID || item.Offsite.ArchiveKey != a.Archive.Key || item.Offsite.ManifestKey != a.Manifest.Key || len(item.Offsite.ManifestChecksum) != 64 || item.Offsite.ImageReference == "" {
+			return errors.New("offsite export evidence ownership is invalid")
+		}
+	}
 	switch item.State {
-	case "ready", "verified", "restored", "deleted", "failed", "unknown", "unresolved":
+	case "ready", "verified", "restored", "deleted", "failed", "unknown", "unresolved", "exported":
 	default:
 		return errors.New("invalid backup outcome")
 	}
@@ -61,7 +79,7 @@ func (r Request) ValidateWorkloadBackupResult(result Result) error {
 	if action == "reconcile" {
 		action = r.WorkloadBackup.RecoveryAction
 	}
-	expected := map[string]string{"backup": "ready", "inspect": "ready", "verify": "verified", "restore": "restored", "delete": "deleted"}[action]
+	expected := map[string]string{"backup": "ready", "inspect": "ready", "verify": "verified", "restore": "restored", "delete": "deleted", "export": "exported"}[action]
 	if item.State != "failed" && item.State != "unknown" && item.State != "unresolved" && item.State != expected {
 		return errors.New("backup evidence does not match the accepted action")
 	}
@@ -74,4 +92,12 @@ func (r Request) ValidateWorkloadBackupResult(result Result) error {
 		return errors.New("invalid backup cleanup outcome")
 	}
 	return nil
+}
+
+func offsiteRuntimeRecovery(b *core.WorkloadBackupRequest, s core.Server) bool {
+	action := b.Action
+	if action == "reconcile" {
+		action = b.RecoveryAction
+	}
+	return (action == "restore" || action == "verify") && b.Backup.Offsite != nil && b.OffsiteAccess != nil && b.OffsiteAccess.StoreID == b.Backup.Offsite.StoreID && b.Destination != nil && b.Destination.Run.Target != nil && b.Destination.Run.Target.ServerID == s.ID && b.Destination.Run.ProjectID == b.Backup.ProjectID
 }

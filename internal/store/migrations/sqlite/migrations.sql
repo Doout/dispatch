@@ -1740,3 +1740,14 @@ CREATE INDEX workload_backup_policy_history ON workload_backups(capture_policy_i
 
 -- dispatch:migration 095_service_admission
 ALTER TABLE project_infrastructure_policies ADD COLUMN max_services BIGINT NOT NULL DEFAULT 0 CHECK(max_services >= -1);
+
+-- dispatch:migration 096_workload_backup_offsite
+CREATE TABLE workload_backup_object_stores (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ credential_secret_id TEXT NOT NULL REFERENCES secrets(id), payload TEXT NOT NULL
+);
+ALTER TABLE workload_backups ADD COLUMN offsite_store_id TEXT REFERENCES workload_backup_object_stores(id);
+ALTER TABLE workload_backup_operations ADD COLUMN offsite_store_id TEXT REFERENCES workload_backup_object_stores(id);
+
+DROP INDEX runtime_jobs_active_mutation;
+CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect','workload_backup_offsite_inspect','retention_inspect');

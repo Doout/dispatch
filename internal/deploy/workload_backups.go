@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doout/dispatch/internal/backupstore"
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/workloadbackup"
 )
@@ -26,16 +27,19 @@ var backupImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 func ValidateWorkloadBackupRequest(r core.WorkloadBackupRequest, server core.Server) error {
 	b := r.Backup
+	if r.OffsiteAccess != nil && (r.OffsiteAccess.MaxBytes < 1 || r.OffsiteAccess.MaxBytes > backupstore.MaxObjectBytes || b.Bytes > r.OffsiteAccess.MaxBytes) {
+		return errors.New("offsite archive size limit is invalid")
+	}
 	if _, err := workloadbackup.Path("/unused", b.ID); err != nil {
 		return err
 	}
 	if _, err := workloadbackup.Path("/unused", r.OperationID); err != nil {
 		return err
 	}
-	if b.ProjectID == "" || b.ServerID != server.ID || b.ArtifactID != b.ID || b.Consistency != "database-native" || b.Format != "postgresql-custom" || b.Location != "target-local" || b.Policy != "retain" || b.SourceRunID != r.Source.Run.ID || r.Source.Run.ProjectID != b.ProjectID || r.Source.ServiceType != "postgresql" || r.Source.Run.Target == nil || r.Source.Run.Target.Provider != "docker" || r.Source.Run.Target.ServerID != server.ID || r.Source.Password == "" {
+	if b.ProjectID == "" || (b.ServerID != server.ID && !offsiteRecovery(r, server)) || b.ArtifactID != b.ID || b.Consistency != "database-native" || b.Format != "postgresql-custom" || b.Location != "target-local" || b.Policy != "retain" || b.SourceRunID != r.Source.Run.ID || r.Source.Run.ProjectID != b.ProjectID || r.Source.ServiceType != "postgresql" || r.Source.Run.Target == nil || r.Source.Run.Target.Provider != "docker" || r.Source.Run.Target.ServerID != b.ServerID || r.Source.Password == "" {
 		return errors.New("backup source ownership or format is invalid")
 	}
-	if r.Storage.ID != b.StorageID || r.Storage.ServerID != server.ID || r.Storage.ProjectID != b.ProjectID || r.Storage.ProvisionRunID != b.SourceRunID || r.Storage.Ownership != "verified" || r.Storage.Kind != "docker_volume" {
+	if r.Storage.ID != b.StorageID || r.Storage.ServerID != b.ServerID || r.Storage.ProjectID != b.ProjectID || r.Storage.ProvisionRunID != b.SourceRunID || r.Storage.Ownership != "verified" || r.Storage.Kind != "docker_volume" {
 		return errors.New("backup requires verified owned PostgreSQL storage")
 	}
 	raw, err := hex.DecodeString(r.Key)
@@ -61,9 +65,9 @@ func ValidateWorkloadBackupRequest(r core.WorkloadBackupRequest, server core.Ser
 		}
 	}
 	switch r.Action {
-	case "backup", "inspect", "verify", "delete":
+	case "backup", "inspect", "verify", "delete", "export":
 	case "reconcile":
-		if r.RecoveryAction != "backup" && r.RecoveryAction != "verify" && r.RecoveryAction != "restore" && r.RecoveryAction != "delete" {
+		if r.RecoveryAction != "backup" && r.RecoveryAction != "verify" && r.RecoveryAction != "restore" && r.RecoveryAction != "delete" && r.RecoveryAction != "export" {
 			return errors.New("invalid backup recovery action")
 		}
 	case "restore":
@@ -183,7 +187,15 @@ func backupArtifactResult(r core.WorkloadBackupRequest, a workloadbackup.Artifac
 }
 func readBackupArtifact(dir string, r core.WorkloadBackupRequest) (workloadbackup.Artifact, error) {
 	var a workloadbackup.Artifact
-	if err := readBackupJSON(dir, "manifest.enc", r.Key, r.Backup.ID, &a); err != nil {
+	manifest := "manifest.enc"
+	action := r.Action
+	if action == "reconcile" {
+		action = r.RecoveryAction
+	}
+	if r.OffsiteAccess != nil && r.Backup.Offsite != nil && (action == "restore" || action == "verify") {
+		manifest = "offsite-manifest.enc"
+	}
+	if err := readBackupJSON(dir, manifest, r.Key, r.Backup.ID, &a); err != nil {
 		return a, errors.New("backup manifest is inaccessible or cannot be decrypted")
 	}
 	if a.ID != r.Backup.ID || a.ProjectID != r.Backup.ProjectID || a.Encryption != "AES-256-GCM-chunks-v1" || a.RequestDigest != backupRequestDigest(r) || !backupImageID.MatchString(a.ImageID) {
@@ -237,7 +249,18 @@ func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBa
 		return result, err
 	}
 	if r.Action == "delete" {
+		if r.Backup.Offsite != nil {
+			return result, errors.New("exported archives are protected until reviewed offsite deletion is supported")
+		}
 		return e.deleteWorkloadBackup(dir, r)
+	}
+	if r.Action == "export" {
+		return e.exportWorkloadBackup(ctx, dir, r, false)
+	}
+	if r.OffsiteAccess != nil && (r.Action == "restore" || r.Action == "verify") {
+		if err := e.downloadWorkloadBackup(ctx, dir, r); err != nil {
+			return result, err
+		}
 	}
 	a, err := readBackupArtifact(dir, r)
 	if err != nil {
@@ -449,7 +472,17 @@ func (e DockerExecutor) verifyWorkloadBackup(ctx context.Context, dir string, ar
 		return result, errors.New("cannot allocate isolated verification storage")
 	}
 	args := append([]string{"run", "-d", "--name", name, "--network", "none", "--memory", "2g", "--cpus", "1", "--security-opt", "no-new-privileges", "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", "POSTGRES_DB=verification", "--env", "PGDATA=/var/lib/postgresql/data/pgdata", "--mount", "type=volume,source=" + name + ",target=/var/lib/postgresql/data"}, labels...)
-	args = append(args, a.ImageID)
+	image := a.ImageID
+	if r.OffsiteAccess != nil && r.Destination != nil && r.Destination.Run.Target.ServerID != r.Backup.ServerID {
+		if !backupImageReference.MatchString(a.ImageReference) {
+			return result, errors.New("offsite verification requires a pinned image reference")
+		}
+		if err = e.backupCommand(ctx, nil, io.Discard, "pull", a.ImageReference); err != nil {
+			return result, errors.New("pinned verification image is unavailable")
+		}
+		image = a.ImageReference
+	}
+	args = append(args, image)
 	container, err = e.backupOutput(ctx, args...)
 	if err != nil {
 		return result, errors.New("cannot start isolated PostgreSQL verification")
@@ -570,6 +603,8 @@ func (e DockerExecutor) reconcileWorkloadBackup(ctx context.Context, dir string,
 		return result, receiptErr
 	}
 	switch r.RecoveryAction {
+	case "export":
+		return e.exportWorkloadBackup(ctx, dir, r, true)
 	case "backup":
 		a, err := readBackupArtifact(dir, r)
 		if err != nil {
@@ -642,7 +677,17 @@ func backupOperationDigest(r core.WorkloadBackupRequest) string {
 	if r.Action == "reconcile" {
 		r.Action = r.RecoveryAction
 	}
+	if (r.Action == "restore" || r.Action == "verify") && r.OffsiteAccess != nil {
+		r.Backup.Offsite = b.Offsite
+	}
 	r.RecoveryAction, r.Key = "", ""
+	if r.OffsiteAccess != nil {
+		a := *r.OffsiteAccess
+		a.Archive = backupstore.ObjectAccess{Key: a.Archive.Key}
+		a.Manifest = backupstore.ObjectAccess{Key: a.Manifest.Key}
+		a.ExpiresAt = time.Time{}
+		r.OffsiteAccess = &a
+	}
 	raw, _ := json.Marshal(r)
 	sum := sha256.Sum256(raw)
 	clear(raw)

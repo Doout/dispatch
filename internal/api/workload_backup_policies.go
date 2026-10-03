@@ -469,7 +469,16 @@ func (a *API) pruneBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy
 		return
 	}
 	// One reviewed-policy archive per tick keeps retention bounded and restartable.
-	b := verified[len(verified)-1]
+	var b core.WorkloadBackup
+	for i := len(verified) - 1; i >= p.KeepLast; i-- {
+		if verified[i].Offsite == nil {
+			b = verified[i]
+			break
+		}
+	}
+	if b.ID == "" {
+		return
+	}
 	request, err := a.decryptWorkloadBackup(b.ID, "accepted", b.EncryptedInput)
 	if err != nil {
 		return

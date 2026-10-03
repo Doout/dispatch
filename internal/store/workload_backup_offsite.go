@@ -1,0 +1,55 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"github.com/doout/dispatch/internal/core"
+)
+
+type BackupObjectStoreStore interface {
+	CreateBackupObjectStore(context.Context, core.BackupObjectStore) error
+	GetBackupObjectStore(context.Context, string) (core.BackupObjectStore, error)
+	ListBackupObjectStores(context.Context) ([]core.BackupObjectStore, error)
+}
+
+func (s *SQLStore) CreateBackupObjectStore(ctx context.Context, item core.BackupObjectStore) error {
+	if err := item.Config.Validate(); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO workload_backup_object_stores(id,project_id,credential_secret_id,payload) VALUES(?,?,?,?)`), item.ID, item.ProjectID, item.CredentialSecretID, jsonText(item))
+	return err
+}
+func (s *SQLStore) GetBackupObjectStore(ctx context.Context, id string) (core.BackupObjectStore, error) {
+	var item core.BackupObjectStore
+	var raw string
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT payload FROM workload_backup_object_stores WHERE id=?`), id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	if err == nil {
+		err = json.Unmarshal([]byte(raw), &item)
+	}
+	return item, err
+}
+func (s *SQLStore) ListBackupObjectStores(ctx context.Context) ([]core.BackupObjectStore, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM workload_backup_object_stores ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.BackupObjectStore{}
+	for rows.Next() {
+		var raw string
+		var item core.BackupObjectStore
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal([]byte(raw), &item); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}

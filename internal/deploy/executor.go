@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +128,7 @@ type DockerExecutor struct {
 	Vault                   *secretcrypto.Vault
 	ArtifactDirectory       string
 	WorkloadBackupDirectory string
+	BackupObjectClient      *http.Client
 }
 
 var safeID = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
