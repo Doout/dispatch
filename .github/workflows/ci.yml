@@ -65,6 +65,41 @@ jobs:
               --require-test TestTemporaryEnvironmentDockerRestartExpiryIntegration \
               --require-test TestPackagedMockProviderCLIAndMCPAcceptanceIntegration \
               --require-test TestWorkloadBackupSeparateDaemonsSourceLossIntegration
+  api-race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run discovered API race tests
+        run: python3 scripts/test-api-shard.py --shard ${{ matrix.shard }} --count 4
+      - name: Preserve API discovery, coverage and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-race-${{ matrix.shard }}
+          path: api-race-results/
+          if-no-files-found: error
+  api-coverage:
+    needs: api-race
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: api-race-*
+          path: api-race-results/
+          merge-multiple: true
+      - name: Verify complete API coverage and report shard timings
+        run: python3 scripts/test-api-shard.py --verify api-race-results --count 4
   test:
     runs-on: ubuntu-latest
     steps:
@@ -98,7 +133,10 @@ jobs:
       - run: pnpm --dir web typecheck
       - run: pnpm --dir web test --maxWorkers=2
       - run: pnpm --dir web build
-      - run: go test -race -timeout 40m ./...
+      - name: Check deterministic API shard coverage and Go selection semantics
+        run: python3 scripts/test-api-shard_test.py
+      - name: Run the full race suite for all other discovered Go packages
+        run: python3 scripts/test-api-shard.py --other-packages
       - run: sh scripts/install_test.sh
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
