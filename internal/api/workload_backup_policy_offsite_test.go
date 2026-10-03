@@ -12,6 +12,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/observe"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/oklog/ulid/v2"
 )
 
 func scheduledOffsitePolicy(t *testing.T, a *API, source core.ServiceResource, token string, extra map[string]any) core.WorkloadBackupPolicy {
@@ -463,5 +464,76 @@ func TestScheduledOffsiteNotificationsKeepDistinctRecurringTransitions(t *testin
 	events, err := a.observations.Repo.ListObservationEvents(ctx, app.ID)
 	if err != nil || len(events) != 3 {
 		t.Fatal("outbox dedup erased a later failure episode", len(events), err)
+	}
+}
+
+func TestScheduledOffsiteInspectionBlocksFailedCleanupUntilOriginalArchiveRecovers(t *testing.T) {
+	for _, localState := range []string{"present", "retired"} {
+		t.Run(localState, func(t *testing.T) {
+			a, source := backupAPIFixture(t)
+			ctx := context.Background()
+			a.workloadBackupBackend = func(_ context.Context, input core.WorkloadBackupRequest, _ core.Server) (core.WorkloadBackupResult, error) {
+				return scheduledOffsiteResult(input), nil
+			}
+			p := scheduledOffsitePolicy(t, a, source, "secret", nil)
+			b := finishScheduledOffsite(t, a, verifyScheduledCapture(t, a, p))
+			a.scheduleWorkloadBackupCaptures(ctx)
+			policies := a.store.(store.WorkloadBackupPolicyStore)
+			backups := a.store.(store.WorkloadBackupStore)
+			p, _ = policies.GetWorkloadBackupPolicy(ctx, p.ID)
+			if p.LastOffsiteBackupID != b.ID {
+				t.Fatal("fixture recovery point missing")
+			}
+			originalID, originalInput, originalVerifiedAt := b.ID, b.EncryptedInput, *b.Offsite.VerifiedAt
+			// A restore can retain historical archive verification while its cleanup is uncertain.
+			op := newBackupOperation(ulid.Make().String(), b, "restore")
+			op.TargetRunID, op.TargetResourceID = source.RunID, source.ResourceID
+			op.EncryptedInput = "encrypted-restore-cleanup-fixture"
+			if err := backups.CreateWorkloadBackupOperation(ctx, op, b.Revision); err != nil {
+				t.Fatal(err)
+			}
+			b.LocalState, b.CleanupState = localState, "failed"
+			op.State, op.CleanupState = "unknown", "failed"
+			if err := backups.CompleteWorkloadBackupOperation(ctx, b, op); err != nil {
+				t.Fatal(err)
+			}
+			b, _ = backups.GetWorkloadBackup(ctx, b.ID)
+			p, _ = policies.GetWorkloadBackupPolicy(ctx, p.ID)
+			policyRevision, archiveRevision := p.Revision, b.Revision
+			var inspected core.WorkloadBackupPolicy
+			if err := json.Unmarshal(serviceRequestTest(t, a, "GET", "/api/v1/workload-backup-policies/"+p.ID, nil, 200), &inspected); err != nil {
+				t.Fatal(err)
+			}
+			if inspected.OffsiteState != "blocked" || inspected.OffsiteFreshness == "fresh" || inspected.LastOffsiteBackupID != "" || !strings.Contains(inspected.OffsiteMessage, "incomplete cleanup") {
+				t.Fatal("failed cleanup reported confirmed offsite protection", inspected.OffsiteState, inspected.OffsiteFreshness)
+			}
+			stored, _ := policies.GetWorkloadBackupPolicy(ctx, p.ID)
+			b, _ = backups.GetWorkloadBackup(ctx, b.ID)
+			if stored.Revision != policyRevision || b.Revision != archiveRevision || b.Offsite.VerificationState != "verified" || !b.Offsite.VerifiedAt.Equal(originalVerifiedAt) || b.EncryptedInput != originalInput {
+				t.Fatal("inspection mutated retained cleanup or historical verification")
+			}
+			claimed, err := backups.ClaimWorkloadBackupRecovery(ctx, op.ID, time.Now().UTC().Add(32*time.Minute), "cleanup-recovery")
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.CleanupState = "complete"
+			claimed.State, claimed.CleanupState = "succeeded", "complete"
+			if err = backups.CompleteWorkloadBackupOperation(ctx, b, claimed); err != nil {
+				t.Fatal(err)
+			}
+			b, _ = backups.GetWorkloadBackup(ctx, b.ID)
+			archiveRevision = b.Revision
+			if err = json.Unmarshal(serviceRequestTest(t, a, "GET", "/api/v1/workload-backup-policies/"+p.ID, nil, 200), &inspected); err != nil {
+				t.Fatal(err)
+			}
+			if inspected.OffsiteState != "healthy" || inspected.OffsiteFreshness != "fresh" || inspected.LastOffsiteBackupID != originalID || !inspected.LastOffsiteRecoveryPointAt.Equal(b.CreatedAt) {
+				t.Fatal("confirmed cleanup did not recover the original archive", inspected.OffsiteState, inspected.LastOffsiteBackupID)
+			}
+			stored, _ = policies.GetWorkloadBackupPolicy(ctx, p.ID)
+			b, _ = backups.GetWorkloadBackup(ctx, b.ID)
+			if stored.Revision != policyRevision || b.Revision != archiveRevision || b.EncryptedInput != originalInput || b.ID != originalID {
+				t.Fatal("recovery inspection replaced archive identity or changed revisions")
+			}
+		})
 	}
 }

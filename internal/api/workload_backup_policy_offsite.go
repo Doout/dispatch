@@ -263,7 +263,7 @@ func describeBackupPolicyOffsite(p core.WorkloadBackupPolicy, items []core.Workl
 				retiring = true
 			}
 		}
-		if !retiring && b.LocalState != "retiring" && b.State == "ready" && b.Offsite != nil && b.Offsite.DeletedAt == nil && !b.Offsite.ConfirmedAt.IsZero() && b.Checksum != "" && b.Offsite.ManifestChecksum != "" && b.Offsite.StoreID == p.OffsiteStoreID && b.Offsite.VerificationState == "verified" && b.Offsite.VerifiedAt != nil {
+		if !retiring && b.LocalState != "retiring" && b.State == "ready" && b.CleanupState == "complete" && b.Offsite != nil && b.Offsite.DeletedAt == nil && !b.Offsite.ConfirmedAt.IsZero() && b.Checksum != "" && b.Offsite.ManifestChecksum != "" && b.Offsite.StoreID == p.OffsiteStoreID && b.Offsite.VerificationState == "verified" && b.Offsite.VerifiedAt != nil {
 			if p.LastOffsiteRecoveryPointAt == nil || b.CreatedAt.After(*p.LastOffsiteRecoveryPointAt) {
 				point := b.CreatedAt
 				p.LastOffsiteBackupID, p.LastOffsiteRecoveryPointAt, p.LastOffsiteVerifiedAt = b.ID, &point, b.Offsite.VerifiedAt
@@ -272,14 +272,20 @@ func describeBackupPolicyOffsite(p core.WorkloadBackupPolicy, items []core.Workl
 		if b.ID != p.LastBackupID {
 			continue
 		}
-		if retiring || b.LocalState == "retiring" || b.Offsite != nil && b.Offsite.DeletedAt != nil {
+		if b.CleanupState != "complete" {
+			p.OffsiteState, p.OffsiteMessage = "blocked", "The latest captured archive has incomplete cleanup. Reconcile its original operation before relying on offsite protection."
+		} else if retiring || b.LocalState == "retiring" || b.Offsite != nil && b.Offsite.DeletedAt != nil {
 			p.OffsiteState, p.OffsiteMessage = "blocked", "Archive retirement or removal is pending or confirmed. Inspect the retained copy history before unattended recovery."
 		} else if b.Offsite != nil && b.Offsite.StoreID != p.OffsiteStoreID {
 			p.OffsiteState, p.OffsiteMessage = "blocked", "The capture was exported to another destination. Inspect its original archive identity."
 		} else if b.Offsite != nil {
 			switch b.Offsite.VerificationState {
 			case "verified":
-				p.OffsiteState, p.OffsiteMessage = "healthy", "The downloaded encrypted capture passed isolated offsite restore verification."
+				if b.State == "ready" && b.CleanupState == "complete" && b.Offsite.VerifiedAt != nil {
+					p.OffsiteState, p.OffsiteMessage = "healthy", "The downloaded encrypted capture passed isolated offsite restore verification."
+				} else {
+					p.OffsiteState, p.OffsiteMessage = "blocked", "The latest captured archive has incomplete recovery evidence. Inspect its original operation before relying on offsite protection."
+				}
 			case "failed":
 				p.OffsiteState, p.OffsiteMessage = "verification_failed", "Offsite restore verification failed. Earlier confirmed recovery points remain retained."
 			case "unknown":
