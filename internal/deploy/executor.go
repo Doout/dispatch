@@ -310,6 +310,12 @@ func (e DockerExecutor) Cleanup(ctx context.Context, app core.App, server core.S
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		// Routed releases use separate candidate names, including the previous
+		// serving revision. Remove their owned containers and isolated networks
+		// even when retained-artifact storage is not enabled on a local executor.
+		if err := e.pruneRouteCandidates(ctx, app, "", ""); err != nil {
+			return err
+		}
 	}
 	name := dockerResourceName(app.ID)
 	if e.Artifacts != nil && e.Vault != nil {
