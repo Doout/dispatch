@@ -20,14 +20,17 @@ import (
 // Exercise the shipped binary and its MCP transport against the API. Runtime
 // deployment and service allocation are deterministic fixtures, not cloud proof.
 func TestScopedAutomationCLIAndMCPJourney(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancelBuild()
 	cli := filepath.Join(t.TempDir(), "dispatchctl")
-	build := exec.CommandContext(ctx, "go", "build", "-o", cli, "./cmd/dispatchctl")
+	build := exec.CommandContext(buildCtx, "go", "build", "-o", cli, "./cmd/dispatchctl")
 	build.Dir = "../.."
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build supported client: %v %s", err, output)
 	}
+	cancelBuild()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	a, runtime, template := resourceAPIFixture(t)
 	servers, err := a.store.ListServers(ctx)
 	if err != nil {
@@ -230,10 +233,94 @@ func TestScopedAutomationCLIAndMCPJourney(t *testing.T) {
 	if denied := tool(4, "app_get", map[string]any{"appId": foreignApp.ID}); denied.Status != 403 {
 		t.Fatal("MCP read foreign app")
 	}
+	var cliDeploymentBody map[string]any
+	if err := json.Unmarshal(deployInput, &cliDeploymentBody); err != nil {
+		t.Fatal(err)
+	}
+	cliReplay := must(tool(5, "deployment_start", map[string]any{"appId": appID, "key": "agent-deployment-once", "input": cliDeploymentBody}))
+	var cliReplayReceipt core.MutationReceipt
+	if err := json.Unmarshal(cliReplay.Data, &cliReplayReceipt); err != nil || !cliReplay.Replayed || cliReplay.Continuation == nil || cliReplay.Continuation.ID != deploymentReceipt.ID || cliReplayReceipt.OperationID != deploymentReceipt.OperationID {
+		t.Fatal("MCP did not preserve CLI deployment identity", err)
+	}
+	mcpPreview := must(tool(6, "deployment_preview", map[string]any{"appId": appID, "revision": "inline"}))
+	if err := json.Unmarshal(mcpPreview.Data, &plan); err != nil || plan.Review.ExpectedAppName == "" {
+		t.Fatal("MCP preview did not return a deployment review", err)
+	}
+	if rejected := tool(7, "deployment_start", map[string]any{"appId": appID, "key": "mcp-incomplete-review", "input": map[string]any{"commitSha": "inline"}}); rejected.OK || rejected.Error == nil || rejected.Error.Code != "invalid_input" {
+		t.Fatal("MCP manufactured a missing deployment review")
+	}
+	mismatchedReview := plan.Review
+	mismatchedReview.ExpectedAppName = "unconfirmed-application"
+	mismatchedInput, _ := json.Marshal(automationclient.DeploymentStart{CommitSHA: "inline", Review: &mismatchedReview})
+	var mismatchedBody map[string]any
+	if err := json.Unmarshal(mismatchedInput, &mismatchedBody); err != nil {
+		t.Fatal(err)
+	}
+	if rejected := tool(8, "deployment_start", map[string]any{"appId": appID, "key": "mcp-mismatched-review", "input": mismatchedBody}); rejected.Status != 409 {
+		t.Fatal("MCP bypassed the server's deployment review", rejected)
+	}
+	if rejected := run(string(mismatchedInput), "deployment", "start", "--app", appID, "--key", "cli-mismatched-review", "--input", "-"); rejected.Status != 409 {
+		t.Fatal("CLI and MCP accepted different deployment reviews", rejected)
+	}
+	mcpDeploymentInput, _ := json.Marshal(automationclient.DeploymentStart{CommitSHA: "inline", Review: &plan.Review})
+	var mcpDeploymentBody map[string]any
+	if err := json.Unmarshal(mcpDeploymentInput, &mcpDeploymentBody); err != nil {
+		t.Fatal(err)
+	}
+	mcpDeploymentArgs := map[string]any{"appId": appID, "key": "mcp-deployment-once", "input": mcpDeploymentBody}
+	mcpAccepted := must(tool(9, "deployment_start", mcpDeploymentArgs))
+	var mcpReceipt core.MutationReceipt
+	if err := json.Unmarshal(mcpAccepted.Data, &mcpReceipt); err != nil || mcpReceipt.ID == "" || mcpReceipt.OperationID == "" || mcpReceipt.OperationID == deploymentReceipt.OperationID {
+		t.Fatal("MCP deployment lost its new operation identity", err)
+	}
+	if mcpAccepted.Continuation == nil || mcpAccepted.Continuation.Kind != "receipt" || mcpAccepted.Continuation.ID != mcpReceipt.ID {
+		t.Fatal("MCP deployment continuation does not match its receipt")
+	}
+	replay := must(tool(10, "deployment_start", mcpDeploymentArgs))
+	var replayReceipt core.MutationReceipt
+	if err := json.Unmarshal(replay.Data, &replayReceipt); err != nil || !replay.Replayed || replay.Continuation == nil || replay.Continuation.ID != mcpReceipt.ID || replayReceipt.OperationID != mcpReceipt.OperationID {
+		t.Fatal("MCP retry duplicated deployment", err)
+	}
+	mcpCompleted := must(tool(11, "receipt_wait", map[string]any{"receiptId": mcpReceipt.ID, "timeoutSeconds": 10}))
+	if err := json.Unmarshal(mcpCompleted.Data, &mcpReceipt); err != nil || mcpReceipt.State != "succeeded" {
+		t.Fatal("MCP wait did not return terminal deployment evidence", err, mcpReceipt.State)
+	}
+	diagnosis := must(tool(12, "deployment_diagnose", map[string]any{"deploymentId": mcpReceipt.OperationID}))
+	var diagnosed releaseDiagnosis
+	if err := json.Unmarshal(diagnosis.Data, &diagnosed); err != nil || diagnosed.CheckedAt.IsZero() || diagnosed.Message == "" {
+		t.Fatal("MCP did not return diagnostic evidence", err)
+	}
+	logs := must(tool(13, "deployment_logs", map[string]any{"deploymentId": mcpReceipt.OperationID, "limit": 2}))
+	var entries []core.DeploymentLog
+	if err := json.Unmarshal(logs.Data, &entries); err != nil || len(entries) > 2 {
+		t.Fatal("MCP deployment logs were not bounded", err)
+	}
+	if denied := tool(14, "deployment_cancel", map[string]any{"deploymentId": mcpReceipt.OperationID}); denied.Status != 403 {
+		t.Fatal("MCP run permission granted cancellation")
+	}
+	if denied := tool(15, "deployment_preview", map[string]any{"appId": foreignApp.ID, "revision": "inline"}); denied.Status != 403 {
+		t.Fatal("MCP preview crossed project scope")
+	}
+	deployments, err := a.store.ListDeployments(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appDeployments := 0
+	for _, deployment := range deployments {
+		if deployment.AppID == appID {
+			appDeployments++
+		}
+	}
+	if appDeployments != 2 {
+		t.Fatal("review rejection or replay created another deployment", appDeployments)
+	}
 	grant.Permissions = []core.Permission{core.PermissionProjectView}
 	automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/grants", grant, 200)
-	if denied := tool(5, "service_provision", map[string]any{"templateId": template.ID, "key": "agent-service-once", "input": serviceBody}); denied.Status != 403 {
+	if denied := tool(16, "service_provision", map[string]any{"templateId": template.ID, "key": "agent-service-once", "input": serviceBody}); denied.Status != 403 {
 		t.Fatal("MCP replay bypassed revoked provision permission")
+	}
+	if denied := tool(17, "deployment_start", mcpDeploymentArgs); denied.Status != 403 {
+		t.Fatal("MCP deployment replay bypassed revoked run permission")
 	}
 	if err := stdin.Close(); err != nil {
 		t.Fatal(err)
