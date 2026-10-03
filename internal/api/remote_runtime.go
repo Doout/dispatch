@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/doout/dispatch/internal/runtimecontract"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,11 +85,9 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	supported := false
-	for _, op := range advertised {
-		if op == string(job.Request.Operation) {
-			supported = true
-		}
+	supported := slices.Contains(advertised, string(job.Request.Operation))
+	if required := job.Request.BackupCacheCleanupCapability(); required != "" && !slices.Contains(advertised, string(required)) {
+		supported = false
 	}
 	if !supported {
 		a.rejectRuntimeDispatch(r.Context(), broker, node.ID, job, runtimecontract.Unsupported, "The enrolled agent does not advertise this runtime capability.")
@@ -166,6 +165,21 @@ func (a *API) renewRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	if job.State != "running" || input.LeaseToken == "" || job.LeaseToken != input.LeaseToken || !job.LeaseUntil.After(now) || !job.ExpiresAt.After(now) {
 		a.runtimeJobProblem(w, store.ErrRuntimeJobConflict)
+		return
+	}
+	required, err := broker.BackupCacheCleanupCapability(r.Context(), jobID)
+	if err != nil {
+		a.runtimeJobProblem(w, err)
+		return
+	}
+	advertised := r.Header.Get("X-Dispatch-Runtime-Capabilities")
+	capabilities := strings.Split(advertised, ",")
+	if required != "" && (r.Header.Get("X-Dispatch-Runtime-Version") != remoteruntime.APIVersion || len(advertised) > 512 || len(capabilities) > 20 || !slices.Contains(capabilities, job.Operation) || !slices.Contains(capabilities, string(required))) {
+		if err := broker.Store.FenceRuntimeJob(r.Context(), node.ID, jobID, input.LeaseToken, now); err != nil {
+			a.runtimeJobProblem(w, err)
+			return
+		}
+		problem(w, 422, "Backup cleanup capability required", "Upgrade the recovery agent, then reconcile the original operation to confirm cleanup. Its outcome remains unknown and its recovery inputs remain retained.")
 		return
 	}
 	if err := a.checkTemporaryRuntimeAuthority(r.Context(), chi.URLParam(r, "jobId")); err != nil {
