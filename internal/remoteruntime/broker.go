@@ -96,21 +96,28 @@ func (b *Broker) request(j core.RuntimeJob) (Request, error) {
 	return r, nil
 }
 
+// executionRequest rechecks current ownership when a retained request is leased,
+// renewed or completed. Keep the same validation order at all three boundaries.
+func (b *Broker) executionRequest(ctx context.Context, j core.RuntimeJob) (Request, error) {
+	r, err := b.request(j)
+	if err != nil {
+		return r, err
+	}
+	if err = b.validateServiceOwner(ctx, j, r); err != nil {
+		return r, err
+	}
+	if err = b.validateStorageOwner(ctx, j, r); err != nil {
+		return r, err
+	}
+	return r, b.validateRetentionOwner(ctx, j, r)
+}
+
 func (b *Broker) Lease(ctx context.Context, node string) (*LeasedJob, error) {
 	j, err := b.Store.LeaseRuntimeJob(ctx, node, time.Now().UTC(), LeaseDuration)
 	if err != nil || j == nil {
 		return nil, err
 	}
-	r, err := b.request(*j)
-	if err == nil {
-		err = b.validateServiceOwner(ctx, *j, r)
-		if err == nil {
-			err = b.validateStorageOwner(ctx, *j, r)
-			if err == nil {
-				err = b.validateRetentionOwner(ctx, *j, r)
-			}
-		}
-	}
+	r, err := b.executionRequest(ctx, *j)
 	if err != nil {
 		return nil, err
 	}
@@ -125,16 +132,7 @@ func (b *Broker) Renew(ctx context.Context, node, id string, h Heartbeat) (bool,
 	if j.NodeID != node {
 		return false, store.ErrNotFound
 	}
-	r, err := b.request(j)
-	if err == nil {
-		err = b.validateServiceOwner(ctx, j, r)
-		if err == nil {
-			err = b.validateStorageOwner(ctx, j, r)
-			if err == nil {
-				err = b.validateRetentionOwner(ctx, j, r)
-			}
-		}
-	}
+	r, err := b.executionRequest(ctx, j)
 	if err != nil {
 		return false, err
 	}
@@ -157,16 +155,7 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	if j.NodeID != node {
 		return store.ErrNotFound
 	}
-	r, err := b.request(j)
-	if err == nil {
-		err = b.validateServiceOwner(ctx, j, r)
-		if err == nil {
-			err = b.validateStorageOwner(ctx, j, r)
-			if err == nil {
-				err = b.validateRetentionOwner(ctx, j, r)
-			}
-		}
-	}
+	r, err := b.executionRequest(ctx, j)
 	if err != nil {
 		return err
 	}

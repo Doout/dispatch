@@ -71,6 +71,48 @@ func TestRemoteRetentionRequiresExactAcceptedReviewAtEveryBoundary(t *testing.T)
 		t.Fatal("released review renewed mutation")
 	}
 }
+
+func TestRemoteRetentionReleasedReviewCannotLeaseOrComplete(t *testing.T) {
+	for _, boundary := range []string{"lease", "complete"} {
+		t.Run(boundary, func(t *testing.T) {
+			b, r, review := retentionRequestFixture(t)
+			ctx := context.Background()
+			job, err := b.Submit(ctx, "released-review-job", r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var lease *LeasedJob
+			if boundary == "complete" {
+				lease, err = b.Lease(ctx, r.Server.AgentNodeID)
+				if err != nil || lease == nil {
+					t.Fatal("accepted review did not lease", err)
+				}
+			}
+			review.State = "partial"
+			if err = b.Store.(*store.SQLStore).UpdateRuntimeRetentionReview(ctx, review, true); err != nil {
+				t.Fatal(err)
+			}
+			if boundary == "lease" {
+				if lease, err = b.Lease(ctx, r.Server.AgentNodeID); err == nil || lease != nil {
+					t.Fatal("released review disclosed its execution request", err)
+				}
+			} else {
+				result := Result{State: "succeeded", Retention: &RetentionResult{Outcome: &core.RuntimeRetentionOutcome{Key: r.Retention.Item.Key, State: "removed"}}}
+				if err = r.ValidateRetentionResult(result); err != nil {
+					t.Fatal("test requires a valid deletion receipt", err)
+				}
+				if err = b.Complete(ctx, r.Server.AgentNodeID, job.ID, Completion{LeaseToken: lease.LeaseToken, Result: result}); err == nil {
+					t.Fatal("released review accepted a deletion receipt")
+				}
+			}
+			saved, err := b.Store.GetRuntimeJob(ctx, job.ID)
+			if err != nil || saved.State != "running" || saved.EncryptedRequest == "" || saved.EncryptedResult != "" {
+				t.Fatal("rejected execution lost recovery inputs or recorded completion", err)
+			}
+		})
+	}
+}
+
 func TestRemoteRetentionInspectionCannotUnlockAnotherMutation(t *testing.T) {
 	b, r, _ := retentionRequestFixture(t)
 	ctx := context.Background()
