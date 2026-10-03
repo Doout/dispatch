@@ -37,6 +37,93 @@ paths:
               schema: { $ref: '#/components/schemas/NeonProvider' }
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+  /workload-backup-policies:
+    get:
+      operationId: listWorkloadBackupPolicies
+      description: Lists project-visible scheduled capture policies. Requests, archive keys and integrity assertions stay encrypted and are not returned.
+      parameters:
+        - { in: query, name: projectId, schema: { type: string } }
+      responses:
+        '200':
+          description: Capture policies with cadence, missed captures and last verified recovery point.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/WorkloadBackupPolicy' } }
+    post:
+      operationId: createWorkloadBackupPolicy
+      description: Requires project.configure and deployment.run on the owned PostgreSQL source. Immutable cadence, source ownership and actor authority are captured before acceptance. Scheduled archives verify in isolation before older verified policy archives become retention candidates. The newest keepLast verified captures remain protected while enabled. Current grants and original enrollment are checked before unattended mutation.
+      parameters:
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, sourceRunId, intervalHours, keepLast, confirmRetention]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 80 }
+                sourceRunId: { type: string }
+                intervalHours: { type: integer, minimum: 1, maximum: 8760 }
+                keepLast: { type: integer, minimum: 1, maximum: 1000 }
+                confirmRetention: { type: string, description: Exact policy name approving automatic removal of older policy archives after newer verified recovery points exist. }
+                checks:
+                  type: array
+                  maxItems: 16
+                  writeOnly: true
+                  items:
+                    type: object
+                    required: [query, expected]
+                    properties:
+                      query: { type: string, maxLength: 4096, writeOnly: true }
+                      expected: { type: string, maxLength: 4096, writeOnly: true }
+      responses:
+        '201':
+          description: Durable policy acceptance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
+        '202':
+          description: Original policy acceptance replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MutationReceipt' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backup-policies/{policyId}:
+    parameters:
+      - { in: path, name: policyId, required: true, schema: { type: string } }
+    get:
+      operationId: getWorkloadBackupPolicy
+      description: Requires project.view. Inspects the original policy and latest recovery-point metadata.
+      responses:
+        '200':
+          description: Capture policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkloadBackupPolicy' }
+    put:
+      operationId: updateWorkloadBackupPolicy
+      description: Requires project.configure and deployment.run. Explicitly pauses or resumes the current policy by revision and exact name. Resume rechecks the frozen source, target identity and original actor. Lost responses require inspection; do not automatically retry a changed revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, enabled, confirmName]
+              properties:
+                revision: { type: integer, minimum: 1 }
+                enabled: { type: boolean }
+                confirmName: { type: string }
+      responses:
+        '200':
+          description: Updated policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkloadBackupPolicy' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /workload-backups:
     get:
       operationId: listWorkloadBackups
@@ -5724,6 +5811,33 @@ components:
         digest: { type: string, description: Exact digest returned by the current creation or deletion review. }
         confirmName: { type: string, description: Exact reviewed server or snapshot name. }
         requestKey: { type: string, description: Legacy retry key, required only when Idempotency-Key is omitted. }
+    WorkloadBackupPolicy:
+      type: object
+      required: [id, projectId, sourceRunId, serverId, name, enabled, revision, intervalHours, keepLast, nextCaptureAt, missedCaptures, state]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        sourceRunId: { type: string }
+        sourceResourceId: { type: string }
+        serverId: { type: string }
+        nodeId: { type: string }
+        nodeGeneration: { type: integer }
+        name: { type: string }
+        enabled: { type: boolean }
+        revision: { type: integer }
+        intervalHours: { type: integer }
+        keepLast: { type: integer }
+        nextCaptureAt: { type: string, format: date-time }
+        lastScheduledAt: { type: string, format: date-time }
+        lastAttemptAt: { type: string, format: date-time }
+        lastSuccessAt: { type: string, format: date-time }
+        lastBackupId: { type: string }
+        lastVerifiedBackupId: { type: string }
+        missedCaptures: { type: integer }
+        state: { type: string }
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     MutationReceipt:
       type: object
       required: [id, projectId, action, operationKind, operationId, state, retryUntil, recoveryActions]

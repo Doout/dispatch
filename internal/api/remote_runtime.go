@@ -98,6 +98,11 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if err := a.checkBackupPolicyRuntimeAuthority(r.Context(), job.ID); err != nil {
+		_ = broker.Store.CancelRuntimeJob(r.Context(), job.ID, time.Now().UTC())
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Recheck source authorization at the credential-release boundary. A queued
 	// job cannot outlive its preview approval or a moved pull request head.
 	if job.Request.Operation == runtimecontract.Deploy || job.Request.Operation == runtimecontract.Rollback || job.Request.Operation == runtimecontract.Start || job.Request.SourceDeploymentID != "" {
@@ -137,6 +142,11 @@ func (a *API) renewRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.checkTemporaryRuntimeAuthority(r.Context(), chi.URLParam(r, "jobId")); err != nil {
+		a.runtimeJobProblem(w, err)
+		return
+	}
+	if err := a.checkBackupPolicyRuntimeAuthority(r.Context(), chi.URLParam(r, "jobId")); err != nil {
+		_ = broker.Store.CancelRuntimeJob(r.Context(), chi.URLParam(r, "jobId"), time.Now().UTC())
 		a.runtimeJobProblem(w, err)
 		return
 	}
