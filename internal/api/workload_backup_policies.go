@@ -151,7 +151,7 @@ func (a *API) createWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request)
 			}
 		}
 		if p.NodeID != "" {
-			d, ok := a.store.(*store.SQLStore)
+			d, ok := a.store.(workloadBackupEnrollmentReader)
 			if !ok {
 				return errors.New("durable target identity is unavailable")
 			}
@@ -344,7 +344,7 @@ func (a *API) backupPolicyTarget(ctx context.Context, p core.WorkloadBackupPolic
 		return store.ErrWorkloadBackupChanged
 	}
 	if p.NodeID != "" {
-		data, ok := a.store.(*store.SQLStore)
+		data, ok := a.store.(workloadBackupEnrollmentReader)
 		if !ok {
 			return store.ErrWorkloadBackupChanged
 		}
@@ -648,7 +648,7 @@ func (a *API) checkBackupPolicyRuntimeAuthority(ctx context.Context, id string) 
 		if serverID != binding.ServerID || nodeID != binding.NodeID {
 			return store.ErrWorkloadBackupChanged
 		}
-		data, ok := a.store.(*store.SQLStore)
+		data, ok := a.store.(workloadBackupEnrollmentReader)
 		if !ok {
 			return store.ErrWorkloadBackupChanged
 		}
