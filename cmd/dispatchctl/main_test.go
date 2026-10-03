@@ -173,3 +173,32 @@ func TestCLIApplicationConfigurationAndInfrastructureRecovery(t *testing.T) {
 		t.Fatal("unexpected mutations", mutations)
 	}
 }
+
+func TestCLIBackupPolicyPauseRequiresExplicitEnabled(t *testing.T) {
+	credential := filepath.Join(t.TempDir(), "credential")
+	if err := os.WriteFile(credential, []byte("dsa_cli_fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != "PUT" || r.URL.Path != "/api/v1/workload-backup-policies/policy-1" || r.Header.Get("Idempotency-Key") != "" {
+			t.Error("wrong policy mutation")
+		}
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body["enabled"] != false || body["confirmName"] != "daily-pg" {
+			t.Error("pause was not explicit")
+		}
+		io.WriteString(w, `{"id":"policy-1","revision":2,"enabled":false}`)
+	}))
+	defer server.Close()
+	args := []string{"--url", server.URL, "--token-file", credential, "backup", "policy", "set", "--policy", "policy-1", "--input", "-"}
+	var out, diagnostics bytes.Buffer
+	if code := run(context.Background(), args, strings.NewReader(`{"revision":1,"confirmName":"daily-pg"}`), &out, &diagnostics); code != 2 || requests != 0 {
+		t.Fatal("CLI silently paused policy", code, requests)
+	}
+	out.Reset()
+	if code := run(context.Background(), args, strings.NewReader(`{"revision":1,"enabled":false,"confirmName":"daily-pg"}`), &out, &diagnostics); code != 0 || requests != 1 {
+		t.Fatal("explicit pause failed", code, out.String())
+	}
+}

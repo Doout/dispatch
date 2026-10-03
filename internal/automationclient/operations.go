@@ -287,7 +287,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	if args.Limit < 0 || args.Limit > 500 || args.After < 0 {
 		return Failure("invalid_input", "Log limit must be 1 to 500 and the cursor must not be negative")
 	}
-	if name == "backups_list" && args.ProjectID != "" {
+	if (name == "backups_list" || name == "backup_policies_list") && args.ProjectID != "" {
 		path += "?projectId=" + url.QueryEscape(args.ProjectID)
 	}
 	if name == "deployment_logs" {

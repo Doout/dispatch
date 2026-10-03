@@ -15,6 +15,11 @@ func workflowSchema(kind string) map[string]any {
 		return object(props, []string{})
 	}
 	switch kind {
+	case "BackupPolicyCreateInput":
+		check := object(map[string]any{"query": map[string]any{"type": "string", "minLength": 1, "maxLength": 4096}, "expected": map[string]any{"type": "string", "maxLength": 4096}}, []string{"query", "expected"})
+		return object(map[string]any{"name": text(), "sourceRunId": text(), "intervalHours": map[string]any{"type": "integer", "minimum": 1, "maximum": 8760}, "keepLast": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000}, "confirmRetention": text(), "checks": map[string]any{"type": "array", "maxItems": 16, "items": check}}, []string{"name", "sourceRunId", "intervalHours", "keepLast", "confirmRetention"})
+	case "BackupPolicyUpdateInput":
+		return object(map[string]any{"revision": map[string]any{"type": "integer", "minimum": 1}, "enabled": map[string]any{"type": "boolean"}, "confirmName": text()}, []string{"revision", "enabled", "confirmName"})
 	case "ServiceProvisionInput":
 		return object(map[string]any{"name": text(), "description": text(), "inputs": map[string]any{"type": "object", "additionalProperties": text()}}, []string{"name", "inputs"})
 	case "ApplicationInput":

@@ -471,6 +471,61 @@ candidate set. Follow a `supersededBy` reference instead of resuming an older
 review. Storage and workload backups are excluded. History cleanup and retention
 policy edits remain outside these commands.
 
+## Schedule workload backups
+
+Scheduled policies create fresh native PostgreSQL backups on an owned Docker
+service. They use the original actor's current grants and assigned target.
+Archives stay on that target, so these policies do not provide offsite recovery.
+
+Write `capture-policy.json` with an explicit interval, retained verified count and
+the exact policy name to acknowledge removal of older verified policy archives:
+
+```json
+{
+  "name": "daily-postgres",
+  "sourceRunId": "SERVICE_RUN_ID",
+  "intervalHours": 24,
+  "keepLast": 7,
+  "confirmRetention": "daily-postgres",
+  "checks": [{ "query": "SELECT 1", "expected": "1" }]
+}
+```
+
+```sh
+dispatchctl backup policy create --key daily-postgres-policy-001 --input capture-policy.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+dispatchctl backup policies list --project PROJECT_ID
+dispatchctl backup policy get --policy POLICY_ID
+```
+
+Creation needs `project.view`, `project.configure` and `deployment.run`, an
+assigned target and verified owned source storage. Keep the original file and key
+across a lost response. Inspect capture and verification timestamps, missed
+captures, blockers and the latest verified archive before relying on the policy.
+Failed capture or verification must not replace the last usable backup.
+
+Pause or resume with the current revision, an explicit `enabled` value and the
+exact policy name. For example, `pause-policy.json` contains:
+
+```json
+{"revision": 3, "enabled": false, "confirmName": "daily-postgres"}
+```
+
+```sh
+dispatchctl backup policy set --policy POLICY_ID --input pause-policy.json
+dispatchctl backup policy get --policy POLICY_ID
+```
+
+Pause and resume have no mutation receipt. Inspect the policy after response loss
+before requesting another change. Resume rechecks the original actor and frozen
+target. Source, cadence and retention cannot be changed through this command.
+
+The policy keeps the credential identity that accepted it. Rotating or revoking
+that credential stops unattended work. A fresh credential can pause the old
+policy, then create a new explicitly reviewed policy with a new key. Resuming the
+old policy does not transfer it to the fresh credential. Existing archives remain
+owned by the old policy.
+
 ## Capture, verify and restore a workload backup
 
 The current native adapter supports owned PostgreSQL 17+ services on Docker.

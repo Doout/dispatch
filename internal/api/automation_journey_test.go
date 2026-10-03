@@ -245,3 +245,61 @@ func TestScopedAutomationCLIAndMCPJourney(t *testing.T) {
 		t.Fatal("MCP diagnostics leaked token")
 	}
 }
+
+func TestScopedBackupPolicyClientJourney(t *testing.T) {
+	a, source := backupAPIFixture(t)
+	token, grant := scopedServiceIdentity(t, a, source.ProjectID, core.PermissionProjectView, core.PermissionProjectConfigure, core.PermissionDeploymentRun)
+	automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/assignments/"+source.ProjectID, map[string]any{"kind": "target", "resourceId": source.Target.ServerID}, 200)
+	server := httptest.NewServer(a)
+	defer server.Close()
+	client, err := automationclient.New(server.URL, token, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(name string, args automationclient.Arguments) automationclient.Result {
+		t.Helper()
+		result := client.Call(context.Background(), name, args)
+		if !result.OK {
+			t.Fatalf("%s: %s", name, result.Error.Title)
+		}
+		if strings.Contains(string(result.Data), token) {
+			t.Fatal("policy leaked authentication")
+		}
+		return result
+	}
+	input, _ := json.Marshal(automationclient.BackupPolicyCreateInput{Name: "daily-agent-pg", SourceRunID: source.RunID, IntervalHours: 24, KeepLast: 7, ConfirmRetention: "daily-agent-pg", Checks: []core.BackupIntegrityCheck{{Query: "SELECT 1", Expected: "1"}}})
+	args := automationclient.Arguments{Key: "agent-capture-policy-once", Input: input}
+	accepted := call("backup_policy_create", args)
+	policyID := accepted.Continuation.ResourceID
+	if policyID == "" || accepted.Continuation.OperationID != policyID {
+		t.Fatal("policy receipt lost identity")
+	}
+	if replay := call("backup_policy_create", args); !replay.Replayed || replay.Continuation.ID != accepted.Continuation.ID {
+		t.Fatal("replay created a different policy")
+	}
+	call("receipt_wait", automationclient.Arguments{ReceiptID: accepted.Continuation.ID, TimeoutSeconds: 5})
+	call("backup_policies_list", automationclient.Arguments{ProjectID: source.ProjectID})
+	policy := call("backup_policy_get", automationclient.Arguments{PolicyID: policyID})
+	var saved core.WorkloadBackupPolicy
+	if err := json.Unmarshal(policy.Data, &saved); err != nil || !saved.Enabled || saved.SourceRunID != source.RunID {
+		t.Fatal("policy did not retain reviewed source", err)
+	}
+	enabled := false
+	update, _ := json.Marshal(automationclient.BackupPolicyUpdateInput{Revision: saved.Revision, Enabled: &enabled, ConfirmName: saved.Name})
+	paused := call("backup_policy_set", automationclient.Arguments{PolicyID: policyID, Input: update})
+	if err := json.Unmarshal(paused.Data, &saved); err != nil || saved.Enabled {
+		t.Fatal("explicit pause failed", err)
+	}
+	if stale := client.Call(context.Background(), "backup_policy_set", automationclient.Arguments{PolicyID: policyID, Input: update}); stale.Status != 409 {
+		t.Fatal("stale revision accepted")
+	}
+	enabled = true
+	update, _ = json.Marshal(automationclient.BackupPolicyUpdateInput{Revision: saved.Revision, Enabled: &enabled, ConfirmName: saved.Name})
+	call("backup_policy_set", automationclient.Arguments{PolicyID: policyID, Input: update})
+	grant.Permissions = []core.Permission{core.PermissionProjectView}
+	automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/grants", grant, 200)
+	if denied := client.Call(context.Background(), "backup_policy_create", args); denied.Status != 403 {
+		t.Fatal("policy replay bypassed revoked permission")
+	}
+	call("backup_policy_get", automationclient.Arguments{PolicyID: policyID})
+}
