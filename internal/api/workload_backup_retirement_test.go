@@ -79,6 +79,16 @@ func TestReviewedBackupRetirementAPIReceiptsScopeAndOffsiteRecovery(t *testing.T
 	awaitBackupOperation(t, a, decodeMutation(t, exported).OperationID, "succeeded")
 	var review destructiveReview
 	json.Unmarshal(automationRequest(t, a, token, "POST", base+"/retire-local-preview", nil, 200).Body.Bytes(), &review)
+	if review.BlockedReason == "" {
+		t.Fatal("upload confirmation allowed retirement before independent verification")
+	}
+	verification := mutationRequest(a, token, "POST", base+"/verify", "retirement-offsite-verify", nil)
+	if verification.Code != 202 {
+		t.Fatal(verification.Code, verification.Body.String())
+	}
+	awaitBackupOperation(t, a, decodeMutation(t, verification).OperationID, "succeeded")
+	review = destructiveReview{}
+	json.Unmarshal(automationRequest(t, a, token, "POST", base+"/retire-local-preview", nil, 200).Body.Bytes(), &review)
 	if review.BlockedReason != "" || len(review.Resources) < 5 {
 		t.Fatal("exact offsite preservation identity absent", review)
 	}

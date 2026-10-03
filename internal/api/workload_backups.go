@@ -758,10 +758,6 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 				b.Offsite.VerifiedAt = &now
 			}
 		}
-	case "retire-local":
-		if op.State == "succeeded" && result.State == "local-retired" && result.CleanupState == "complete" {
-			b.LocalState = "retired"
-		}
 	case "delete":
 		if op.State == "succeeded" && result.State == "deleted" {
 			b.State = "deleted"
