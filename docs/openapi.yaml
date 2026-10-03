@@ -617,7 +617,11 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Ready providers with public manifest and capabilities, without endpoint credentials }
+        '200':
+          description: Ready providers with public manifest and capabilities, without endpoint credentials
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/ProjectInfrastructureProvider' } }
         '403': { $ref: '#/components/responses/Problem' }
   /projects/{id}/infrastructure/providers/{providerId}/options:
     post:
@@ -631,15 +635,39 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ProviderOptionsInput' }
       responses:
-        '200': { description: Supported region, size, image or network choices }
+        '200':
+          description: Supported region, size, image or network choices
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/InfrastructureProviderOption' } }
         '403': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}:
+    get:
+      operationId: getManagedServer
+      summary: Inspect one managed server and its current deployment readiness
+      description: Requires current project infrastructure.inspect and provider assignment. Refreshes only this authorized server's enrolled identity and runtime evidence. Returns separate allocation, enrollment and runtime states, a sanitized installation summary, the latest create, restore or delete operation, and a derived waitState. Provider allocation is not deployment readiness. Verified snapshot clones remain isolated. Never starts installation, issues credentials or approves SSH.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Current readiness, returned with Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedServerReadiness' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers/{id}/operations:
     get:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Owned server operation history and recovery state }
+        '200':
+          description: Owned server operation history and recovery state
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/InfrastructureOperation' } }
   /infrastructure/operations/{id}/{action}:
     post:
       operationId: changeInfrastructureOperation
@@ -669,7 +697,11 @@ paths:
                 revision: { type: integer, minimum: 1 }
                 confirmName: { type: string }
       responses:
-        '200': { description: Original owned managed server adopted. }
+        '200':
+          description: Original owned managed server adopted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedServer' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers/{id}/enrollment:
@@ -697,7 +729,11 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Current deletion digest, exact server name and protected storage consequences }
+        '200':
+          description: Current deletion digest, exact server name and protected storage consequences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InfrastructureDeletionReview' }
         '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/bootstrap:
     get:
@@ -1031,7 +1067,11 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ServerCreateReview' }
       responses:
-        '201': { description: Expiring creation review with digest and fresh node/bootstrap binding }
+        '201':
+          description: Expiring creation review with digest and fresh node/bootstrap binding
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InfrastructureReview' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
@@ -1039,7 +1079,11 @@ paths:
     get:
       summary: List managed servers permitted by the current project grants and provider assignments
       responses:
-        '200': { description: Visible managed server records }
+        '200':
+          description: Visible managed server records
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/ManagedServer' } }
     post:
       operationId: createManagedServer
       description: Accepts a reviewed server creation or isolated clone. Requires infrastructure.create and access to the provider; a clone also requires infrastructure.restore. Verified clones remain isolated and are not published as ordinary workload targets. Idempotency-Key reserves one durable provisioning operation; identical retries return its receipt for seven days. Changed inputs or expired keys return 409 without creating another machine.
@@ -1058,7 +1102,7 @@ paths:
               schema:
                 oneOf:
                   - { $ref: '#/components/schemas/MutationReceipt' }
-                  - { type: object, required: [server, operation], properties: {server: {type: object}, operation: {type: object}} }
+                  - { $ref: '#/components/schemas/InfrastructureAccepted' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
@@ -1085,7 +1129,7 @@ paths:
               schema:
                 oneOf:
                   - { $ref: '#/components/schemas/MutationReceipt' }
-                  - { type: object, required: [server, operation], properties: {server: {type: object}, operation: {type: object}} }
+                  - { $ref: '#/components/schemas/InfrastructureAccepted' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
@@ -5136,6 +5180,8 @@ components:
         id: { type: string }
         projectId: { type: string }
         sourceRunId: { type: string }
+        capturePolicyId: { type: string, description: Scheduled policy that created this capture. Absent for manual captures. }
+        scheduledAt: { type: string, format: date-time, description: Original scheduled capture deadline. Absent for manual captures; missed schedules retain their original deadline. }
         storageId: { type: string }
         serverId: { type: string }
         nodeId: { type: string }
@@ -5949,6 +5995,143 @@ components:
         state: { type: string, enum: [ready, unready, absent] }
         resourceId: { type: string }
         storageRetained: { type: boolean }
+    ProjectInfrastructureProvider:
+      type: object
+      required: [id, name, capabilities, manifest]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        manifest: { $ref: '#/components/schemas/InfrastructureProviderManifest' }
+    InfrastructureProviderManifest:
+      type: object
+      required: [apiVersion, name, displayName, version, capabilities, configurationSchema]
+      properties:
+        apiVersion: { type: string, const: dispatch.provider/v1 }
+        name: { type: string }
+        displayName: { type: string }
+        version: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        configurationSchema: { type: object, description: Provider configuration JSON Schema. Public metadata only. }
+        snapshots: { $ref: '#/components/schemas/InfrastructureProviderSnapshotCapabilities' }
+    InfrastructureProviderSnapshotCapabilities:
+      type: object
+      required: [diskSets, consistency, encryption, restore]
+      properties:
+        diskSets: { type: array, items: { type: string } }
+        consistency: { type: array, items: { type: string } }
+        encryption: { type: array, items: { type: string } }
+        restore:
+          type: object
+          required: [prebootSanitization, networkQuarantine, resetAgentIdentity, resetMachineIdentity, resetSSHIdentity, clearRuntimeJournal, disableCopiedWorkloads, independentDisks, checks]
+          properties:
+            prebootSanitization: { type: boolean }
+            networkQuarantine: { type: boolean }
+            resetAgentIdentity: { type: boolean }
+            resetMachineIdentity: { type: boolean }
+            resetSSHIdentity: { type: boolean }
+            clearRuntimeJournal: { type: boolean }
+            disableCopiedWorkloads: { type: boolean }
+            independentDisks: { type: boolean }
+            checks: { type: array, items: { type: string } }
+    InfrastructureProviderOption:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        metadata: { type: object, additionalProperties: true }
+    InfrastructureReview:
+      type: object
+      required: [id, serverId, projectId, providerId, providerRevision, manifestDigest, name, input, digest, state, expiresAt, createdAt]
+      properties:
+        id: { type: string }
+        serverId: { type: string }
+        projectId: { type: string }
+        providerId: { type: string }
+        providerRevision: { type: integer, format: int64 }
+        manifestDigest: { type: string }
+        name: { type: string }
+        input: { $ref: '#/components/schemas/ServerCreateReview' }
+        digest: { type: string }
+        state: { type: string }
+        sourceSnapshotId: { type: string }
+        bootstrapId: { type: string }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    ManagedServer:
+      type: object
+      required: [id, reviewId, projectId, providerId, name, nodeId, allocationState, enrollmentState, runtimeState, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        reviewId: { type: string }
+        projectId: { type: string }
+        providerId: { type: string }
+        name: { type: string }
+        nodeId: { type: string }
+        sourceSnapshotId: { type: string }
+        bootstrapId: { type: string }
+        resourceId: { type: string }
+        address: { type: string }
+        allocationState: { type: string }
+        enrollmentState: { type: string }
+        runtimeState: { type: string }
+        revision: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ManagedServerReadiness:
+      allOf:
+        - { $ref: '#/components/schemas/ManagedServer' }
+        - type: object
+          required: [waitState, deployable]
+          properties:
+            waitState: { type: string, enum: [waiting, ready, verified-isolated, pending_approval, paused, failed, cancelled, unknown, unresolved, expired, revoked, deleted, deleting, cancelling] }
+            deployable: { type: boolean, description: True only for an allocated server with enrolled identity, fresh runtime evidence and the matching ordinary workload target. Always false for snapshot clones. }
+            bootstrap: { $ref: '#/components/schemas/ManagedServerBootstrapReadiness' }
+            latestOperation: { $ref: '#/components/schemas/InfrastructureOperation' }
+    ManagedServerBootstrapReadiness:
+      type: object
+      required: [id, state, installationState, enrollmentState, runtimeState]
+      properties:
+        id: { type: string }
+        state: { type: string }
+        installationState: { type: string }
+        enrollmentState: { type: string }
+        runtimeState: { type: string }
+    InfrastructureOperation:
+      type: object
+      required: [id, serverId, providerId, actorId, action, state, stage, attempts, cancelRequested, expiresAt, nextAttemptAt, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        serverId: { type: string }
+        providerId: { type: string }
+        actorId: { type: string }
+        action: { type: string }
+        state: { type: string }
+        stage: { type: string }
+        providerOperationId: { type: string }
+        resourceId: { type: string }
+        errorCode: { type: string }
+        message: { type: string }
+        attempts: { type: integer, minimum: 0 }
+        cancelRequested: { type: boolean }
+        expiresAt: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    InfrastructureDeletionReview:
+      type: object
+      required: [server, digest, summary]
+      properties:
+        server: { $ref: '#/components/schemas/ManagedServer' }
+        digest: { type: string }
+        summary: { type: string }
+    InfrastructureAccepted:
+      type: object
+      required: [server, operation]
+      properties:
+        server: { $ref: '#/components/schemas/ManagedServer' }
+        operation: { $ref: '#/components/schemas/InfrastructureOperation' }
     InfrastructureAcceptance:
       type: object
       required: [digest, confirmName]

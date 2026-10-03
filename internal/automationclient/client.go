@@ -64,7 +64,7 @@ func (r Result) ExitCode() int {
 		return 3
 	case "timeout", "cancelled":
 		return 4
-	case "operation_failed", "operation_cancelled", "outcome_unknown":
+	case "operation_failed", "operation_cancelled", "operation_paused", "outcome_unknown":
 		return 5
 	default:
 		return 1

@@ -119,6 +119,8 @@ var Operations = append(append([]Operation{
 	{Name: "receipt_get", Method: "GET", Path: "/mutation-receipts/{receiptId}", Description: "Inspect the original mutation receipt using current permissions.", Fields: []string{"receiptId"}, Required: []string{"receiptId"}},
 	{Name: "receipt_wait", Method: "GET", Path: "/mutation-receipts/{receiptId}", Description: "Wait for a receipt outcome. Pending approval and uncertain outcomes return for operator review.", Fields: []string{"receiptId", "timeoutSeconds"}, Required: []string{"receiptId"}},
 	{Name: "servers_list", Method: "GET", Path: "/infrastructure/servers", Description: "List managed servers visible to the current identity.", Fields: []string{"projectId"}},
+	{Name: "server_get", Method: "GET", Path: "/infrastructure/servers/{serverId}", Description: "Inspect allocation, installation, enrollment and fresh runtime readiness using current project access and provider assignment. Allocation success does not mean the server can receive deployments.", Fields: []string{"serverId"}, Required: []string{"serverId"}},
+	{Name: "server_wait", Method: "GET", Path: "/infrastructure/servers/{serverId}", Description: "Wait for the original server's deployment readiness with a bounded deadline. Returns isolated snapshot clones separately and stops for approval, failure, uncertain outcomes, expiration or revoked enrollment. Never starts installation or cancels server work.", Fields: []string{"serverId", "timeoutSeconds"}, Required: []string{"serverId"}},
 	{Name: "providers_list", Method: "GET", Path: "/projects/{projectId}/infrastructure/providers", Description: "List assigned providers, their capabilities and supported configuration for a project.", Fields: []string{"projectId"}, Required: []string{"projectId"}},
 	{Name: "provider_options", Method: "POST", Path: "/projects/{projectId}/infrastructure/providers/{providerId}/options", Description: "Inspect available provider regions, sizes, images or networks using public configuration.", Fields: []string{"projectId", "providerId", "input"}, Required: []string{"projectId", "providerId", "input"}, InputSchema: "ProviderOptionsInput"},
 	{Name: "server_operations", Method: "GET", Path: "/infrastructure/servers/{serverId}/operations", Description: "Inspect original server operation history and recovery state.", Fields: []string{"serverId"}, Required: []string{"serverId"}},
@@ -317,6 +319,9 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		continuation.Kind = "receipt"
 		continuation.ID = args.ReceiptID
 	}
+	if name == "server_wait" || name == "server_get" {
+		continuation = &Continuation{Kind: "managed_server", ID: args.ServerID, ResourceID: args.ServerID}
+	}
 	wait := strings.HasSuffix(name, "_wait")
 	if wait {
 		timeout := args.TimeoutSeconds
@@ -335,7 +340,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 				out.Continuation.Kind = "environment"
 			}
 		}
-		if wait {
+		if wait || name == "server_get" {
 			out.Continuation = continuation
 		}
 		if op.Mutation && op.Response == "" && out.OK && name != "environment_extend" {
@@ -355,6 +360,16 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 
 		if !out.OK {
 			return out
+		}
+		if name == "server_wait" || name == "server_get" {
+			out, stop := serverReadinessResult(args.ServerID, out, wait)
+			if stop || !wait {
+				return out
+			}
+			if !c.waitPoll(ctx, &out) {
+				return out
+			}
+			continue
 		}
 		if (name == "apps_list" || name == "servers_list" || name == "service_templates_list" || name == "service_runs_list") && args.ProjectID != "" {
 			var items []map[string]any

@@ -51,6 +51,23 @@ dispatchctl deployment diagnose --deployment DEPLOYMENT_ID
 
 A wait timeout or Ctrl-C stops the client. It does not cancel accepted work. The result includes a `continuation` with the receipt or deployment ID. Resume with that ID. Log entry IDs are continuation cursors; pass the last received ID as `--after` for the next bounded page.
 
+For an on-demand machine, allocation success is separate from deployment
+readiness. Inspect or wait for the original server after its creation receipt
+succeeds:
+
+```sh
+dispatchctl server get --server SERVER_ID
+dispatchctl server wait --server SERVER_ID --timeout 120
+```
+
+These commands report allocation, enrollment and fresh runtime evidence and
+preserve the original server and operation IDs. `ready` means `deployable` is
+true. `verified-isolated` ends the wait for a snapshot clone with `deployable`
+false. Approval, failed or interrupted installation, expired or revoked
+enrollment, uncertain outcomes and deletion return for review. The client never
+starts installation, obtains credentials or accepts SSH approval while waiting.
+See [server readiness](on-demand-servers.md#wait-for-a-usable-server).
+
 ## Define and configure an application
 
 After a target has enrolled and become ready, an account with `project.configure`
@@ -674,11 +691,11 @@ Every command returns `version: "dispatch.client/v1"`, `ok`, HTTP `status` when 
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Request succeeded, or wait reached a successful result or explicit paused state |
+| 0 | Request succeeded, or wait returned success or approval. Receipt and deployment waits also return paused states. |
 | 1 | Controller, protocol, capability, quota or other request failure |
 | 2 | Invalid arguments or credential configuration |
 | 3 | Authentication or project permission denied |
 | 4 | Client timeout or cancellation, accepted work may continue |
-| 5 | Operation failed, was cancelled or has an unresolved external outcome |
+| 5 | Operation failed, was cancelled, paused for recovery or has an unresolved external outcome |
 
-No convenience flag converts a paused approval into permission to execute. Use the server's review identifier and approval process, then inspect the same operation again.
+A returned approval or paused state does not grant permission to execute. Use the server's review identifier and approval process, then inspect the same operation again.

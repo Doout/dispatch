@@ -127,6 +127,28 @@ func TestAutomationClientSimulationAndMockProvider(t *testing.T) {
 	if !strings.Contains(string(inventory.Data), allocation.ServerID) {
 		t.Fatal("accepted server missing")
 	}
+	readiness := call("server_get", automationclient.Arguments{ServerID: allocation.ServerID})
+	var status provision.ServerReadiness
+	if json.Unmarshal(readiness.Data, &status) != nil || status.ID != allocation.ServerID || status.WaitState != "waiting" || status.AllocationState != "allocated" || status.Deployable || readiness.Continuation.OperationID == "" {
+		t.Fatal("allocation success became deployment readiness", readiness)
+	}
+	w = automationRequest(t, a, issued.Token, "GET", "/api/v1/infrastructure/servers/"+allocation.ServerID, nil, 200)
+	if w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), "encryptedInput") || strings.Contains(w.Body.String(), "requestDigest") {
+		t.Fatal("readiness response cached or leaked private operation inputs")
+	}
+	waitCtx, stopWaiting := context.WithTimeout(ctx, 5*time.Second)
+	waited := client.Call(waitCtx, "server_wait", automationclient.Arguments{ServerID: allocation.ServerID, TimeoutSeconds: 2})
+	stopWaiting()
+	if waited.OK || waited.ExitCode() != 4 || waited.Continuation == nil || waited.Continuation.ID != allocation.ServerID || waited.Continuation.OperationID != readiness.Continuation.OperationID {
+		t.Fatalf("wait lost the original allocated server: %+v error=%+v continuation=%+v", waited, waited.Error, waited.Continuation)
+	}
+	// Inspection cannot use owner-only installation routes or an unassigned provider.
+	automationRequest(t, a, issued.Token, "GET", "/api/v1/infrastructure/bootstrap", nil, 403)
+	automationRequest(t, a, "secret", "DELETE", "/api/v1/infrastructure/assignments/"+app.ProjectID+"/provider/"+p.ID, nil, 204)
+	if denied := client.Call(ctx, "server_get", automationclient.Arguments{ServerID: allocation.ServerID}); denied.Status != 403 {
+		t.Fatal("readiness ignored revoked provider assignment", denied)
+	}
+	automationRequest(t, a, "secret", "PUT", "/api/v1/infrastructure/assignments/"+app.ProjectID, map[string]any{"kind": "provider", "resourceId": p.ID}, 200)
 	// Read and create permissions do not authorize deleting infrastructure.
 	if r := client.Call(ctx, "server_delete_review", automationclient.Arguments{ServerID: allocation.ServerID}); r.Status != 403 || r.ExitCode() != 3 {
 		t.Fatal("client gained deletion permission", r)
@@ -161,7 +183,29 @@ func TestAutomationClientSimulationAndMockProvider(t *testing.T) {
 	if r := client.Call(ctx, "snapshot_delete_review", automationclient.Arguments{SnapshotID: capture.SnapshotID}); r.Status != 403 || r.ExitCode() != 3 {
 		t.Fatal("client gained snapshot deletion permission", r)
 	}
+	foreign := core.Project{ID: "foreign-managed-project", Name: "Foreign managed project", CreatedAt: now}
+	if err := a.store.CreateProject(ctx, foreign); err != nil {
+		t.Fatal(err)
+	}
+	automationRequest(t, a, "secret", "PUT", "/api/v1/projects/"+foreign.ID+"/infrastructure/quota", policy, 200)
+	foreignInput := create
+	foreignInput.ProjectID, foreignInput.Name = foreign.ID, "foreign-machine"
+	var foreignReview core.InfrastructureReview
+	if json.Unmarshal(serviceRequestTest(t, a, "POST", "/api/v1/infrastructure/servers/review", foreignInput, 201), &foreignReview) != nil {
+		t.Fatal("foreign scope fixture did not create a review")
+	}
+	serviceRequestTest(t, a, "POST", "/api/v1/infrastructure/servers", provision.Acceptance{ReviewID: foreignReview.ID, Digest: foreignReview.Digest, ConfirmName: foreignReview.Name, RequestKey: "foreign-fixture-once"}, 202)
+	for _, name := range []string{"server_get", "server_wait"} {
+		if denied := client.Call(ctx, name, automationclient.Arguments{ServerID: foreignReview.ServerID}); denied.Status != 403 {
+			t.Fatal("managed readiness crossed the project scope", name, denied)
+		}
+	}
 	automationRequest(t, a, "secret", "DELETE", "/api/v1/infrastructure/grants/service_account/"+account.ID+"/"+app.ProjectID, nil, 204)
+	for _, name := range []string{"server_get", "server_wait"} {
+		if denied := client.Call(ctx, name, automationclient.Arguments{ServerID: allocation.ServerID}); denied.Status != 403 || denied.Continuation == nil || denied.Continuation.ID != allocation.ServerID {
+			t.Fatal("readiness ignored revoked project permission", name, denied)
+		}
+	}
 	if r := client.Call(ctx, "server_create", accept); r.Status != 403 {
 		t.Fatal("replay ignored revoked permission", r)
 	}

@@ -19,6 +19,7 @@ func (a *API) infrastructureLifecycleRoutes(r chi.Router) {
 		r.Post("/review", a.reviewManagedServer)
 		r.Post("/", a.createManagedServer)
 		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", a.getManagedServer)
 			r.Get("/operations", a.managedServerOperations)
 			r.Post("/snapshot-review", a.reviewInfrastructureSnapshot)
 			r.Post("/enrollment", a.enrollManagedServer)
@@ -45,6 +46,19 @@ func (a *API) listManagedServers(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := m.ListManaged(r.Context())
 	a.list(w, items, err)
+}
+func (a *API) getManagedServer(w http.ResponseWriter, r *http.Request) {
+	m := a.lifecycleManager(w)
+	if m == nil {
+		return
+	}
+	item, err := m.GetManaged(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.infrastructureProblem(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, item)
 }
 func (a *API) reviewManagedServer(w http.ResponseWriter, r *http.Request) {
 	m := a.lifecycleManager(w)

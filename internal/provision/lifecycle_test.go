@@ -229,6 +229,11 @@ func TestLifecycleCancelUnknownOwnershipAndAdoption(t *testing.T) {
 	if err != nil || server.AllocationState != "allocated" {
 		t.Fatalf("adopt: %#v %v", server, err)
 	}
+	f.now = f.now.Add(time.Hour)
+	readiness, err := f.m.GetManaged(ctx, server.ID)
+	if err != nil || readiness.WaitState != "waiting" || readiness.LatestOperation.State != "adopted" || readiness.Deployable {
+		t.Fatal("adopted allocation retained the original operation deadline", readiness, err)
+	}
 	f.tick(t)
 	if len(f.requests) != 1 {
 		t.Fatal("adopted cancelled creation resumed")
@@ -316,6 +321,10 @@ func TestLifecycleAgentReadinessThenProtectedDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	readiness, err := f.m.GetManaged(ctx, target.ID)
+	if err != nil || readiness.WaitState != "deleting" || readiness.Deployable || readiness.LatestOperation.ID != deletion.Operation.ID {
+		t.Fatal("deletion remained deployable", readiness, err)
+	}
 	if err = f.data.CreateApp(ctx, core.App{ID: "late-app", ProjectID: "project", ServerID: target.ID, Name: "Late", CreatedAt: f.now}); err == nil {
 		t.Fatal("application admitted after deletion")
 	}
@@ -329,6 +338,14 @@ func TestLifecycleAgentReadinessThenProtectedDeletion(t *testing.T) {
 	credential, _ := f.data.GetEdgeCredential(ctx, enrollment.NodeID)
 	if !credential.Revoked {
 		t.Fatal("deleted agent still enrolled")
+	}
+	readiness, err = f.m.GetManaged(ctx, target.ID)
+	if err != nil || readiness.WaitState != "deleted" || readiness.Deployable {
+		t.Fatal("deleted server remained ready", readiness, err)
+	}
+	unchanged, err := f.data.GetEdgeCredential(ctx, enrollment.NodeID)
+	if err != nil || unchanged.Generation != credential.Generation {
+		t.Fatal("status read changed a deleted node's credential generation", unchanged, err)
 	}
 	if _, err = f.data.GetServer(ctx, target.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("deleted target remains")

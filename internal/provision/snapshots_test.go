@@ -315,6 +315,11 @@ func TestSnapshotRestoreUsesFreshBootstrapAndRemainsIsolated(t *testing.T) {
 	if machine.RuntimeState != "verified-isolated" {
 		t.Fatal(machine)
 	}
+	readiness, err := f.m.GetManaged(ctx, machine.ID)
+	if err != nil || readiness.WaitState != "verified-isolated" || readiness.Deployable {
+		t.Fatal("isolated clone reported deployment readiness", readiness, err)
+	}
+
 	if _, err = f.data.GetServer(ctx, machine.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("isolated clone published as production workload target")
 	}

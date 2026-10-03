@@ -41,6 +41,32 @@ func TestCLIJSONAndExplicitConfirmation(t *testing.T) {
 	}
 }
 
+func TestCLIManagedServerReadinessCommands(t *testing.T) {
+	credential := filepath.Join(t.TempDir(), "credential")
+	if err := os.WriteFile(credential, []byte("dsa_cli_fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/api/v1/infrastructure/servers/server-1" {
+			t.Error("readiness command changed the server", r.Method, r.URL.Path)
+		}
+		io.WriteString(w, `{"id":"server-1","projectId":"project-1","allocationState":"allocated","enrollmentState":"enrolled","runtimeState":"verified-isolated","sourceSnapshotId":"snapshot-1","waitState":"verified-isolated","deployable":false,"latestOperation":{"id":"original-operation","serverId":"server-1"}}`)
+	}))
+	defer server.Close()
+	for _, command := range []string{"get", "wait"} {
+		var out, diagnostics bytes.Buffer
+		args := []string{"--url", server.URL, "--token-file", credential, "server", command, "--server", "server-1"}
+		if command == "wait" {
+			args = append(args, "--timeout", "1")
+		}
+		code := run(context.Background(), args, strings.NewReader(""), &out, &diagnostics)
+		var result automationclient.Result
+		if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK || result.Continuation == nil || result.Continuation.ID != "server-1" || result.Continuation.OperationID != "original-operation" || !strings.Contains(string(result.Data), `"deployable":false`) {
+			t.Fatal("CLI lost isolated clone evidence", command, code, out.String(), diagnostics.String())
+		}
+	}
+}
+
 func TestMCPConfigurationFailureKeepsStdoutProtocolOnly(t *testing.T) {
 	var out, errout bytes.Buffer
 	code := run(context.Background(), []string{"--url", "https://example.com", "--token-file", filepath.Join(t.TempDir(), "missing"), "mcp"}, strings.NewReader(""), &out, &errout)
