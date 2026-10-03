@@ -232,6 +232,10 @@ func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBa
 	if (r.Backup.LocalState == "retired" || server.ID != r.Backup.ServerID) && r.OffsiteAccess != nil && (action == "verify" || action == "restore") {
 		// A downloaded cache is never an authoritative local copy. Keep the
 		// original journal, but remove these temporary bytes before completion.
+		if _, err := backupArchiveDataFiles(dir); err != nil {
+			result.State, result.CleanupState = "unknown", "pending"
+			return result, err
+		}
 		if _, err := os.Lstat(filepath.Join(dir, "archive.enc")); err == nil {
 			if _, err = readBackupArtifact(dir, r); err != nil {
 				result.State, result.CleanupState = "unknown", "pending"
@@ -242,18 +246,7 @@ func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBa
 			return result, err
 		}
 		defer func() {
-			cleanupErr := os.Remove(filepath.Join(dir, "archive.enc"))
-			if cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
-				out.State, out.CleanupState = "unknown", "failed"
-				runErr = errors.New("retired backup temporary archive cleanup is unresolved")
-				return
-			}
-			folder, err := os.Open(dir)
-			if err == nil {
-				err = folder.Sync()
-				folder.Close()
-			}
-			if err != nil {
+			if err := cleanupTemporaryBackupArchiveData(dir); err != nil {
 				out.State, out.CleanupState = "unknown", "failed"
 				runErr = errors.New("retired backup temporary archive cleanup is unresolved")
 			}

@@ -81,14 +81,23 @@ func (e DockerExecutor) retireLocalWorkloadBackup(ctx context.Context, dir strin
 	if err = ctx.Err(); err != nil {
 		return out, err
 	}
+	archives, err := backupArchiveDataFiles(dir)
+	if err != nil {
+		out.State, out.CleanupState = "unknown", "pending"
+		return out, err
+	}
 	if r.Action == "reconcile" {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			out.State, out.CleanupState = "unresolved", "pending"
 			return out, err
 		}
+		if len(archives) != 0 {
+			out.State, out.CleanupState, out.Message = "failed", "complete", "The original retirement left local archive or staging bytes. Request a fresh reviewed retirement."
+			return out, nil
+		}
 		for _, entry := range entries {
-			if entry.Name() == "archive.enc" || strings.HasPrefix(entry.Name(), ".archive-") || strings.HasPrefix(entry.Name(), ".retirement-verification-") {
+			if strings.HasPrefix(entry.Name(), ".retirement-verification-") {
 				out.State, out.CleanupState, out.Message = "failed", "complete", "The original retirement left local archive or staging bytes. Request a fresh reviewed retirement."
 				return out, nil
 			}
@@ -113,14 +122,10 @@ func (e DockerExecutor) retireLocalWorkloadBackup(ctx context.Context, dir strin
 				return out, err
 			}
 		}
-		if entry.Name() == "archive.enc" || strings.HasPrefix(entry.Name(), ".archive-") {
-			info, e1 := entry.Info()
-			if e1 != nil || !info.Mode().IsRegular() {
-				return out, errors.New("unexpected local backup storage layout")
-			}
-			if err = os.Remove(filepath.Join(dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return out, errors.New("local backup retirement outcome is unresolved")
-			}
+	}
+	for _, archive := range archives {
+		if err = os.Remove(archive); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return out, errors.New("local backup retirement outcome is unresolved")
 		}
 	}
 	// Sync the directory before advertising that server protection may be released.
@@ -138,6 +143,48 @@ func (e DockerExecutor) retireLocalWorkloadBackup(ctx context.Context, dir strin
 		return out, err
 	}
 	return out, nil
+}
+
+// Downloads and captures can leave encrypted staging files after a process
+// crash. Validate every known data path before removing any of them.
+func backupArchiveDataFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := []string{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != "archive.enc" && !strings.HasPrefix(name, ".archive-") && !strings.HasPrefix(name, ".offsite-") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, errors.New("unexpected local backup storage layout")
+		}
+		files = append(files, filepath.Join(dir, name))
+	}
+	return files, nil
+}
+
+// Only transient caches use this cleanup. Retained source copies remain owned
+// until the separate reviewed retirement confirms offsite preservation.
+func cleanupTemporaryBackupArchiveData(dir string) error {
+	files, err := backupArchiveDataFiles(dir)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err = os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	folder, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer folder.Close()
+	return folder.Sync()
 }
 
 func cleanupRetirementVerificationStaging(dir string) error {

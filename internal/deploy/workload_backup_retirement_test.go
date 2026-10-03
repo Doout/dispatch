@@ -88,6 +88,80 @@ func TestLocalRetirementIndependentOffsiteAuthenticationAndRecovery(t *testing.T
 	if _, err = os.Stat(staged); err != nil {
 		t.Fatal("inspection deleted local staging bytes")
 	}
+	offsiteStaged := filepath.Join(dir, ".offsite-interrupted")
+	if err = os.WriteFile(offsiteStaged, []byte("partial encrypted remote download"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("offsite-staging-absence-inspection", func(t *testing.T) {
+		inspectionDir, err := privateBackupDirectory(filepath.Join(t.TempDir(), "inspection"), r.Backup.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = writeBackupJSON(inspectionDir, "owner.enc", r.Key, r.Backup.ID, artifact); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(inspectionDir, ".offsite-interrupted")
+		if err = os.WriteFile(path, []byte("partial encrypted remote download"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		result, err := executor.retireLocalWorkloadBackup(context.Background(), inspectionDir, inspected)
+		if err != nil || result.State != "failed" || result.CleanupState != "complete" {
+			t.Fatal("inspection hid abandoned offsite bytes", result, err)
+		}
+		if _, err = os.Stat(path); err != nil {
+			t.Fatal("inspection removed abandoned offsite bytes", err)
+		}
+	})
+	for _, action := range []string{"retire-local", "reconcile"} {
+		for _, layout := range []string{"directory", "symlink"} {
+			t.Run("offsite-staging-"+action+"-"+layout, func(t *testing.T) {
+				request := r
+				request.Action, request.RecoveryAction = action, "retire-local"
+				request.OperationID = "offsite-layout-" + action + "-" + layout
+				stagingDir, err := privateBackupDirectory(filepath.Join(t.TempDir(), "retirement"), request.Backup.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = writeBackupJSON(stagingDir, "owner.enc", request.Key, request.Backup.ID, artifact); err != nil {
+					t.Fatal(err)
+				}
+				archive := filepath.Join(stagingDir, "archive.enc")
+				if action == "retire-local" {
+					if err = os.WriteFile(archive, []byte("retained original bytes"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				path := filepath.Join(stagingDir, ".offsite-interrupted")
+				preserved := filepath.Join(t.TempDir(), "unowned-data")
+				if err = os.WriteFile(preserved, []byte("unowned bytes"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if layout == "symlink" {
+					err = os.Symlink(preserved, path)
+				} else {
+					err = os.Mkdir(path, 0700)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := executor.retireLocalWorkloadBackup(context.Background(), stagingDir, request)
+				if err == nil || result.State != "unknown" || result.CleanupState != "pending" {
+					t.Fatal("unexpected layout was treated as settled cleanup", result, err)
+				}
+				if _, err = os.Lstat(path); err != nil {
+					t.Fatal("unexpected staging layout was removed", err)
+				}
+				if raw, err := os.ReadFile(preserved); err != nil || string(raw) != "unowned bytes" {
+					t.Fatal("unowned symlink target changed", err)
+				}
+				if action == "retire-local" {
+					if _, err = os.Stat(archive); err != nil {
+						t.Fatal("original archive was removed before layout validation", err)
+					}
+				}
+			})
+		}
+	}
 	abandoned := filepath.Join(dir, ".retirement-verification-interrupted")
 	if err = os.Mkdir(abandoned, 0700); err != nil {
 		t.Fatal(err)
@@ -104,6 +178,9 @@ func TestLocalRetirementIndependentOffsiteAuthenticationAndRecovery(t *testing.T
 	}
 	if _, err = os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("staging archive bytes remain after retirement")
+	}
+	if _, err = os.Stat(offsiteStaged); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("interrupted offsite download bytes remain after retirement")
 	}
 	if _, err = os.Stat(abandoned); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("interrupted offsite verification bytes remain after retirement")
@@ -183,6 +260,10 @@ func TestLocalRetirementIndependentOffsiteAuthenticationAndRecovery(t *testing.T
 					cacheRoot := filepath.Join(t.TempDir(), "cache")
 					cacheDir, err := privateBackupDirectory(cacheRoot, request.Backup.ID)
 					if err != nil {
+						t.Fatal(err)
+					}
+					staging := filepath.Join(cacheDir, ".offsite-interrupted")
+					if err = os.WriteFile(staging, []byte("partial encrypted remote download"), 0600); err != nil {
 						t.Fatal(err)
 					}
 					containerExists, volumeExists := false, false
@@ -285,6 +366,39 @@ func TestLocalRetirementIndependentOffsiteAuthenticationAndRecovery(t *testing.T
 						off.VerificationState = "failed"
 						off.VerifiedAt = nil
 						request.Backup.Offsite = &off
+						for _, layout := range []string{"directory", "symlink"} {
+							t.Run("unexpected-"+layout, func(t *testing.T) {
+								path := filepath.Join(cacheDir, ".offsite-unexpected")
+								preserved := filepath.Join(t.TempDir(), "unowned-data")
+								if err = os.WriteFile(preserved, []byte("unowned bytes"), 0600); err != nil {
+									t.Fatal(err)
+								}
+								if layout == "symlink" {
+									err = os.Symlink(preserved, path)
+								} else {
+									err = os.Mkdir(path, 0700)
+								}
+								if err != nil {
+									t.Fatal(err)
+								}
+								result, err := runner.RunWorkloadBackup(context.Background(), request, targetServer)
+								if err == nil || result.State != "unknown" || result.CleanupState != "pending" {
+									t.Fatal("cache inspection hid unexpected staging layout", result, err)
+								}
+								if _, err = os.Lstat(path); err != nil {
+									t.Fatal("cache inspection removed unexpected staging layout", err)
+								}
+								if raw, err := os.ReadFile(preserved); err != nil || string(raw) != "unowned bytes" {
+									t.Fatal("cache inspection changed unowned data", err)
+								}
+								if _, err = os.Stat(staging); err != nil {
+									t.Fatal("cache inspection partially removed bytes before validating all paths", err)
+								}
+								if err = os.Remove(path); err != nil {
+									t.Fatal(err)
+								}
+							})
+						}
 					}
 					result, err := runner.RunWorkloadBackup(context.Background(), request, targetServer)
 					if outcome == "cleanup-failure" {
@@ -306,6 +420,9 @@ func TestLocalRetirementIndependentOffsiteAuthenticationAndRecovery(t *testing.T
 					}
 					if _, err = os.Stat(filepath.Join(cacheDir, "archive.enc")); !errors.Is(err, os.ErrNotExist) {
 						t.Fatal("unprotected temporary archive bytes remain", err)
+					}
+					if _, err = os.Stat(staging); !errors.Is(err, os.ErrNotExist) {
+						t.Fatal("unprotected offsite staging bytes remain", err)
 					}
 					if containerExists || volumeExists {
 						t.Fatal("verification resources remain")
