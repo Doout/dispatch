@@ -44,12 +44,13 @@ type SnapshotReviewInput struct {
 	RetainUntil string `json:"retainUntil,omitempty"`
 }
 type TemporaryEnvironmentInput struct {
-	ProjectID       string `json:"projectId"`
-	TemplateID      string `json:"templateId"`
-	ServerID        string `json:"serverId"`
-	Name            string `json:"name"`
-	SourceSHA       string `json:"sourceSha"`
-	LifetimeSeconds int64  `json:"lifetimeSeconds"`
+	ProjectID       string                `json:"projectId"`
+	TemplateID      string                `json:"templateId"`
+	ServerID        string                `json:"serverId"`
+	Name            string                `json:"name"`
+	SourceSHA       string                `json:"sourceSha"`
+	LifetimeSeconds int64                 `json:"lifetimeSeconds"`
+	ServiceBindings []core.ServiceBinding `json:"serviceBindings,omitempty"`
 }
 type TemporaryEnvironmentExtension struct {
 	Revision  int64  `json:"revision"`
@@ -236,6 +237,14 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		var input TemporaryEnvironmentInput
 		if decodeStrict(args.Input, &input) != nil || !identifier.MatchString(input.ProjectID) || !identifier.MatchString(input.TemplateID) || !identifier.MatchString(input.ServerID) || !environmentName.MatchString(input.Name) || !fullCommit.MatchString(input.SourceSHA) || input.LifetimeSeconds < 1 || input.LifetimeSeconds > 365*24*3600 {
 			return Failure("invalid_input", "Supply the project, template, target, lowercase environment name, full Git commit SHA and finite lifetime in seconds")
+		}
+		if len(input.ServiceBindings) > 32 {
+			return Failure("invalid_input", "Supply at most 32 explicit service bindings")
+		}
+		for _, binding := range input.ServiceBindings {
+			if strings.TrimSpace(binding.Alias) == "" || strings.TrimSpace(binding.ServiceRef) == "" || len(binding.Environment) == 0 || binding.Compose != nil || binding.Helm != nil {
+				return Failure("invalid_input", "Temporary environments accept explicit same-project service references with Dockerfile environment mappings only")
+			}
 		}
 		body = input
 	case "TemporaryEnvironmentExtension":

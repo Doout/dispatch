@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/doout/dispatch/internal/core"
 )
 
 func TestEnvironmentMutationKeepsReviewKeyAndContinuation(t *testing.T) {
@@ -49,6 +51,48 @@ func TestEnvironmentMutationKeepsReviewKeyAndContinuation(t *testing.T) {
 	}
 	if requests.Load() != 2 {
 		t.Fatal("client made an extra mutation", requests.Load())
+	}
+}
+
+func TestEnvironmentReviewPreservesExplicitBindingsAndGeneratedRouteEvidence(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var input TemporaryEnvironmentInput
+		if json.NewDecoder(r.Body).Decode(&input) != nil || len(input.ServiceBindings) != 1 || input.ServiceBindings[0].ServiceRef != "approved-service" || input.ServiceBindings[0].Environment["DATABASE_URL"] != "connectionUrl" {
+			t.Error("changed explicit service composition")
+		}
+		io.WriteString(w, `{"id":"review-1","serviceRevisions":{"approved-service":3},"route":{"hostname":"generated.preview.example"},"routing":{"enabled":true}}`)
+	})
+	input := TemporaryEnvironmentInput{ProjectID: "project-1", TemplateID: "template-1", ServerID: "server-1", Name: "agent-test", SourceSHA: strings.Repeat("a", 40), LifetimeSeconds: 3600, ServiceBindings: []core.ServiceBinding{{Alias: "db", ServiceRef: "approved-service", Environment: map[string]string{"DATABASE_URL": "connectionUrl"}}}}
+	raw, _ := json.Marshal(input)
+	r := c.Call(context.Background(), "environment_review", Arguments{Input: raw})
+	if !r.OK || !strings.Contains(string(r.Data), "generated.preview.example") || !strings.Contains(string(r.Data), "serviceRevisions") {
+		t.Fatal("lost reviewed route or binding evidence", r)
+	}
+	bad := input
+	bad.ServiceBindings = []core.ServiceBinding{{Alias: "db", ServiceRef: "approved-service", Compose: map[string]map[string]string{"web": {"DATABASE_URL": "connectionUrl"}}}}
+	raw, _ = json.Marshal(bad)
+	if r := c.Call(context.Background(), "environment_review", Arguments{Input: raw}); r.OK || r.ExitCode() != 2 {
+		t.Fatal("accepted unsupported Compose binding")
+	}
+	bad.ServiceBindings = make([]core.ServiceBinding, 33)
+	raw, _ = json.Marshal(bad)
+	if r := c.Call(context.Background(), "environment_review", Arguments{Input: raw}); r.OK || r.ExitCode() != 2 {
+		t.Fatal("accepted unbounded environment services")
+	}
+	var fields map[string]any
+	json.Unmarshal(recoveryJSON(input), &fields)
+	fields["hostname"] = "production.example"
+	raw, _ = json.Marshal(fields)
+	if r := c.Call(context.Background(), "environment_review", Arguments{Input: raw}); r.OK || r.ExitCode() != 2 {
+		t.Fatal("accepted caller-selected production hostname")
+	}
+	schema := inputSchema("TemporaryEnvironmentInput").(map[string]any)["properties"].(map[string]any)["serviceBindings"].(map[string]any)
+	if schema["maxItems"] != 32 {
+		t.Fatal("MCP services were not bounded")
+	}
+	props := schema["items"].(map[string]any)["properties"].(map[string]any)
+	if props["compose"] != nil || props["helm"] != nil {
+		t.Fatal("MCP advertised unsupported environment mappings")
 	}
 }
 

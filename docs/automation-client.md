@@ -305,8 +305,16 @@ Choose a listed template and target. Write `environment.json` with `projectId`,
 dispatchctl environment review --input environment.json > environment-review.json
 ```
 
-Read the clone settings and omissions in the review. Production routes, service
-bindings and hooks are not copied. Supply its `reviewId`, `digest` and exact
+Read the clone settings and omissions in the review. Production routes, template
+service bindings and hooks are not copied. Optional `serviceBindings` explicitly
+selects up to 32 same-project services through Dockerfile environment mappings.
+For example, a binding may use `alias: db`, an approved `serviceRef`, and
+`environment: {DATABASE_URL: connectionUrl}`. Services and their data remain
+shared owned resources; cleanup does not delete them.
+
+If the target has managed routing, the server generates a fresh hostname. Inspect
+the review's routing and route evidence, service revisions and expiration.
+The client cannot request a production hostname. Supply its `reviewId`, `digest` and exact
 `confirmName` in `accept-environment.json`:
 
 ```sh
