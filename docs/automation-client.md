@@ -4,6 +4,11 @@
 
 Build with `go build -o dispatchctl ./cmd/dispatchctl`. Linux release archives include the client. Run `dispatchctl --help` for its supported commands. The underscore form, such as `deployment_preview`, is also accepted and matches the MCP tool name.
 
+An executable integration test exercises the CLI and MCP against an isolated
+controller using simulated deployment and an owned service fixture. It verifies
+request replay, current grants and cross-project denials. It does not establish
+support for a real infrastructure provider.
+
 ## Credentials
 
 Have a controller owner create a service account with only the required project grants. Inspection needs `project.view`; deployment needs `deployment.run`. Infrastructure uses its separate inspect, create and delete grants and assigned providers and SSH public keys. An owner credential is not needed for ordinary automation. See [automation identities](automation-identities.md).
@@ -341,6 +346,43 @@ block cleanup until inspected. The shared server, named volumes, backups and
 execution history remain. The client exposes no arbitrary command execution,
 secret administration or human-approval tool.
 
+## Provision an approved service
+
+An owner must approve the exact built-in service template digest, assign its
+target and enable service quota for the project. Automation needs `project.view`
+and `service.provision`. Custom scripts and production-data copy remain outside
+this path.
+
+```sh
+dispatchctl service templates list --project PROJECT_ID
+dispatchctl service template get --template TEMPLATE_ID
+```
+
+Inspect the template's inputs and approved target before writing `service.json`:
+
+```json
+{
+  "name": "review-database",
+  "description": "Database for the review environment",
+  "inputs": {}
+}
+```
+
+Supply the exact inputs required by the chosen template. Then:
+
+```sh
+dispatchctl service provision --template TEMPLATE_ID --key provision-database-001 --input service.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+dispatchctl service run get --run SERVICE_RUN_ID
+dispatchctl service get --run SERVICE_RUN_ID
+```
+
+Keep the template ID, request file and key until the original run is resolved.
+An identical retry returns its original receipt instead of another service.
+A changed template digest needs a fresh owner approval before new provisioning.
+Recovery and deletion use the owned service resource, its original credentials
+and the separate permissions below.
+
 ## Recover an owned service
 
 Use the service provision run ID, which identifies the owned workload even if
@@ -394,14 +436,14 @@ dispatchctl service get --run SERVICE_RUN_ID
 ```
 
 Keep the same request and key across retries. Protected storage, credentials and
-history remain. New service-template provisioning remains a direct-user API;
-this client exposes recovery of existing owned resources and does not bypass
-that restriction. Custom scripts without an owned recovery adapter remain manual.
+history remain. Custom scripts without an owned recovery adapter remain manual.
 
 ## Review runtime artifact retention
 
-These commands require `project.manage` and Operations enabled. Read the saved
-policy and prepare a runtime review without changing that policy:
+These commands require `runtime.cleanup` or `project.manage` and Operations
+enabled. An automation account with `runtime.cleanup` can inspect and apply the
+owner's saved runtime policy. It cannot change policy or delete history. Read the
+saved policy and prepare a runtime review without changing it:
 
 ```sh
 dispatchctl retention policy --project PROJECT_ID > policy.json

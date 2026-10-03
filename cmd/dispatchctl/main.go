@@ -86,6 +86,8 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	var a automationclient.Arguments
+	flags.StringVar(&a.TemplateID, "template", "", "Approved service template ID")
+	flags.StringVar(&a.PolicyID, "policy", "", "Scheduled workload backup policy ID")
 	flags.StringVar(&a.RunID, "run", "", "Owned service provision run ID")
 	flags.StringVar(&a.BackupID, "backup", "", "Native workload backup ID")
 	flags.StringVar(&a.OperationID, "operation", "", "Original infrastructure or workload backup operation ID")

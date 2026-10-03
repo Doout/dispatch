@@ -74,6 +74,8 @@ type ServerCreateReview struct {
 	SourceSnapshotID string          `json:"sourceSnapshotId,omitempty"`
 }
 type Arguments struct {
+	TemplateID     string          `json:"templateId,omitempty"`
+	PolicyID       string          `json:"policyId,omitempty"`
 	RunID          string          `json:"runId,omitempty"`
 	BackupID       string          `json:"backupId,omitempty"`
 	OperationID    string          `json:"operationId,omitempty"`
@@ -201,7 +203,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 	}
 	path := op.Path
-	for f, v := range map[string]string{"runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
+	for f, v := range map[string]string{"templateId": args.TemplateID, "policyId": args.PolicyID, "runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
 		if v != "" && !identifier.MatchString(v) {
 			return Failure("invalid_input", "Invalid resource identifier")
 		}
@@ -344,7 +346,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		if !out.OK {
 			return out
 		}
-		if (name == "apps_list" || name == "servers_list") && args.ProjectID != "" {
+		if (name == "apps_list" || name == "servers_list" || name == "service_templates_list" || name == "service_runs_list") && args.ProjectID != "" {
 			var items []map[string]any
 			decoder := json.NewDecoder(bytes.NewReader(out.Data))
 			decoder.UseNumber()

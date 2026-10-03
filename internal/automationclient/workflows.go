@@ -54,7 +54,7 @@ type ServerAdoptionInput struct {
 	ConfirmName string `json:"confirmName"`
 }
 
-var workflowOperations = []Operation{
+var workflowOperations = append([]Operation{
 	{Name: "app_get", Method: "GET", Path: "/apps/{appId}", Description: "Inspect the accepted application by its durable resource ID using current project access. Credential references remain redacted for scoped callers.", Fields: []string{"appId"}, Required: []string{"appId"}},
 	{Name: "app_create", Method: "POST", Path: "/apps", Description: "Create an application on a ready assigned target with explicit source configuration and a stable retry key. Global credentials and hooks are excluded.", Fields: []string{"key", "input"}, Required: []string{"key", "input"}, Mutation: true, InputSchema: "ApplicationInput", Response: "receipt_or_application"},
 	{Name: "app_sync", Method: "GET", Path: "/apps/{appId}/sync", Description: "Inspect saved and applied application configuration without changing or deploying it.", Fields: []string{"appId"}, Required: []string{"appId"}},
@@ -72,7 +72,7 @@ var workflowOperations = []Operation{
 	{Name: "server_cancel", Method: "POST", Path: "/infrastructure/operations/{operationId}/cancel", Description: "Request cancellation of the original infrastructure operation. An uncertain allocation retains ownership and quota; inspect before adoption or further recovery.", Fields: []string{"serverId", "operationId"}, Required: []string{"serverId", "operationId"}, Mutation: true, NonIdempotent: true, Destructive: true, Response: "infrastructure_action"},
 	{Name: "server_adopt", Method: "POST", Path: "/infrastructure/servers/{serverId}/adopt", Description: "Inspect and adopt the original reviewed provider resource using its explicit resource ID, current revision and exact confirmation name. Foreign ownership or active leases block adoption.", Fields: []string{"serverId", "input"}, Required: []string{"serverId", "input"}, Mutation: true, NonIdempotent: true, Destructive: true, InputSchema: "ServerAdoptionInput", Response: "managed_server"},
 	{Name: "server_enrollment", Method: "POST", Path: "/infrastructure/servers/{serverId}/enrollment", Description: "Explicitly issue a short-lived single-use enrollment token for an allocated unenrolled machine. Requires infrastructure.modify; cannot replace an enrolled identity or refresh an approved bootstrap. Store the returned token privately. No automatic retry occurs.", Fields: []string{"serverId"}, Required: []string{"serverId"}, Mutation: true, NonIdempotent: true, Destructive: true, Response: "server_enrollment"},
-}
+}, serviceClientOperations...)
 
 func isWorkflowOperation(name string) bool {
 	for _, op := range workflowOperations {
@@ -84,6 +84,9 @@ func isWorkflowOperation(name string) bool {
 }
 
 func workflowInput(op Operation, args Arguments) (any, error) {
+	if op.InputSchema == "ServiceProvisionInput" {
+		return serviceClientInput(op, args)
+	}
 	fail := func(message string) (any, error) { return nil, errors.New(message) }
 	switch op.InputSchema {
 	case "ApplicationInput":
@@ -152,6 +155,10 @@ func workflowContinuation(op Operation, args Arguments, out Result) Result {
 		kind, id, project = "application_create", "", input.ProjectID
 	case "receipt_or_rollback", "deployment_action":
 		kind, id = "deployment", args.DeploymentID
+	case "receipt_or_service_provision":
+		kind, id = "service_provision_request", args.TemplateID
+	case "service_provision_run":
+		kind, id = "service_provision_run", args.RunID
 	case "infrastructure_action", "managed_server", "server_enrollment":
 		kind, id, operation = "managed_server", args.ServerID, args.OperationID
 	}
@@ -165,7 +172,7 @@ func workflowContinuation(op Operation, args Arguments, out Result) Result {
 		}
 		return out
 	}
-	if op.Response == "receipt_or_application" || op.Response == "receipt_or_rollback" {
+	if op.Response == "receipt_or_application" || op.Response == "receipt_or_rollback" || op.Response == "receipt_or_service_provision" {
 		var result struct {
 			ID            string `json:"id"`
 			OperationID   string `json:"operationId"`
@@ -176,12 +183,24 @@ func workflowContinuation(op Operation, args Arguments, out Result) Result {
 		if op.Response == "receipt_or_rollback" {
 			expected = "deployment"
 		}
+		if op.Response == "receipt_or_service_provision" {
+			expected = "service_provision"
+		}
 		if json.Unmarshal(out.Data, &result) != nil || !identifier.MatchString(result.ID) || !identifier.MatchString(result.OperationID) || !identifier.MatchString(result.ResourceID) || result.OperationKind != expected || out.Location != "/api/v1/mutation-receipts/"+result.ID {
 			out.OK = false
 			out.Error = &Problem{Code: "invalid_response", Title: "The controller did not return the expected durable receipt. Retry only the original request and key."}
 			return out
 		}
 		out.Continuation = &Continuation{Kind: "receipt", ID: result.ID, OperationID: result.OperationID, ResourceID: result.ResourceID, ProjectID: project, Key: args.Key}
+	}
+	if op.Response == "service_provision_run" {
+		var result struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(out.Data, &result) != nil || result.ID != args.RunID {
+			out.OK = false
+			out.Error = &Problem{Code: "invalid_response", Title: "The response does not identify the original service provision run."}
+		}
 	}
 	if op.Response == "managed_server" {
 		var result struct {

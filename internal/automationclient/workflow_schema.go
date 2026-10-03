@@ -15,6 +15,8 @@ func workflowSchema(kind string) map[string]any {
 		return object(props, []string{})
 	}
 	switch kind {
+	case "ServiceProvisionInput":
+		return object(map[string]any{"name": text(), "description": text(), "inputs": map[string]any{"type": "object", "additionalProperties": text()}}, []string{"name", "inputs"})
 	case "ApplicationInput":
 		props := map[string]any{}
 		for _, key := range []string{"projectId", "serverId", "name", "sourceRepo", "branch", "contextPath", "dockerfilePath", "composePath", "composeContent", "domain", "helmChart", "helmVersion", "helmRepository", "helmValues", "helmNamespace", "helmRelease"} {
