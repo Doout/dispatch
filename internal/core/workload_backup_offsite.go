@@ -15,10 +15,13 @@ type BackupObjectStore struct {
 	CreatedAt          time.Time          `json:"createdAt"`
 }
 type BackupOffsiteArtifact struct {
-	StoreID          string    `json:"storeId"`
-	ArchiveKey       string    `json:"archiveKey"`
-	ManifestKey      string    `json:"manifestKey"`
-	ManifestChecksum string    `json:"manifestChecksum"`
-	ImageReference   string    `json:"imageReference"`
-	ConfirmedAt      time.Time `json:"confirmedAt"`
+	VerifiedAt        *time.Time `json:"verifiedAt,omitempty"`
+	VerificationState string     `json:"verificationState,omitempty"`
+	DeletedAt         *time.Time `json:"deletedAt,omitempty"`
+	StoreID           string     `json:"storeId"`
+	ArchiveKey        string     `json:"archiveKey"`
+	ManifestKey       string     `json:"manifestKey"`
+	ManifestChecksum  string     `json:"manifestChecksum"`
+	ImageReference    string     `json:"imageReference"`
+	ConfirmedAt       time.Time  `json:"confirmedAt"`
 }

@@ -17,3 +17,25 @@ func TestBackupCaptureCadenceCoalescesDowntime(t *testing.T) {
 		t.Fatal("early capture changed deadline")
 	}
 }
+
+func TestOffsiteRecoveryPointFreshnessDoesNotRenewWithVerification(t *testing.T) {
+	now := time.Now().UTC()
+	captured := now.Add(-3 * time.Hour)
+	justVerified := now
+	p := WorkloadBackupPolicy{OffsiteStoreID: "approved-store", OffsiteStaleAfterHours: 2, LastOffsiteRecoveryPointAt: &captured, LastOffsiteVerifiedAt: &justVerified, CreatedAt: captured}
+	if p.OffsiteFreshnessAt(now) != "stale" {
+		t.Fatal("verifying old captured data falsely refreshed protection")
+	}
+	p.LastOffsiteRecoveryPointAt = nil
+	if p.OffsiteFreshnessAt(now) != "stale" {
+		t.Fatal("no confirmed recovery point remained fresh beyond its initial window")
+	}
+	p.CreatedAt = now
+	if p.OffsiteFreshnessAt(now) != "not_protected" {
+		t.Fatal("first capture was reported as confirmed protection")
+	}
+	p.OffsiteStoreID = ""
+	if p.OffsiteFreshnessAt(now) != "disabled" {
+		t.Fatal("target-local policy claimed offsite protection")
+	}
+}

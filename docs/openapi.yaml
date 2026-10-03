@@ -51,7 +51,7 @@ paths:
               schema: { type: array, items: { $ref: '#/components/schemas/WorkloadBackupPolicy' } }
     post:
       operationId: createWorkloadBackupPolicy
-      description: Requires project.configure and deployment.run on the owned PostgreSQL source. Immutable cadence, source ownership and actor authority are captured before acceptance. Scheduled archives verify in isolation before older verified policy archives become retention candidates. The newest keepLast verified captures remain protected while enabled. Current grants and original enrollment are checked before unattended mutation.
+      description: Requires project.configure and deployment.run on the owned PostgreSQL source. Immutable cadence, source ownership and actor authority are captured before acceptance. Scheduled archives verify in isolation before older verified policy archives become retention candidates. The newest keepLast verified captures remain protected while enabled. An optional immutable approved offsiteStoreId and exact confirmOffsiteStoreId authorize one export per verified capture, then isolated restore verification using downloaded encrypted bytes. Uploaded objects alone do not establish offsite protection. offsiteStaleAfterHours defaults to twice the capture cadence and measures the captured data age. notificationAppId explicitly uses an already enabled same-project observation webhook. retireLocalAfterOffsiteVerification optionally retires older local copies after verified offsite preservation while keeping keepLast local copies. Offsite object deletion is never automatic. Current grants and original enrollment are checked before unattended mutation.
       parameters:
         - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
       requestBody:
@@ -60,19 +60,26 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [name, sourceRunId, intervalHours, keepLast, confirmRetention]
               properties:
                 name: { type: string, minLength: 2, maxLength: 80 }
                 sourceRunId: { type: string }
                 intervalHours: { type: integer, minimum: 1, maximum: 8760 }
                 keepLast: { type: integer, minimum: 1, maximum: 1000 }
-                confirmRetention: { type: string, description: Exact policy name approving automatic removal of older policy archives after newer verified recovery points exist. }
+                confirmRetention: { type: string, description: Exact policy name approving automatic removal of older local policy archives after newer verified recovery points exist. }
+                offsiteStoreId: { type: string, description: Approved immutable destination belonging to the source project. }
+                confirmOffsiteStoreId: { type: string, description: Exact offsiteStoreId approving unattended encrypted exports. Required when offsiteStoreId is supplied. }
+                offsiteStaleAfterHours: { type: integer, minimum: 1, maximum: 17520, description: At least intervalHours. Defaults to twice intervalHours; measured from capture creation, never upload or re-verification. }
+                notificationAppId: { type: string, description: Explicit opt-in to the existing enabled same-project observation webhook. No destination is created or enabled implicitly. }
+                retireLocalAfterOffsiteVerification: { type: boolean, default: false, description: Approves removal of older local bytes after the newest capture and each candidate pass offsite restore verification. keepLast local copies remain. Offsite objects and controller recovery metadata stay retained. }
                 checks:
                   type: array
                   maxItems: 16
                   writeOnly: true
                   items:
                     type: object
+                    additionalProperties: false
                     required: [query, expected]
                     properties:
                       query: { type: string, maxLength: 4096, writeOnly: true }
@@ -111,6 +118,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [revision, enabled, confirmName]
               properties:
                 revision: { type: integer, minimum: 1 }
@@ -138,7 +146,7 @@ paths:
               schema: { type: array, items: { $ref: '#/components/schemas/BackupObjectStore' } }
     post:
       operationId: registerWorkloadBackupStore
-      description: Owner-only immutable project-scoped registration using an existing write-only JSON secret. Credentials contain accessKeyId, secretAccessKey and optional sessionToken. Use a bucket/prefix-scoped credential allowing HEAD, GET and create-only PUT; this API grants no object deletion. HTTPS is required. Maximum encrypted object size is 4 GiB.
+      description: Owner-only immutable project-scoped registration using an existing write-only JSON secret. Credentials contain accessKeyId, secretAccessKey and optional sessionToken. Use a bucket/prefix-scoped credential allowing HEAD, GET and create-only PUT. Reviewed object deletion also needs DELETE and an explicit conditionalDelete declaration. HTTPS is required. Maximum encrypted object size is 4 GiB.
       requestBody:
         required: true
         content:
@@ -165,6 +173,33 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/BackupObjectStore' }
         '404': { $ref: '#/components/responses/Problem' }
+  /workload-backup-stores/{storeId}/conditional-delete:
+    put:
+      operationId: setWorkloadBackupStoreConditionalDeletion
+      description: Owner-only declaration that the registered unversioned store enforces If-Match DELETE. The endpoint, prefix and credential identity stay fixed. Active or uncertain object operations block changes.
+      parameters:
+        - { in: path, name: storeId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled, expectedEnabled, confirmName]
+              properties:
+                enabled: { type: boolean }
+                expectedEnabled: { type: boolean }
+                confirmName: { type: string }
+      responses:
+        '200':
+          description: Registered store with updated conditional deletion declaration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupObjectStore' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /workload-backups:
     get:
       operationId: listWorkloadBackups
@@ -244,7 +279,7 @@ paths:
   /workload-backups/{id}/export:
     post:
       operationId: exportWorkloadBackup
-      description: Requires project.configure and deployment.run. Copies the complete encrypted archive and encrypted manifest to an approved same-project store using conditional create-only PUT. Lost replies reconcile the same objects and exact bytes. A confirmed manifest pins the original pullable image digest. Maximum encrypted archive size is the store limit, capped at 4 GiB; manifests are capped at 1 MiB. Exported archives remain protected from deletion until reviewed offsite deletion is supported.
+      description: Requires project.configure and deployment.run. Copies the complete encrypted archive and encrypted manifest to an approved same-project store using conditional create-only PUT. Lost replies reconcile the same objects and exact bytes. A confirmed manifest pins the original pullable image digest. Maximum encrypted archive size is the store limit, capped at 4 GiB; manifests are capped at 1 MiB. Exported archives require separately reviewed local retirement or conditional offsite deletion.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
@@ -310,6 +345,54 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkloadBackupConfirmation' }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/retire-local-preview:
+    post:
+      operationId: reviewWorkloadBackupLocalRetirement
+      description: Requires project.configure. Freezes exact backup, store, object checksums, policy and recovery points. Confirmation name is the backup ID.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/DestructiveReview' }
+  /workload-backups/{id}/retire-local:
+    post:
+      operationId: acceptWorkloadBackupLocalRetirement
+      description: Requires project.configure and deployment.run. Authenticate offsite archive and encrypted manifest before retiring original local archive bytes. Controller key and recovery metadata remain. Requires independently verified offsite preservation. Supply a stable retry key and exact current confirmation.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 }, description: Generate once for this reviewed operation and reuse for identical retries. }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkloadBackupConfirmation' }
+      responses:
+        '202': { $ref: '#/components/responses/WorkloadBackupAccepted' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /workload-backups/{id}/delete-offsite-preview:
+    post:
+      operationId: reviewWorkloadBackupOffsiteDeletion
+      description: Requires project.configure. Freezes exact backup, store, object checksums, policy and recovery points. Confirmation name is the backup ID.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/DestructiveReview' }
+  /workload-backups/{id}/delete-offsite:
+    post:
+      operationId: acceptWorkloadBackupOffsiteDeletion
+      description: Requires project.configure and deployment.run. Conditionally delete only reviewed owned encrypted archive and manifest objects. Versioned objects and unsupported conditional stores remain protected. Keep a usable recovery point. Supply a stable retry key and exact current confirmation.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 8, maxLength: 128 }, description: Generate once for this reviewed operation and reuse for identical retries. }
       requestBody:
         required: true
         content:
@@ -617,7 +700,11 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Ready providers with public manifest and capabilities, without endpoint credentials }
+        '200':
+          description: Ready providers with public manifest and capabilities, without endpoint credentials
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/ProjectInfrastructureProvider' } }
         '403': { $ref: '#/components/responses/Problem' }
   /projects/{id}/infrastructure/providers/{providerId}/options:
     post:
@@ -631,15 +718,39 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ProviderOptionsInput' }
       responses:
-        '200': { description: Supported region, size, image or network choices }
+        '200':
+          description: Supported region, size, image or network choices
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/InfrastructureProviderOption' } }
         '403': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /infrastructure/servers/{id}:
+    get:
+      operationId: getManagedServer
+      summary: Inspect one managed server and its current deployment readiness
+      description: Requires current project infrastructure.inspect and provider assignment. Refreshes only this authorized server's enrolled identity and runtime evidence. Returns separate allocation, enrollment and runtime states, a sanitized installation summary, the latest create, restore or delete operation, and a derived waitState. Provider allocation is not deployment readiness. Verified snapshot clones remain isolated. Never starts installation, issues credentials or approves SSH.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Current readiness, returned with Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedServerReadiness' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers/{id}/operations:
     get:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Owned server operation history and recovery state }
+        '200':
+          description: Owned server operation history and recovery state
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/InfrastructureOperation' } }
   /infrastructure/operations/{id}/{action}:
     post:
       operationId: changeInfrastructureOperation
@@ -669,7 +780,11 @@ paths:
                 revision: { type: integer, minimum: 1 }
                 confirmName: { type: string }
       responses:
-        '200': { description: Original owned managed server adopted. }
+        '200':
+          description: Original owned managed server adopted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedServer' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/servers/{id}/enrollment:
@@ -697,7 +812,11 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
-        '200': { description: Current deletion digest, exact server name and protected storage consequences }
+        '200':
+          description: Current deletion digest, exact server name and protected storage consequences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InfrastructureDeletionReview' }
         '409': { $ref: '#/components/responses/Problem' }
   /infrastructure/bootstrap:
     get:
@@ -1031,7 +1150,11 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ServerCreateReview' }
       responses:
-        '201': { description: Expiring creation review with digest and fresh node/bootstrap binding }
+        '201':
+          description: Expiring creation review with digest and fresh node/bootstrap binding
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InfrastructureReview' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
@@ -1039,7 +1162,11 @@ paths:
     get:
       summary: List managed servers permitted by the current project grants and provider assignments
       responses:
-        '200': { description: Visible managed server records }
+        '200':
+          description: Visible managed server records
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/ManagedServer' } }
     post:
       operationId: createManagedServer
       description: Accepts a reviewed server creation or isolated clone. Requires infrastructure.create and access to the provider; a clone also requires infrastructure.restore. Verified clones remain isolated and are not published as ordinary workload targets. Idempotency-Key reserves one durable provisioning operation; identical retries return its receipt for seven days. Changed inputs or expired keys return 409 without creating another machine.
@@ -1058,7 +1185,7 @@ paths:
               schema:
                 oneOf:
                   - { $ref: '#/components/schemas/MutationReceipt' }
-                  - { type: object, required: [server, operation], properties: {server: {type: object}, operation: {type: object}} }
+                  - { $ref: '#/components/schemas/InfrastructureAccepted' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
@@ -1085,7 +1212,7 @@ paths:
               schema:
                 oneOf:
                   - { $ref: '#/components/schemas/MutationReceipt' }
-                  - { type: object, required: [server, operation], properties: {server: {type: object}, operation: {type: object}} }
+                  - { $ref: '#/components/schemas/InfrastructureAccepted' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
@@ -4928,6 +5055,11 @@ components:
       required: true
       schema: { type: string }
   responses:
+    DestructiveReview:
+      description: Current resource identity, confirmation version, consequences and blockers. A changed resource requires a fresh review.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DestructiveReview' }
     WorkloadBackupAccepted:
       description: Durable operation accepted, or the original shared mutation receipt when Idempotency-Key is supplied. Acceptance does not imply completion.
       content:
@@ -4947,6 +5079,21 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    DestructiveReview:
+      type: object
+      required: [resourceId, resourceType, name, action, version, summary, resources]
+      properties:
+        resourceId: { type: string }
+        resourceType: { type: string }
+        name: { type: string, description: Exact confirmName for the accepted action. }
+        action: { type: string }
+        version: { type: string, description: Supply as confirmation.expectedVersion. }
+        summary: { type: string }
+        resources: { type: array, items: { type: string } }
+        blockedReason: { type: string }
+        storagePolicy: { type: string }
+        projectId: { type: string }
+        appId: { type: string }
     DestructiveConfirmation:
       type: object
       required: [resourceId, action, expectedVersion, confirmName]
@@ -5097,6 +5244,7 @@ components:
         region: { type: string }
         prefix: { type: string, description: Relative object prefix with no traversal components. }
         maxBytes: { type: integer, format: int64, minimum: 1, maximum: 4294967296 }
+        conditionalDelete: { type: boolean, default: false, description: Owner declaration that this unversioned destination enforces exact ETag If-Match DELETE. }
     BackupObjectStore:
       type: object
       required: [id, projectId, name, credentialSecretId, config, createdAt]
@@ -5117,6 +5265,9 @@ components:
         manifestChecksum: { type: string }
         imageReference: { type: string, description: Original image repository with immutable sha256 pull digest. }
         confirmedAt: { type: string, format: date-time }
+        verificationState: { type: string, description: Verification using downloaded encrypted offsite objects and an isolated restore. Upload confirmation alone is not verified. }
+        verifiedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, description: Confirmed exact object deletion tombstone. }
     WorkloadBackupConfirmation:
       type: object
       required: [confirmation]
@@ -5126,16 +5277,19 @@ components:
           required: [resourceId, action, expectedVersion, confirmName]
           properties:
             resourceId: { type: string, description: Backup ID. }
-            action: { type: string, enum: [restore, delete] }
+            action: { type: string, enum: [restore, delete, retire-local, delete-offsite] }
             expectedVersion: { type: string }
             confirmName: { type: string }
     WorkloadBackup:
       type: object
-      required: [id, projectId, sourceRunId, storageId, serverId, sourceResourceId, state, revision, artifactId, consistency, format, bytes, encryption, keyId, location, policy, verificationState, cleanupState, verificationIntervalHours, createdAt, updatedAt]
+      required: [id, projectId, sourceRunId, storageId, serverId, sourceResourceId, state, revision, artifactId, consistency, format, bytes, encryption, keyId, location, policy, checkCount, verificationState, cleanupState, verificationIntervalHours, createdAt, updatedAt]
       properties:
+        localState: { type: string, enum: [present, retired], description: Omitted legacy value means the local copy is present. }
         id: { type: string }
         projectId: { type: string }
         sourceRunId: { type: string }
+        capturePolicyId: { type: string, description: Scheduled policy that created this capture. Absent for manual captures. }
+        scheduledAt: { type: string, format: date-time, description: Original scheduled capture deadline. Absent for manual captures; missed schedules retain their original deadline. }
         storageId: { type: string }
         serverId: { type: string }
         nodeId: { type: string }
@@ -5153,6 +5307,8 @@ components:
         location: { type: string, const: target-local }
         imageId: { type: string }
         offsite: { $ref: '#/components/schemas/BackupOffsiteArtifact' }
+        scheduledExportOperationId: { type: string, description: Original durable export identity, retained after failure or an uncertain reply. }
+        scheduledExportMissed: { type: boolean, description: This captured archive has counted once toward its policy missedExports. }
         policy: { type: string, enum: [retain, suspend, delete] }
         checkCount: { type: integer }
         verificationState: { type: string }
@@ -5170,7 +5326,8 @@ components:
         id: { type: string }
         backupId: { type: string }
         projectId: { type: string }
-        action: { type: string, enum: [backup, verify, restore, delete, export] }
+        capturePolicyId: { type: string, readOnly: true, description: Policy authorizing this unattended operation. Absent for manually accepted operations. }
+        action: { type: string, enum: [backup, verify, restore, delete, export, retire-local, delete-offsite] }
         state: { type: string, enum: [running, succeeded, failed, unknown, unresolved] }
         targetRunId: { type: string }
         targetName: { type: string }
@@ -5949,6 +6106,143 @@ components:
         state: { type: string, enum: [ready, unready, absent] }
         resourceId: { type: string }
         storageRetained: { type: boolean }
+    ProjectInfrastructureProvider:
+      type: object
+      required: [id, name, capabilities, manifest]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        manifest: { $ref: '#/components/schemas/InfrastructureProviderManifest' }
+    InfrastructureProviderManifest:
+      type: object
+      required: [apiVersion, name, displayName, version, capabilities, configurationSchema]
+      properties:
+        apiVersion: { type: string, const: dispatch.provider/v1 }
+        name: { type: string }
+        displayName: { type: string }
+        version: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        configurationSchema: { type: object, description: Provider configuration JSON Schema. Public metadata only. }
+        snapshots: { $ref: '#/components/schemas/InfrastructureProviderSnapshotCapabilities' }
+    InfrastructureProviderSnapshotCapabilities:
+      type: object
+      required: [diskSets, consistency, encryption, restore]
+      properties:
+        diskSets: { type: array, items: { type: string } }
+        consistency: { type: array, items: { type: string } }
+        encryption: { type: array, items: { type: string } }
+        restore:
+          type: object
+          required: [prebootSanitization, networkQuarantine, resetAgentIdentity, resetMachineIdentity, resetSSHIdentity, clearRuntimeJournal, disableCopiedWorkloads, independentDisks, checks]
+          properties:
+            prebootSanitization: { type: boolean }
+            networkQuarantine: { type: boolean }
+            resetAgentIdentity: { type: boolean }
+            resetMachineIdentity: { type: boolean }
+            resetSSHIdentity: { type: boolean }
+            clearRuntimeJournal: { type: boolean }
+            disableCopiedWorkloads: { type: boolean }
+            independentDisks: { type: boolean }
+            checks: { type: array, items: { type: string } }
+    InfrastructureProviderOption:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        metadata: { type: object, additionalProperties: true }
+    InfrastructureReview:
+      type: object
+      required: [id, serverId, projectId, providerId, providerRevision, manifestDigest, name, input, digest, state, expiresAt, createdAt]
+      properties:
+        id: { type: string }
+        serverId: { type: string }
+        projectId: { type: string }
+        providerId: { type: string }
+        providerRevision: { type: integer, format: int64 }
+        manifestDigest: { type: string }
+        name: { type: string }
+        input: { $ref: '#/components/schemas/ServerCreateReview' }
+        digest: { type: string }
+        state: { type: string }
+        sourceSnapshotId: { type: string }
+        bootstrapId: { type: string }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    ManagedServer:
+      type: object
+      required: [id, reviewId, projectId, providerId, name, nodeId, allocationState, enrollmentState, runtimeState, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        reviewId: { type: string }
+        projectId: { type: string }
+        providerId: { type: string }
+        name: { type: string }
+        nodeId: { type: string }
+        sourceSnapshotId: { type: string }
+        bootstrapId: { type: string }
+        resourceId: { type: string }
+        address: { type: string }
+        allocationState: { type: string }
+        enrollmentState: { type: string }
+        runtimeState: { type: string }
+        revision: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ManagedServerReadiness:
+      allOf:
+        - { $ref: '#/components/schemas/ManagedServer' }
+        - type: object
+          required: [waitState, deployable]
+          properties:
+            waitState: { type: string, enum: [waiting, ready, verified-isolated, pending_approval, paused, failed, cancelled, unknown, unresolved, expired, revoked, deleted, deleting, cancelling] }
+            deployable: { type: boolean, description: True only for an allocated server with enrolled identity, fresh runtime evidence and the matching ordinary workload target. Always false for snapshot clones. }
+            bootstrap: { $ref: '#/components/schemas/ManagedServerBootstrapReadiness' }
+            latestOperation: { $ref: '#/components/schemas/InfrastructureOperation' }
+    ManagedServerBootstrapReadiness:
+      type: object
+      required: [id, state, installationState, enrollmentState, runtimeState]
+      properties:
+        id: { type: string }
+        state: { type: string }
+        installationState: { type: string }
+        enrollmentState: { type: string }
+        runtimeState: { type: string }
+    InfrastructureOperation:
+      type: object
+      required: [id, serverId, providerId, actorId, action, state, stage, attempts, cancelRequested, expiresAt, nextAttemptAt, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        serverId: { type: string }
+        providerId: { type: string }
+        actorId: { type: string }
+        action: { type: string }
+        state: { type: string }
+        stage: { type: string }
+        providerOperationId: { type: string }
+        resourceId: { type: string }
+        errorCode: { type: string }
+        message: { type: string }
+        attempts: { type: integer, minimum: 0 }
+        cancelRequested: { type: boolean }
+        expiresAt: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    InfrastructureDeletionReview:
+      type: object
+      required: [server, digest, summary]
+      properties:
+        server: { $ref: '#/components/schemas/ManagedServer' }
+        digest: { type: string }
+        summary: { type: string }
+    InfrastructureAccepted:
+      type: object
+      required: [server, operation]
+      properties:
+        server: { $ref: '#/components/schemas/ManagedServer' }
+        operation: { $ref: '#/components/schemas/InfrastructureOperation' }
     InfrastructureAcceptance:
       type: object
       required: [digest, confirmName]
@@ -5959,7 +6253,7 @@ components:
         requestKey: { type: string, description: Legacy retry key, required only when Idempotency-Key is omitted. }
     WorkloadBackupPolicy:
       type: object
-      required: [id, projectId, sourceRunId, serverId, name, enabled, revision, intervalHours, keepLast, nextCaptureAt, missedCaptures, state]
+      required: [id, projectId, sourceRunId, sourceResourceId, serverId, name, enabled, revision, intervalHours, keepLast, nextCaptureAt, missedCaptures, missedExports, state, actor, createdAt, updatedAt]
       properties:
         id: { type: string }
         projectId: { type: string }
@@ -5979,9 +6273,38 @@ components:
         lastSuccessAt: { type: string, format: date-time }
         lastBackupId: { type: string }
         lastVerifiedBackupId: { type: string }
+        offsiteStoreId: { type: string }
+        offsiteStoreDigest: { type: string, description: Frozen destination identity including credential reference, excluding secret values. }
+        offsiteStaleAfterHours: { type: integer }
+        notificationAppId: { type: string }
+        retireLocalAfterOffsiteVerification: { type: boolean }
+        retentionBlockedReason: { type: string, description: Explains when local archives can exceed keepLast because retirement is disabled or newer offsite protection is pending. }
+        offsiteState: { type: string, enum: [pending, exporting, verifying, healthy, export_failed, verification_failed, blocked] }
+        offsiteFreshness: { type: string, enum: [disabled, not_protected, fresh, stale], description: Derived on inspection from capture creation time. Export and verification cannot make old captured data fresh. }
+        offsiteMessage: { type: string, description: Sanitized protection or failure reason. }
+        lastOffsiteBackupId: { type: string }
+        lastOffsiteOperationId: { type: string }
+        lastOffsiteRecoveryPointAt: { type: string, format: date-time, description: Creation time of the captured data in the newest confirmed offsite recovery point. }
+        lastOffsiteVerifiedAt: { type: string, format: date-time }
+        missedExports: { type: integer, description: Captured archives with a rejected or failed scheduled export, counted at most once each. }
+        offsiteNotificationState: { type: string, readOnly: true, description: Last observed offsite notification state used to suppress unchanged transitions. }
+        offsiteNotificationSequence: { type: integer, format: int64, minimum: 0, readOnly: true, description: Durable sequence distinguishing recurring notification transitions. }
         missedCaptures: { type: integer }
         state: { type: string }
         message: { type: string }
+        actor:
+          type: object
+          readOnly: true
+          description: Original identity whose current authority is checked before unattended operations. Credential IDs identify accepted authority and contain no credential values.
+          required: [id, username, displayName, systemRole, permissions]
+          properties:
+            kind: { type: string }
+            credentialId: { type: string }
+            id: { type: string }
+            username: { type: string }
+            displayName: { type: string }
+            systemRole: { type: string }
+            permissions: { type: [array, 'null'], items: { type: string } }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     MutationReceipt:

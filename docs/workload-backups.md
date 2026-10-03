@@ -219,7 +219,71 @@ Pause or resume through `PUT /api/v1/workload-backup-policies/{id}` with
 new captures and retention. An already running operation may finish. A resume
 rechecks the original authority and target; it does not reset the cadence. An
 explicit manual verification or reviewed restore remains available independently.
-Policy schedules do not provide offsite storage or cross-target recovery.
+Policies without an approved offsite destination remain target-local.
+
+
+## Schedule offsite protection
+
+Add the following fields when creating a capture policy to export each locally
+verified capture to an owner-registered destination in the same project:
+
+```json
+{
+  "offsiteStoreId": "APPROVED_STORE_ID",
+  "confirmOffsiteStoreId": "APPROVED_STORE_ID",
+  "offsiteStaleAfterHours": 48,
+  "retireLocalAfterOffsiteVerification": true,
+  "notificationAppId": "EXISTING_APPLICATION_ID"
+}
+```
+
+The exact destination ID confirms unattended exports. The destination, credential
+reference, freshness threshold, retirement choice and notification application
+are frozen with the original policy. The credential value can rotate without
+changing its reference. A changed destination identity or unavailable credential
+blocks further unattended work. Current actor grants, source ownership and
+original target enrollment must still authorize every export and verification.
+
+The first locally verified capture receives one durable export operation. The
+controller records that identity with the capture before dispatch. Reply loss,
+concurrent scheduler calls and restarts preserve it. An uncertain export is
+inspected with read-only object access rather than uploaded again. Failed exports
+remain available for inspection and explicit operator recovery. `missedExports`
+counts a captured archive at most once, even while the same failure persists.
+
+Confirmed upload only moves the policy to `verifying`. The agent then downloads
+the encrypted archive and manifest, authenticates and decrypts them, and performs
+an isolated restore with the policy's integrity checks. Only that success sets
+`lastOffsiteBackupId` and `lastOffsiteVerifiedAt`. A later failed or uncertain
+verification removes that archive from the currently confirmed recovery points.
+Older intact verified points remain available.
+
+`lastOffsiteRecoveryPointAt` is the capture creation time. `offsiteFreshness`
+compares that time with `offsiteStaleAfterHours`, which defaults to twice the
+capture interval. The threshold must be at least the interval and at most 17520
+hours. Uploading or checking an old archive cannot make its captured data fresh.
+An enabled policy with no confirmed offsite recovery point becomes stale after
+its first freshness window. Inspection computes freshness even while the
+controller scheduler is stopped.
+
+`retireLocalAfterOffsiteVerification` defaults to false. Without explicit approval,
+local copies can exceed `keepLast`; `retentionBlockedReason` reports that limit.
+When approved, the newest capture must pass offsite restore verification before
+older local copies retire. The controller keeps the newest `keepLast` verified
+local copies and retires at most one older verified local copy per minute. Each
+retirement authenticates its exact encrypted offsite archive again before deleting
+local bytes. Offsite objects, wrapped encryption keys and operation history remain.
+Failed offsite protection blocks local retirement. Scheduled policies never
+automatically delete offsite objects.
+
+Notifications are optional. `notificationAppId` explicitly selects an existing
+application in the source project whose observation notifications and encrypted
+webhook are already enabled. The policy does not create or enable a destination.
+Export failures, uncertainty, stale protection and subsequent recovery use the
+existing durable observation outbox, deduplication, mute settings and retry limits.
+Notification payloads contain policy IDs and sanitized state, never credentials,
+signed object URLs, SQL assertions or encryption keys. Changed delivery settings
+cancel pending events. Omitting the application ID leaves delivery disabled.
 
 
 ## Export encrypted archives offsite
@@ -294,14 +358,59 @@ Both export and recovery require agents advertising the new
 `workload_backup_offsite` and `workload_backup_offsite_inspect` capabilities.
 Older generic backup agents cannot claim those jobs.
 
-Exported archives are protected from deletion until reviewed conditional offsite
-deletion is supported. Capture-policy retention skips those extra copies and
-prunes eligible older local archives while preserving its newest verified set.
-Target registration deletion remains blocked by retained backup records. These
-APIs do not expose an import flow for a lost controller database or master key.
+Local copies protect their source target until a reviewed retirement confirms that
+archive bytes are absent. Offsite-only backups retain their controller metadata
+and encrypted key. These APIs do not import a lost controller database or master key.
+
+## Retire local copies and remove offsite objects
+
+Use `POST /api/v1/workload-backups/{id}/retire-local-preview` to inspect the review.
+Build the confirmation using its `resourceId` and `action`, with `version` as
+`expectedVersion` and `name` as `confirmName`. Submit it to `/retire-local` with a
+stable `Idempotency-Key`.
+Retirement requires independently verified offsite preservation. The worker
+again downloads both remote objects into a fresh directory, checks their frozen
+checksums, decrypts the manifest and authenticates the archive plaintext. It then
+removes the owned local archive bytes, syncs the directory and saves the bound
+receipt. Local manifests and operation history remain. An uncertain outcome
+keeps the target protected until reconciliation confirms absence and offsite
+preservation. Reconciliation does not resume deleting an intact local archive.
+
+`/delete-offsite-preview` and `/delete-offsite` use the same confirmation and key
+contract. The review includes the exact store, keys, checksums, policy and other
+recovery points. Active or unresolved operations retain their artifacts. A paused
+policy still cannot lose its sole usable recovery point. Concurrent destructive
+operations for one source are serialized. No prefix listing or bulk delete occurs.
+
+Offsite deletion runs at the controller and therefore works after source-target
+removal. Each object is checked for ownership and authenticated bytes, then
+removed with its exact ETag in `If-Match`. A missing object settles a lost reply;
+changed or unavailable evidence remains uncertain. Metadata and the encrypted
+key remain as a tombstone after confirmed deletion.
+
+Object deletion defaults to disabled. An owner must verify that the unversioned
+store enforces conditional DELETE, then set `config.conditionalDelete` at
+registration or use `PUT /api/v1/workload-backup-stores/{storeId}/conditional-delete`
+with explicit `enabled`, `expectedEnabled` and the exact `confirmName`. This
+updates only the declaration, never the endpoint, prefix or credential identity.
+Versioned objects are rejected. AWS documents that
+[conditional deletion checks the current ETag](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-deletes.html)
+and that [versioned deletion can leave previous versions behind](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html).
+Compatible stores need their own conditional-delete validation before enabling
+this declaration. The local fixtures do not prove live cloud behavior.
+
+Remote retirement needs the `workload_backup_retire` and
+`workload_backup_retire_inspect` capabilities. Older agents cannot claim these
+jobs. CLI and MCP expose `backup_retire_local_review`, `backup_retire_local`,
+`backup_delete_offsite_review` and `backup_delete_offsite`. The mutation tools
+require the exact action-specific confirmation and retain the original receipt
+and operation identity across retries.
 
 The PostgreSQL fixture captures and exports an archive, removes the source
 container and its archive directory, verifies in a fresh backup directory, and
 restores a separately owned destination. It uses one disposable Docker daemon
-with separate logical target identities. Independent host and live cloud recovery
+with separate logical target identities. Another fixture removes a source daemon
+and its storage before recovering through a second nested Docker daemon. Both
+daemons share a physical host and use a TLS object-store fixture.
+Independent host and live cloud recovery
 remain deployment validation steps.

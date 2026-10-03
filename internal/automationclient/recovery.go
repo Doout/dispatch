@@ -63,6 +63,10 @@ var recoveryOperations = []Operation{
 	{Name: "backup_reconcile", Method: "POST", Path: "/workload-backups/{backupId}/operations/{operationId}/reconcile", Description: "Inspect original operation evidence after its recovery deadline and clean owned verification resources. Never replays an unknown restore. Inspect the original operation if interrupted.", Fields: []string{"backupId", "operationId"}, Required: []string{"backupId", "operationId"}, Mutation: true, NonIdempotent: true, Destructive: true, Response: "backup_operation"},
 	{Name: "backup_delete_review", Method: "POST", Path: "/workload-backups/{backupId}/delete-preview", Description: "Review permanent archive-byte deletion and current operation blockers. Does not accept deletion.", Fields: []string{"backupId"}, Required: []string{"backupId"}},
 	{Name: "backup_delete", Method: "POST", Path: "/workload-backups/{backupId}/delete", Description: "Accept the supplied backup deletion confirmation with a stable retry key. Retained encrypted history remains.", Fields: []string{"backupId", "key", "input"}, Required: []string{"backupId", "key", "input"}, Mutation: true, Destructive: true, InputSchema: "RecoveryConfirmation", Response: "receipt_or_backup_operation"},
+	{Name: "backup_retire_local_review", Method: "POST", Path: "/workload-backups/{backupId}/retire-local-preview", Description: "Review local archive retirement after independently verified offsite preservation. Retains controller recovery metadata and encrypted key.", Fields: []string{"backupId"}, Required: []string{"backupId"}},
+	{Name: "backup_retire_local", Method: "POST", Path: "/workload-backups/{backupId}/retire-local", Description: "Accept exact reviewed local archive retirement with a stable retry key. Source protection remains until local bytes are confirmed absent.", Fields: []string{"backupId", "key", "input"}, Required: []string{"backupId", "key", "input"}, Mutation: true, Destructive: true, InputSchema: "RecoveryConfirmation", Response: "receipt_or_backup_operation"},
+	{Name: "backup_delete_offsite_review", Method: "POST", Path: "/workload-backups/{backupId}/delete-offsite-preview", Description: "Review exact owned offsite archive and manifest deletion, recovery point protections and conditional object store support.", Fields: []string{"backupId"}, Required: []string{"backupId"}},
+	{Name: "backup_delete_offsite", Method: "POST", Path: "/workload-backups/{backupId}/delete-offsite", Description: "Accept reviewed conditional deletion of the exact encrypted offsite objects with a stable key. Never deletes a prefix or the last usable recovery point.", Fields: []string{"backupId", "key", "input"}, Required: []string{"backupId", "key", "input"}, Mutation: true, Destructive: true, InputSchema: "RecoveryConfirmation", Response: "receipt_or_backup_operation"},
 	{Name: "backup_restore_review", Method: "POST", Path: "/workload-backups/{backupId}/restore/{destinationId}/preview", Description: "Review overwrite of an explicitly selected owned destination service on the same project and target. Active consumers block restore.", Fields: []string{"backupId", "destinationId"}, Required: []string{"backupId", "destinationId"}},
 	{Name: "backup_restore", Method: "POST", Path: "/workload-backups/{backupId}/restore/{destinationId}", Description: "Submit the exact reviewed destination confirmation and stable restore key. An unknown outcome requires original-operation inspection; no automatic restore retry occurs.", Fields: []string{"backupId", "destinationId", "key", "input"}, Required: []string{"backupId", "destinationId", "key", "input"}, Mutation: true, Destructive: true, InputSchema: "RecoveryConfirmation", Response: "receipt_or_backup_operation"},
 }
@@ -96,6 +100,12 @@ func recoveryInput(op Operation, args Arguments) (any, error) {
 		}
 		if op.Name == "backup_restore" {
 			action = "restore"
+		}
+		if op.Name == "backup_retire_local" {
+			action = "retire-local"
+		}
+		if op.Name == "backup_delete_offsite" {
+			action = "delete-offsite"
 		}
 		if v.Confirmation.ResourceID != resource || v.Confirmation.Action != action || v.Confirmation.ExpectedVersion == "" || v.Confirmation.ConfirmName == "" {
 			return fail("Supply the exact reviewed resource ID, action, version and confirmation name for this operation")

@@ -175,6 +175,12 @@ func (s *SQLStore) CreateWorkloadBackupOperation(ctx context.Context, o core.Wor
 		return err
 	}
 	defer tx.Rollback()
+	if o.Action == "retire-local" || o.Action == "delete-offsite" || o.Action == "delete" {
+		if err = s.lockBackupDestructiveProject(ctx, tx.Tx, original); err != nil {
+			return err
+		}
+
+	}
 	if original.CapturePolicyID != "" {
 		policy, e := s.lockBackupPolicy(ctx, tx.Tx, original.CapturePolicyID)
 		if e != nil {
@@ -187,7 +193,7 @@ func (s *SQLStore) CreateWorkloadBackupOperation(ctx context.Context, o core.Wor
 		if active > 0 {
 			return ErrWorkloadBackupChanged
 		}
-		if policy.Enabled && o.Action == "delete" {
+		if policy.Enabled && (o.Action == "delete" || o.Action == "delete-offsite" && (original.LocalState == "retired" || policy.OffsiteStoreID != "")) {
 			protected, e := s.protectedPolicyBackup(ctx, tx.Tx, policy, original.ID)
 			if e != nil {
 				return e
@@ -205,10 +211,24 @@ func (s *SQLStore) CreateWorkloadBackupOperation(ctx context.Context, o core.Wor
 	if err != nil {
 		return err
 	}
-	if o.Action == "delete" && b.Offsite != nil {
+	if o.Action == "retire-local" || o.Action == "delete-offsite" || o.Action == "delete" {
+		if err = s.guardBackupDestructiveCohort(ctx, tx.Tx, b); err != nil {
+			return err
+		}
+
+	}
+	if o.Action == "retire-local" || o.Action == "delete-offsite" {
+		if err = s.guardWorkloadBackupRetirement(ctx, tx.Tx, b, o.Action); err != nil {
+			return err
+		}
+	}
+	if o.Action == "delete" && b.Offsite != nil && b.Offsite.DeletedAt == nil {
 		return ErrWorkloadBackupChanged
 	}
-	if b.Revision != revision || b.State == "deleted" || (o.Action == "verify" || o.Action == "restore" || o.Action == "export") && b.State != "ready" {
+	if b.Revision != revision || b.State == "deleted" || (o.Action == "verify" || o.Action == "restore" || o.Action == "export" || o.Action == "retire-local" || o.Action == "delete-offsite") && b.State != "ready" {
+		return ErrWorkloadBackupChanged
+	}
+	if o.Action == "export" && (b.LocalState == "retired" || b.Offsite != nil && b.Offsite.DeletedAt != nil) {
 		return ErrWorkloadBackupChanged
 	}
 	if err = s.insertWorkloadBackupOperation(ctx, tx.Tx, b, o); err != nil {
@@ -236,7 +256,7 @@ func (s *SQLStore) CompleteWorkloadBackupOperation(ctx context.Context, b core.W
 	before = b.Revision
 	b.Revision++
 	b.UpdatedAt = o.UpdatedAt
-	result, err = tx.ExecContext(ctx, s.q(`UPDATE workload_backups SET state=?,revision=?,payload=?,offsite_store_id=? WHERE id=? AND revision=?`), b.State, b.Revision, jsonText(b), backupOffsiteStore(b), b.ID, before)
+	result, err = tx.ExecContext(ctx, s.q(`UPDATE workload_backups SET state=?,revision=?,payload=?,offsite_store_id=?,local_state=?,offsite_usable=? WHERE id=? AND revision=?`), b.State, b.Revision, jsonText(b), backupOffsiteStore(b), backupLocalState(b), usableOffsite(b) && !(o.Action == "delete-offsite" && o.State != "failed" && o.State != "succeeded"), b.ID, before)
 	if err = changed(result, err); err != nil {
 		return err
 	}
@@ -277,12 +297,12 @@ func (s *SQLStore) ClaimWorkloadBackupRecovery(ctx context.Context, id string, n
 
 // Reconciliation acknowledges only expired uncertain data operations on the same current agent.
 func (s *SQLStore) ReconcileWorkloadBackupRuntime(ctx context.Context, run, operation, inspection string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state='acknowledged',updated_at=? WHERE service_run_id=? AND id=? AND operation IN ('workload_backup','workload_backup_offsite') AND state='unknown' AND lease_until<=? AND EXISTS (SELECT 1 FROM runtime_jobs i WHERE i.id=? AND i.service_run_id=runtime_jobs.service_run_id AND i.server_id=runtime_jobs.server_id AND i.node_id=runtime_jobs.node_id AND i.node_generation>=runtime_jobs.node_generation AND i.operation IN ('workload_backup_inspect','workload_backup_offsite_inspect') AND i.state='succeeded' AND i.created_at>runtime_jobs.updated_at AND i.created_at>runtime_jobs.lease_until AND EXISTS (SELECT 1 FROM edge_node_credentials c WHERE c.network_id=i.node_id AND c.generation=i.node_generation AND c.revoked=FALSE AND c.public_key<>'')) AND EXISTS (SELECT 1 FROM servers s WHERE s.id=runtime_jobs.server_id AND s.agent_node_id=runtime_jobs.node_id)`), stamp(now), run, "backup-"+operation, stamp(now), inspection)
+	_, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET state='acknowledged',updated_at=? WHERE service_run_id=? AND id=? AND operation IN ('workload_backup','workload_backup_offsite','workload_backup_retire') AND state='unknown' AND lease_until<=? AND EXISTS (SELECT 1 FROM runtime_jobs i WHERE i.id=? AND i.service_run_id=runtime_jobs.service_run_id AND i.server_id=runtime_jobs.server_id AND i.node_id=runtime_jobs.node_id AND i.node_generation>=runtime_jobs.node_generation AND i.operation IN ('workload_backup_inspect','workload_backup_offsite_inspect','workload_backup_retire_inspect') AND i.state='succeeded' AND i.created_at>runtime_jobs.updated_at AND i.created_at>runtime_jobs.lease_until AND EXISTS (SELECT 1 FROM edge_node_credentials c WHERE c.network_id=i.node_id AND c.generation=i.node_generation AND c.revoked=FALSE AND c.public_key<>'')) AND EXISTS (SELECT 1 FROM servers s WHERE s.id=runtime_jobs.server_id AND s.agent_node_id=runtime_jobs.node_id)`), stamp(now), run, "backup-"+operation, stamp(now), inspection)
 	if err != nil {
 		return err
 	}
 	var n int
-	err = s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM runtime_jobs WHERE service_run_id=? AND operation IN ('workload_backup','workload_backup_offsite') AND state IN ('pending','running','unknown')`), run).Scan(&n)
+	err = s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM runtime_jobs WHERE service_run_id=? AND operation IN ('workload_backup','workload_backup_offsite','workload_backup_retire') AND state IN ('pending','running','unknown')`), run).Scan(&n)
 	if err != nil {
 		return err
 	}
@@ -309,4 +329,129 @@ func backupStoreReference(id string) any {
 		return nil
 	}
 	return id
+}
+
+func backupLocalState(b core.WorkloadBackup) string {
+	if b.LocalState == "retired" {
+		return "retired"
+	}
+	return "present"
+}
+func usableOffsite(b core.WorkloadBackup) bool {
+	return b.CleanupState == "complete" && b.Offsite != nil && b.Offsite.DeletedAt == nil && !b.Offsite.ConfirmedAt.IsZero() && b.Offsite.VerifiedAt != nil && b.Offsite.VerificationState == "verified" && b.Offsite.ManifestChecksum != "" && b.Checksum != ""
+}
+func (s *SQLStore) guardWorkloadBackupRetirement(ctx context.Context, tx *sql.Tx, b core.WorkloadBackup, action string) error {
+	if b.State != "ready" || b.Offsite == nil || b.Offsite.DeletedAt != nil {
+		return ErrWorkloadBackupChanged
+	}
+	var unresolved int
+	if err := tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backup_operations WHERE backup_id=? AND state='unresolved'`), b.ID).Scan(&unresolved); err != nil {
+		return err
+	}
+	if unresolved > 0 {
+		return ErrWorkloadBackupChanged
+	}
+	if action == "retire-local" {
+		if b.LocalState == "retired" || !usableOffsite(b) {
+			return ErrWorkloadBackupChanged
+		}
+		return nil
+	}
+	requiredStore := ""
+	if b.CapturePolicyID != "" {
+		p, err := s.lockBackupPolicy(ctx, tx, b.CapturePolicyID)
+		if err != nil {
+			return err
+		}
+		if p.Enabled {
+			requiredStore = p.OffsiteStoreID
+		}
+	}
+	if requiredStore == "" && b.LocalState != "retired" && b.VerificationState == "verified" && b.CleanupState == "complete" {
+		return nil
+	}
+	// A paused policy still cannot destroy its sole independently usable copy.
+	rows, err := tx.QueryContext(ctx, s.q(`SELECT payload,input_cipher,revision FROM workload_backups WHERE project_id=? AND source_run_id=? AND id<>? AND state='ready'`), b.ProjectID, b.SourceRunID, b.ID)
+	if err != nil {
+		return err
+	}
+	items := []core.WorkloadBackup{}
+	for rows.Next() {
+		other, e := scanWorkloadBackup(rows)
+		if e != nil {
+			rows.Close()
+			return e
+		}
+		items = append(items, other)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, other := range items {
+		if requiredStore != "" && (!usableOffsite(other) || other.Offsite.StoreID != requiredStore) {
+			continue
+		}
+		if other.VerificationState != "verified" || other.CleanupState != "complete" || other.LocalState == "retired" && !usableOffsite(other) {
+			continue
+		}
+		var active int
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backup_operations WHERE backup_id=? AND state IN ('running','unknown','unresolved')`), other.ID).Scan(&active); err != nil {
+			return err
+		}
+		if active == 0 {
+			return nil
+		}
+	}
+	return ErrWorkloadBackupChanged
+}
+
+// WorkloadBackupRetirementAllowed supplies the same conservative guards used by
+// admission. Admission repeats them while holding the policy and backup locks.
+func (s *SQLStore) WorkloadBackupRetirementAllowed(ctx context.Context, b core.WorkloadBackup, action string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if b.CapturePolicyID != "" && action == "delete-offsite" {
+		p, err := s.lockBackupPolicy(ctx, tx.Tx, b.CapturePolicyID)
+		if err != nil {
+			return err
+		}
+		if p.Enabled && (b.LocalState == "retired" || p.OffsiteStoreID != "") {
+			protected, err := s.protectedPolicyBackup(ctx, tx.Tx, p, b.ID)
+			if err != nil {
+				return err
+			}
+			if protected {
+				return ErrWorkloadBackupChanged
+			}
+		}
+	}
+	return s.guardWorkloadBackupRetirement(ctx, tx.Tx, b, action)
+}
+
+func usableRecoveryBackup(b core.WorkloadBackup) bool {
+	return b.State == "ready" && b.VerificationState == "verified" && b.CleanupState == "complete" && (b.LocalState != "retired" || usableOffsite(b))
+}
+
+func (s *SQLStore) lockBackupDestructiveProject(ctx context.Context, tx *sql.Tx, b core.WorkloadBackup) error {
+	query := `SELECT id FROM projects WHERE id=?`
+	if s.postgres {
+		query += ` FOR NO KEY UPDATE`
+	}
+	var ignored string
+	return tx.QueryRowContext(ctx, s.q(query), b.ProjectID).Scan(&ignored)
+}
+func (s *SQLStore) guardBackupDestructiveCohort(ctx context.Context, tx *sql.Tx, b core.WorkloadBackup) error {
+	var sibling int
+	if err := tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backup_operations WHERE project_id=? AND source_run_id=? AND backup_id<>? AND action IN ('delete','delete-offsite','retire-local') AND state IN ('running','unknown','unresolved')`), b.ProjectID, b.SourceRunID, b.ID).Scan(&sibling); err != nil {
+		return err
+	}
+	if sibling > 0 {
+		return ErrWorkloadBackupChanged
+	}
+	return nil
 }

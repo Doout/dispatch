@@ -36,6 +36,7 @@ quota for every caller. Global provider secret references remain owner-only. See
 | POST | `/api/v1/infrastructure/servers/review` | Save an encrypted, 15-minute creation review |
 | POST | `/api/v1/infrastructure/servers` | Accept `reviewId`, `digest`, `confirmName`, and stable `requestKey` |
 | GET | `/api/v1/infrastructure/servers` | List allocation, enrollment, and runtime state |
+| GET | `/api/v1/infrastructure/servers/{id}` | Refresh this authorized server's readiness and inspect its original operation |
 | GET | `/api/v1/infrastructure/servers/{id}/operations` | Durable operation history and recovery state |
 | POST | `/api/v1/infrastructure/servers/{id}/enrollment` | Issue a node-scoped 15-minute one-use token |
 | POST | `/api/v1/infrastructure/operations/{id}/retry` | Resume a paused transport failure using the original request identity |
@@ -51,6 +52,44 @@ key returns the original operation. An `Idempotency-Key` header uses the
 [public receipt contract](mutation-receipts.md) and replaces the body `requestKey`.
 Acceptance binds that receipt to the operation in the same database transaction.
 Operation history remains durable after machine deletion.
+
+## Wait for a usable server
+
+After accepting creation, save both the managed server ID and the mutation
+receipt. A successful allocation receipt confirms the provider operation. Use
+the server endpoint to check whether the intended node has enrolled and passed
+a fresh runtime check:
+
+```sh
+dispatchctl server get --server SERVER_ID
+dispatchctl server wait --server SERVER_ID --timeout 120
+```
+
+`server_get` and `server_wait` are also MCP tools. They require current
+`infrastructure.inspect` access and the assigned provider on every request.
+Reading status refreshes only that server. It never starts installation or issues
+an enrollment token. SSH review and approval remain restricted to the controller
+owner.
+
+The response keeps `allocationState`, `enrollmentState` and `runtimeState`
+separate. It also includes `waitState`, `deployable`, a small `bootstrap` summary
+when applicable and the latest create, restore or delete operation. The summary
+excludes installer plans, claim tokens, credentials and provider connection
+details. The response uses `Cache-Control: no-store`.
+
+A wait succeeds with `waitState: ready` only when `deployable` is true and the
+ordinary workload target matches this server's enrolled identity. A snapshot
+clone returns `verified-isolated` with `deployable: false`. That result ends the
+wait but does not permit deployment. Pending installation approval also returns
+for operator review.
+
+Failure, cancellation, uncertain allocation or installation, expired enrollment,
+revoked identity and deletion end a wait with a structured recovery error. A
+paused provider operation also ends the wait. Its `waitState: paused` and
+`operation_paused` error require inspection and an explicit retry. A stale
+runtime check keeps the server waiting. Timeout or Ctrl-C stops the client
+without cancelling accepted work. The `continuation` preserves the server,
+project and original operation IDs. Resume with the same server ID.
 
 ## Recovery and deletion
 

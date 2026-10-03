@@ -90,63 +90,70 @@ func (m *Manager) RefreshReadiness(ctx context.Context) error {
 		return err
 	}
 	for _, server := range servers {
-		if server.AllocationState == "deleted" {
-			if _, e := data.GetEdgeCredential(ctx, server.NodeID); e == nil {
-				if e = data.RevokeEdgeCredential(ctx, server.NodeID, m.now()); e != nil {
-					return e
-				}
-			}
-			if _, e := data.GetServer(ctx, server.ID); e == nil {
-				if e = data.DeleteServer(ctx, server.ID); e != nil {
-					return e
-				}
-			}
-			continue
+		if err = m.refreshServerReadiness(ctx, data, server); err != nil {
+			return err
 		}
-		if server.AllocationState != "allocated" {
-			continue
-		}
-		enrollment, runtime := "waiting", "waiting"
-		credential, e := data.GetEdgeCredential(ctx, server.NodeID)
-		if e == nil && credential.PublicKey != "" && !credential.Revoked {
-			enrollment = "enrolled"
-			node, e := data.GetPrivateNetwork(ctx, server.NodeID)
-			checkedAt, checkedErr := time.Parse(time.RFC3339Nano, node.Details["runtimeCheckedAt"])
-			if e == nil && checkedErr == nil && !checkedAt.Before(credential.UpdatedAt) && checkedAt.After(m.now().Add(-90*time.Second)) && node.Details["runtimeVersion"] == remoteruntime.APIVersion && slices.Contains(strings.Split(node.Details["runtimeCapabilities"], ","), "deploy") {
-				runtime = "ready"
-			}
-		}
-		if server.BootstrapID != "" {
-			if m.Bootstrap == nil {
-				runtime = "waiting"
-			} else if b, e := m.Bootstrap.Refresh(ctx, server.BootstrapID); e != nil || b.State != "ready" || b.RuntimeState != "ready" {
-				runtime = "waiting"
-			}
-		}
-		// A verified clone remains quarantined and is never offered as a workload target.
-		if server.SourceSnapshotID != "" && runtime == "ready" {
-			runtime = "verified-isolated"
-		}
-		if server.EnrollmentState != enrollment || server.RuntimeState != runtime {
-			server.EnrollmentState = enrollment
-			server.RuntimeState = runtime
-			server.Revision++
-			server.UpdatedAt = m.now()
-			if e = data.UpdateManagedServer(ctx, server, server.Revision-1); e != nil {
+	}
+	return nil
+}
+
+func (m *Manager) refreshServerReadiness(ctx context.Context, data EnrollmentStore, server core.ManagedServer) error {
+	if server.AllocationState == "deleted" {
+		if _, e := data.GetEdgeCredential(ctx, server.NodeID); e == nil {
+			if e = data.RevokeEdgeCredential(ctx, server.NodeID, m.now()); e != nil {
 				return e
 			}
 		}
-		if runtime == "ready" {
-			if _, e = data.GetServer(ctx, server.ID); errors.Is(e, store.ErrNotFound) {
-				target := core.Server{ID: server.ID, ProjectID: server.ProjectID, Name: server.Name, Address: server.Address, Runtime: core.ServerRuntimeDocker, State: "ready", AgentMode: "outbound-runtime", AgentNodeID: server.NodeID, CreatedAt: m.now()}
-				if e = data.CreateServer(ctx, target); e != nil {
-					if _, check := data.GetServer(ctx, server.ID); check != nil {
-						return e
-					}
-				}
-			} else if e != nil {
+		if _, e := data.GetServer(ctx, server.ID); e == nil {
+			if e = data.DeleteServer(ctx, server.ID); e != nil {
 				return e
 			}
+		}
+		return nil
+	}
+	if server.AllocationState != "allocated" {
+		return nil
+	}
+	enrollment, runtime := "waiting", "waiting"
+	credential, e := data.GetEdgeCredential(ctx, server.NodeID)
+	if e == nil && credential.PublicKey != "" && !credential.Revoked {
+		enrollment = "enrolled"
+		node, e := data.GetPrivateNetwork(ctx, server.NodeID)
+		checkedAt, checkedErr := time.Parse(time.RFC3339Nano, node.Details["runtimeCheckedAt"])
+		if e == nil && checkedErr == nil && !checkedAt.Before(credential.UpdatedAt) && checkedAt.After(m.now().Add(-90*time.Second)) && !checkedAt.After(m.now().Add(10*time.Second)) && node.Details["runtimeVersion"] == remoteruntime.APIVersion && slices.Contains(strings.Split(node.Details["runtimeCapabilities"], ","), "deploy") {
+			runtime = "ready"
+		}
+	}
+	if server.BootstrapID != "" {
+		if m.Bootstrap == nil {
+			runtime = "waiting"
+		} else if b, e := m.Bootstrap.Refresh(ctx, server.BootstrapID); e != nil || b.State != "ready" || b.RuntimeState != "ready" {
+			runtime = "waiting"
+		}
+	}
+	// A verified clone remains quarantined and is never offered as a workload target.
+	if server.SourceSnapshotID != "" && runtime == "ready" {
+		runtime = "verified-isolated"
+	}
+	if server.EnrollmentState != enrollment || server.RuntimeState != runtime {
+		server.EnrollmentState = enrollment
+		server.RuntimeState = runtime
+		server.Revision++
+		server.UpdatedAt = m.now()
+		if e = data.UpdateManagedServer(ctx, server, server.Revision-1); e != nil {
+			return e
+		}
+	}
+	if runtime == "ready" {
+		if _, e = data.GetServer(ctx, server.ID); errors.Is(e, store.ErrNotFound) {
+			target := core.Server{ID: server.ID, ProjectID: server.ProjectID, Name: server.Name, Address: server.Address, Runtime: core.ServerRuntimeDocker, State: "ready", AgentMode: "outbound-runtime", AgentNodeID: server.NodeID, CreatedAt: m.now()}
+			if e = data.CreateServer(ctx, target); e != nil {
+				if _, check := data.GetServer(ctx, server.ID); check != nil {
+					return e
+				}
+			}
+		} else if e != nil {
+			return e
 		}
 	}
 	return nil

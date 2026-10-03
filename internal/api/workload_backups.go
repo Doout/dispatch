@@ -47,6 +47,10 @@ func (a *API) workloadBackupRoutes(r chi.Router) {
 			r.Post("/operations/{operationId}/reconcile", a.reconcileWorkloadBackup)
 			r.Post("/delete-preview", a.previewDestructiveAction("workload-backup", "delete"))
 			r.Post("/delete", a.deleteWorkloadBackup)
+			r.Post("/retire-local-preview", a.previewDestructiveAction("workload-backup", "retire-local"))
+			r.Post("/retire-local", a.retireLocalWorkloadBackup)
+			r.Post("/delete-offsite-preview", a.previewDestructiveAction("workload-backup", "delete-offsite"))
+			r.Post("/delete-offsite", a.deleteOffsiteWorkloadBackup)
 			r.Post("/restore/{destinationId}/preview", a.previewDestructiveAction("workload-backup", "restore"))
 			r.Post("/restore/{destinationId}", a.restoreWorkloadBackup)
 		})
@@ -316,6 +320,9 @@ func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.Workload
 		return op, err
 	}
 	input.Backup = b
+	if (action == "restore" || action == "verify") && b.LocalState == "retired" && (b.Offsite == nil || b.Offsite.DeletedAt != nil) {
+		return op, store.ErrWorkloadBackupChanged
+	}
 	input.OperationID, input.Action = id, action
 	if action == "restore" || action == "verify" && destination != "" {
 		record, accepted, server, storage, err := a.backupSource(ctx, destination)
@@ -342,14 +349,14 @@ func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.Workload
 			input.ExecutionNodeGeneration = credential.Generation
 		}
 	}
-	if b.Offsite != nil && (action == "verify" || action == "restore") {
-		access, grantErr := a.grantBackupObjects(ctx, b, b.Offsite.StoreID, false, false)
+	if b.Offsite != nil && b.Offsite.DeletedAt == nil && (action == "verify" || action == "restore" || action == "retire-local" || action == "delete-offsite") {
+		access, grantErr := a.grantBackupObjects(ctx, b, b.Offsite.StoreID, false, action == "delete-offsite")
 		input.OffsiteAccess, err = &access, grantErr
 		if err != nil {
 			return op, err
 		}
 		op.OffsiteStoreID = b.Offsite.StoreID
-		if op.ExecutionServerID == "" {
+		if op.ExecutionServerID == "" && action != "delete-offsite" {
 			server, e := a.store.GetServer(ctx, b.ServerID)
 			if e != nil || server.AgentNodeID != b.NodeID {
 				return op, errors.New("accepted source target changed")
@@ -383,6 +390,10 @@ func (a *API) restoreWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	a.mutateWorkloadBackup(w, r, "restore")
 }
 func (a *API) mutateWorkloadBackup(w http.ResponseWriter, r *http.Request, action string) {
+	if (action == "retire-local" || action == "delete-offsite") && strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+		problem(w, 422, "Idempotency key required", "Choose one stable key for this reviewed backup operation.")
+		return
+	}
 	s, _ := a.workloadBackupStore()
 	b, err := s.GetWorkloadBackup(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
@@ -464,6 +475,9 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 	if b.State == "deleted" {
 		out.BlockedReason = "The archive is already deleted."
 	}
+	if action == "retire-local" || action == "delete-offsite" {
+		return a.workloadBackupRetirementReview(ctx, b, action, out)
+	}
 	var target any
 	if action == "restore" {
 		record, accepted, server, storage, err := a.backupSource(ctx, chi.URLParam(r, "destinationId"))
@@ -496,8 +510,8 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 		out.Summary = "Overwrite database objects present in this backup in one PostgreSQL transaction. Objects absent from the archive remain. Detach consumers first; no deployment rollback is triggered."
 		out.Resources = []string{"Destination: " + record.Name, "Target: " + server.Name, "Archive: " + b.ID, "Retain the encrypted backup after restore"}
 	} else {
-		if b.Offsite != nil {
-			out.BlockedReason = "Exported archives are protected until reviewed offsite deletion is supported."
+		if b.Offsite != nil && b.Offsite.DeletedAt == nil {
+			out.BlockedReason = "Retire the local copy or review offsite deletion separately before deleting all local archive metadata."
 		}
 		if b.CapturePolicyID != "" && b.VerificationState == "verified" {
 			policies, e := a.backupPolicyStore()
@@ -512,6 +526,31 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 				out.BlockedReason = "Pause the capture policy before deleting a protected verified archive. Automatic retention separately preserves the policy recovery points."
 			}
 		}
+		cohort, e := s.ListWorkloadBackups(ctx, b.ProjectID)
+		if e != nil {
+			return out, e
+		}
+		points := []core.WorkloadBackup{}
+		for _, other := range cohort {
+			if other.SourceRunID == b.SourceRunID {
+				points = append(points, other)
+			}
+		}
+		var currentPolicy any
+		if b.CapturePolicyID != "" {
+			policies, e := a.backupPolicyStore()
+			if e != nil {
+				return out, e
+			}
+			currentPolicy, e = policies.GetWorkloadBackupPolicy(ctx, b.CapturePolicyID)
+			if e != nil {
+				return out, e
+			}
+		}
+		target = struct {
+			RecoveryPoints []core.WorkloadBackup
+			Policy         any
+		}{points, currentPolicy}
 		out.Summary = "Permanently delete this retained workload backup archive. Workload data and encrypted operation history remain."
 		out.StoragePolicy = "destroy"
 		out.Resources = []string{"Encrypted archive: " + b.ID, "Target-local bytes: " + fmt.Sprint(b.Bytes), "This backup will no longer protect target deletion"}
@@ -570,7 +609,7 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 		return
 	}
 	input, err := a.decryptWorkloadBackup(op.ID, "operation", op.EncryptedInput)
-	if err == nil && op.CapturePolicyID != "" && !recovering {
+	if err == nil && op.CapturePolicyID != "" {
 		policies, e := a.backupPolicyStore()
 		if e == nil {
 			policy, lookup := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
@@ -587,7 +626,17 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 	if recovering {
 		result.State, result.CleanupState = "unknown", "pending"
 	}
-	if err == nil {
+	if err == nil && op.Action == "delete-offsite" {
+		access, e := a.grantBackupObjects(ctx, b, op.OffsiteStoreID, false, true)
+		input.Backup, input.OffsiteAccess = b, &access
+		if e != nil {
+			err = e
+		} else if a.workloadBackupBackend != nil {
+			result, err = a.workloadBackupBackend(ctx, input, core.Server{})
+		} else {
+			result, err = deploy.DeleteOffsiteWorkloadBackup(ctx, nil, input)
+		}
+	} else if err == nil {
 		executionServer := b.ServerID
 		if op.ExecutionServerID != "" {
 			executionServer = op.ExecutionServerID
@@ -611,6 +660,19 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 				err = a.deploy.Storage.WithTarget(ctx, server.ID, func() error {
 					if op.ExecutionServerID != "" && !a.backupExecutionGenerationMatches(ctx, op) {
 						return errors.New("accepted destination enrollment changed")
+					}
+					if op.CapturePolicyID != "" {
+						policies, policyErr := a.backupPolicyStore()
+						if policyErr != nil {
+							return policyErr
+						}
+						policy, policyErr := policies.GetWorkloadBackupPolicy(ctx, op.CapturePolicyID)
+						if policyErr != nil || !policy.Enabled {
+							return store.ErrWorkloadBackupChanged
+						}
+						if policyErr = a.backupPolicyAuthority(ctx, policy); policyErr != nil {
+							return policyErr
+						}
 					}
 					var e error
 					result, e = a.runWorkloadBackup(ctx, input, server)
@@ -642,9 +704,29 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 		}
 	}
 	switch op.Action {
+	case "retire-local":
+		if op.State == "succeeded" && result.State == "local-retired" && result.CleanupState == "complete" {
+			b.LocalState = "retired"
+		}
+	case "delete-offsite":
+		if op.State == "unknown" && b.Offsite != nil {
+			off := *b.Offsite
+			off.VerificationState = "deletion-pending"
+			b.Offsite = &off
+		}
+		if op.State == "succeeded" && result.State == "offsite-deleted" && result.CleanupState == "complete" && b.Offsite != nil {
+			off := *b.Offsite
+			off.DeletedAt = &now
+			off.VerificationState = "deleted"
+			b.Offsite = &off
+			if b.LocalState == "retired" {
+				b.State = "deleted"
+			}
+		}
 	case "export":
 		if op.State == "succeeded" && result.State == "exported" && result.Offsite != nil {
 			b.Offsite = result.Offsite
+			b.Offsite.VerificationState, b.Offsite.VerifiedAt = "not_verified", nil
 		}
 	case "backup":
 		b.State = "unknown"
@@ -654,6 +736,10 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 		}
 		if op.State == "failed" {
 			b.State = "failed"
+		}
+	case "restore":
+		if b.LocalState == "retired" || op.ExecutionServerID != "" && op.ExecutionServerID != b.ServerID {
+			b.CleanupState = result.CleanupState
 		}
 	case "verify":
 		b.VerificationState = "failed"
@@ -666,6 +752,12 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 			b.VerificationState = "unknown"
 			op.State = "unknown"
 		}
+		if input.OffsiteAccess != nil && b.Offsite != nil {
+			b.Offsite.VerificationState = b.VerificationState
+			if b.VerificationState == "verified" && op.State == "succeeded" {
+				b.Offsite.VerifiedAt = &now
+			}
+		}
 	case "delete":
 		if op.State == "succeeded" && result.State == "deleted" {
 			b.State = "deleted"
@@ -674,7 +766,7 @@ func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, re
 	if b.VerificationIntervalHours > 0 {
 		next := now.Add(time.Duration(b.VerificationIntervalHours) * time.Hour)
 		b.NextVerificationAt = &next
-		if op.Action == "backup" && b.CapturePolicyID != "" && b.State == "ready" {
+		if (op.Action == "backup" || op.Action == "export" && b.Offsite != nil) && b.CapturePolicyID != "" && b.State == "ready" {
 			b.NextVerificationAt = &now
 		}
 	}

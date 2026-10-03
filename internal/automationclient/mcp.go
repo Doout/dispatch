@@ -97,6 +97,12 @@ func toolDescription(op Operation) map[string]any {
 				if op.Name == "backup_restore" {
 					action = "restore"
 				}
+				if op.Name == "backup_retire_local" {
+					action = "retire-local"
+				}
+				if op.Name == "backup_delete_offsite" {
+					action = "delete-offsite"
+				}
 				schema := properties[f].(map[string]any)["properties"].(map[string]any)["confirmation"].(map[string]any)["properties"].(map[string]any)
 				schema["action"] = map[string]any{"type": "string", "const": action}
 			}

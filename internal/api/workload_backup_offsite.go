@@ -25,7 +25,11 @@ func (a *API) backupObjectStore() (store.BackupObjectStoreStore, error) {
 func (a *API) workloadBackupOffsiteRoutes(r chi.Router) {
 	r.Get("/workload-backup-stores", a.listBackupObjectStores)
 	r.Get("/workload-backup-stores/{storeId}", a.getBackupObjectStore)
-	r.Group(func(r chi.Router) { r.Use(a.ownerOnly); r.Post("/workload-backup-stores", a.createBackupObjectStore) })
+	r.Group(func(r chi.Router) {
+		r.Use(a.ownerOnly)
+		r.Post("/workload-backup-stores", a.createBackupObjectStore)
+		r.Put("/workload-backup-stores/{storeId}/conditional-delete", a.setBackupObjectStoreConditionalDelete)
+	})
 }
 func (a *API) createBackupObjectStore(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -168,7 +172,7 @@ func (a *API) exportWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	if !a.requireProject(w, r, core.PermissionDeploymentRun, b.ProjectID) {
 		return
 	}
-	if b.State != "ready" || b.Checksum == "" || input.StoreID == "" {
+	if b.State != "ready" || b.LocalState == "retired" || b.Offsite != nil && b.Offsite.DeletedAt != nil || b.Checksum == "" || input.StoreID == "" {
 		problem(w, 409, "Offsite export unavailable", "Choose a complete encrypted backup and assigned object store.")
 		return
 	}

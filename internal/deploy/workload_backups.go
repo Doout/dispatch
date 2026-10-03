@@ -65,9 +65,9 @@ func ValidateWorkloadBackupRequest(r core.WorkloadBackupRequest, server core.Ser
 		}
 	}
 	switch r.Action {
-	case "backup", "inspect", "verify", "delete", "export":
+	case "backup", "inspect", "verify", "delete", "export", "retire-local":
 	case "reconcile":
-		if r.RecoveryAction != "backup" && r.RecoveryAction != "verify" && r.RecoveryAction != "restore" && r.RecoveryAction != "delete" && r.RecoveryAction != "export" {
+		if r.RecoveryAction != "backup" && r.RecoveryAction != "verify" && r.RecoveryAction != "restore" && r.RecoveryAction != "delete" && r.RecoveryAction != "export" && r.RecoveryAction != "retire-local" {
 			return errors.New("invalid backup recovery action")
 		}
 	case "restore":
@@ -210,7 +210,7 @@ func readBackupArtifact(dir string, r core.WorkloadBackupRequest) (workloadbacku
 	}
 	return a, nil
 }
-func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBackupRequest, server core.Server) (core.WorkloadBackupResult, error) {
+func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBackupRequest, server core.Server) (out core.WorkloadBackupResult, runErr error) {
 	result := core.WorkloadBackupResult{BackupID: r.Backup.ID, ProjectID: r.Backup.ProjectID, OperationID: r.OperationID, ArtifactID: r.Backup.ID, State: "failed", CleanupState: "complete"}
 	if server.AgentNodeID != "" {
 		return result, errors.New("agent-bound backups require remote execution")
@@ -224,6 +224,33 @@ func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBa
 	dir, err := privateBackupDirectory(e.WorkloadBackupDirectory, r.Backup.ID)
 	if err != nil {
 		return result, err
+	}
+	action := r.Action
+	if action == "reconcile" {
+		action = r.RecoveryAction
+	}
+	if (r.Backup.LocalState == "retired" || server.ID != r.Backup.ServerID) && r.OffsiteAccess != nil && (action == "verify" || action == "restore") {
+		// A downloaded cache is never an authoritative local copy. Keep the
+		// original journal, but remove these temporary bytes before completion.
+		if _, err := backupArchiveDataFiles(dir); err != nil {
+			result.State, result.CleanupState = "unknown", "pending"
+			return result, err
+		}
+		if _, err := os.Lstat(filepath.Join(dir, "archive.enc")); err == nil {
+			if _, err = readBackupArtifact(dir, r); err != nil {
+				result.State, result.CleanupState = "unknown", "pending"
+				return result, errors.New("retired backup cache ownership cannot be verified")
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			result.State, result.CleanupState = "unknown", "pending"
+			return result, err
+		}
+		defer func() {
+			if err := cleanupTemporaryBackupArchiveData(dir); err != nil {
+				out.State, out.CleanupState = "unknown", "failed"
+				runErr = errors.New("retired backup temporary archive cleanup is unresolved")
+			}
+		}()
 	}
 	if r.Action == "reconcile" {
 		return e.reconcileWorkloadBackup(ctx, dir, r)
@@ -248,9 +275,12 @@ func (e DockerExecutor) RunWorkloadBackup(ctx context.Context, r core.WorkloadBa
 		}
 		return result, err
 	}
+	if r.Action == "retire-local" {
+		return e.retireLocalWorkloadBackup(ctx, dir, r)
+	}
 	if r.Action == "delete" {
-		if r.Backup.Offsite != nil {
-			return result, errors.New("exported archives are protected until reviewed offsite deletion is supported")
+		if r.Backup.Offsite != nil && r.Backup.Offsite.DeletedAt == nil {
+			return result, errors.New("Retire the local copy or finish reviewed offsite deletion before deleting retained archive metadata")
 		}
 		return e.deleteWorkloadBackup(dir, r)
 	}
@@ -603,6 +633,8 @@ func (e DockerExecutor) reconcileWorkloadBackup(ctx context.Context, dir string,
 		return result, receiptErr
 	}
 	switch r.RecoveryAction {
+	case "retire-local":
+		return e.retireLocalWorkloadBackup(ctx, dir, r)
 	case "export":
 		return e.exportWorkloadBackup(ctx, dir, r, true)
 	case "backup":
@@ -677,8 +709,14 @@ func backupOperationDigest(r core.WorkloadBackupRequest) string {
 	if r.Action == "reconcile" {
 		r.Action = r.RecoveryAction
 	}
-	if (r.Action == "restore" || r.Action == "verify") && r.OffsiteAccess != nil {
-		r.Backup.Offsite = b.Offsite
+	if (r.Action == "restore" || r.Action == "verify" || r.Action == "retire-local" || r.Action == "delete-offsite") && r.OffsiteAccess != nil {
+		if b.Offsite != nil {
+			off := *b.Offsite
+			off.VerifiedAt = nil
+			off.VerificationState = ""
+			off.DeletedAt = nil
+			r.Backup.Offsite = &off
+		}
 	}
 	r.RecoveryAction, r.Key = "", ""
 	if r.OffsiteAccess != nil {

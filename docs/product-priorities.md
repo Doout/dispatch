@@ -1,9 +1,9 @@
 # Product priorities
 
-The deployment and operations backlog is implemented in this release. The table
-below links each item to its behavior and limits. Existing Services, manual drift
-checks, deployment history, saved-input comparison, and direct navigation remain
-part of the same flow.
+The deployment workspace provides the behavior below. Existing Services, manual
+drift checks, deployment history, saved-input comparison and direct navigation
+remain part of the same flow. New provisioning and recovery APIs are listed
+separately below; their UI follows this release.
 
 | Item | Implemented behavior |
 | --- | --- |
@@ -16,7 +16,7 @@ part of the same flow.
 | Board status | Separate configuration, runtime drift, and health observations with freshness. |
 | Environment comparison | Compare redacted saved deployment inputs across visible environments in the same project. |
 | Pre-deployment preview | Resolve source/service inputs, render Helm, and run Kubernetes admission dry-run checks. Image builds and hooks remain deployment-time operations. |
-| Historical rollback | Confirm rollback to a uniquely matched retained successful Helm release, preserving its original immutable service Secrets. Docker/Compose artifact rollback is explicitly unavailable. |
+| Historical rollback | Reviewed rollback restores retained Docker/Compose images and encrypted runtime inputs on the original target, or a uniquely matched successful Helm release with its original immutable service Secrets. Required artifacts must remain available. Rollback preserves data and does not reverse database migrations. |
 | Failure diagnosis | Current pod conditions, events, safely redacted logs, and reason-specific next steps. |
 | Activity timeline | Saved deployment/workflow/check actions and authenticated mutation audit metadata. |
 | Promotions and approvals | Exact revision/source context and project-scoped approval controls. Changed configuration requires a new revision. |
@@ -42,14 +42,32 @@ Credential edits never automatically redeploy applications. Runtime operations
 remain explicit. Existing edge installations retain an identified legacy mode until
 an owner rotates enrollment and installs the updated agent.
 
+## Provisioning and recovery APIs
+
+These contracts are available through the API, CLI and MCP. The future UI must
+preserve their permissions, confirmation reviews and original operation IDs.
+
+| Item | Available behavior and limits |
+| --- | --- |
+| Managed-server readiness, #93 | Scoped inspection and bounded waits report allocation, bootstrap, enrollment and runtime readiness separately. Timeout preserves continuation IDs. A verified isolated snapshot clone remains non-deployable; approval, failure and uncertain outcomes require inspection. |
+| Scheduled offsite protection, #92 | An explicitly approved store receives encrypted exports of verified PostgreSQL captures. Independent offsite restore verification establishes a recovery point. Policies expose capture age, verification time, missed exports, failures and freshness. Notifications use an explicitly configured destination. |
+| Automatic local retention, #92 | Local retirement requires separate policy opt-in and independently verified offsite preservation. Local-only policies retain their existing behavior. Offsite objects are never deleted by automatic retention. |
+| Reviewed backup retirement, #88 | Retire local bytes after authenticating the preserved offsite copy. Delete only reviewed owned offsite objects through conditional unversioned requests. Keep the last usable recovery point, controller keys and history; unresolved cleanup retains protection. |
+| Source-loss recovery, #90 | Verification and reviewed restore can use a fresh authorized destination without the original source. Independent-host and live object-store acceptance remain open. |
+
+Follow [PaaS release acceptance](paas-release-acceptance.md) before claiming live
+support. Real provider allocation and enrollment, safe snapshot clone boot,
+public DNS and ACME lifecycle, and recovery between independent hosts remain
+release gates. Local fixtures do not close them.
+
 ## Later candidates
 
-Progressive delivery, canary analysis, policy-driven automatic rollback,
-maintenance windows, and resource metrics remain later candidates. They are not
-activated by this release. Infrastructure work outside the product backlog remains
-in [the roadmap](roadmap.md).
+Approved rollback policies for unhealthy promoted releases remain #89.
+Progressive delivery, canary analysis, maintenance windows and resource metrics
+remain later candidates. This release does not activate them. Infrastructure work
+remains in [the roadmap](roadmap.md).
 
-Provisioning external dependencies, deleting external services, and connecting
-existing Argo CD installations remain outside this scope. Services continue to
-accept existing connection information regardless of how the dependency was
-created.
+Provisioning arbitrary external services and connecting existing Argo CD
+installations remain outside this scope. Dispatch can provision and recover
+approved owned PostgreSQL services on Docker. Services also accept existing
+connection information regardless of how the dependency was created.

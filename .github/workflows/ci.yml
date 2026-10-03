@@ -45,6 +45,7 @@ jobs:
       DISPATCH_RUNTIME_INTEGRATION: '1'
       DISPATCH_ROUTING_DOCKER_INTEGRATION: '1'
       DISPATCH_PROVIDER_CONTAINER_INTEGRATION: '1'
+      DISPATCH_OFFSITE_DAEMON_INTEGRATION: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -55,14 +56,15 @@ jobs:
         run: |
           set -o pipefail
           go test -race -count=1 -timeout 20m -json ./internal/deploy ./internal/agentruntime ./internal/api \
-            -run '^(TestManagedDockerTraefikPromotionAndRestartIntegration|TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration|TestRemoteManagedRouteCandidateIntegration|TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration|TestTemporaryEnvironmentDockerRestartExpiryIntegration|TestPackagedMockProviderCLIAndMCPAcceptanceIntegration)$' \
+            -run '^(TestManagedDockerTraefikPromotionAndRestartIntegration|TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration|TestRemoteManagedRouteCandidateIntegration|TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration|TestTemporaryEnvironmentDockerRestartExpiryIntegration|TestPackagedMockProviderCLIAndMCPAcceptanceIntegration|TestWorkloadBackupSeparateDaemonsSourceLossIntegration)$' \
             | python3 scripts/check-test-results.py \
               --require-test TestManagedDockerTraefikPromotionAndRestartIntegration \
               --require-test TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration \
               --require-test TestRemoteManagedRouteCandidateIntegration \
               --require-test TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration \
               --require-test TestTemporaryEnvironmentDockerRestartExpiryIntegration \
-              --require-test TestPackagedMockProviderCLIAndMCPAcceptanceIntegration
+              --require-test TestPackagedMockProviderCLIAndMCPAcceptanceIntegration \
+              --require-test TestWorkloadBackupSeparateDaemonsSourceLossIntegration
   test:
     runs-on: ubuntu-latest
     steps:

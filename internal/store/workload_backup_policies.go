@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sort"
 	"time"
 
@@ -18,6 +19,9 @@ type WorkloadBackupPolicyStore interface {
 	UpdateWorkloadBackupPolicy(context.Context, core.WorkloadBackupPolicy, int64) error
 	AcceptWorkloadBackupCapture(context.Context, core.WorkloadBackupPolicy, core.WorkloadBackup, core.WorkloadBackupOperation) error
 	AcceptWorkloadBackupRetention(context.Context, core.WorkloadBackupPolicy, core.WorkloadBackup, core.WorkloadBackupOperation) error
+	AcceptWorkloadBackupExport(context.Context, core.WorkloadBackupPolicy, core.WorkloadBackup, core.WorkloadBackupOperation) error
+	MarkWorkloadBackupExportMissed(context.Context, core.WorkloadBackupPolicy, core.WorkloadBackup) error
+	UpdateWorkloadBackupPolicyEvent(context.Context, core.WorkloadBackupPolicy, int64, *core.ObservationEvent) error
 }
 
 func scanWorkloadBackupPolicy(row scanner) (core.WorkloadBackupPolicy, error) {
@@ -87,11 +91,48 @@ func (s *SQLStore) CreateWorkloadBackupPolicy(ctx context.Context, p core.Worklo
 	return tx.Commit()
 }
 func (s *SQLStore) UpdateWorkloadBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy, revision int64) error {
+	return s.UpdateWorkloadBackupPolicyEvent(ctx, p, revision, nil)
+}
+
+// Policy state and its notification outbox entry commit together.
+func (s *SQLStore) UpdateWorkloadBackupPolicyEvent(ctx context.Context, p core.WorkloadBackupPolicy, revision int64, event *core.ObservationEvent) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := s.lockBackupPolicy(ctx, tx.Tx, p.ID)
+	if err != nil {
+		return err
+	}
+	if before.Revision != revision || !sameBackupPolicyAuthority(before, p) {
+		return ErrWorkloadBackupChanged
+	}
 	p.Revision = revision + 1
 	p.UpdatedAt = time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workload_backup_policies SET enabled=?,revision=?,payload=? WHERE id=? AND revision=? AND project_id=? AND source_run_id=? AND server_id=? AND input_cipher=?`), p.Enabled, p.Revision, jsonText(p), p.ID, revision, p.ProjectID, p.SourceRunID, p.ServerID, p.EncryptedInput)
-	return changed(result, err)
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workload_backup_policies SET enabled=?,revision=?,payload=? WHERE id=? AND revision=?`), p.Enabled, p.Revision, jsonText(p), p.ID, revision)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	if event != nil {
+		if p.NotificationAppID == "" || event.AppID != p.NotificationAppID || event.ProjectID != p.ProjectID || event.Kind != "backup_offsite" {
+			return ErrWorkloadBackupChanged
+		}
+		var project string
+		if err = tx.QueryRowContext(ctx, s.q(`SELECT project_id FROM apps WHERE id=?`), event.AppID).Scan(&project); err != nil || project != p.ProjectID {
+			return ErrWorkloadBackupChanged
+		}
+		if err = s.insertObservationEvent(ctx, tx, *event); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
+
+func sameBackupPolicyAuthority(a, b core.WorkloadBackupPolicy) bool {
+	return a.ID == b.ID && a.ProjectID == b.ProjectID && a.SourceRunID == b.SourceRunID && a.SourceResourceID == b.SourceResourceID && a.ServerID == b.ServerID && a.NodeID == b.NodeID && a.NodeGeneration == b.NodeGeneration && a.Name == b.Name && a.IntervalHours == b.IntervalHours && a.KeepLast == b.KeepLast && a.EncryptedInput == b.EncryptedInput && a.OffsiteStoreID == b.OffsiteStoreID && a.OffsiteStoreDigest == b.OffsiteStoreDigest && a.OffsiteStaleAfterHours == b.OffsiteStaleAfterHours && a.NotificationAppID == b.NotificationAppID && a.RetireLocalAfterOffsiteVerification == b.RetireLocalAfterOffsiteVerification && a.CreatedAt.Equal(b.CreatedAt) && reflect.DeepEqual(a.Actor, b.Actor)
+}
+
 func (s *SQLStore) lockBackupPolicy(ctx context.Context, tx *sql.Tx, id string) (core.WorkloadBackupPolicy, error) {
 	query := `SELECT payload,input_cipher FROM workload_backup_policies WHERE id=?`
 	if s.postgres {
@@ -147,7 +188,7 @@ func (s *SQLStore) AcceptWorkloadBackupCapture(ctx context.Context, p core.Workl
 	return tx.Commit()
 }
 func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.WorkloadBackupPolicy, b core.WorkloadBackup, o core.WorkloadBackupOperation) error {
-	if b.Offsite != nil {
+	if b.Offsite != nil && o.Action == "delete" {
 		return ErrWorkloadBackupChanged
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -155,15 +196,18 @@ func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.Wor
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.lockBackupDestructiveProject(ctx, tx.Tx, b); err != nil {
+		return err
+	}
 	current, err := s.lockBackupPolicy(ctx, tx.Tx, p.ID)
 	if err != nil {
 		return err
 	}
-	if !current.Enabled || current.Revision != p.Revision || b.CapturePolicyID != p.ID || o.Action != "delete" {
+	if !current.Enabled || current.Revision != p.Revision || b.CapturePolicyID != p.ID || current.OffsiteStoreID == "" && o.Action != "delete" || current.OffsiteStoreID != "" && (!current.RetireLocalAfterOffsiteVerification || o.Action != "retire-local" || current.LastOffsiteBackupID != current.LastBackupID) {
 		return ErrWorkloadBackupChanged
 	}
 	var deleting int
-	if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backup_operations o JOIN workload_backups b ON b.id=o.backup_id WHERE b.capture_policy_id=? AND o.state IN ('running','unknown')`), p.ID).Scan(&deleting); err != nil {
+	if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backup_operations o JOIN workload_backups b ON b.id=o.backup_id WHERE b.capture_policy_id=? AND o.state IN ('running','unknown','unresolved')`), p.ID).Scan(&deleting); err != nil {
 		return err
 	}
 	if deleting > 0 {
@@ -190,11 +234,11 @@ func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.Wor
 	}
 	verified := []core.WorkloadBackup{}
 	for _, item := range items {
-		if item.ID == b.ID && item.Offsite != nil {
+		if item.ID == b.ID && item.Offsite != nil && o.Action == "delete" {
 			rows.Close()
 			return ErrWorkloadBackupChanged
 		}
-		if item.State == "ready" && item.VerificationState == "verified" && item.CleanupState == "complete" {
+		if item.LocalState != "retired" && item.LocalState != "retiring" && item.State == "ready" && item.VerificationState == "verified" && item.CleanupState == "complete" {
 			verified = append(verified, item)
 		}
 	}
@@ -225,6 +269,17 @@ func (s *SQLStore) AcceptWorkloadBackupRetention(ctx context.Context, p core.Wor
 	if !allowed {
 		return ErrWorkloadBackupChanged
 	}
+	if err = s.guardBackupDestructiveCohort(ctx, tx.Tx, b); err != nil {
+		return err
+	}
+	if o.Action == "retire-local" {
+		if b.LocalState == "retired" || b.LocalState == "retiring" || b.Offsite == nil || b.Offsite.DeletedAt != nil || b.Offsite.StoreID != current.OffsiteStoreID || b.Offsite.VerificationState != "verified" || b.Offsite.VerifiedAt == nil || b.Offsite.ConfirmedAt.IsZero() || b.Offsite.ManifestChecksum == "" || b.Checksum == "" || o.OffsiteStoreID != current.OffsiteStoreID {
+			return ErrWorkloadBackupChanged
+		}
+		if err = s.guardWorkloadBackupRetirement(ctx, tx.Tx, b, o.Action); err != nil {
+			return err
+		}
+	}
 	if err = s.insertWorkloadBackupOperation(ctx, tx.Tx, b, o); err != nil {
 		return err
 	}
@@ -244,7 +299,7 @@ func (s *SQLStore) protectedPolicyBackup(ctx context.Context, tx *sql.Tx, p core
 		if err != nil {
 			return true, err
 		}
-		if b.State == "ready" && b.VerificationState == "verified" && b.CleanupState == "complete" {
+		if usableRecoveryBackup(b) {
 			verified = append(verified, b)
 		}
 	}
@@ -263,4 +318,99 @@ func (s *SQLStore) protectedPolicyBackup(ctx context.Context, tx *sql.Tx, p core
 		}
 	}
 	return false, nil
+}
+
+// One scheduled export per capture, even after failure or an uncertain reply.
+func (s *SQLStore) AcceptWorkloadBackupExport(ctx context.Context, p core.WorkloadBackupPolicy, b core.WorkloadBackup, o core.WorkloadBackupOperation) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := s.lockBackupPolicy(ctx, tx.Tx, p.ID)
+	if err != nil {
+		return err
+	}
+	if !current.Enabled || current.Revision != p.Revision || !sameBackupPolicyAuthority(current, p) || p.OffsiteStoreID == "" || o.OffsiteStoreID != p.OffsiteStoreID || o.CapturePolicyID != p.ID || o.Action != "export" {
+		return ErrWorkloadBackupChanged
+	}
+	query := `SELECT payload,input_cipher,revision FROM workload_backups WHERE id=?`
+	if s.postgres {
+		query += ` FOR UPDATE`
+	}
+	original, err := scanWorkloadBackup(tx.QueryRowContext(ctx, s.q(query), b.ID))
+	if err != nil {
+		return err
+	}
+	if original.Revision != b.Revision || original.CapturePolicyID != p.ID || original.ProjectID != p.ProjectID || original.ServerID != p.ServerID || original.NodeID != p.NodeID || original.SourceResourceID != p.SourceResourceID || original.State != "ready" || original.VerificationState != "verified" || original.CleanupState != "complete" || original.Offsite != nil || original.LocalState == "retired" || original.LocalState == "retiring" || original.ScheduledExportOperationID != "" {
+		return ErrWorkloadBackupChanged
+	}
+	var active int
+	if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM workload_backup_operations o JOIN workload_backups b ON b.id=o.backup_id WHERE b.capture_policy_id=? AND o.state IN ('running','unknown','unresolved')`), p.ID).Scan(&active); err != nil {
+		return err
+	}
+	if active > 0 {
+		return ErrWorkloadBackupChanged
+	}
+	if err = s.insertWorkloadBackupOperation(ctx, tx.Tx, original, o); err != nil {
+		return err
+	}
+	original.ScheduledExportOperationID = o.ID
+	original.Revision++
+	original.UpdatedAt = o.CreatedAt
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workload_backups SET revision=?,payload=? WHERE id=? AND revision=?`), original.Revision, jsonText(original), original.ID, b.Revision)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	p.LastOffsiteOperationID, p.OffsiteState = o.ID, "exporting"
+	p.OffsiteMessage = "Encrypted capture export accepted for the approved destination."
+	p.Revision++
+	p.UpdatedAt = o.CreatedAt
+	result, err = tx.ExecContext(ctx, s.q(`UPDATE workload_backup_policies SET revision=?,payload=? WHERE id=? AND revision=?`), p.Revision, jsonText(p), p.ID, current.Revision)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Count a missed export once per captured archive. It can later export if its authority recovers.
+func (s *SQLStore) MarkWorkloadBackupExportMissed(ctx context.Context, p core.WorkloadBackupPolicy, b core.WorkloadBackup) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := s.lockBackupPolicy(ctx, tx.Tx, p.ID)
+	if err != nil {
+		return err
+	}
+	if current.Revision != p.Revision || !current.Enabled || current.OffsiteStoreID == "" || !sameBackupPolicyAuthority(current, p) {
+		return ErrWorkloadBackupChanged
+	}
+	query := `SELECT payload,input_cipher,revision FROM workload_backups WHERE id=?`
+	if s.postgres {
+		query += ` FOR UPDATE`
+	}
+	original, err := scanWorkloadBackup(tx.QueryRowContext(ctx, s.q(query), b.ID))
+	if err != nil {
+		return err
+	}
+	if original.CapturePolicyID != p.ID || original.Revision != b.Revision || original.ScheduledExportMissed {
+		return ErrWorkloadBackupChanged
+	}
+	original.ScheduledExportMissed = true
+	original.UpdatedAt = time.Now().UTC()
+	original.Revision++
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE workload_backups SET revision=?,payload=? WHERE id=? AND revision=?`), original.Revision, jsonText(original), original.ID, b.Revision)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	current.MissedExports++
+	current.Revision++
+	current.UpdatedAt = time.Now().UTC()
+	result, err = tx.ExecContext(ctx, s.q(`UPDATE workload_backup_policies SET revision=?,payload=? WHERE id=? AND revision=?`), current.Revision, jsonText(current), current.ID, p.Revision)
+	if err = changed(result, err); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
