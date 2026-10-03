@@ -100,7 +100,7 @@ jobs:
           merge-multiple: true
       - name: Verify complete API coverage and report shard timings
         run: python3 scripts/test-api-shard.py --verify api-race-results --count 4
-  test:
+  build-checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -135,6 +135,8 @@ jobs:
       - run: pnpm --dir web build
       - name: Check deterministic API shard coverage and Go selection semantics
         run: python3 scripts/test-api-shard_test.py
+      - name: Check required CI status dependencies
+        run: python3 scripts/check-ci-gate_test.py
       - name: Run the full race suite for all other discovered Go packages
         run: python3 scripts/test-api-shard.py --other-packages
       - run: sh scripts/install_test.sh
@@ -154,3 +156,17 @@ jobs:
           cache-from: type=gha,scope=dispatch-runtime
           cache-to: type=gha,mode=max,scope=dispatch-runtime
           tags: dispatch:test
+  test:
+    needs: [build-checks, api-coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require build checks and complete API race coverage
+        env:
+          BUILD_CHECKS_RESULT: ${{ needs.build-checks.result }}
+          API_COVERAGE_RESULT: ${{ needs.api-coverage.result }}
+        run: |
+          if [[ "$BUILD_CHECKS_RESULT" != success || "$API_COVERAGE_RESULT" != success ]]; then
+            echo "Required jobs did not both succeed: build-checks=$BUILD_CHECKS_RESULT api-coverage=$API_COVERAGE_RESULT"
+            exit 1
+          fi
