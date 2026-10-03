@@ -23,6 +23,7 @@ type RuntimeJobStore interface {
 	RenewRuntimeJob(context.Context, string, string, string, string, string, time.Time, time.Duration) (bool, error)
 	CompleteRuntimeJob(context.Context, string, string, string, string, string, time.Time) error
 	CancelRuntimeJob(context.Context, string, time.Time) error
+	CancelLeasedRuntimeJob(context.Context, string, string, string, time.Time) error
 	FenceRuntimeJob(context.Context, string, string, string, time.Time) error
 	ExpireRuntimeJobs(context.Context, time.Time) error
 	ActiveRuntimeMutation(context.Context, string) (*core.RuntimeJob, error)
@@ -177,6 +178,14 @@ func (s *SQLStore) CompleteRuntimeJob(ctx context.Context, node, id, token, stat
 
 func (s *SQLStore) CancelRuntimeJob(ctx context.Context, id string, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET cancel_requested=TRUE,updated_at=? WHERE id=? AND state IN ('pending','running')`), stamp(now), id)
+	return err
+}
+
+func (s *SQLStore) CancelLeasedRuntimeJob(ctx context.Context, node, id, token string, now time.Time) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE runtime_jobs SET cancel_requested=TRUE,updated_at=? WHERE id=? AND node_id=? AND lease_token=? AND state='running' AND lease_until>? AND expires_at>?`), stamp(now), id, node, token, stamp(now), stamp(now))
+	if err = changed(result, err); errors.Is(err, ErrNotFound) {
+		return ErrRuntimeJobConflict
+	}
 	return err
 }
 

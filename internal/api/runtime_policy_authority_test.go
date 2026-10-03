@@ -117,6 +117,10 @@ func TestScheduledBackupDeniedFirstDispatchStopsWithoutReclaim(t *testing.T) {
 	if err != nil || job.State != "failed" || job.Attempt != 1 || job.EncryptedRequest != "" || job.EncryptedResult == "" {
 		t.Fatal("undispatched job remained reclaimable", job.State, job.Attempt, err)
 	}
+	result, err := a.runtimeBroker().Wait(context.Background(), job.ID, nil)
+	if err == nil || result.WorkloadBackup == nil || result.WorkloadBackup.State != "failed" || result.WorkloadBackup.CleanupState != "complete" {
+		t.Fatal("unsent work lost its confirmed cleanup outcome", err)
+	}
 	backupRuntimeNodeRequest(t, a, node, session.Token, "next", "GET", nil, 204)
 	job, _ = a.runtimeBroker().Store.GetRuntimeJob(context.Background(), job.ID)
 	if job.Attempt != 1 {
@@ -168,6 +172,19 @@ func TestScheduledBackupRenewalDenialRetainsOriginalCompletionEvidence(t *testin
 		t.Fatal("invalid lease")
 	}
 	pauseRuntimeBackupPolicy(t, a, policy)
+	// Neither a stale lease nor another enrolled node can request cancellation.
+	backupRuntimeNodeRequest(t, a, node, session.Token, lease.ID+"/heartbeat", "POST", remoteruntime.Heartbeat{LeaseToken: "stale-token"}, 409)
+	var other core.PrivateNetwork
+	raw = serviceRequestTest(t, a, "POST", "/api/v1/private-networks", map[string]string{"name": "other-backup-runtime", "driver": "dispatch_agent"}, 201)
+	if err := json.Unmarshal(raw, &other); err != nil {
+		t.Fatal(err)
+	}
+	otherSession := enrollNodeTest(t, a, other)
+	backupRuntimeNodeRequest(t, a, other, otherSession.Token, lease.ID+"/heartbeat", "POST", remoteruntime.Heartbeat{LeaseToken: lease.LeaseToken}, 404)
+	before, err := a.runtimeBroker().Store.GetRuntimeJob(context.Background(), lease.ID)
+	if err != nil || before.CancelRequested || before.LeaseToken != lease.LeaseToken || before.State != "running" {
+		t.Fatal("an unauthorized heartbeat changed another lease", err)
+	}
 	backupRuntimeNodeRequest(t, a, node, session.Token, lease.ID+"/heartbeat", "POST", remoteruntime.Heartbeat{LeaseToken: lease.LeaseToken}, 422)
 	job, err := a.runtimeBroker().Store.GetRuntimeJob(context.Background(), lease.ID)
 	if err != nil || job.State != "running" || !job.CancelRequested {

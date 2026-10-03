@@ -102,7 +102,11 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		// No first-attempt payload has left the controller. A later attempt may
 		// already have effects, so stop delivery without claiming those effects absent.
 		if job.Attempt == 1 {
-			err = broker.Complete(r.Context(), node.ID, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: remoteruntime.Result{State: "failed", Code: runtimecontract.OwnershipConflict, Message: "Scheduled backup authority changed before runtime dispatch."}})
+			result := remoteruntime.Result{State: "failed", Code: runtimecontract.OwnershipConflict, Message: "Scheduled backup authority changed before runtime dispatch."}
+			if request := job.Request.WorkloadBackup; request != nil {
+				result.WorkloadBackup = &core.WorkloadBackupResult{BackupID: request.Backup.ID, ProjectID: request.Backup.ProjectID, OperationID: request.OperationID, ArtifactID: request.Backup.ArtifactID, State: "failed", CleanupState: "complete", Message: result.Message}
+			}
+			err = broker.Complete(r.Context(), node.ID, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: result})
 		}
 		if job.Attempt > 1 || err != nil {
 			_ = broker.Store.FenceRuntimeJob(r.Context(), node.ID, job.ID, job.LeaseToken, time.Now().UTC())
@@ -148,12 +152,26 @@ func (a *API) renewRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+	jobID := chi.URLParam(r, "jobId")
+	job, err := broker.Store.GetRuntimeJob(r.Context(), jobID)
+	if err != nil || job.NodeID != node.ID {
+		a.runtimeJobProblem(w, store.ErrNotFound)
+		return
+	}
+	now := time.Now().UTC()
+	if job.State != "running" || input.LeaseToken == "" || job.LeaseToken != input.LeaseToken || !job.LeaseUntil.After(now) || !job.ExpiresAt.After(now) {
+		a.runtimeJobProblem(w, store.ErrRuntimeJobConflict)
+		return
+	}
 	if err := a.checkTemporaryRuntimeAuthority(r.Context(), chi.URLParam(r, "jobId")); err != nil {
 		a.runtimeJobProblem(w, err)
 		return
 	}
 	if err := a.checkBackupPolicyRuntimeAuthority(r.Context(), chi.URLParam(r, "jobId")); err != nil {
-		_ = broker.Store.CancelRuntimeJob(r.Context(), chi.URLParam(r, "jobId"), time.Now().UTC())
+		if cancelErr := broker.Store.CancelLeasedRuntimeJob(r.Context(), node.ID, jobID, input.LeaseToken, time.Now().UTC()); cancelErr != nil {
+			a.runtimeJobProblem(w, cancelErr)
+			return
+		}
 		a.runtimeJobProblem(w, err)
 		return
 	}
