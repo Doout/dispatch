@@ -14,7 +14,11 @@ func TestBackupObjectStoreSQLiteOwnershipAndCredentialReference(t *testing.T) {
 	testBackupObjectStore(t, filepath.Join(t.TempDir(), "offsite.db"))
 }
 func TestBackupObjectStorePostgresOwnershipAndCredentialReference(t *testing.T) {
-	testBackupObjectStore(t, isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL"))
+	dsn := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
+	if dsn == "" {
+		t.Skip("set DISPATCH_TEST_POSTGRES_URL to a disposable PostgreSQL database")
+	}
+	testBackupObjectStore(t, dsn)
 }
 func testBackupObjectStore(t *testing.T, dsn string) {
 	ctx := context.Background()
