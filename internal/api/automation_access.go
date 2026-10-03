@@ -3,12 +3,19 @@ package api
 import (
 	"context"
 	"github.com/doout/dispatch/internal/core"
-	"github.com/doout/dispatch/internal/store"
 	"time"
 )
 
+type principalGrantReader interface {
+	ListPrincipalGrants(context.Context, string, string) ([]core.PrincipalGrant, error)
+}
+
+type infrastructureAssignmentReader interface {
+	ListInfrastructureAssignments(context.Context, string) ([]core.InfrastructureAssignment, error)
+}
+
 func (a *API) directProjectGrants(ctx context.Context, identity core.Identity) ([]core.PrincipalGrant, error) {
-	data, ok := a.store.(store.AutomationStore)
+	data, ok := a.store.(principalGrantReader)
 	if !ok {
 		return nil, nil
 	}
@@ -62,7 +69,7 @@ func (a *API) assignedInfrastructure(ctx context.Context, project, kind, id stri
 			return true, nil
 		}
 	}
-	data, ok := a.store.(store.AutomationStore)
+	data, ok := a.store.(infrastructureAssignmentReader)
 	if !ok {
 		return false, nil
 	}
