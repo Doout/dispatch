@@ -10,15 +10,19 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/remoteruntime"
-	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
+
+type workloadBackupExecutionRecords interface {
+	GetWorkloadBackup(context.Context, string) (core.WorkloadBackup, error)
+	CompleteWorkloadBackupOperation(context.Context, core.WorkloadBackup, core.WorkloadBackupOperation) error
+}
 
 // workloadBackupExecution supplies the API's vault, policy and runtime adapters
 // to the operation service without exposing its HTTP admission dependencies.
 type workloadBackupExecution struct {
 	api     *API
-	records store.WorkloadBackupStore
+	records workloadBackupExecutionRecords
 }
 
 func (a workloadBackupExecution) GetWorkloadBackup(ctx context.Context, id string) (core.WorkloadBackup, error) {
@@ -102,7 +106,11 @@ func (a *API) runWorkloadBackup(ctx context.Context, input core.WorkloadBackupRe
 }
 
 func (a *API) executeWorkloadBackupOperation(op core.WorkloadBackupOperation, recovering bool) {
-	records, _ := a.workloadBackupStore()
+	records, ok := a.store.(workloadBackupExecutionRecords)
+	if !ok {
+		a.logger.Error("Workload backup outcome could not be saved", "operation", op.ID)
+		return
+	}
 	adapter := workloadBackupExecution{api: a, records: records}
 	service := backupoperations.Service{Records: adapter, Authority: adapter, Material: adapter, Execution: adapter}
 	if err := service.Execute(context.Background(), op, recovering); err != nil {

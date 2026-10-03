@@ -114,7 +114,7 @@ func (r Request) Validate() error {
 	if IsStorageOperation(r.Operation) {
 		return r.validateStorage()
 	}
-	if r.WorkloadBackup != nil && r.Operation != WorkloadBackup && r.Operation != WorkloadBackupInspect && r.Operation != WorkloadBackupOffsite && r.Operation != WorkloadBackupOffsiteInspect && r.Operation != WorkloadBackupRetire && r.Operation != WorkloadBackupRetireInspect {
+	if r.WorkloadBackup != nil && !IsWorkloadBackupOperation(r.Operation) {
 		return errors.New("unexpected backup inputs")
 	}
 	if r.Storage != nil {

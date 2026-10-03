@@ -1,5 +1,5 @@
-// Package backupoperations executes accepted backup operations and records their
-// outcomes. Admission, HTTP permissions and destructive reviews belong to callers.
+// Package backupoperations admits captures, claims recovery and executes accepted
+// backup operations. HTTP permissions and destructive reviews belong to callers.
 package backupoperations
 
 import (

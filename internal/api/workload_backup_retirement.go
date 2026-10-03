@@ -50,7 +50,7 @@ func (a *API) workloadBackupRetirementReview(ctx context.Context, b core.Workloa
 	}
 	var policy any
 	if b.CapturePolicyID != "" {
-		policies, err := a.backupPolicyStore()
+		policies, err := a.backupPolicyReader()
 		if err != nil {
 			return out, err
 		}

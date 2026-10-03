@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doout/dispatch/internal/backupoperations"
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/remoteruntime"
@@ -61,7 +62,7 @@ func (a *API) listWorkloadBackupPolicies(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, result)
 }
 func (a *API) getWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request) {
-	s, err := a.backupPolicyStore()
+	s, err := a.backupPolicyReader()
 	if err != nil {
 		a.internal(w, err)
 		return
@@ -101,7 +102,7 @@ func (a *API) createWorkloadBackupPolicy(w http.ResponseWriter, r *http.Request)
 		problem(w, 422, "Explicit offsite approval required", "Choose an approved destination, confirm its exact ID and an optional freshness threshold between the capture interval and 17520 hours. Notifications require an offsite destination.")
 		return
 	}
-	record, err := a.store.(store.ServiceResourceStore).GetServiceResource(r.Context(), input.SourceRunID)
+	record, err := a.store.(workloadBackupSourceReader).GetServiceResource(r.Context(), input.SourceRunID)
 	if err != nil {
 		a.notFoundOrInternal(w, err, "Owned PostgreSQL resource")
 		return
@@ -267,7 +268,7 @@ func (a *API) backupOperationPolicyAuthority(ctx context.Context, op core.Worklo
 	if op.CapturePolicyID == "" {
 		return nil
 	}
-	policies, err := a.backupPolicyStore()
+	policies, err := a.backupPolicyReader()
 	if err != nil {
 		return err
 	}
@@ -282,7 +283,7 @@ func (a *API) backupOperationPolicyAuthority(ctx context.Context, op core.Worklo
 func (a *API) backupPolicyAuthority(ctx context.Context, p core.WorkloadBackupPolicy) error {
 	actor := p.Actor
 	if actor.Kind == core.PrincipalServiceAccount {
-		data, ok := a.store.(store.AutomationStore)
+		data, ok := a.store.(workloadBackupActorReader)
 		if !ok {
 			return store.ErrAutomationCredential
 		}
@@ -408,53 +409,10 @@ func (a *API) missBackupCapture(ctx context.Context, p core.WorkloadBackupPolicy
 	_ = s.UpdateWorkloadBackupPolicy(ctx, p, p.Revision)
 }
 func (a *API) acceptBackupCapture(ctx context.Context, p core.WorkloadBackupPolicy) error {
-	s, _ := a.backupPolicyStore()
-	stored, err := a.decryptWorkloadBackup(p.ID, "policy", p.EncryptedInput)
-	if err != nil {
-		return err
-	}
-	return a.deploy.Storage.WithTarget(ctx, p.ServerID, func() error {
-		if err := a.backupPolicyAuthority(ctx, p); err != nil {
-			return err
-		}
-		record, accepted, server, storage, err := a.backupSource(ctx, p.SourceRunID)
-		if err != nil {
-			return err
-		}
-		if record.ResourceID != p.SourceResourceID || storage.ID != stored.Storage.ID || storage.Identity != stored.Storage.Identity || storage.Evidence != stored.Storage.Evidence {
-			return store.ErrWorkloadBackupChanged
-		}
-		now := time.Now().UTC()
-		slot, _, _ := p.DueCapture(now)
-		if slot.IsZero() {
-			return store.ErrWorkloadBackupChanged
-		}
-		id := ulid.Make().String()
-		key, err := workloadbackup.Key()
-		if err != nil {
-			return err
-		}
-		b := core.WorkloadBackup{ID: id, CapturePolicyID: p.ID, ScheduledAt: &slot, ProjectID: p.ProjectID, SourceRunID: p.SourceRunID, StorageID: storage.ID, ServerID: server.ID, NodeID: p.NodeID, SourceResourceID: p.SourceResourceID, State: "creating", Revision: 1, ArtifactID: id, Consistency: "database-native", Format: "postgresql-custom", Encryption: "AES-256-GCM-chunks-v1", KeyID: id, Location: "target-local", Policy: "retain", CheckCount: len(stored.Checks), VerificationState: "not_verified", CleanupState: "complete", VerificationIntervalHours: 24, CreatedAt: now, UpdatedAt: now}
-		request := core.WorkloadBackupRequest{OperationID: id, Action: "backup", Backup: b, Source: accepted.Request, Storage: storage, Key: key, Checks: stored.Checks}
-		if err = deploy.ValidateWorkloadBackupRequest(request, server); err != nil {
-			return err
-		}
-		b.EncryptedInput, err = a.encryptWorkloadBackup(id, "accepted", request)
-		if err != nil {
-			return err
-		}
-		op := newBackupOperation(id, b, "backup")
-		op.CapturePolicyID = p.ID
-		op.EncryptedInput, err = a.encryptWorkloadBackup(id, "operation", request)
-		if err != nil {
-			return err
-		}
-		if err = s.AcceptWorkloadBackupCapture(ctx, p, b, op); err != nil {
-			return err
-		}
-		go a.executeWorkloadBackupOperation(op, false)
-		return nil
-	})
+	policies, _ := a.backupPolicyStore()
+	admission := a.backupAdmission()
+	admission.Policies = policies
+	return admission.Scheduled(ctx, p)
 }
 func (a *API) refreshBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy) core.WorkloadBackupPolicy {
 	if p.LastBackupID == "" {
@@ -568,33 +526,10 @@ func (a *API) pruneBackupPolicy(ctx context.Context, p core.WorkloadBackupPolicy
 
 // After restart, inspect the original accepted operation rather than repeat its mutation.
 func (a *API) recoverBackupPolicyOperations(ctx context.Context, p core.WorkloadBackupPolicy) {
-	if a.backupPolicyAuthority(ctx, p) != nil {
-		return
-	}
 	backups, _ := a.workloadBackupStore()
-	items, err := backups.ListWorkloadBackups(ctx, p.ProjectID)
-	if err != nil {
-		return
-	}
-	for _, b := range items {
-		if b.CapturePolicyID != p.ID {
-			continue
-		}
-		ops, err := backups.ListWorkloadBackupOperations(ctx, b.ID)
-		if err != nil {
-			return
-		}
-		for _, op := range ops {
-			if op.CapturePolicyID != p.ID || (op.State != "running" && op.State != "unknown") || op.LeaseUntil.After(time.Now()) {
-				continue
-			}
-			claimed, err := backups.ClaimWorkloadBackupRecovery(ctx, op.ID, time.Now().UTC(), ulid.Make().String())
-			if err == nil {
-				go a.executeWorkloadBackupOperation(claimed, true)
-			}
-			return
-		}
-	}
+	adapter := workloadBackupAdmission{api: a}
+	scheduler := backupoperations.RecoveryScheduler{Records: backups, Authority: adapter, Dispatch: adapter}
+	scheduler.Recover(ctx, p)
 }
 
 // Called before agent input release and lease renewal for unattended policy jobs.
@@ -663,7 +598,7 @@ func (a *API) checkBackupPolicyRuntimeAuthority(ctx context.Context, id string) 
 	if op.CapturePolicyID == "" {
 		return nil
 	}
-	policies, err := a.backupPolicyStore()
+	policies, err := a.backupPolicyReader()
 	if err != nil {
 		return err
 	}

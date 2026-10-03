@@ -11,10 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doout/dispatch/internal/backupoperations"
 	"github.com/doout/dispatch/internal/core"
-	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/store"
-	"github.com/doout/dispatch/internal/workloadbackup"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
 )
@@ -165,7 +164,7 @@ func (a *API) backupOwnedStorage(ctx context.Context, record core.ServiceResourc
 	return *found, nil
 }
 func (a *API) backupSource(ctx context.Context, id string) (core.ServiceResource, acceptedServiceResource, core.Server, core.StorageResource, error) {
-	record, err := a.store.(store.ServiceResourceStore).GetServiceResource(ctx, id)
+	record, err := a.store.(workloadBackupSourceReader).GetServiceResource(ctx, id)
 	if err != nil {
 		return record, acceptedServiceResource{}, core.Server{}, core.StorageResource{}, err
 	}
@@ -183,8 +182,7 @@ func (a *API) backupSource(ctx context.Context, id string) (core.ServiceResource
 	return record, accepted, server, storage, err
 }
 func newBackupOperation(id string, b core.WorkloadBackup, action string) core.WorkloadBackupOperation {
-	now := time.Now().UTC()
-	return core.WorkloadBackupOperation{ID: id, BackupID: b.ID, ProjectID: b.ProjectID, Action: action, State: "running", Revision: 1, LeaseToken: ulid.Make().String(), LeaseUntil: now.Add(31 * time.Minute), CreatedAt: now, UpdatedAt: now}
+	return backupoperations.NewOperation(id, b, action)
 }
 func (a *API) createWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -199,7 +197,7 @@ func (a *API) createWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Invalid verification schedule", "Use zero for manual verification or 1 to 8760 hours.")
 		return
 	}
-	record, err := a.store.(store.ServiceResourceStore).GetServiceResource(r.Context(), input.SourceRunID)
+	record, err := a.store.(workloadBackupSourceReader).GetServiceResource(r.Context(), input.SourceRunID)
 	if err != nil {
 		a.notFoundOrInternal(w, err, "Owned PostgreSQL resource")
 		return
@@ -220,34 +218,9 @@ func (a *API) createWorkloadBackup(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	var b core.WorkloadBackup
-	var op core.WorkloadBackupOperation
-	err = a.deploy.Storage.WithTarget(r.Context(), record.Target.ServerID, func() error {
-		record, accepted, server, storage, err := a.backupSource(r.Context(), input.SourceRunID)
-		if err != nil {
-			return err
-		}
-		key, err := workloadbackup.Key()
-		if err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		b = core.WorkloadBackup{ID: id, ProjectID: record.ProjectID, SourceRunID: record.RunID, StorageID: storage.ID, ServerID: server.ID, NodeID: server.AgentNodeID, SourceResourceID: record.ResourceID, State: "creating", Revision: 1, ArtifactID: id, Consistency: "database-native", Format: "postgresql-custom", Encryption: "AES-256-GCM-chunks-v1", KeyID: id, Location: "target-local", Policy: "retain", CheckCount: len(input.Checks), VerificationState: "not_verified", CleanupState: "complete", VerificationIntervalHours: input.VerificationIntervalHours, CreatedAt: now, UpdatedAt: now}
-		request := core.WorkloadBackupRequest{OperationID: id, Action: "backup", Backup: b, Source: accepted.Request, Storage: storage, Key: key, Checks: input.Checks}
-		if err = deploy.ValidateWorkloadBackupRequest(request, server); err != nil {
-			return err
-		}
-		b.EncryptedInput, err = a.encryptWorkloadBackup(id, "accepted", request)
-		if err != nil {
-			return err
-		}
-		op = newBackupOperation(id, b, "backup")
-		op.EncryptedInput, err = a.encryptWorkloadBackup(op.ID, "operation", request)
-		if err != nil {
-			return err
-		}
-		return s.CreateWorkloadBackup(r.Context(), b, op)
-	})
+	admission := a.backupAdmission()
+	admission.Records = s
+	op, err := admission.Manual(r.Context(), backupoperations.ManualCapture{ID: id, SourceRunID: input.SourceRunID, ServerID: record.Target.ServerID, Checks: input.Checks, VerificationIntervalHours: input.VerificationIntervalHours})
 	if err != nil {
 		a.failMutationAcceptance(r.Context(), 409, "Backup acceptance failed; inspect the owned source, encryption and storage.")
 		problem(w, 409, "Backup unavailable", err.Error())
@@ -512,7 +485,7 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 			out.BlockedReason = "Retire the local copy or review offsite deletion separately before deleting all local archive metadata."
 		}
 		if b.CapturePolicyID != "" && b.VerificationState == "verified" {
-			policies, e := a.backupPolicyStore()
+			policies, e := a.backupPolicyReader()
 			if e != nil {
 				return out, e
 			}
@@ -536,7 +509,7 @@ func (a *API) workloadBackupReview(ctx context.Context, r *http.Request, action 
 		}
 		var currentPolicy any
 		if b.CapturePolicyID != "" {
-			policies, e := a.backupPolicyStore()
+			policies, e := a.backupPolicyReader()
 			if e != nil {
 				return out, e
 			}
@@ -617,7 +590,7 @@ func (a *API) scheduleWorkloadBackupVerification(ctx context.Context) {
 		}
 		policyID := ""
 		if b.CapturePolicyID != "" {
-			policies, e := a.backupPolicyStore()
+			policies, e := a.backupPolicyReader()
 			if e != nil {
 				continue
 			}

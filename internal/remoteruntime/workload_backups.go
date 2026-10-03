@@ -2,6 +2,7 @@ package remoteruntime
 
 import (
 	"errors"
+
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/runtimecontract"
 )
@@ -12,6 +13,15 @@ const WorkloadBackupOffsite runtimecontract.Operation = "workload_backup_offsite
 const WorkloadBackupOffsiteInspect runtimecontract.Operation = "workload_backup_offsite_inspect"
 const WorkloadBackupRetire runtimecontract.Operation = "workload_backup_retire"
 const WorkloadBackupRetireInspect runtimecontract.Operation = "workload_backup_retire_inspect"
+
+func IsWorkloadBackupOperation(op runtimecontract.Operation) bool {
+	switch op {
+	case WorkloadBackup, WorkloadBackupInspect, WorkloadBackupOffsite, WorkloadBackupOffsiteInspect, WorkloadBackupRetire, WorkloadBackupRetireInspect:
+		return true
+	default:
+		return false
+	}
+}
 
 func NewWorkloadBackupRequest(input core.WorkloadBackupRequest, server core.Server) Request {
 	subject := input.Source

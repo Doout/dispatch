@@ -6078,13 +6078,22 @@ components:
         previewId: { type: string }
         previewAlias: { type: string }
         providerPhase: { type: string }
+        providerCreateAttempted: { type: boolean, description: Whether the original provider mutation was attempted. }
         policyActorId: { type: string }
         policyApprovedAt: { type: string, format: date-time }
         runId: { type: string }
         projectId: { type: string }
         serviceId: { type: string }
         name: { type: string }
-        target: { type: object, properties: { provider: {type: string}, serverId: {type: string}, resourceName: {type: string}, namespace: {type: string} } }
+        target:
+          type: object
+          properties:
+            provider: { type: string }
+            serverId: { type: string }
+            resourceName: { type: string }
+            namespace: { type: string }
+            providerRef: { type: string }
+            network: { type: string }
         state: { type: string, enum: [accepted, provisioning, recovering, ready, unresolved, deleting, deleted] }
         policy: { type: string, enum: [retain, suspend, delete] }
         revision: { type: integer }
@@ -6443,6 +6452,8 @@ components:
               identity: { type: string }
               createdAt: { type: string, format: date-time }
               protected: { type: array, items: { type: string }, description: Readable reasons excluding this resource from deletion. }
+              targetBinding: { type: string, description: Digest of the accepted target registration and enrollment. }
+              containers: { type: array, items: { type: string }, description: Exact retained container identities covered by this review. }
         results:
           type: array
           items:

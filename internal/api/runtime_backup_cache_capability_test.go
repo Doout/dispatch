@@ -20,6 +20,58 @@ import (
 const legacyOffsiteCapabilities = "deploy,inspect,logs,start,stop,rollback,destroy,provision_service,service_inspect,service_delete,workload_backup,workload_backup_inspect,workload_backup_offsite,workload_backup_offsite_inspect,storage_inspect,storage_delete,retention_inspect,retention_prune"
 const cacheCleanupCapabilities = legacyOffsiteCapabilities + ",workload_backup_retire,workload_backup_retire_inspect"
 
+func TestBackupCacheCapabilityLimitsBeforeLeaseAndDuringRenewal(t *testing.T) {
+	const required = "workload_backup_offsite,workload_backup_retire"
+	for _, tc := range []struct {
+		name, header string
+		valid        bool
+	}{
+		{"20 entries", required + "," + strings.Repeat("inspect,", 17) + "inspect", true},
+		{"21 entries", required + "," + strings.Repeat("inspect,", 18) + "inspect", false},
+		{"512 bytes", required + "," + strings.Repeat("x", 512-len(required)-1), true},
+		{"513 bytes", required + "," + strings.Repeat("x", 513-len(required)-1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, node, session, request, id := queuedCacheRecovery(t, "retired-source", "verify")
+			want := 422
+			if tc.valid {
+				want = 200
+			}
+			raw := cacheRuntimeRequest(t, a, node, session.Token, "next", "GET", tc.header, nil, want)
+			if !tc.valid {
+				job, err := a.runtimeBroker().Store.GetRuntimeJob(context.Background(), id)
+				if err != nil || job.State != "pending" || job.LeaseToken != "" || job.EncryptedRequest == "" {
+					t.Fatal("invalid capabilities changed the queued request", err)
+				}
+				raw = cacheRuntimeRequest(t, a, node, session.Token, "next", "GET", cacheCleanupCapabilities, nil, 200)
+			}
+			var lease remoteruntime.LeasedJob
+			if err := json.Unmarshal(raw, &lease); err != nil || lease.ID != id {
+				t.Fatal("capability negotiation lost the queued job", err)
+			}
+			cacheRuntimeRequest(t, a, node, session.Token, id+"/heartbeat", "POST", tc.header, remoteruntime.Heartbeat{LeaseToken: "stale-lease"}, 409)
+			cacheRuntimeRequest(t, a, node, session.Token, id+"/heartbeat", "POST", tc.header, remoteruntime.Heartbeat{LeaseToken: lease.LeaseToken}, want)
+			job, err := a.runtimeBroker().Store.GetRuntimeJob(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.valid {
+				if job.State != "running" || job.LeaseToken != lease.LeaseToken || job.EncryptedRequest == "" {
+					t.Fatal("valid capability boundary interrupted execution")
+				}
+			} else {
+				if job.State != "unknown" || !job.CancelRequested || job.LeaseToken != "" || job.EncryptedRequest != "" {
+					t.Fatal("invalid cleanup capabilities retained a usable lease")
+				}
+				op, err := a.store.(store.WorkloadBackupStore).GetWorkloadBackupOperation(context.Background(), request.WorkloadBackup.OperationID)
+				if err != nil || op.EncryptedInput == "" {
+					t.Fatal("invalid cleanup capabilities erased recovery input", err)
+				}
+			}
+		})
+	}
+}
+
 func cacheRuntimeRequest(t *testing.T, a *API, node core.PrivateNetwork, token, suffix, method, capabilities string, input any, want int) []byte {
 	t.Helper()
 	raw, err := json.Marshal(input)

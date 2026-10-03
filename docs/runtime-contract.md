@@ -81,3 +81,24 @@ before mutation, and run the applicable shared suite plus its own ownership,
 restart, immutable artifact and runtime integration tests. Optional operations
 may be added without changing v1 semantics. An incompatible contract requires a
 new version; unknown versions cannot enable mutations.
+
+## Agent wire compatibility
+
+The separate `dispatch.agent.runtime/v1` protocol carries encrypted controller
+requests and agent lease receipts. Its request digest is SHA-256 over the exact
+compact `encoding/json` bytes. Changing serialization can invalidate a saved
+request or the digest that an agent checks before execution.
+
+`internal/remoteruntime/testdata/wire` freezes deployment and offsite restore
+reconciliation requests, a leased recovery job, a heartbeat and a completion.
+The fixtures use fixed UTC timestamps, immutable fixture identities and fake
+credentials. Each JSON file contains the exact wire bytes without a trailing
+newline. The tests retain literal SHA-256 digests, validate decoded requests and
+backup completion evidence, and compare re-encoded and reconstructed requests
+with those bytes. Recovery keeps the original operation ID independently of its
+inspection job ID and retains its downloaded-cache cleanup requirement.
+
+There is no automatic fixture update mode. An intentional change must explain
+how existing encrypted requests, recovery inputs and older agents remain
+compatible, then update the affected JSON and literal digest together. Use a new
+protocol version for an incompatible change.
