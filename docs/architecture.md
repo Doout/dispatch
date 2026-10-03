@@ -67,7 +67,8 @@ rules within each domain when extracting shared code.
 
 | Code | Responsibility |
 | --- | --- |
-| `internal/api` | Authenticate public requests, enforce roles and project grants, review mutations, retain idempotency receipts and coordinate domain operations. The API currently also owns backup scheduling and reconciliation. |
+| `internal/api` | Authenticate public requests, enforce roles and project grants, review mutations, retain idempotency receipts and coordinate domain operations. The API currently also owns backup admission and scheduling, and supplies vault, authority and runtime adapters to the backup operation service. |
+| `internal/backupoperations` | Prepare accepted backup execution, recheck authority after target waits, execute or reconcile the original operation and record its outcome. Depend on the record reads, authority checks, recovery material and execution adapters this service uses. |
 | `internal/core` | Define persisted records and public data shapes. Keep command execution and database access out of these types. |
 | `internal/store` | Enforce atomic admission, revision checks, lease ownership, protected-resource constraints and durable transitions for SQLite and PostgreSQL. |
 | `internal/remoteruntime` | Bind encrypted requests to a node and operation, recheck ownership at execution boundaries, validate typed evidence and retain uncertain outcomes. |
@@ -88,6 +89,26 @@ for temporary environments, backup policy authority and agent capabilities remai
 separate at their existing boundaries. Do not replace these fresh checks with the
 approval captured when an operation was first accepted.
 
+The backup operation service uses the accepted lease minus its one-minute recovery
+margin. Starting the dispatcher does not grant a new execution window; recovery
+uses the lease issued by the durable recovery claim. The service retains
+both policy authority checks and both destination enrollment checks around the
+target lock. Once it loads an operation's backup, it records the outcome with
+`context.WithoutCancel`; timeouts and uncertain cleanup keep the original recovery
+material and operation identity. HTTP admission and durable recovery claims remain
+with their existing callers.
+
+Policy listing filters visibility before loading inspection evidence. It reads
+backups once per project with visible offsite policies, then reads operations for
+their archives. These inputs live for one request and only feed the read-only
+projection. A failed operation read retains that policy's recorded projection
+without suppressing its siblings. Schedulers and execution authority checks still
+read fresh records at their original boundaries.
+
+Backup enrollment checks depend on the credential reader they use, rather than a
+concrete SQL store. A missing reader, revoked credential, missing public key or
+generation mismatch retains each caller's existing rejection behavior.
+
 ## Maintainability review
 
 The review starting at `0d5debe` on 2026-10-03 found these priorities:
@@ -96,9 +117,10 @@ The review starting at `0d5debe` on 2026-10-03 found these priorities:
 | --- | --- |
 | First pass | Remove repeated backup policy authority checks, scheduled backup SQL primitives and runtime ownership validation. Preserve error precedence, lock scope, fresh checks after waiting and uncertain-operation recovery. |
 | First pass | Split the complete API race suite into bounded CI shards and verify discovered roots against executed roots. The previous passing API run took 2,299.959 seconds under a 40-minute timeout. Required Docker and PostgreSQL fixtures remain separate checks. |
-| Next | Separate backup operation preparation, execution and reconciliation from HTTP handlers. `workload_backups.go` has 893 lines and mixes those responsibilities. Start with one domain service and consumer-owned interfaces while retaining the public review and receipt contracts. |
-| Next | Batch backup policy inspection inputs per visible project. Policy listing currently reloads project backups and each backup's operations for each policy. Keep the projection read-only and retain project filtering and cleanup-aware freshness. |
-| Next | Reduce dependencies on the base `store.Store`, which has 255 directly declared context methods plus embedded domain interfaces. New domain services should depend on the smallest interface they use. Preserve the current optional-feature error behavior during migration. |
+| Second pass | Separate accepted backup execution and reconciliation from HTTP handlers into `internal/backupoperations`, with consumer-owned interfaces. Keep public review, admission and receipt contracts unchanged. |
+| Second pass | Batch backup policy inspection inputs per visible project. Keep the projection read-only, preserve per-policy read failures and retain project filtering and cleanup-aware freshness. |
+| Second pass | Remove concrete SQL store dependencies from backup enrollment checks. Preserve caller-specific rejection behavior when the credential reader is absent or enrollment changed. |
+| Next | Continue reducing dependencies on the base `store.Store`, which has 255 directly declared context methods plus embedded domain interfaces. The backup operation service starts with narrow consumer interfaces; admission and scheduling still depend on the API. Preserve optional-feature error behavior as those boundaries move. |
 | Next | Define runtime capability advertisement and controller bounds together. Adding an operation currently requires changes to request validation, executor dispatch, the agent advertisement and controller admission limits. Check old and current agent contracts in the same regression suite. |
 | Before expanding the UI | Extract feature state and dialogs from `web/src/App.tsx`, which has 3,996 lines, and group the 1,708-line `web/src/api.ts` by domain behind its existing exports. Keep route handling, authentication and overview subscriptions in the application shell. |
 | As contracts grow | Check OpenAPI, shipped clients and wire examples together. A JSON shape change can affect saved encrypted requests and agent digest checks even when a UI does not use the endpoint. |

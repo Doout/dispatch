@@ -200,7 +200,11 @@ func TestBackupExportEnrollmentWithWrappedStore(t *testing.T) {
 		if input.Action == "export" {
 			exports.Add(1)
 		}
-		return scheduledOffsiteResult(input), nil
+		result := scheduledOffsiteResult(input)
+		if input.Action == "restore" {
+			result.State = "restored"
+		}
+		return result, nil
 	}
 	capture := mutationRequest(a, "secret", "POST", "/api/v1/workload-backups", "wrapped-export-capture", map[string]any{"sourceRunId": source.RunID})
 	if capture.Code != 202 {
@@ -245,5 +249,31 @@ func TestBackupExportEnrollmentWithWrappedStore(t *testing.T) {
 	accepted, err := a.decryptWorkloadBackup(op.ID, "operation", op.EncryptedInput)
 	if err != nil || op.ExecutionGeneration != credential.Generation || accepted.ExecutionNodeGeneration != credential.Generation || exports.Load() != 1 {
 		t.Fatal("export lost accepted enrollment or dispatched twice", err, op.ExecutionGeneration, accepted.ExecutionNodeGeneration, exports.Load())
+	}
+	for _, action := range []string{"verify", "restore"} {
+		backup, err := domains.GetWorkloadBackup(ctx, backupID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		destination := ""
+		if action == "restore" {
+			destination = source.RunID
+		}
+		op, err := a.acceptWorkloadBackupOperation(ctx, backup, action, "wrapped-offsite-"+action, destination)
+		if err != nil {
+			t.Fatal("current wrapped enrollment rejected offsite recovery admission", action, err)
+		}
+		accepted, err := a.decryptWorkloadBackup(op.ID, "operation", op.EncryptedInput)
+		if err != nil || op.ExecutionNodeID != credential.NetworkID || op.ExecutionGeneration != credential.Generation || accepted.ExecutionNodeGeneration != credential.Generation || accepted.OffsiteAccess == nil {
+			t.Fatal("offsite recovery did not bind current enrollment", action, err, op.ExecutionGeneration)
+		}
+		if action == "restore" && (op.TargetRunID != source.RunID || accepted.Destination == nil || accepted.ExpectedDestination != source.ResourceID) {
+			t.Fatal("restore admission lost its owned destination")
+		}
+		a.executeWorkloadBackupOperation(op, false)
+		saved := awaitBackupOperation(t, a, op.ID, "succeeded")
+		if saved.ExecutionGeneration != credential.Generation || saved.CleanupState != "complete" {
+			t.Fatal("offsite recovery lost enrolled identity or cleanup evidence", action)
+		}
 	}
 }

@@ -335,7 +335,7 @@ func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.Workload
 		op.ExecutionServerID = server.ID
 		op.ExecutionNodeID = server.AgentNodeID
 		if server.AgentNodeID != "" {
-			data, ok := a.store.(*store.SQLStore)
+			data, ok := a.store.(workloadBackupEnrollmentReader)
 			if !ok {
 				return op, errors.New("target identity unavailable")
 			}
@@ -361,7 +361,7 @@ func (a *API) acceptWorkloadBackupOperation(ctx context.Context, b core.Workload
 			}
 			op.ExecutionServerID, op.ExecutionNodeID = server.ID, server.AgentNodeID
 			if server.AgentNodeID != "" {
-				data, ok := a.store.(*store.SQLStore)
+				data, ok := a.store.(workloadBackupEnrollmentReader)
 				if !ok {
 					return op, errors.New("target identity unavailable")
 				}
