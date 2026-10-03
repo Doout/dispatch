@@ -67,8 +67,8 @@ rules within each domain when extracting shared code.
 
 | Code | Responsibility |
 | --- | --- |
-| `internal/api` | Authenticate public requests, enforce roles and project grants, review mutations, retain idempotency receipts and coordinate domain operations. The API currently also owns backup admission and scheduling, and supplies vault, authority and runtime adapters to the backup operation service. |
-| `internal/backupoperations` | Prepare accepted backup execution, recheck authority after target waits, execute or reconcile the original operation and record its outcome. Depend on the record reads, authority checks, recovery material and execution adapters this service uses. |
+| `internal/api` | Authenticate public requests, enforce roles and project grants, review mutations, retain idempotency receipts and coordinate domain operations. Delegate backup capture admission and recovery selection to `internal/backupoperations`, and supply vault, authority, persistence and runtime adapters. |
+| `internal/backupoperations` | Construct manual and scheduled captures, select at most one recovery claim per policy tick, prepare accepted execution, recheck authority after target waits, execute or reconcile the original operation and record its outcome. Each consumer declares the reads and writes it uses. |
 | `internal/core` | Define persisted records and public data shapes. Keep command execution and database access out of these types. |
 | `internal/store` | Enforce atomic admission, revision checks, lease ownership, protected-resource constraints and durable transitions for SQLite and PostgreSQL. |
 | `internal/remoteruntime` | Bind encrypted requests to a node and operation, recheck ownership at execution boundaries, validate typed evidence and retain uncertain outcomes. |
@@ -95,8 +95,12 @@ uses the lease issued by the durable recovery claim. The service retains
 both policy authority checks and both destination enrollment checks around the
 target lock. Once it loads an operation's backup, it records the outcome with
 `context.WithoutCancel`; timeouts and uncertain cleanup keep the original recovery
-material and operation identity. HTTP admission and durable recovery claims remain
-with their existing callers.
+material and operation identity. HTTP handlers retain public validation, permissions, reviews and receipts. Capture
+admission reloads source and storage under the target lock before creating keys,
+encrypting inputs and calling the unchanged atomic store admission. Scheduled
+captures recheck policy authority and the due slot inside that lock. Recovery
+selection stops after one eligible claim attempt per policy tick, including a
+failed claim. The store still owns the durable lease transition.
 
 Policy listing filters visibility before loading inspection evidence. It reads
 backups once per project with visible offsite policies, then reads operations for
@@ -109,25 +113,44 @@ Backup enrollment checks depend on the credential reader they use, rather than a
 concrete SQL store. A missing reader, revoked credential, missing public key or
 generation mismatch retains each caller's existing rejection behavior.
 
+Agent capability advertisement and controller limits live in
+`internal/remoteruntime/capabilities.go`. The catalog retains the original operation
+order and parser semantics. Typed validators and executor dispatch still enforce
+each operation's inputs. The public seven-operation runtime manifest remains
+separate from the agent protocol.
+
+The web application shell owns routing, authentication and the overview
+subscription. Feature pages and dialogs own their component state. API domain
+modules share one transport and session module; `web/src/api.ts` preserves the
+existing client exports. Deployment log polling has its own hook, which discards
+responses after navigation and pauses polling in hidden tabs.
+
+Default same-repository previews need no manual chart approval. Generated apps
+may resolve chart revisions through the normal deployment path after fresh source
+and lifetime checks. Their chart repository still matches the configured source.
+Explicit source approvals retain the approved revision's chart commit.
+
 ## Maintainability review
 
 The review starting at `0d5debe` on 2026-10-03 found these priorities:
 
-| Order | Finding and next change |
+| Pass | Completed change |
 | --- | --- |
-| First pass | Remove repeated backup policy authority checks, scheduled backup SQL primitives and runtime ownership validation. Preserve error precedence, lock scope, fresh checks after waiting and uncertain-operation recovery. |
-| First pass | Split the complete API race suite into bounded CI shards and verify discovered roots against executed roots. The previous passing API run took 2,299.959 seconds under a 40-minute timeout. Required Docker and PostgreSQL fixtures remain separate checks. |
-| Second pass | Separate accepted backup execution and reconciliation from HTTP handlers into `internal/backupoperations`, with consumer-owned interfaces. Keep public review, admission and receipt contracts unchanged. |
-| Second pass | Batch backup policy inspection inputs per visible project. Keep the projection read-only, preserve per-policy read failures and retain project filtering and cleanup-aware freshness. |
-| Second pass | Remove concrete SQL store dependencies from backup enrollment checks. Preserve caller-specific rejection behavior when the credential reader is absent or enrollment changed. |
-| Next | Continue reducing dependencies on the base `store.Store`, which has 255 directly declared context methods plus embedded domain interfaces. The backup operation service starts with narrow consumer interfaces; admission and scheduling still depend on the API. Preserve optional-feature error behavior as those boundaries move. |
-| Next | Define runtime capability advertisement and controller bounds together. Adding an operation currently requires changes to request validation, executor dispatch, the agent advertisement and controller admission limits. Check old and current agent contracts in the same regression suite. |
-| Before expanding the UI | Extract feature state and dialogs from `web/src/App.tsx`, which has 3,996 lines, and group the 1,708-line `web/src/api.ts` by domain behind its existing exports. Keep route handling, authentication and overview subscriptions in the application shell. |
-| As contracts grow | Check OpenAPI, shipped clients and wire examples together. A JSON shape change can affect saved encrypted requests and agent digest checks even when a UI does not use the endpoint. |
+| First pass, complete | Remove repeated backup policy authority checks, scheduled backup SQL primitives and runtime ownership validation. Preserve error precedence, lock scope, fresh checks after waiting and uncertain-operation recovery. |
+| First pass, complete | Split the complete API race suite into bounded CI shards and verify discovered roots against executed roots. The previous passing API run took 2,299.959 seconds under a 40-minute timeout. Required Docker and PostgreSQL fixtures remain separate checks. |
+| Second pass, complete | Separate accepted backup execution and reconciliation from HTTP handlers into `internal/backupoperations`, with consumer-owned interfaces. Keep public review, admission and receipt contracts unchanged. |
+| Second pass, complete | Batch backup policy inspection inputs per visible project. Keep the projection read-only, preserve per-policy read failures and retain project filtering and cleanup-aware freshness. |
+| Second pass, complete | Remove concrete SQL store dependencies from backup enrollment checks. Preserve caller-specific rejection behavior when the credential reader is absent or enrollment changed. |
+| Final pass, complete | Extract capture admission and recovery selection behind narrow source, material, authority, execution and persistence adapters. Narrow backup policy, actor, enrollment and execution reads without changing optional-feature error behavior. |
+| Final pass, complete | Define runtime capability advertisement and controller bounds together. Check legacy and current agents, negotiation at lease and cleanup renewal, and stale-lease precedence. |
+| Final pass, complete | Extract feature pages, dialogs and log polling from `web/src/App.tsx`, and group `web/src/api.ts` by domain behind its existing exports. Preserve session, route, subscription, markup and stylesheet behavior. |
+| Final pass, complete | Compare nested recovery responses against OpenAPI alongside the existing shipped-client request checks. Freeze representative agent wire examples and their digests to guard saved encrypted requests. |
 
-These sizes describe the reviewed revision. Use them to locate responsibilities,
-then assess coupling and repeated rules before deciding what to move. File size
-alone does not justify a refactor.
+The reviewed revision had 3,996 lines in the application shell, 1,708 in the web
+API client and 255 directly declared methods in the base store interface. The
+refactors split responsibilities where consumers needed a smaller dependency.
+The shared store contract still describes the controller's persistence backend;
+new domain services should declare only the operations they use.
 
 Each refactor should preserve observable behavior and include the relevant
 existing lifecycle tests. Add a regression when a boundary lacks coverage, such
