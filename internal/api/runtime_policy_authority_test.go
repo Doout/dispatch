@@ -128,6 +128,23 @@ func TestScheduledBackupDeniedFirstDispatchStopsWithoutReclaim(t *testing.T) {
 	}
 }
 
+func TestBackupUnsupportedFirstDispatchRecordsCompleteCleanup(t *testing.T) {
+	a, node, session, _, request := queuedBackupPolicyRuntime(t)
+	req := httptest.NewRequest("GET", "/api/v1/edge/nodes/"+node.ID+"/runtime/jobs/next", nil)
+	req.Header.Set("Authorization", "Bearer "+session.Token)
+	req.Header.Set("X-Dispatch-Runtime-Version", remoteruntime.APIVersion)
+	req.Header.Set("X-Dispatch-Runtime-Capabilities", "inspect")
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, req)
+	if w.Code != 204 || w.Body.Len() != 0 {
+		t.Fatal("unsupported job payload was delivered", w.Code)
+	}
+	result, err := a.runtimeBroker().Wait(context.Background(), "backup-"+request.OperationID, nil)
+	if err == nil || result.State != "failed" || result.Code != runtimecontract.Unsupported || result.WorkloadBackup == nil || result.WorkloadBackup.CleanupState != "complete" {
+		t.Fatal("unsupported execution lost its proven cleanup outcome", err)
+	}
+}
+
 func TestScheduledBackupDeniedReofferPreservesUnknownAndRecoveryEvidence(t *testing.T) {
 	a, node, session, policy, request := queuedBackupPolicyRuntime(t)
 	ctx := context.Background()

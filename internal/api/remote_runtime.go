@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"github.com/doout/dispatch/internal/runtimecontract"
@@ -90,7 +91,7 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !supported {
-		_ = broker.Complete(r.Context(), node.ID, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: remoteruntime.Result{State: "failed", Code: runtimecontract.Unsupported, Message: "The enrolled agent does not advertise this runtime capability."}})
+		a.rejectRuntimeDispatch(r.Context(), broker, node.ID, job, runtimecontract.Unsupported, "The enrolled agent does not advertise this runtime capability.")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -99,18 +100,7 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.checkBackupPolicyRuntimeAuthority(r.Context(), job.ID); err != nil {
-		// No first-attempt payload has left the controller. A later attempt may
-		// already have effects, so stop delivery without claiming those effects absent.
-		if job.Attempt == 1 {
-			result := remoteruntime.Result{State: "failed", Code: runtimecontract.OwnershipConflict, Message: "Scheduled backup authority changed before runtime dispatch."}
-			if request := job.Request.WorkloadBackup; request != nil {
-				result.WorkloadBackup = &core.WorkloadBackupResult{BackupID: request.Backup.ID, ProjectID: request.Backup.ProjectID, OperationID: request.OperationID, ArtifactID: request.Backup.ArtifactID, State: "failed", CleanupState: "complete", Message: result.Message}
-			}
-			err = broker.Complete(r.Context(), node.ID, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: result})
-		}
-		if job.Attempt > 1 || err != nil {
-			_ = broker.Store.FenceRuntimeJob(r.Context(), node.ID, job.ID, job.LeaseToken, time.Now().UTC())
-		}
+		a.rejectRuntimeDispatch(r.Context(), broker, node.ID, job, runtimecontract.OwnershipConflict, "Scheduled backup authority changed before runtime dispatch.")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -141,6 +131,21 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, job)
+}
+
+func (a *API) rejectRuntimeDispatch(ctx context.Context, broker *remoteruntime.Broker, node string, job *remoteruntime.LeasedJob, code runtimecontract.Code, message string) {
+	// No first-attempt payload has left the controller. A later attempt may
+	// already have effects, so stop delivery without claiming those effects absent.
+	if job.Attempt == 1 {
+		result := remoteruntime.Result{State: "failed", Code: code, Message: message}
+		if request := job.Request.WorkloadBackup; request != nil {
+			result.WorkloadBackup = &core.WorkloadBackupResult{BackupID: request.Backup.ID, ProjectID: request.Backup.ProjectID, OperationID: request.OperationID, ArtifactID: request.Backup.ArtifactID, State: "failed", CleanupState: "complete", Message: message}
+		}
+		if err := broker.Complete(ctx, node, job.ID, remoteruntime.Completion{LeaseToken: job.LeaseToken, Result: result}); err == nil {
+			return
+		}
+	}
+	_ = broker.Store.FenceRuntimeJob(ctx, node, job.ID, job.LeaseToken, time.Now().UTC())
 }
 
 func (a *API) renewRuntimeJob(w http.ResponseWriter, r *http.Request) {
