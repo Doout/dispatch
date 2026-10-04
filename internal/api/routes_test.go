@@ -70,7 +70,7 @@ func TestRouteGroupsRejectMembersAndImpersonatedOwners(t *testing.T) {
 	}
 	for _, route := range []string{
 		"GET /infrastructure/providers", "POST /infrastructure/providers", "PUT /infrastructure/providers/missing", "POST /infrastructure/providers/missing/verify", "POST /infrastructure/providers/missing/options",
-		"GET /infrastructure/bootstrap", "POST /infrastructure/bootstrap/review", "POST /infrastructure/bootstrap/missing/accept", "POST /infrastructure/bootstrap/missing/retry",
+		"POST /infrastructure/bootstrap/review", "POST /infrastructure/bootstrap/missing/accept",
 		"GET /secrets", "POST /secret-stores", "DELETE /private-networks/missing",
 		"POST /laneway-networks/authorize", "POST /github-apps/manifest", "POST /servers",
 		"POST /relay/ssh/install", "POST /auth/providers", "GET /users/missing/profile",

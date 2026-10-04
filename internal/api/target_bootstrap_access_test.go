@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +69,36 @@ func TestTargetBootstrapScopedInspectionAndOriginalRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := m.Store.GetTargetBootstrap(ctx, item.ID)
+	member := core.User{ID: "bootstrap-member", Username: "bootstrap-member", SystemRole: core.UserRoleMember, State: core.UserStateActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err = a.store.CreateUser(ctx, member); err != nil {
+		t.Fatal(err)
+	}
+	memberToken, err := a.createSession(ctx, member.ID, identityForUser(member))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, impersonating := range []bool{false, true} {
+		for _, check := range []struct {
+			method, url string
+			status      int
+		}{
+			{"GET", path, 403},
+			{"GET", "/api/v1/infrastructure/bootstrap", 200},
+			{"POST", path + "/retry", 403},
+		} {
+			request := httptest.NewRequest(check.method, check.url, strings.NewReader(`{"digest":"`+item.Digest+`"}`))
+			request.Header.Set("Authorization", "Bearer "+memberToken)
+			if impersonating {
+				request.Header.Set("Authorization", "Bearer secret")
+				request.Header.Set(impersonateUserHeader, member.ID)
+			}
+			response := httptest.NewRecorder()
+			a.ServeHTTP(response, request)
+			if response.Code != check.status || check.url == "/api/v1/infrastructure/bootstrap" && strings.TrimSpace(response.Body.String()) != "[]" {
+				t.Fatalf("member installation access (impersonating %t): %s %s: %d %s", impersonating, check.method, check.url, response.Code, response.Body.String())
+			}
+		}
+	}
 	automationRequest(t, a, issued.Token, "GET", path, nil, 403)
 	w = automationRequest(t, a, issued.Token, "GET", "/api/v1/infrastructure/bootstrap", nil, 200)
 	if strings.TrimSpace(w.Body.String()) != "[]" {
