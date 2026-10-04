@@ -5,12 +5,13 @@ Dispatch can create, inspect, adopt, and delete machines through a registered
 without cloud credentials or billing. A real provider adapter is a separate
 integration; the mock does not allocate a VM.
 
-In **Servers → On-demand servers**, select a project and approved provider,
-load the provider's region/size/image/network choices, and choose a stored SSH
+Use the [HTTP workflow](#http-workflow) below or the
+[CLI and MCP commands](automation-client.md) to select a project and approved
+provider, load its region/size/image/network choices, and reference a stored SSH
 key. Only the public SSH key is sent. Provider configuration follows the
 advertised JSON Schema; undeclared fields are rejected and write-only fields
-require secret references. Review the rendered selection and type the machine
-name to accept it. Accepted inputs, including resolved field secrets, are
+require secret references. Inspect the saved review and supply the exact machine
+name as `confirmName` to accept it. Accepted inputs, including resolved field secrets, are
 frozen in encrypted storage. Credential rotation does not change a pending
 request's payload.
 

@@ -15,11 +15,6 @@ import {
 import { api, Deployment, GitHubAppConnection, Overview, RelayWebhook, Server } from "../api";
 import { relative } from "../presentation";
 import { View } from "../routes";
-import { InfrastructureProviders } from "../InfrastructureProviders";
-import { InfrastructureQuotas } from "../InfrastructureQuotas";
-import { ManagedServers } from "../ManagedServers";
-import { TemporaryEnvironments } from "../TemporaryEnvironments";
-import { TargetBootstraps } from "../TargetBootstraps";
 import { PageHeader } from "../PageHeader";
 import { StatusLabel, TableIconAction } from "../ResourceTable";
 import { ResourceSummary } from "../components/PageStates";
@@ -75,10 +70,6 @@ export function ServersPage({
           { label: "Relay connected", value: connected },
         ]}
       />
-      {canManage && <InfrastructureProviders overview={overview} />}
-      <InfrastructureQuotas overview={overview} canManage={canManage} />
-      <TemporaryEnvironments overview={overview} canManage={canManage} />
-      {canManage && <><ManagedServers overview={overview} /><TargetBootstraps overview={overview} /></>}
       <section className="server-section">
         <div className="section-title">
           <div>
