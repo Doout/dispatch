@@ -24,6 +24,8 @@ type Options struct {
 	FailDelete       bool
 	FailSnapshot     bool
 	FailRestore      bool
+	FailPower        bool
+	FailPromotion    bool
 	CorruptSnapshot  bool
 	UnsafeRestore    bool
 	DisableSnapshots bool
@@ -48,6 +50,9 @@ type savedOperation struct {
 	Delete    bool               `json:"delete"`
 	Fail      bool               `json:"fail"`
 	Kind      string             `json:"kind,omitempty"`
+	Action    string             `json:"action,omitempty"`
+	Network   string             `json:"network,omitempty"`
+	Identity  string             `json:"identity,omitempty"`
 }
 type savedKey struct {
 	Digest      string `json:"digest"`
@@ -107,8 +112,9 @@ func New(options Options) (*Mock, error) {
 
 func (m *Mock) Manifest(context.Context) (provider.Manifest, error) {
 	manifest := provider.Manifest{APIVersion: provider.APIVersion, Name: "dispatch-mock", DisplayName: "Dispatch mock provider", Version: "2.0.0", Capabilities: []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete, provider.CapabilityOwnership}, ConfigurationSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"testLabel":{"type":"string","maxLength":80}},"additionalProperties":false}`)}
+	manifest.Capabilities = append(manifest.Capabilities, provider.CapabilityPowerStart, provider.CapabilityPowerStop, provider.CapabilityPowerReboot)
 	if !m.options.DisableSnapshots {
-		manifest.Capabilities = append(manifest.Capabilities, provider.CapabilitySnapshotCreate, provider.CapabilitySnapshotInspect, provider.CapabilitySnapshotDelete, provider.CapabilityRestore)
+		manifest.Capabilities = append(manifest.Capabilities, provider.CapabilitySnapshotCreate, provider.CapabilitySnapshotInspect, provider.CapabilitySnapshotDelete, provider.CapabilityRestore, provider.CapabilityPromote)
 		manifest.Snapshots = &provider.SnapshotCapabilities{DiskSets: []string{"boot", "all"}, Consistency: []string{provider.ConsistencyCrash}, Encryption: []string{"provider-managed"}, Restore: provider.RestoreCapabilities{PrebootSanitization: true, NetworkQuarantine: true, ResetAgentIdentity: true, ResetMachineIdentity: true, ResetSSHIdentity: true, ClearRuntimeJournal: true, DisableCopiedWorkloads: true, IndependentDisks: true, Checks: []string{"provider-disk-map", "provider-content-digest"}}}
 	}
 	return manifest, nil
@@ -236,7 +242,7 @@ func (m *Mock) CreateServer(ctx context.Context, key string, input provider.Crea
 		if label, _ := input.ProviderConfig["testLabel"].(string); label != "" {
 			labels["testLabel"] = label
 		}
-		server := provider.Server{ID: id, Name: input.Name, Address: "192.0.2.10", State: "provisioning", Labels: labels}
+		server := provider.Server{Network: input.Network, PowerState: provider.PowerRunning, ID: id, Name: input.Name, Address: "192.0.2.10", State: "provisioning", Labels: labels}
 		ensureServerMetadata(&server)
 		state.Servers[id] = server
 		state.Operations[op.ID] = savedOperation{Operation: op, Remaining: m.options.Polls, Fail: m.options.FailCreate}
@@ -282,6 +288,27 @@ func (m *Mock) Operation(ctx context.Context, id string) (provider.Operation, er
 				return saved.Operation, nil
 			}
 			server := state.Servers[saved.Operation.ResourceID]
+			if saved.Kind == "power" || saved.Kind == "promote" {
+				if saved.Fail {
+					saved.Operation.State = provider.StateFailed
+					saved.Operation.Message = "Configured mock machine action failure"
+					if saved.Kind == "power" {
+						server.PowerState = provider.PowerUnknown
+					}
+				} else if saved.Kind == "power" {
+					server.PowerState = provider.PowerRunning
+					if saved.Action == "stop" {
+						server.PowerState = provider.PowerStopped
+					}
+					server.PowerOperationID = saved.Operation.ID
+				} else {
+					server.Network = saved.Network
+					server.Promotion = &provider.PromotionEvidence{OperationID: saved.Operation.ID, Network: saved.Network, IdentityDigest: saved.Identity, QuarantineReleased: true, CopiedWorkloadsDisabled: true, ProductionBindingsCleared: true}
+				}
+				state.Servers[server.ID] = server
+				state.Operations[id] = saved
+				return saved.Operation, nil
+			}
 			if saved.Fail {
 				saved.Operation.State, saved.Operation.Message = provider.StateFailed, "Configured mock operation failure"
 				server.State = "failed"
@@ -314,6 +341,10 @@ func (m *Mock) Server(ctx context.Context, id string) (provider.Server, error) {
 	}
 	server.Labels = labels
 	server.Disks = append([]provider.Disk(nil), server.Disks...)
+	if server.Promotion != nil {
+		copy := *server.Promotion
+		server.Promotion = &copy
+	}
 	if server.Restore != nil {
 		copy := *server.Restore
 		copy.Checks = append([]string(nil), copy.Checks...)

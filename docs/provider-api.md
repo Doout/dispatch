@@ -28,6 +28,8 @@ belong in the Authorization header, never endpoint URLs. The mock reads
 | `GET /v1/operations/{id}` | No body | `200` operation |
 | `GET /v1/servers/{id}` | No body | `200` server |
 | `DELETE /v1/servers/{id}` | No body | `202` operation |
+| `POST /v1/servers/{id}/power` | `action`, `expectedIdentity` | `202` operation |
+| `POST /v1/servers/{id}/promote` | `network`, `expectedIdentity` | `202` operation |
 
 POST requests use `application/json`. Validation and option discovery do not
 allocate resources. Option kinds are `regions`, `sizes`, `images` and `networks`;
@@ -55,9 +57,56 @@ remain stable. Success must identify the resource, including after deletion.
 Server inspection returns `id`, `name`, `address`, `state` and optional `labels`;
 creation exposes a `ready` server. An absent resource returns a 404 problem.
 
+### Optional machine actions
+
+Existing v1 adapters can omit the new capabilities and fields. Machine power
+controls advertise `server.start`, `server.stop` and `server.reboot` separately.
+Each requires `server.inspect` and `server.ownership`. The optional Go interface
+is `PowerProvider`; its `PowerServer` method accepts an original mutation key,
+machine ID and `PowerServerRequest`. Inspection reports `powerState` as `running`,
+`stopped`, `transitioning` or `unknown`, plus the latest confirmed
+`powerOperationId`. Reboot must record its own completed operation ID even when
+the machine was already running. Power controls affect the VM; application
+container start/stop use the separate runtime API.
+
+The controller's `powerCheckedAt` records its last persisted power or network
+confirmation. Repeated inspection with unchanged evidence leaves the managed
+server revision stable. A detected change requires a fresh runtime heartbeat
+before the server becomes deployable again.
+
+Clone promotion advertises `server.promote` and requires isolated `server.restore`
+support. `PromotionProvider.PromoteServer` accepts an explicit destination network
+and the original fresh clone identity. Inspection reports the current `network`
+and `promotion` evidence containing the original provider `operationId`,
+destination `network`, `identityDigest`, `quarantineReleased`,
+`copiedWorkloadsDisabled` and `productionBindingsCleared`. All three flags must be
+true. Promotion releases networking for this clone only. It preserves its agent,
+machine, SSH and independent disk identities, keeps copied workloads disabled,
+and does not copy applications or service bindings. Original `restore` evidence
+remains the record of sanitation before first boot. Promotion does not establish
+database or application integrity.
+
+Both mutation requests carry `expectedIdentity`, computed by
+`provider.ServerIdentityDigest` over the canonical JSON object containing machine
+ID/name, ownership labels, machine/SSH identities, disks and original restore
+evidence. Power, network, address and current operation status are excluded.
+Adapters must compare the digest before mutation. Replays return the original
+operation even after the resulting power or network state changes; changed input
+with the same key returns 409. Successful inspection must identify that same
+operation and still match the immutable digest.
+
+Dispatch encrypts accepted action requests before provider I/O and journals their
+original operation IDs. A promoted clone becomes a workload target only after
+confirmed network release and fresh authenticated runtime evidence from its
+intended enrollment. An uncertain action keeps the machine unavailable. Explicit
+retry resumes the saved request with its original provider key while its deadline
+and cancellation permit. Explicit resolution of an acknowledged unknown action
+only inspects its original provider operation and machine; it does not resubmit.
+Deliberately cancelled unacknowledged submissions retain their ownership lock.
+
 ### Mutation identity and errors
 
-Create and delete require one `Idempotency-Key`. Keys and resource/operation IDs
+Create, delete, power and promotion require one `Idempotency-Key`. Keys and resource/operation IDs
 use 1-128 ASCII letters, digits, dots, underscores, colons or hyphens and start
 with a letter or digit. Retrying the same request returns the same operation and
 resource IDs. Reusing a key with a different payload, action or target returns
@@ -236,3 +285,15 @@ imports format 1. Older binaries reject format 2 instead of silently losing
 snapshot records. Before this format upgrade, stop the sidecar and take a private
 state backup. A rollback must use a format-compatible binary; restoring an older
 backup after new operations requires reconciling those operations first.
+
+Run optional machine action conformance against an isolated adapter account:
+
+```sh
+go run ./cmd/dispatch-provider-conformance --allow-mutations --server-actions
+```
+
+This creates disposable machines, exercises stop/start/reboot and, when promotion
+is advertised, captures a snapshot, restores an isolated clone, releases its
+network and checks immutable evidence. It removes its machines and snapshot and
+reports cleanup separately. It does not boot a real guest or prove application
+health when run against the mock.

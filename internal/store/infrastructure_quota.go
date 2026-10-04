@@ -210,6 +210,9 @@ func (s *SQLStore) ApplyInfrastructureQuota(ctx context.Context, tx *sql.Tx, c c
 // InfrastructureQuotaAdmission is shared by API acceptance and the controller's
 // reconciler so terminal evidence and reservation accounting commit together.
 func (s *SQLStore) InfrastructureQuotaAdmission(ctx context.Context, tx *sql.Tx, in core.InfrastructureAcceptance) error {
+	if strings.HasPrefix(in.Action, "server.power") || in.Action == "server.promote" || in.Action == "server.promoted" {
+		return nil
+	}
 	if strings.HasPrefix(in.Action, "snapshot.") {
 		return s.applySnapshotQuota(ctx, tx, in)
 	}

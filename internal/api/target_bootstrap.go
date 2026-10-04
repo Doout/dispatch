@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -59,13 +60,62 @@ func (a *API) bootstrapProblem(w http.ResponseWriter, err error) {
 }
 func (a *API) targetBootstrapRoutes(r chi.Router) {
 	r.Route("/infrastructure/bootstrap", func(r chi.Router) {
-		r.Use(a.ownerOnly)
 		r.Get("/", a.listTargetBootstraps)
-		r.Post("/review", a.reviewTargetBootstrap)
+		r.With(a.ownerOnly).Post("/review", a.reviewTargetBootstrap)
 		r.Get("/{id}", a.getTargetBootstrap)
-		r.Post("/{id}/accept", a.acceptTargetBootstrap)
+		r.With(a.ownerOnly).Post("/{id}/accept", a.acceptTargetBootstrap)
 		r.Post("/{id}/retry", a.retryTargetBootstrap)
 	})
+}
+
+// Project callers may inspect and resume an existing accepted installation;
+// importing a machine and approving a new SSH plan remain owner operations.
+func (a *API) authorizeTargetBootstrap(ctx context.Context, item core.TargetBootstrap, permission core.Permission) error {
+	if currentIdentity(ctx).SystemRole == core.UserRoleOwner {
+		return nil
+	}
+	if item.ProjectID == "" {
+		return errInfrastructureDenied
+	}
+	allowed, err := a.canProject(ctx, permission, item.ProjectID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return errInfrastructureDenied
+	}
+	if item.ProviderID != "" {
+		if err := a.authorizeInfrastructure(ctx, item.ProjectID, item.ProviderID, string(permission)); err != nil {
+			return err
+		}
+		data, ok := a.store.(store.InfrastructureLifecycleStore)
+		if !ok {
+			return errInfrastructureDenied
+		}
+		server, err := data.GetManagedServer(ctx, item.ServerID)
+		if err != nil {
+			return err
+		}
+		if server.ProjectID != item.ProjectID || server.ProviderID != item.ProviderID || server.NodeID != item.NodeID {
+			return errInfrastructureDenied
+		}
+		return nil
+	}
+	server, err := a.store.GetServer(ctx, item.ServerID)
+	if err != nil {
+		return err
+	}
+	if server.ProjectID != item.ProjectID {
+		return errInfrastructureDenied
+	}
+	assigned, err := a.assignedInfrastructure(ctx, item.ProjectID, "target", item.ServerID)
+	if err != nil {
+		return err
+	}
+	if !assigned {
+		return errInfrastructureDenied
+	}
+	return nil
 }
 func (a *API) listTargetBootstraps(w http.ResponseWriter, r *http.Request) {
 	m := a.bootstrapAvailable(w)
@@ -77,15 +127,37 @@ func (a *API) listTargetBootstraps(w http.ResponseWriter, r *http.Request) {
 		a.bootstrapProblem(w, err)
 		return
 	}
+	visible := make([]core.TargetBootstrap, 0, len(items))
+	for _, item := range items {
+		if project := r.URL.Query().Get("projectId"); project != "" && item.ProjectID != project {
+			continue
+		}
+		if err := a.authorizeTargetBootstrap(r.Context(), item, core.PermissionInfrastructureInspect); errors.Is(err, errInfrastructureDenied) || errors.Is(err, store.ErrNotFound) {
+			continue
+		} else if err != nil {
+			a.internal(w, err)
+			return
+		}
+		visible = append(visible, item)
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, items)
+	writeJSON(w, 200, visible)
 }
 func (a *API) getTargetBootstrap(w http.ResponseWriter, r *http.Request) {
 	m := a.bootstrapAvailable(w)
 	if m == nil {
 		return
 	}
-	item, err := m.Refresh(r.Context(), chi.URLParam(r, "id"))
+	item, err := m.Store.GetTargetBootstrap(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.bootstrapProblem(w, err)
+		return
+	}
+	if err := a.authorizeTargetBootstrap(r.Context(), item, core.PermissionInfrastructureInspect); err != nil {
+		a.infrastructureProblem(w, err)
+		return
+	}
+	item, err = m.Refresh(r.Context(), item.ID)
 	if err != nil {
 		a.bootstrapProblem(w, err)
 		return
@@ -198,11 +270,21 @@ func (a *API) retryTargetBootstrap(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	item, err := m.Retry(r.Context(), chi.URLParam(r, "id"), in.Digest)
+	item, err := m.Store.GetTargetBootstrap(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		a.bootstrapProblem(w, err)
 		return
 	}
+	if err := a.authorizeTargetBootstrap(r.Context(), item, core.PermissionInfrastructureModify); err != nil {
+		a.infrastructureProblem(w, err)
+		return
+	}
+	item, err = m.Retry(r.Context(), item.ID, in.Digest)
+	if err != nil {
+		a.bootstrapProblem(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 202, item)
 }
 func claimBearer(r *http.Request) string {

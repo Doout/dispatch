@@ -751,13 +751,62 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/InfrastructureOperation' } }
+  /infrastructure/servers/{id}/power:
+    post:
+      operationId: powerManagedServer
+      description: Requires infrastructure.modify, current provider assignment and the advertised action capability. Journals an explicit start, stop or reboot on the original owned machine with a current revision. Active or unknown workloads block the operation. Accepted work survives controller restart; repeated identical keys inspect the original operation. A stopped or uncertain machine is not deployment-ready.
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+        - {$ref: '#/components/parameters/RequiredIdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ServerPowerInput'}
+      responses:
+        '202': {$ref: '#/components/responses/InfrastructureAccepted'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /infrastructure/servers/{id}/clone:
+    get:
+      operationId: inspectManagedClone
+      description: Requires infrastructure.inspect and current provider assignment. Inspects fresh owned clone identity, disk and provider isolation evidence alongside enrollment readiness. Application integrity remains unverified. Does not release the network or start workloads.
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Current clone inspection and application-integrity limitation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CloneInspection'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /infrastructure/servers/{id}/promote:
+    post:
+      operationId: promoteManagedClone
+      description: Requires infrastructure.modify, infrastructure.restore, current provider assignment and server.promote capability. Releases a verified isolated clone to an explicitly selected workload network using its current revision and exact name. Preserves snapshot ancestry and fresh identities. Publication as a workload target requires original provider release evidence and current enrollment plus a fresh post-action runtime heartbeat. Applications and service bindings are not copied. Unknown outcomes remain unpublished until resolved from original evidence.
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+        - {$ref: '#/components/parameters/RequiredIdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ClonePromotionInput'}
+      responses:
+        '202': {$ref: '#/components/responses/InfrastructureAccepted'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /infrastructure/operations/{id}/{action}:
     post:
       operationId: changeInfrastructureOperation
-      description: Requires current project infrastructure.modify and provider assignment. Retry continues the original operation and request identity; cancel does not undo an allocation. Inspect uncertain outcomes before further mutation.
+      description: Requires the original operation's current project permission and provider assignment. Power controls require infrastructure.modify; clone promotion also requires infrastructure.restore. Retry continues the original operation and request identity; cancel does not undo external work. Resolve inspects an acknowledged power/promotion operation and commits only verified terminal evidence, without submitting replacement work or extending its original deadline.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
-        - { in: path, name: action, required: true, schema: { type: string, enum: [retry, cancel] } }
+        - { in: path, name: action, required: true, schema: { type: string, enum: [retry, cancel, resolve] } }
       responses:
         '204': { description: Original operation updated. }
         '403': { $ref: '#/components/responses/Problem' }
@@ -821,11 +870,16 @@ paths:
   /infrastructure/bootstrap:
     get:
       operationId: listTargetBootstraps
-      description: Controller-owner inventory of sanitized installation plans and separate installation, enrollment and runtime states. SSH credentials and installer claims are never returned.
+      description: Sanitized installation inventory under current infrastructure.inspect access and current target or provider assignment. Controller owners may also inspect imported machines without a project. SSH credentials and installer claims are never returned.
       parameters:
         - {name: serverId, in: query, schema: {type: string}}
+        - {name: projectId, in: query, schema: {type: string}}
       responses:
-        '200': {description: Installation receipts}
+        '200':
+          description: Visible installation receipts.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/TargetBootstrap'}}
   /infrastructure/bootstrap/review:
     post:
       operationId: reviewTargetBootstrap
@@ -853,10 +907,16 @@ paths:
   /infrastructure/bootstrap/{id}:
     get:
       operationId: getTargetBootstrap
+      description: Requires current infrastructure.inspect access and target or provider assignment before refreshing enrollment and runtime evidence. Reading never starts installation.
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
       responses:
-        '200': {description: Sanitized installation receipt and refreshed runtime evidence}
+        '200':
+          description: Sanitized installation receipt and refreshed runtime evidence.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TargetBootstrap'}
+        '403': {$ref: '#/components/responses/Problem'}
   /infrastructure/bootstrap/{id}/accept:
     post:
       operationId: acceptTargetBootstrap
@@ -879,20 +939,21 @@ paths:
   /infrastructure/bootstrap/{id}/retry:
     post:
       operationId: retryTargetBootstrap
-      description: Retries the approved SSH installer with its same digest, encrypted credentials and target. Never allocates another machine. An expired claim requires a new review.
+      description: Requires current infrastructure.modify access and target or provider assignment. Retries the already accepted SSH installer with its same digest, encrypted credentials and target. Never approves a new plan or allocates another machine. An expired claim requires a new owner review; after response loss inspect the original installation before another retry.
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [digest]
-              properties:
-                digest: {type: string}
+            schema: {$ref: '#/components/schemas/BootstrapRetryInput'}
       responses:
-        '202': {description: Same installation scheduled for retry}
+        '202':
+          description: Same installation scheduled for retry.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TargetBootstrap'}
+        '403': {$ref: '#/components/responses/Problem'}
         '409': {description: Changed review, expired claim or active lease}
   /bootstrap/claims/{id}:
     post:
@@ -4413,11 +4474,33 @@ paths:
       - $ref: "#/components/parameters/AppID"
     get:
       operationId: getApp
-      description: Requires project.view. Returns the accepted application by ID; scoped callers receive redacted credential fields.
+      description: Requires project.view. Returns the accepted application by ID with its saved specDigest and any blocking runtime job reference. Scoped callers receive redacted credential fields; execution payloads, results and lease tokens are never returned.
       responses:
-        "200": { description: Current application specification. }
+        "200":
+          description: Current application specification and recoverable operation reference.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplicationConfiguration'}
         "403": { $ref: '#/components/responses/Problem' }
         "404": { $ref: '#/components/responses/Problem' }
+    patch:
+      operationId: updateApplicationConfiguration
+      description: Requires project.configure and an idle manually managed application. Applies only supplied fields using expectedSpecDigest from GET. Preserves application identity, target and deployment history and does not deploy. Omitted fields remain saved; empty strings explicitly clear a field. Source credential edits require a controller owner. Repository and workflow managed applications must be edited in their source. After response loss inspect the same application before another edit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApplicationUpdateInput'}
+      responses:
+        '200':
+          description: Saved application specification with its new specDigest.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplicationConfiguration'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {description: Saved configuration changed, application is source-managed, or a deployment/runtime mutation blocks edits. Inspect GET for the blocking runtime job reference.}
+        '422': {$ref: '#/components/responses/Problem'}
     delete:
       operationId: deleteApp
       description: Cleans deployed resources, then transactionally deletes the application and its deployment history.
@@ -5013,6 +5096,12 @@ components:
       type: http
       scheme: bearer
   parameters:
+    RequiredIdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: Original caller-chosen request identity. Reuse only with the same action, target and input.
     IdempotencyKey:
       in: header
       name: Idempotency-Key
@@ -5055,6 +5144,14 @@ components:
       required: true
       schema: { type: string }
   responses:
+    InfrastructureAccepted:
+      description: Original durable mutation receipt, or accepted server and operation for stores without receipt support. Acceptance does not imply completion.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - { $ref: '#/components/schemas/MutationReceipt' }
+              - { $ref: '#/components/schemas/InfrastructureAccepted' }
     DestructiveReview:
       description: Current resource identity, confirmation version, consequences and blockers. A changed resource requires a fresh review.
       content:
@@ -5079,6 +5176,99 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    BootstrapRetryInput:
+      type: object
+      additionalProperties: false
+      required: [digest]
+      properties:
+        digest: {type: string, minLength: 1, description: Original accepted installation digest.}
+    TargetBootstrap:
+      type: object
+      required: [id, serverId, nodeId, plan, digest, state, installationState, enrollmentState, runtimeState, message, actorId, expectedGeneration, revision, createdAt, updatedAt, reviewExpiresAt, claimExpiresAt]
+      properties:
+        id: {type: string}
+        resourceId: {type: string}
+        reviewId: {type: string}
+        serverId: {type: string}
+        nodeId: {type: string}
+        providerId: {type: string}
+        projectId: {type: string}
+        plan: {$ref: '#/components/schemas/TargetBootstrapPlan'}
+        digest: {type: string}
+        state: {type: string}
+        installationState: {type: string}
+        enrollmentState: {type: string}
+        runtimeState: {type: string}
+        message: {type: string}
+        actorId: {type: string}
+        generation: {type: integer, format: int64}
+        expectedGeneration: {type: integer, format: int64}
+        revision: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        reviewExpiresAt: {type: string, format: date-time}
+        claimExpiresAt: {type: string, format: date-time}
+        acceptedAt: {type: string, format: date-time}
+        leaseUntil: {type: string, format: date-time}
+    TargetBootstrapPlan:
+      type: object
+      required: [targetName, controllerUrl, artifactUrl, artifactSha256, platform, imageFamily, installRuntime, replaceIdentity, method, actions]
+      properties:
+        targetName: {type: string}
+        controllerUrl: {type: string}
+        artifactUrl: {type: string}
+        artifactSha256: {type: string}
+        platform: {type: string}
+        imageFamily: {type: string}
+        installRuntime: {type: boolean}
+        replaceIdentity: {type: boolean}
+        method: {type: string}
+        sshHost: {type: string}
+        sshPort: {type: integer}
+        sshUser: {type: string}
+        sshHostKey: {type: string}
+        sshFingerprint: {type: string}
+        sshVerified: {type: boolean}
+        actions: {type: array, items: {type: string}}
+    ApplicationUpdateInput:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [expectedSpecDigest]
+      properties:
+        expectedSpecDigest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        sourceRepo: {type: string}
+        branch: {type: string}
+        buildType: {type: string, enum: [dockerfile, compose, helm]}
+        contextPath: {type: string}
+        dockerfilePath: {type: string}
+        composePath: {type: string}
+        composeContent: {type: string, maxLength: 524288, writeOnly: true}
+        domain: {type: string}
+        containerPort: {type: integer, minimum: 0, maximum: 65535}
+        helmChart: {type: string}
+        helmVersion: {type: string}
+        helmRepository: {type: string}
+        sourceAuthType: {type: string, description: Controller-owner credential configuration only; excluded from scoped CLI/MCP inputs.}
+        sourceCredentialId: {type: string, description: Controller-owner credential reference only; excluded from scoped CLI/MCP inputs.}
+    ApplicationConfiguration:
+      type: object
+      additionalProperties: true
+      description: Existing application fields with saved configuration identity and optional sanitized runtime recovery reference. Credential references remain redacted for scoped callers.
+      required: [id, specDigest]
+      properties:
+        id: {type: string}
+        specDigest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        blockingRuntimeJob: {$ref: '#/components/schemas/BlockingRuntimeJob'}
+    BlockingRuntimeJob:
+      type: object
+      required: [id, operation, state, location]
+      properties:
+        id: {type: string}
+        operation: {type: string}
+        state: {type: string}
+        deploymentId: {type: string}
+        location: {type: string, description: Same-origin API path for inspecting this original job.}
     DestructiveReview:
       type: object
       required: [resourceId, resourceType, name, action, version, summary, resources]
@@ -6183,6 +6373,12 @@ components:
       type: object
       required: [id, reviewId, projectId, providerId, name, nodeId, allocationState, enrollmentState, runtimeState, revision, createdAt, updatedAt]
       properties:
+        powerState: { type: string, enum: [running, stopped, transitioning, unknown] }
+        powerCheckedAt: { type: string, format: date-time, description: Last persisted power or network confirmation. Unchanged inspection does not advance the server revision. }
+        network: { type: string }
+        promotionState: { type: string, enum: [isolated, pending, unknown, promoted] }
+        promotedAt: { type: string, format: date-time }
+        promotionEvidence: { $ref: '#/components/schemas/PromotionEvidence' }
         id: { type: string }
         reviewId: { type: string }
         projectId: { type: string }
@@ -6205,8 +6401,8 @@ components:
         - type: object
           required: [waitState, deployable]
           properties:
-            waitState: { type: string, enum: [waiting, ready, verified-isolated, pending_approval, paused, failed, cancelled, unknown, unresolved, expired, revoked, deleted, deleting, cancelling] }
-            deployable: { type: boolean, description: True only for an allocated server with enrolled identity, fresh runtime evidence and the matching ordinary workload target. Always false for snapshot clones. }
+            waitState: { type: string, enum: [waiting, ready, verified-isolated, stopped, pending_approval, paused, failed, cancelled, unknown, unresolved, expired, revoked, deleted, deleting, cancelling] }
+            deployable: { type: boolean, description: Requires an allocated running server with current enrollment, fresh runtime evidence and its matching workload target. A snapshot clone also requires verified promotion evidence and a heartbeat after promotion. }
             bootstrap: { $ref: '#/components/schemas/ManagedServerBootstrapReadiness' }
             latestOperation: { $ref: '#/components/schemas/InfrastructureOperation' }
     ManagedServerBootstrapReadiness:
@@ -6252,6 +6448,39 @@ components:
       properties:
         server: { $ref: '#/components/schemas/ManagedServer' }
         operation: { $ref: '#/components/schemas/InfrastructureOperation' }
+    ServerPowerInput:
+      type: object
+      additionalProperties: false
+      required: [action, revision]
+      properties:
+        action: { type: string, enum: [start, stop, reboot] }
+        revision: { type: integer, format: int64, minimum: 1, description: Current managed server revision. }
+    ClonePromotionInput:
+      type: object
+      additionalProperties: false
+      required: [network, revision, confirmName]
+      properties:
+        network: { type: string, minLength: 1, description: Explicit supported workload network; the restore quarantine network is rejected. }
+        revision: { type: integer, format: int64, minimum: 1 }
+        confirmName: { type: string, minLength: 1, description: Exact current clone name. }
+    CloneInspection:
+      type: object
+      required: [server, resource, verified, applicationIntegrity]
+      properties:
+        server: { $ref: '#/components/schemas/ManagedServerReadiness' }
+        resource: { type: object, additionalProperties: true, description: Public provider/v1 machine metadata with ownership and restore evidence. }
+        verified: { type: boolean, description: Provider ownership, fresh clone identities and isolated restore evidence were verified. Does not establish application integrity. }
+        applicationIntegrity: { type: string, enum: [unverified] }
+    PromotionEvidence:
+      type: object
+      required: [operationId, network, identityDigest, quarantineReleased, copiedWorkloadsDisabled, productionBindingsCleared]
+      properties:
+        operationId: { type: string }
+        network: { type: string }
+        identityDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+        quarantineReleased: { type: boolean }
+        copiedWorkloadsDisabled: { type: boolean }
+        productionBindingsCleared: { type: boolean }
     InfrastructureAcceptance:
       type: object
       required: [digest, confirmName]

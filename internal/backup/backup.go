@@ -19,7 +19,6 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
-	"github.com/doout/dispatch/internal/serviceconn"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
@@ -184,37 +183,14 @@ func (m Manager) Verify(ctx context.Context, id string) (core.BackupRecord, erro
 		if _, err = restored.ListApps(ctx); err != nil {
 			return err
 		}
-		secrets, err := restored.ListSecrets(ctx)
-		if err != nil {
-			return err
-		}
-		for _, s := range secrets {
-			if s.EncryptedValue == "" {
-				continue
-			}
-			plain, err := vault.Decrypt("secret:"+s.ID, s.EncryptedValue)
+		return restored.VisitControllerCiphertexts(ctx, func(scope, ciphertext string) error {
+			plain, err := vault.Decrypt(scope, ciphertext)
 			clear(plain)
 			if err != nil {
-				return errors.New("restored vault cannot decrypt a saved secret")
+				return errors.New("restored vault cannot decrypt saved controller data")
 			}
-		}
-		services, err := restored.ListServices(ctx, "")
-		if err != nil {
-			return err
-		}
-		for _, s := range services {
-			for name, f := range s.Fields {
-				if f.EncryptedValue == "" {
-					continue
-				}
-				plain, err := vault.Decrypt(serviceconn.FieldAAD(s.ID, name), f.EncryptedValue)
-				clear(plain)
-				if err != nil {
-					return errors.New("restored vault cannot decrypt service credentials")
-				}
-			}
-		}
-		return nil
+			return nil
+		})
 	}
 	err = check()
 	if err != nil {
@@ -225,7 +201,7 @@ func (m Manager) Verify(ctx context.Context, id string) (core.BackupRecord, erro
 		now := time.Now().UTC()
 		b.State = "verified"
 		b.VerifiedAt = &now
-		b.Message = "An isolated restore passed database, schema, and saved credential checks."
+		b.Message = "An isolated restore passed database, schema, credential and recovery-data checks."
 	}
 	saveCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

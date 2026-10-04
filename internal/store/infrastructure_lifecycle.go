@@ -57,15 +57,19 @@ func (s *SQLStore) GetInfrastructureReview(ctx context.Context, id string) (core
 	return scanInfrastructureReview(s.db.QueryRowContext(ctx, s.q(`SELECT `+reviewColumns+` FROM infrastructure_reviews WHERE id=?`), id))
 }
 
-const managedServerColumns = `id,review_id,project_id,provider_id,name,node_id,resource_id,address,allocation_state,enrollment_state,runtime_state,revision,created_at,updated_at,bootstrap_id,source_snapshot_id`
+const managedServerColumns = `id,review_id,project_id,provider_id,name,node_id,resource_id,address,allocation_state,enrollment_state,runtime_state,revision,created_at,updated_at,bootstrap_id,source_snapshot_id,power_state,power_checked_at,network,promotion_state,promoted_at,promotion_evidence,runtime_ready_after`
 
 func scanManagedServer(row scanner) (core.ManagedServer, error) {
 	var m core.ManagedServer
-	var created, updated string
-	err := row.Scan(&m.ID, &m.ReviewID, &m.ProjectID, &m.ProviderID, &m.Name, &m.NodeID, &m.ResourceID, &m.Address, &m.AllocationState, &m.EnrollmentState, &m.RuntimeState, &m.Revision, &created, &updated, &m.BootstrapID, &m.SourceSnapshotID)
+	var created, updated, powerChecked, promoted, evidence, readyAfter string
+	err := row.Scan(&m.ID, &m.ReviewID, &m.ProjectID, &m.ProviderID, &m.Name, &m.NodeID, &m.ResourceID, &m.Address, &m.AllocationState, &m.EnrollmentState, &m.RuntimeState, &m.Revision, &created, &updated, &m.BootstrapID, &m.SourceSnapshotID, &m.PowerState, &powerChecked, &m.Network, &m.PromotionState, &promoted, &evidence, &readyAfter)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
+	m.RuntimeReadyAfter = parseTime(readyAfter)
+	m.PowerCheckedAt = parseTime(powerChecked)
+	m.PromotedAt = parseTime(promoted)
+	m.PromotionEvidence = []byte(evidence)
 	m.CreatedAt = parseTime(created)
 	m.UpdatedAt = parseTime(updated)
 	return m, err
@@ -90,7 +94,7 @@ func (s *SQLStore) ListManagedServers(ctx context.Context) ([]core.ManagedServer
 	return out, rows.Err()
 }
 func (s *SQLStore) UpdateManagedServer(ctx context.Context, m core.ManagedServer, expected int64) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE managed_servers SET resource_id=?,address=?,allocation_state=?,enrollment_state=?,runtime_state=?,revision=?,updated_at=? WHERE id=? AND project_id=? AND provider_id=? AND review_id=? AND node_id=? AND revision=?`), m.ResourceID, m.Address, m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(m.UpdatedAt), m.ID, m.ProjectID, m.ProviderID, m.ReviewID, m.NodeID, expected)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE managed_servers SET resource_id=?,address=?,allocation_state=?,enrollment_state=?,runtime_state=?,revision=?,updated_at=?,power_state=?,power_checked_at=?,network=?,promotion_state=?,promoted_at=?,promotion_evidence=?,runtime_ready_after=? WHERE id=? AND project_id=? AND provider_id=? AND review_id=? AND node_id=? AND revision=?`), m.ResourceID, m.Address, m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(m.UpdatedAt), m.PowerState, stamp(m.PowerCheckedAt), m.Network, m.PromotionState, stamp(m.PromotedAt), string(m.PromotionEvidence), stamp(m.RuntimeReadyAfter), m.ID, m.ProjectID, m.ProviderID, m.ReviewID, m.NodeID, expected)
 	if err != nil {
 		return err
 	}
@@ -176,6 +180,9 @@ func (s *SQLStore) AcceptInfrastructureReview(ctx context.Context, reviewID, dig
 		return core.ManagedServer{}, core.InfrastructureOperation{}, err
 	}
 	m := core.ManagedServer{SourceSnapshotID: r.SourceSnapshotID, BootstrapID: r.BootstrapID, ID: r.ServerID, ReviewID: r.ID, ProjectID: r.ProjectID, ProviderID: r.ProviderID, Name: r.Name, NodeID: "node-" + r.ServerID, AllocationState: "pending", EnrollmentState: "waiting", RuntimeState: "waiting", Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if r.SourceSnapshotID != "" {
+		m.PromotionState = "isolated"
+	}
 	o := core.InfrastructureOperation{ID: operationID, ServerID: m.ID, ProviderID: m.ProviderID, ActorID: actor, Action: "create", State: "pending", Stage: "submit", ExpiresAt: now.Add(30 * time.Minute), NextAttemptAt: now, RequestDigest: digest, CreatedAt: now, UpdatedAt: now}
 	if r.Digest != digest || r.State != "open" || !r.ExpiresAt.After(now) {
 		return m, o, ErrInfrastructureChanged
@@ -201,7 +208,7 @@ func (s *SQLStore) AcceptInfrastructureReview(ctx context.Context, reviewID, dig
 			return m, o, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO managed_servers(`+managedServerColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), m.ID, m.ReviewID, m.ProjectID, m.ProviderID, m.Name, m.NodeID, "", "", m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(now), stamp(now), m.BootstrapID, m.SourceSnapshotID)
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO managed_servers(`+managedServerColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), m.ID, m.ReviewID, m.ProjectID, m.ProviderID, m.Name, m.NodeID, "", "", m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(now), stamp(now), m.BootstrapID, m.SourceSnapshotID, m.PowerState, stamp(m.PowerCheckedAt), m.Network, m.PromotionState, stamp(m.PromotedAt), string(m.PromotionEvidence), stamp(m.RuntimeReadyAfter))
 	if err != nil {
 		return m, o, err
 	}
@@ -271,7 +278,7 @@ func (s *SQLStore) CheckpointInfrastructureOperation(ctx context.Context, o core
 	return err
 }
 func (s *SQLStore) CancelInfrastructureOperation(ctx context.Context, id string, now time.Time) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE infrastructure_operations SET cancel_requested=TRUE,state=CASE WHEN state='paused' THEN 'pending' ELSE state END,next_attempt_at=?,updated_at=? WHERE id=? AND action IN ('create','snapshot.create') AND state IN ('pending','running','paused','unknown')`), stamp(now), stamp(now), id)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE infrastructure_operations SET cancel_requested=TRUE,state=CASE WHEN state='paused' THEN 'pending' ELSE state END,next_attempt_at=?,updated_at=? WHERE id=? AND action IN ('create','snapshot.create','server.start','server.stop','server.reboot','server.promote') AND state IN ('pending','running','paused','unknown')`), stamp(now), stamp(now), id)
 	if err != nil {
 		return err
 	}
@@ -479,7 +486,7 @@ func (s *SQLStore) CompleteInfrastructureOperation(ctx context.Context, m core.M
 	if err != nil || n != 1 {
 		return ErrInfrastructureChanged
 	}
-	result, err = tx.ExecContext(ctx, s.q(`UPDATE managed_servers SET resource_id=?,address=?,allocation_state=?,enrollment_state=?,runtime_state=?,revision=?,updated_at=? WHERE id=? AND project_id=? AND provider_id=? AND revision=?`), m.ResourceID, m.Address, m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(now), m.ID, m.ProjectID, m.ProviderID, m.Revision-1)
+	result, err = tx.ExecContext(ctx, s.q(`UPDATE managed_servers SET resource_id=?,address=?,allocation_state=?,enrollment_state=?,runtime_state=?,revision=?,updated_at=?,power_state=?,power_checked_at=?,network=?,promotion_state=?,promoted_at=?,promotion_evidence=?,runtime_ready_after=? WHERE id=? AND project_id=? AND provider_id=? AND revision=?`), m.ResourceID, m.Address, m.AllocationState, m.EnrollmentState, m.RuntimeState, m.Revision, stamp(now), m.PowerState, stamp(m.PowerCheckedAt), m.Network, m.PromotionState, stamp(m.PromotedAt), string(m.PromotionEvidence), stamp(m.RuntimeReadyAfter), m.ID, m.ProjectID, m.ProviderID, m.Revision-1)
 	if err != nil {
 		return err
 	}

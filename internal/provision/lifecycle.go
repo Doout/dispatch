@@ -243,9 +243,32 @@ func (m *Manager) ChangeOperation(ctx context.Context, id, action string) error 
 	if err = m.authorize(ctx, server.ProjectID, server.ProviderID, permission); err != nil {
 		return err
 	}
+	if op.Action == "server.promote" {
+		if err = m.authorize(ctx, server.ProjectID, server.ProviderID, "infrastructure.restore"); err != nil {
+			return err
+		}
+	}
 	switch action {
+	case "resolve":
+		actions, err := m.actionStore()
+		if err != nil {
+			return err
+		}
+		leased, err := actions.LeaseInfrastructureActionResolution(ctx, id, m.now())
+		if err != nil {
+			return err
+		}
+		return m.reconcileMachineAction(ctx, leased, true)
 	case "retry":
-		return data.RetryInfrastructureOperation(ctx, id, m.now())
+		err := data.RetryInfrastructureOperation(ctx, id, m.now())
+		if errors.Is(err, store.ErrInfrastructureChanged) && (op.Action == "server.start" || op.Action == "server.stop" || op.Action == "server.reboot" || op.Action == "server.promote") {
+			actions, e := m.actionStore()
+			if e != nil {
+				return e
+			}
+			return actions.RetryInfrastructureAction(ctx, id, m.now())
+		}
+		return err
 	case "cancel":
 		return data.CancelInfrastructureOperation(ctx, id, m.now())
 	}

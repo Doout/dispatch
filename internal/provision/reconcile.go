@@ -25,6 +25,9 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 80*time.Second)
 	defer cancel()
+	if strings.HasPrefix(op.Action, "server.") {
+		return true, m.reconcileMachineAction(ctx, op)
+	}
 	if strings.HasPrefix(op.Action, "snapshot.") {
 		return true, m.reconcileSnapshot(ctx, op)
 	}
@@ -198,6 +201,9 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 			server.ResourceID = resource.ID
 			server.Address = resource.Address
 			server.AllocationState = "allocated"
+			server.PowerState = resource.PowerState
+			server.PowerCheckedAt = m.now()
+			server.Network = resource.Network
 		} else {
 			if op.ResourceID != server.ResourceID {
 				return true, stop("resource_changed", "The completed deletion names a different resource.")

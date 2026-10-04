@@ -37,22 +37,29 @@ type InfrastructureReview struct {
 }
 
 type ManagedServer struct {
-	SourceSnapshotID string    `json:"sourceSnapshotId,omitempty"`
-	BootstrapID      string    `json:"bootstrapId,omitempty"`
-	ID               string    `json:"id"`
-	ReviewID         string    `json:"reviewId"`
-	ProjectID        string    `json:"projectId"`
-	ProviderID       string    `json:"providerId"`
-	Name             string    `json:"name"`
-	NodeID           string    `json:"nodeId"`
-	ResourceID       string    `json:"resourceId,omitempty"`
-	Address          string    `json:"address,omitempty"`
-	AllocationState  string    `json:"allocationState"`
-	EnrollmentState  string    `json:"enrollmentState"`
-	RuntimeState     string    `json:"runtimeState"`
-	Revision         int64     `json:"revision"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	RuntimeReadyAfter time.Time       `json:"-"`
+	PowerState        string          `json:"powerState,omitempty"`
+	PowerCheckedAt    time.Time       `json:"powerCheckedAt,omitempty"`
+	Network           string          `json:"network,omitempty"`
+	PromotionState    string          `json:"promotionState,omitempty"`
+	PromotedAt        time.Time       `json:"promotedAt,omitempty"`
+	PromotionEvidence json.RawMessage `json:"promotionEvidence,omitempty"`
+	SourceSnapshotID  string          `json:"sourceSnapshotId,omitempty"`
+	BootstrapID       string          `json:"bootstrapId,omitempty"`
+	ID                string          `json:"id"`
+	ReviewID          string          `json:"reviewId"`
+	ProjectID         string          `json:"projectId"`
+	ProviderID        string          `json:"providerId"`
+	Name              string          `json:"name"`
+	NodeID            string          `json:"nodeId"`
+	ResourceID        string          `json:"resourceId,omitempty"`
+	Address           string          `json:"address,omitempty"`
+	AllocationState   string          `json:"allocationState"`
+	EnrollmentState   string          `json:"enrollmentState"`
+	RuntimeState      string          `json:"runtimeState"`
+	Revision          int64           `json:"revision"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	UpdatedAt         time.Time       `json:"updatedAt"`
 }
 
 type InfrastructureOperation struct {

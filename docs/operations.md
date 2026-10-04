@@ -236,10 +236,14 @@ connection credentials are supplied through process environment variables, never
 command arguments or generated logs.
 
 **Verify restore** checks checksums, restores to an isolated temporary database,
-applies schema migrations there, reads project/application data, and decrypts
-saved global and service credentials using the copied vault key. Only a successful
+applies schema migrations there, reads project/application data, and authenticates
+every nonempty persisted controller ciphertext using the copied vault key and its
+original encryption identity. This includes saved credentials, frozen hook and
+service credentials, workload backup inputs and policies, service requests and
+outputs, infrastructure reviews and actions, installer inputs, and runtime jobs,
+artifacts and drift baselines. Retired empty values are skipped. Only a successful
 restore check sets `verifiedAt`. A failed recheck clears that timestamp and keeps
-the backup for inspection.
+the backup for inspection. This does not verify external workloads or providers.
 
 SQLite verification uses a private temporary file. PostgreSQL verification creates
 a uniquely named temporary database on the configured database server, restores

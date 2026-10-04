@@ -12,6 +12,18 @@ import (
 )
 
 func ensureServerMetadata(server *provider.Server) {
+	if server.PowerState == "" {
+		server.PowerState = provider.PowerRunning
+	}
+	if server.Network == "" {
+		server.Network = "mock-private"
+		if server.Restore != nil {
+			server.Network = "mock-isolated"
+		}
+		if server.Promotion != nil {
+			server.Network = server.Promotion.Network
+		}
+	}
 	if server.MachineIdentity == "" {
 		server.MachineIdentity = "machine-" + digest(server.ID)[:24]
 	}
@@ -194,7 +206,7 @@ func (m *Mock) RestoreServer(ctx context.Context, key, id string, in provider.Re
 			labels[k] = v
 		}
 		serverID := "mock-server-" + keyID[:24]
-		server := provider.Server{ID: serverID, Name: input.Name, Address: "192.0.2.11", State: "provisioning", Labels: labels, MachineIdentity: "machine-" + digest(serverID)[:24], SSHIdentity: "ssh-" + digest("ssh:" + serverID)[:24]}
+		server := provider.Server{Network: in.Server.Network, PowerState: provider.PowerRunning, ID: serverID, Name: input.Name, Address: "192.0.2.11", State: "provisioning", Labels: labels, MachineIdentity: "machine-" + digest(serverID)[:24], SSHIdentity: "ssh-" + digest("ssh:" + serverID)[:24]}
 		for _, disk := range snapshot.Disks {
 			server.Disks = append(server.Disks, provider.Disk{ID: "mock-disk-" + digest(serverID + ":" + disk.ID)[:24], Role: disk.Role, SizeBytes: disk.SizeBytes, Encrypted: disk.Encrypted, SourceDiskID: disk.ID, ContentDigest: disk.ContentDigest})
 		}

@@ -1698,3 +1698,22 @@ BEGIN IF EXISTS(SELECT 1 FROM workload_backups WHERE server_id=OLD.id AND state<
 $$;
 DROP INDEX runtime_jobs_active_mutation;
 CREATE UNIQUE INDEX runtime_jobs_active_mutation ON runtime_jobs(app_id) WHERE state IN ('pending','running','unknown') AND operation NOT IN ('inspect','logs','storage_inspect','service_inspect','workload_backup_inspect','workload_backup_offsite_inspect','workload_backup_retire_inspect','retention_inspect');
+
+-- dispatch:migration 098_managed_machine_state
+ALTER TABLE managed_servers ADD COLUMN power_state TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN power_checked_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN runtime_ready_after TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN network TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN promotion_state TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN promoted_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_servers ADD COLUMN promotion_evidence TEXT NOT NULL DEFAULT '';
+UPDATE managed_servers SET promotion_state='isolated' WHERE source_snapshot_id<>'';
+
+-- dispatch:migration 099_infrastructure_action_requests
+CREATE TABLE infrastructure_action_requests (
+ operation_id TEXT PRIMARY KEY REFERENCES infrastructure_operations(id),
+ provider_revision BIGINT NOT NULL,
+ manifest_digest TEXT NOT NULL,
+ encrypted_request TEXT NOT NULL,
+ cipher_digest TEXT NOT NULL
+);

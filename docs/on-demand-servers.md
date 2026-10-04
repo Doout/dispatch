@@ -1,7 +1,8 @@
 # On-demand servers
 
 Dispatch can create, inspect, adopt, and delete machines through a registered
-`dispatch.provider/v1` adapter. The runnable mock supports the whole workflow
+`dispatch.provider/v1` adapter, with optional power and clone promotion capabilities.
+The runnable mock supports the whole workflow
 without cloud credentials or billing. A real provider adapter is a separate
 integration; the mock does not allocate a VM.
 
@@ -39,9 +40,13 @@ quota for every caller. Global provider secret references remain owner-only. See
 | GET | `/api/v1/infrastructure/servers` | List allocation, enrollment, and runtime state |
 | GET | `/api/v1/infrastructure/servers/{id}` | Refresh this authorized server's readiness and inspect its original operation |
 | GET | `/api/v1/infrastructure/servers/{id}/operations` | Durable operation history and recovery state |
+| POST | `/api/v1/infrastructure/servers/{id}/power` | Accept `action`, current `revision` and an `Idempotency-Key` for start, stop or reboot |
+| GET | `/api/v1/infrastructure/servers/{id}/clone` | Inspect current isolated clone ownership and disk evidence |
+| POST | `/api/v1/infrastructure/servers/{id}/promote` | Accept reviewed clone identity, explicit network and exact name; see [clone promotion](machine-snapshots.md#inspect-and-promote-a-clone) |
 | POST | `/api/v1/infrastructure/servers/{id}/enrollment` | Issue a node-scoped 15-minute one-use token |
 | POST | `/api/v1/infrastructure/operations/{id}/retry` | Resume a paused transport failure using the original request identity |
 | POST | `/api/v1/infrastructure/operations/{id}/cancel` | Stop a creation request without resubmitting it |
+| POST | `/api/v1/infrastructure/operations/{id}/resolve` | Inspect a known uncertain power or promotion operation without submitting another mutation |
 | POST | `/api/v1/infrastructure/servers/{id}/adopt` | Inspect `resourceId`, verify original ownership, and accept `revision` plus `confirmName` |
 | POST | `/api/v1/infrastructure/servers/{id}/delete-review` | Refresh storage evidence and review permanent removal |
 | POST | `/api/v1/infrastructure/servers/{id}/delete` | Accept deletion with `digest`, `confirmName`, and stable `requestKey` |
@@ -91,6 +96,28 @@ paused provider operation also ends the wait. Its `waitState: paused` and
 runtime check keeps the server waiting. Timeout or Ctrl-C stops the client
 without cancelling accepted work. The `continuation` preserves the server,
 project and original operation IDs. Resume with the same server ID.
+
+## Power operations
+
+Power changes require current `infrastructure.modify` access, the assigned provider
+and its approved action capability. Submit `action: start`, `stop` or `reboot`, the
+current managed server `revision`, and a stable `Idempotency-Key` header. Reboot
+requires a running machine. Active deployments or runtime jobs block acceptance;
+an unfinished infrastructure action prevents a competing action on the same machine.
+An accepted power action immediately fences the workload target.
+
+The saved request binds the original machine identity and provider operation. A
+lost reply or transport retry retains the same request and key. Stop leaves
+`powerState: stopped` and `deployable: false`; `server wait` returns
+`operation_stopped` and never starts the machine automatically. Start and reboot
+require provider confirmation and a fresh runtime heartbeat after completion
+before the target can accept work again.
+
+Uncertain outcomes retain the original action and fence the target. An explicit
+retry can resume that action before its deadline if it was not cancelled.
+`resolve` inspects an already recorded provider operation, including after its
+deadline; it never starts, stops, reboots or promotes a replacement. A missing
+provider operation identity or changed evidence keeps the outcome uncertain.
 
 ## Recovery and deletion
 

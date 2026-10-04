@@ -120,7 +120,7 @@ func (m *Manager) refreshServerReadiness(ctx context.Context, data EnrollmentSto
 		enrollment = "enrolled"
 		node, e := data.GetPrivateNetwork(ctx, server.NodeID)
 		checkedAt, checkedErr := time.Parse(time.RFC3339Nano, node.Details["runtimeCheckedAt"])
-		if e == nil && checkedErr == nil && !checkedAt.Before(credential.UpdatedAt) && checkedAt.After(m.now().Add(-90*time.Second)) && !checkedAt.After(m.now().Add(10*time.Second)) && node.Details["runtimeVersion"] == remoteruntime.APIVersion && slices.Contains(strings.Split(node.Details["runtimeCapabilities"], ","), "deploy") {
+		if e == nil && checkedErr == nil && !checkedAt.Before(credential.UpdatedAt) && !checkedAt.Before(server.RuntimeReadyAfter) && checkedAt.After(m.now().Add(-90*time.Second)) && !checkedAt.After(m.now().Add(10*time.Second)) && node.Details["runtimeVersion"] == remoteruntime.APIVersion && slices.Contains(strings.Split(node.Details["runtimeCapabilities"], ","), "deploy") {
 			runtime = "ready"
 		}
 	}
@@ -131,8 +131,11 @@ func (m *Manager) refreshServerReadiness(ctx context.Context, data EnrollmentSto
 			runtime = "waiting"
 		}
 	}
-	// A verified clone remains quarantined and is never offered as a workload target.
-	if server.SourceSnapshotID != "" && runtime == "ready" {
+	if server.PowerState != "" && server.PowerState != "running" {
+		runtime = "waiting"
+	}
+	// Clone ancestry survives promotion. Only confirmed network release permits publication.
+	if server.SourceSnapshotID != "" && server.PromotionState != "promoted" && runtime == "ready" {
 		runtime = "verified-isolated"
 	}
 	if server.EnrollmentState != enrollment || server.RuntimeState != runtime {
@@ -141,6 +144,13 @@ func (m *Manager) refreshServerReadiness(ctx context.Context, data EnrollmentSto
 		server.Revision++
 		server.UpdatedAt = m.now()
 		if e = data.UpdateManagedServer(ctx, server, server.Revision-1); e != nil {
+			return e
+		}
+	}
+	if targetState, ok := data.(interface {
+		RefreshManagedTargetState(context.Context, string) error
+	}); ok {
+		if e = targetState.RefreshManagedTargetState(ctx, server.ID); e != nil {
 			return e
 		}
 	}

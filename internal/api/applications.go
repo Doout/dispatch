@@ -48,10 +48,7 @@ func (a *API) getApp(w http.ResponseWriter, r *http.Request) {
 		a.notFoundOrInternal(w, err, "Application")
 		return
 	}
-	if currentIdentity(r.Context()).SystemRole != core.UserRoleOwner {
-		item = redactAppCredentials(item)
-	}
-	writeJSON(w, http.StatusOK, item)
+	a.writeApplicationConfiguration(w, r, item)
 }
 
 type createAppRequest struct {

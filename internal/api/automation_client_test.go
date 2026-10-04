@@ -142,8 +142,12 @@ func TestAutomationClientSimulationAndMockProvider(t *testing.T) {
 	if waited.OK || waited.ExitCode() != 4 || waited.Continuation == nil || waited.Continuation.ID != allocation.ServerID || waited.Continuation.OperationID != readiness.Continuation.OperationID {
 		t.Fatalf("wait lost the original allocated server: %+v error=%+v continuation=%+v", waited, waited.Error, waited.Continuation)
 	}
-	// Inspection cannot use owner-only installation routes or an unassigned provider.
-	automationRequest(t, a, issued.Token, "GET", "/api/v1/infrastructure/bootstrap", nil, 403)
+	// Scoped inspection returns only accessible bootstrap records.
+	w = automationRequest(t, a, issued.Token, "GET", "/api/v1/infrastructure/bootstrap", nil, 200)
+	if strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Fatal("bootstrap inspection returned unrelated records", w.Body.String())
+	}
+	// Server inspection still requires its current provider assignment.
 	automationRequest(t, a, "secret", "DELETE", "/api/v1/infrastructure/assignments/"+app.ProjectID+"/provider/"+p.ID, nil, 204)
 	if denied := client.Call(ctx, "server_get", automationclient.Arguments{ServerID: allocation.ServerID}); denied.Status != 403 {
 		t.Fatal("readiness ignored revoked provider assignment", denied)

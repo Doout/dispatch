@@ -83,6 +83,15 @@ func TestInfrastructureResponseContracts(t *testing.T) {
 		"InfrastructureOperation":                    core.InfrastructureOperation{},
 		"InfrastructureDeletionReview":               provision.DeletionReview{},
 		"InfrastructureAccepted":                     provision.Accepted{},
+		"BootstrapRetryInput":                        BootstrapRetryInput{},
+		"TargetBootstrap":                            core.TargetBootstrap{},
+		"TargetBootstrapPlan":                        core.TargetBootstrapPlan{},
+		"ApplicationUpdateInput":                     core.ApplicationUpdate{},
+		"BlockingRuntimeJob":                         core.BlockingRuntimeJob{},
+		"ServerPowerInput":                           provision.PowerInput{},
+		"ClonePromotionInput":                        provision.PromotionInput{},
+		"CloneInspection":                            provision.CloneInspection{},
+		"PromotionEvidence":                          provider.PromotionEvidence{},
 	} {
 		properties, required := fields(schemas[name].(map[string]any))
 		actual := []string{}
@@ -111,6 +120,8 @@ func TestInfrastructureResponseContracts(t *testing.T) {
 		{"/infrastructure/servers/review", "post", "201", "InfrastructureReview", false},
 		{"/infrastructure/servers/{id}/delete-review", "post", "200", "InfrastructureDeletionReview", false},
 		{"/infrastructure/servers/{id}/adopt", "post", "200", "ManagedServer", false},
+		{"/infrastructure/servers/{id}/clone", "get", "200", "CloneInspection", false},
+		{"/infrastructure/bootstrap/{id}", "get", "200", "TargetBootstrap", false},
 	} {
 		response := paths[tc.path].(map[string]any)[tc.method].(map[string]any)["responses"].(map[string]any)[tc.status].(map[string]any)
 		schema := response["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)

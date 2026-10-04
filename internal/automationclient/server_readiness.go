@@ -17,6 +17,14 @@ func serverReadinessResult(id string, out Result, wait bool) (Result, bool) {
 		EnrollmentState string `json:"enrollmentState"`
 		RuntimeState    string `json:"runtimeState"`
 		SourceSnapshot  string `json:"sourceSnapshotId"`
+		PowerState      string `json:"powerState"`
+		PromotionState  string `json:"promotionState"`
+		Promotion       *struct {
+			OperationID               string `json:"operationId"`
+			QuarantineReleased        bool   `json:"quarantineReleased"`
+			CopiedWorkloadsDisabled   bool   `json:"copiedWorkloadsDisabled"`
+			ProductionBindingsCleared bool   `json:"productionBindingsCleared"`
+		} `json:"promotionEvidence"`
 		WaitState       string `json:"waitState"`
 		Deployable      *bool  `json:"deployable"`
 		LatestOperation *struct {
@@ -39,7 +47,8 @@ func serverReadinessResult(id string, out Result, wait bool) (Result, bool) {
 		}
 		out.Continuation.OperationID = op.ID
 	}
-	if *server.Deployable && (server.WaitState != "ready" || server.AllocationState != "allocated" || server.EnrollmentState != "enrolled" || server.RuntimeState != "ready" || server.SourceSnapshot != "") {
+	promoted := server.SourceSnapshot != "" && server.PromotionState == "promoted" && server.Promotion != nil && identifier.MatchString(server.Promotion.OperationID) && server.Promotion.QuarantineReleased && server.Promotion.CopiedWorkloadsDisabled && server.Promotion.ProductionBindingsCleared
+	if *server.Deployable && (server.WaitState != "ready" || server.AllocationState != "allocated" || server.EnrollmentState != "enrolled" || server.RuntimeState != "ready" || server.SourceSnapshot != "" && !promoted || server.PowerState != "" && server.PowerState != "running") {
 		return fail("invalid_response", "The controller returned inconsistent deployment readiness")
 	}
 	switch server.WaitState {
@@ -49,8 +58,16 @@ func serverReadinessResult(id string, out Result, wait bool) (Result, bool) {
 		}
 		return out, true
 	case "verified-isolated":
-		if *server.Deployable || server.SourceSnapshot == "" || server.AllocationState != "allocated" || server.EnrollmentState != "enrolled" || server.RuntimeState != "verified-isolated" {
+		if *server.Deployable || server.SourceSnapshot == "" || server.PromotionState == "promoted" || server.AllocationState != "allocated" || server.EnrollmentState != "enrolled" || server.RuntimeState != "verified-isolated" || server.PowerState != "" && server.PowerState != "running" {
 			return fail("invalid_response", "The controller returned inconsistent isolated clone evidence")
+		}
+		return out, true
+	case "stopped":
+		if *server.Deployable || server.PowerState != "stopped" {
+			return fail("invalid_response", "The controller returned inconsistent stopped machine evidence")
+		}
+		if wait {
+			return fail("operation_stopped", "The machine is stopped. Inspect its power operation before explicitly starting it. No automatic start occurred.")
 		}
 		return out, true
 	case "pending_approval":
