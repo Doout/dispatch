@@ -21,6 +21,9 @@ func (a *API) infrastructureLifecycleRoutes(r chi.Router) {
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", a.getManagedServer)
 			r.Get("/operations", a.managedServerOperations)
+			r.Post("/power", a.powerManagedServer)
+			r.Get("/clone", a.inspectManagedClone)
+			r.Post("/promote", a.promoteManagedClone)
 			r.Post("/snapshot-review", a.reviewInfrastructureSnapshot)
 			r.Post("/enrollment", a.enrollManagedServer)
 			r.Post("/adopt", a.adoptManagedServer)

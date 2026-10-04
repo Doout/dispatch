@@ -75,6 +75,7 @@ type ServerCreateReview struct {
 	SourceSnapshotID string          `json:"sourceSnapshotId,omitempty"`
 }
 type Arguments struct {
+	BootstrapID    string          `json:"bootstrapId,omitempty"`
 	StoreID        string          `json:"storeId,omitempty"`
 	TemplateID     string          `json:"templateId,omitempty"`
 	PolicyID       string          `json:"policyId,omitempty"`
@@ -107,7 +108,7 @@ type Operation struct {
 	InputSchema                               string
 }
 
-var Operations = append(append([]Operation{
+var Operations = combineOperations([]Operation{
 	{Name: "projects_list", Method: "GET", Path: "/projects", Description: "List projects visible to the current scoped identity."},
 	{Name: "apps_list", Method: "GET", Path: "/apps", Description: "List visible applications, optionally filtered by project.", Fields: []string{"projectId"}},
 	{Name: "deployment_preview", Method: "POST", Path: "/apps/{appId}/release-preview", Description: "Inspect release inputs and obtain the server's point-in-time deployment review.", Fields: []string{"appId", "revision"}, Required: []string{"appId"}},
@@ -142,7 +143,16 @@ var Operations = append(append([]Operation{
 	{Name: "environment_extend", Method: "POST", Path: "/temporary-environments/{environmentId}/extend", Description: "Set an explicit expiration using the current environment revision. If the response is lost, inspect the environment before another edit. Does not extend beyond project policy.", Fields: []string{"environmentId", "input"}, Required: []string{"environmentId", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentExtension"},
 	{Name: "environment_cleanup_review", Method: "POST", Path: "/temporary-environments/{environmentId}/cleanup-review", Description: "Review removal of owned workload resources and retention of shared infrastructure and data.", Fields: []string{"environmentId"}, Required: []string{"environmentId"}},
 	{Name: "environment_destroy", Method: "POST", Path: "/temporary-environments/{environmentId}/destroy", Description: "Submit the reviewed revision, digest and exact name with a stable cleanup key. Uncertain operations require inspection; shared servers and protected data remain.", Fields: []string{"environmentId", "key", "input"}, Required: []string{"environmentId", "key", "input"}, Mutation: true, InputSchema: "TemporaryEnvironmentCleanup"},
-}, recoveryOperations...), workflowOperations...)
+}, recoveryOperations, workflowOperations, bootstrapOperations, appUpdateOperations, machineActionOperations)
+
+func combineOperations(groups ...[]Operation) []Operation {
+	var combined []Operation
+	for _, group := range groups {
+		combined = append(combined, group...)
+	}
+	return combined
+}
+
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$`)
 var fullCommit = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 var environmentName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,39}$`)
@@ -207,7 +217,7 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 		}
 	}
 	path := op.Path
-	for f, v := range map[string]string{"storeId": args.StoreID, "templateId": args.TemplateID, "policyId": args.PolicyID, "runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
+	for f, v := range map[string]string{"bootstrapId": args.BootstrapID, "storeId": args.StoreID, "templateId": args.TemplateID, "policyId": args.PolicyID, "runId": args.RunID, "backupId": args.BackupID, "operationId": args.OperationID, "destinationId": args.DestinationID, "reviewId": args.ReviewID, "projectId": args.ProjectID, "providerId": args.ProviderID, "snapshotId": args.SnapshotID, "environmentId": args.EnvironmentID, "appId": args.AppID, "deploymentId": args.DeploymentID, "receiptId": args.ReceiptID, "serverId": args.ServerID} {
 		if v != "" && !identifier.MatchString(v) {
 			return Failure("invalid_input", "Invalid resource identifier")
 		}
@@ -219,6 +229,15 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	body, inputErr := recoveryInput(op, args)
 	if inputErr == nil && body == nil {
 		body, inputErr = workflowInput(op, args)
+	}
+	if inputErr == nil && body == nil {
+		body, inputErr = bootstrapInput(op, args)
+	}
+	if inputErr == nil && body == nil {
+		body, inputErr = applicationUpdateInput(op, args)
+	}
+	if inputErr == nil && body == nil {
+		body, inputErr = machineActionInput(op, args)
 	}
 	if inputErr != nil {
 		return Failure("invalid_input", inputErr.Error())
@@ -302,6 +321,18 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 	if (name == "backups_list" || name == "backup_policies_list" || name == "backup_stores_list") && args.ProjectID != "" {
 		path += "?projectId=" + url.QueryEscape(args.ProjectID)
 	}
+	if name == "bootstraps_list" {
+		query := url.Values{}
+		if args.ProjectID != "" {
+			query.Set("projectId", args.ProjectID)
+		}
+		if args.ServerID != "" {
+			query.Set("serverId", args.ServerID)
+		}
+		if len(query) > 0 {
+			path += "?" + query.Encode()
+		}
+	}
 	if name == "deployment_logs" {
 		if args.Limit == 0 {
 			args.Limit = 100
@@ -354,6 +385,12 @@ func (c *Client) call(ctx context.Context, name string, args Arguments) Result {
 
 		if isWorkflowOperation(name) {
 			out = workflowContinuation(op, args, out)
+		} else if op.Response == "target_bootstrap" || op.Response == "target_bootstrap_list" {
+			out = bootstrapResult(op, args, out)
+		} else if op.Response == "application_update" {
+			out = applicationUpdateResult(op, args, out)
+		} else if op.Response == "receipt_or_machine_action" || op.Response == "clone_inspection" {
+			out = machineActionResult(op, args, out)
 		} else {
 			out = recoveryContinuation(op, args, out)
 		}

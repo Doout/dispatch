@@ -48,15 +48,19 @@ type Operation struct {
 }
 
 type Server struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Address         string            `json:"address"`
-	State           string            `json:"state"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	Disks           []Disk            `json:"disks,omitempty"`
-	MachineIdentity string            `json:"machineIdentity,omitempty"`
-	SSHIdentity     string            `json:"sshIdentity,omitempty"`
-	Restore         *RestoreEvidence  `json:"restore,omitempty"`
+	PowerState       string             `json:"powerState,omitempty"`
+	PowerOperationID string             `json:"powerOperationId,omitempty"`
+	Network          string             `json:"network,omitempty"`
+	Promotion        *PromotionEvidence `json:"promotion,omitempty"`
+	ID               string             `json:"id"`
+	Name             string             `json:"name"`
+	Address          string             `json:"address"`
+	State            string             `json:"state"`
+	Labels           map[string]string  `json:"labels,omitempty"`
+	Disks            []Disk             `json:"disks,omitempty"`
+	MachineIdentity  string             `json:"machineIdentity,omitempty"`
+	SSHIdentity      string             `json:"sshIdentity,omitempty"`
+	Restore          *RestoreEvidence   `json:"restore,omitempty"`
 }
 
 type Provider interface {

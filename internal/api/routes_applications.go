@@ -28,6 +28,7 @@ func (a *API) applicationsRoutes(r chi.Router) {
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(a.appPermission(core.PermissionProjectConfigure))
+				r.With(a.idleAppMutation).Patch("/", a.updateApplicationConfiguration)
 				r.Post("/drift/check", a.checkApplicationDrift)
 				r.Post("/route/check", a.checkApplicationRoute)
 				r.With(a.idleAppMutation).Put("/service-bindings", a.updateAppServiceBindings)

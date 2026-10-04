@@ -63,7 +63,8 @@ dispatchctl server wait --server SERVER_ID --timeout 120
 These commands report allocation, enrollment and fresh runtime evidence and
 preserve the original server and operation IDs. `ready` means `deployable` is
 true. `verified-isolated` ends the wait for a snapshot clone with `deployable`
-false. Approval, failed or interrupted installation, expired or revoked
+false until explicit promotion completes. A stopped machine returns `stopped`
+and ends the wait without starting it. Approval, failed or interrupted installation, expired or revoked
 enrollment, uncertain outcomes and deletion return for review. The client never
 starts installation, obtains credentials or accepts SSH approval while waiting.
 See [server readiness](on-demand-servers.md#wait-for-a-usable-server).
@@ -100,6 +101,29 @@ dispatchctl app sync --app APP_ID
 
 Keep the creation file and key. Repeating the exact request returns its original
 receipt and application. Creating an application does not deploy it.
+
+`app get` also returns `specDigest` and, when work blocks editing, a
+`blockingRuntimeJob` reference with the original job's inspection URL. Update an
+idle manual application with the digest from its current inspection:
+
+```json
+{
+  "expectedSpecDigest": "sha256:CURRENT_64_HEX_DIGEST",
+  "branch": "release",
+  "domain": "api.example.com"
+}
+```
+
+```sh
+dispatchctl app update --app APP_ID --input app-update.json
+```
+
+Only supplied fields change. The app keeps its identity, target, deployment
+history, hooks and health policy. The command does not deploy and has no mutation
+receipt. After a lost reply, inspect the same app before editing again. A stale
+digest or active deployment/runtime mutation rejects the edit. Template,
+workflow and preview configuration stays managed by its source. Source credential
+changes remain available only through the owner API.
 
 Service mappings, Helm overrides and health policy have separate inspect and
 replace commands:
@@ -265,9 +289,80 @@ Create the destination file privately, for example with `umask 077`, before
 issuing this command. Its response contains a short-lived single-use token for
 the target installer, distinct from the API credential. This action requires
 `infrastructure.modify`; it cannot replace an enrolled identity. For an approved
-bootstrap, recover the original installation through its owner workflow instead.
+bootstrap, inspect and recover the original installation as described below.
 The client never retries issuance automatically. After a lost reply, inspect the
 server's enrollment state before deliberately issuing a replacement unused token.
+
+## Inspect and resume installation
+
+Current `infrastructure.inspect` access and target/provider assignments permit
+inspection of accepted installation receipts:
+
+```sh
+dispatchctl bootstraps list --project PROJECT_ID --server SERVER_ID
+dispatchctl bootstrap get --bootstrap BOOTSTRAP_ID
+```
+
+For a failed accepted SSH installation, write `bootstrap-retry.json` containing
+its original `digest`, then explicitly retry with `infrastructure.modify`:
+
+```sh
+dispatchctl bootstrap retry --bootstrap BOOTSTRAP_ID --input bootstrap-retry.json
+```
+
+Retry preserves the receipt, machine, reviewed artifact and encrypted credentials.
+Changed enrollment generation, expired claims and changed digests block it.
+The CLI and MCP expose no new-plan acceptance tool. If the reply is lost, inspect
+the original receipt; the client sends no automatic retry.
+
+## Power controls and clone promotion
+
+An assigned provider must advertise the requested optional action. Use the
+revision from `server get` in `power.json`:
+
+```json
+{ "action": "stop", "revision": 3 }
+```
+
+```sh
+dispatchctl server power --server SERVER_ID --key maintenance-stop-001 --input power.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+dispatchctl server get --server SERVER_ID
+```
+
+`start` and `reboot` use the same command with their own request files and keys.
+Power changes require `infrastructure.modify` and an idle machine. Acceptance
+blocks deployment until provider evidence confirms the original operation; start
+and reboot also require a fresh heartbeat before the target becomes ready.
+Keep the exact file and key across response loss. An acknowledged operation with
+an uncertain result can be inspected explicitly without submitting another action:
+
+```sh
+dispatchctl server action resolve --server SERVER_ID --operation OPERATION_ID
+```
+
+For an isolated snapshot clone, inspect its original machine and restore evidence:
+
+```sh
+dispatchctl clone inspect --server CLONE_SERVER_ID
+```
+
+Prepare `promote.json` with an advertised workload `network`, the current
+`revision` and exact clone `confirmName`, then submit:
+
+```sh
+dispatchctl clone promote --server CLONE_SERVER_ID --key clone-promote-001 --input promote.json
+dispatchctl receipt wait --receipt RECEIPT_ID --timeout 120
+dispatchctl server wait --server CLONE_SERVER_ID --timeout 120
+```
+
+Promotion also requires `infrastructure.restore`. It preserves snapshot ancestry
+and the clone's fresh enrolled identity. Provider evidence must confirm quarantine
+release with copied workloads disabled and production bindings cleared; a fresh
+post-promotion heartbeat completes target readiness. Application integrity remains
+unverified, and promotion does not copy applications or recreate their routes.
+The mock provider exercises these contracts; a real provider must implement the
+optional actions before these commands can affect real machines.
 
 ## Capture and inspect a machine snapshot
 
@@ -297,7 +392,7 @@ dispatchctl snapshots list --project PROJECT_ID
 dispatchctl snapshot get --snapshot SNAPSHOT_ID
 ```
 
-To restore, add `sourceSnapshotId` to the server review request, use the provider's isolated restore network and supply a fresh `bootstrap` plan. Submit it through `server review` and `server create` with a new key. The server requires both create and restore grants. A verified clone stays isolated and does not become an ordinary deployment target. See [machine snapshots](machine-snapshots.md) for the identity checks and current provider limitations.
+To restore, add `sourceSnapshotId` to the server review request, use the provider's isolated restore network and supply a fresh `bootstrap` plan. Submit it through `server review` and `server create` with a new key. The server requires both create and restore grants. A verified clone stays isolated until explicitly promoted. See [machine snapshots](machine-snapshots.md) for the identity checks and current provider limitations.
 
 After retention expires and all restore operations settle, `snapshot delete review --snapshot SNAPSHOT_ID` returns the deletion consequences. Supply that review's confirmation fields to `snapshot accept` with its own deletion key. A protected or uncertain snapshot stays owned and continues to consume quota; inspect the original receipt and snapshot before retrying.
 

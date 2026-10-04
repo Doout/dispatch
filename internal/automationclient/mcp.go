@@ -11,6 +11,15 @@ import (
 )
 
 func inputSchema(kind string) any {
+	if schema := machineActionSchema(kind); schema != nil {
+		return schema
+	}
+	if schema := applicationUpdateSchema(kind); schema != nil {
+		return schema
+	}
+	if schema := bootstrapSchema(kind); schema != nil {
+		return schema
+	}
 	if schema := workflowSchema(kind); schema != nil {
 		return schema
 	}

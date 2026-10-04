@@ -63,14 +63,44 @@ allocation alone does not establish bootability. Fresh enrollment, authenticated
 runtime evidence and the reviewed running agent SHA-256 are required. The final
 runtime state is `verified-isolated`; the controller does not publish an ordinary
 workload target or copy application/service bindings. Application integrity remains
-unverified. In-place restore, memory capture, cross-provider restore and promoting
-a clone into production are outside this contract.
+unverified. In-place restore, memory capture and cross-provider restore are outside
+this contract.
 
 Provider evidence and mocked enrollment tests do not prove a real VM booted or
 that a provider actually sanitizes copied disks. A real adapter must pass the
 snapshot conformance suite and a live restore drill before those guarantees can
 be claimed. Unsafe or inconsistent provider evidence remains unresolved and
 retains quota for operator inspection.
+
+## Inspect and promote a clone
+
+`GET /api/v1/infrastructure/servers/{id}/clone` checks current provider ownership,
+fresh clone identities and the reviewed disk evidence. It returns the server's
+readiness, public provider resource, `verified` evidence result and
+`applicationIntegrity: unverified`. Inspection requires `infrastructure.inspect`
+and the project's provider assignment. It does not release quarantine or copy
+application/service bindings.
+
+An adapter may optionally support `server.promote`. Use
+`POST /api/v1/infrastructure/servers/{id}/promote` with an explicit workload
+`network`, current managed server `revision`, exact clone name as `confirmName`,
+and a stable `Idempotency-Key` header. Both `infrastructure.modify` and
+`infrastructure.restore` permissions are required. The clone must still be
+isolated, running, freshly enrolled and ready in isolation. The selected network
+must be advertised outside quarantine. The saved request binds its original
+machine, disk and enrollment identities.
+
+Completion requires matching provider evidence that quarantine was released on
+that same clone, copied workloads remain disabled and production bindings remain
+cleared. Changed enrollment credentials prevent publication. A fresh authenticated
+runtime heartbeat after promotion is required before `deployable` becomes true.
+Clone ancestry remains recorded and application integrity remains unverified;
+promotion does not restore or deploy an application. Uncertain outcomes retain
+the original operation for [explicit recovery](on-demand-servers.md#power-operations).
+
+The bundled mock exercises inspection and promotion without a real VM. Existing
+v1 providers need not implement these optional capabilities. Live sanitation,
+network release and workload acceptance still require a real adapter restore drill.
 
 ## Retention and cleanup
 

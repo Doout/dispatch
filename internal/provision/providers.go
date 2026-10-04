@@ -286,7 +286,7 @@ func (m *Manager) Adapter(ctx context.Context, id, capability, digest string) (*
 	if err != nil {
 		return nil, p, err
 	}
-	mutation := capability == provider.CapabilityCreate || capability == provider.CapabilityDelete
+	mutation := provider.MutationCapability(capability)
 	if mutation && (!p.Enabled || p.State != "ready") {
 		return nil, p, ErrDisabled
 	}

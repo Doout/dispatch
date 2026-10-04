@@ -162,6 +162,7 @@ func testInfrastructureLifecycle(t *testing.T, dsn string) {
 	if err = s.CreateServer(ctx, target); err != nil {
 		t.Fatal(err)
 	}
+	managed = testInfrastructureMachineActions(t, s, managed, now)
 	if err = s.CreateApp(ctx, core.App{ID: prefix + "app", ProjectID: project.ID, ServerID: target.ID, Name: "App", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}

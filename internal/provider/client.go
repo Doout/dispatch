@@ -206,7 +206,7 @@ func (c *Client) Server(ctx context.Context, id string) (Server, error) {
 	}
 	var result Server
 	err := c.request(ctx, "GET", "/v1/servers/"+url.PathEscape(id), "", nil, &result, http.StatusOK)
-	if err == nil && (result.ID != id || result.Name == "" || result.State == "") {
+	if err == nil && (result.ID != id || result.Name == "" || result.State == "" || !ValidPowerState(result.PowerState)) {
 		err = errors.New("provider returned an invalid server identity or state")
 	}
 	return result, err

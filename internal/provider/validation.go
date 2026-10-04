@@ -42,6 +42,9 @@ func ValidateManifest(manifest Manifest) error {
 	if len(seen) == 0 {
 		return errors.New("provider manifest has no capabilities")
 	}
+	if err := validateServerActionCapabilities(seen); err != nil {
+		return err
+	}
 	if err := validateSnapshotCapabilities(manifest, seen); err != nil {
 		return err
 	}

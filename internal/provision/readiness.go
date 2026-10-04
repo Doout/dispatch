@@ -3,6 +3,7 @@ package provision
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
@@ -42,6 +43,10 @@ func (m *Manager) GetManaged(ctx context.Context, id string) (ServerReadiness, e
 	if err = m.authorize(ctx, server.ProjectID, server.ProviderID, "infrastructure.inspect"); err != nil {
 		return result, err
 	}
+	server, err = m.refreshMachineEvidence(ctx, server)
+	if err != nil {
+		return result, err
+	}
 	if enrollment, ok := m.Store.(EnrollmentStore); ok {
 		if server.AllocationState != "deleted" {
 			if err = m.refreshServerReadiness(ctx, enrollment, server); err != nil {
@@ -78,7 +83,7 @@ func (m *Manager) GetManaged(ctx context.Context, id string) (ServerReadiness, e
 		return result, err
 	}
 	for _, operation := range ops {
-		if operation.Action != "create" && operation.Action != "restore" && operation.Action != "delete" {
+		if !slices.Contains([]string{"create", "restore", "delete", "server.start", "server.stop", "server.reboot", "server.promote"}, operation.Action) {
 			continue
 		}
 		if result.LatestOperation == nil || operation.CreatedAt.After(result.LatestOperation.CreatedAt) || operation.CreatedAt.Equal(result.LatestOperation.CreatedAt) && operation.UpdatedAt.After(result.LatestOperation.UpdatedAt) {
@@ -109,15 +114,23 @@ func (s ServerReadiness) waitState(now time.Time) string {
 		return s.AllocationState
 	}
 	if op := s.LatestOperation; op != nil {
+		// A confirmed failed action or a cancellation before submission leaves
+		// availability to the machine's current evidence. Its receipt still
+		// records the action outcome separately from server readiness.
+		settledAction := (op.State == "failed" || op.State == "cancelled") && slices.Contains([]string{"server.start", "server.stop", "server.reboot", "server.promote"}, op.Action)
 		switch op.State {
-		case "failed", "cancelled", "unknown", "unresolved":
+		case "failed", "cancelled":
+			if !settledAction {
+				return op.State
+			}
+		case "unknown", "unresolved":
 			return op.State
 		case "pending_approval", "waiting_approval":
 			return "pending_approval"
 		case "paused":
 			return "paused"
 		}
-		if op.State != "succeeded" && op.State != "adopted" {
+		if !settledAction && op.State != "succeeded" && op.State != "adopted" {
 			if !op.ExpiresAt.IsZero() && !op.ExpiresAt.After(now) {
 				return "expired"
 			}
@@ -149,7 +162,13 @@ func (s ServerReadiness) waitState(now time.Time) string {
 		return s.EnrollmentState
 	}
 	if s.AllocationState == "allocated" && s.EnrollmentState == "enrolled" {
-		if s.RuntimeState == "ready" && s.SourceSnapshotID == "" {
+		if s.PowerState == "stopped" {
+			return "stopped"
+		}
+		if s.PowerState == "transitioning" || s.PowerState == "unknown" {
+			return "waiting"
+		}
+		if s.RuntimeState == "ready" && (s.SourceSnapshotID == "" || s.PromotionState == "promoted") {
 			return "ready"
 		}
 		if s.RuntimeState == "verified-isolated" && s.SourceSnapshotID != "" {

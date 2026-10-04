@@ -107,6 +107,14 @@ func (m *Manager) Retry(ctx context.Context, id, digest string) (core.TargetBoot
 	if item.Digest != digest || item.AcceptedAt == nil || item.Plan.Method != "ssh" || item.State == "cancelled" || !item.ClaimExpiresAt.After(m.now()) {
 		return item, ErrConflict
 	}
+	generation := item.ExpectedGeneration
+	if item.Generation > 0 {
+		generation = item.Generation
+	}
+	credential, readErr := m.Store.GetEdgeCredential(ctx, item.NodeID)
+	if readErr != nil && !errors.Is(readErr, store.ErrNotFound) || credential.Generation != generation {
+		return item, ErrConflict
+	}
 	if item.State == "ready" {
 		return item, nil
 	}
