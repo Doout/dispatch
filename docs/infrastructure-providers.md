@@ -1,6 +1,6 @@
 # Infrastructure providers
 
-Open **Servers → Infrastructure providers → Register provider** as the controller owner. Supply the adapter endpoint, choose direct access or an existing edge node, and select a credential from **Secrets**. Dispatch stores the secret reference. Credential values remain write-only and are resolved only for a provider request.
+As the controller owner, register a provider with `POST /api/v1/infrastructure/providers`. Supply the adapter endpoint, optional `privateNetworkId` for an existing edge node, and optional `credentialSecretId` for a stored secret. Dispatch stores the secret reference. Credential values remain write-only and are resolved only for a provider request.
 
 HTTPS is required. A direct loopback endpoint may use HTTP for the local mock. A private route always uses the selected edge node and verified HTTPS. There is no direct fallback when that node is unavailable.
 
@@ -8,9 +8,9 @@ The registration stores the verified `dispatch.provider/v1` manifest, its digest
 
 Endpoint and network route are fixed for a registration. Register a new connection to point at another adapter. Verification may accept a new implementation version or schema after review, but the adapter name and API version must keep their original identity. Create submissions retain their reviewed manifest digest and original registration. Existing resources can be inspected or deleted after an approved compatible upgrade, with their original ownership labels.
 
-To rotate authentication, update the existing secret in **Secrets**, then verify the provider. To use another credential, edit the registration and choose the new secret reference. A referenced credential cannot be deleted or converted to a plain variable. Its provider reference appears in secret usage.
+To rotate authentication, update the existing secret, then verify the provider with `POST /api/v1/infrastructure/providers/{id}/verify` and its current `revision`. To use another credential, update `credentialSecretId` through `PUT /api/v1/infrastructure/providers/{id}`. A referenced credential cannot be deleted or converted to a plain variable. Its provider reference appears in secret usage.
 
-**Disable provider** prevents new create and delete operations. It retains the registration and allows approved inspection. It does not remove cloud resources. Re-enabling verifies the connection before approving mutations.
+Updating the registration with `enabled: false` prevents new create and delete operations. It retains the registration and allows approved inspection. It does not remove cloud resources. Re-enabling verifies the connection before approving mutations.
 
 ## API
 
@@ -26,7 +26,7 @@ The registration endpoints below require a controller owner. Project operators a
 
 Create and update accept `name`, `endpoint`, `privateNetworkId`, `credentialSecretId`, `enabled` and `capabilities`. Updates also require the current revision. The API returns no credential values and accepts no inline provider authentication token. A saved registration with `state: "failed"` needs operator attention before it can be enabled.
 
-For a credential-free development adapter, run the [persistent mock provider](provider-api.md), register `http://127.0.0.1:8091`, choose **No authentication**, and approve `server.inspect`, `server.create` and `server.delete`. This registers the adapter; it does not allocate a server.
+For a credential-free development adapter, run the [persistent mock provider](provider-api.md), register `http://127.0.0.1:8091`, omit `credentialSecretId`, and approve `server.inspect`, `server.create` and `server.delete`. This registers the adapter; it does not allocate a server.
 
 ## Verification
 

@@ -6,7 +6,7 @@ Set `DISPATCH_PUBLIC_URL` to the controller's public HTTPS origin. Install the r
 
 ## New provider machines
 
-In **Servers → On-demand servers**, choose the provider's region, size, image, network and SSH public key. Enable **Install and enroll the target agent with cloud-init**, select the image architecture, and review the artifact and actions before confirming creation.
+Submit the provider's region, size, image, network and SSH public key reference to `POST /api/v1/infrastructure/servers/review`. Include a `bootstrap` plan with `method: cloud_init`, the image's `platform` and `imageFamily`, and `installRuntime`. Review the returned artifact and actions before accepting creation. The [server CLI commands](automation-client.md) support the same plan.
 
 The selected image must support cloud-init and include Python 3, systemd, `flock` and `timeout`. Automatic prerequisite installation supports Ubuntu 24.04 and installs Docker, Compose v2, Git, curl and CA certificates. Other systemd images must already provide Docker, Compose v2 and Git. Choosing a different image never bypasses these checks.
 
@@ -18,11 +18,11 @@ Allocation, installation, enrollment and runtime readiness are separate. An IP a
 
 ## Verified SSH installation
 
-In **Target agent installation**, choose an existing target or import an existing machine. Enter its SSH host, port and user, then a password or private key. These credentials are encrypted for this installation, excluded from API responses and cleared from the form after review submission. Saved private inputs are erased when installation completes, its claim expires, or a new approved recovery plan supersedes it. Builder SSH credentials remain separate.
+Use `POST /api/v1/infrastructure/bootstrap/review` with `serverId` for an existing target, or omit that ID to import an existing machine. Supply the SSH host, port and user in `plan`, plus a password or private key in the write-only `credentials` object. These credentials are encrypted for this installation and excluded from API responses. Saved private inputs are erased when installation completes, its claim expires, or a new approved recovery plan supersedes it. Builder SSH credentials remain separate.
 
-Supply the SSH host public key and verify its fingerprint through the provider console or another trusted channel. A network scan alone is insufficient. The approval screen shows the exact host, user, fingerprint, artifact SHA-256 and actions. A controller owner must confirm the target name before execution. SSH verifies the pinned host key before offering authentication and runs only the generated installer. Non-root users require passwordless sudo. There is no arbitrary command endpoint.
+Supply the SSH host public key and verify its fingerprint through the provider console or another trusted channel. A network scan alone is insufficient. The review shows the exact host, user, fingerprint, artifact SHA-256 and actions. A controller owner must accept the review with its `digest` and exact target name as `confirmName` before execution. SSH verifies the pinned host key before offering authentication and runs only the generated installer. Non-root users require passwordless sudo. There is no arbitrary command endpoint.
 
-The installer preserves `/var/lib/dispatch-edge/identity.json` and the runtime receipt journal during ordinary upgrades. **Replace the enrolled identity for recovery** is a separate reviewed action. It retires the previous enrollment and sessions, and a local marker prevents a retry from deleting the new identity a second time. Existing identity files for another controller or node are rejected, including identities copied from another machine.
+The installer preserves `/var/lib/dispatch-edge/identity.json` and the runtime receipt journal during ordinary upgrades. Setting `replaceIdentity: true` in the plan requests a separate reviewed recovery action. It retires the previous enrollment and sessions, and a local marker prevents a retry from deleting the new identity a second time. Existing identity files for another controller or node are rejected, including identities copied from another machine.
 
 A new approved recovery plan supersedes the previous claim. A running SSH lease must finish or expire before another plan can be accepted. Approved SSH work resumes after a controller restart. Installation is bounded to 14 minutes, with a 16-minute durable lease and an on-target installer lock. Interrupted work shows a sanitized status and can be retried with the same plan and encrypted credentials. A changed host key, expired claim or changed identity requires a new review for the same target.
 

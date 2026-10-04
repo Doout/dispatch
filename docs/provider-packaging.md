@@ -33,10 +33,10 @@ export DISPATCH_PROVIDER_IMAGE=dispatch-provider-mock:local
 docker compose -f examples/providers/sidecar/compose.yaml up -d
 ```
 
-As controller owner, register `http://127.0.0.1:8091` in **Servers → Infrastructure
-providers**, with no authentication and inspect/create/delete capabilities.
-The [registration body](../examples/providers/sidecar/registration.json) is also
-accepted by `POST /api/v1/infrastructure/providers`. Run the managed-server
+As controller owner, submit the
+[registration body](../examples/providers/sidecar/registration.json) to
+`POST /api/v1/infrastructure/providers`. It registers `http://127.0.0.1:8091`
+with no authentication and inspect/create/delete capabilities. Run the managed-server
 workflow in [On-demand servers](on-demand-servers.md); the mock's machine needs
 a separately installed agent before it becomes a deployment target.
 

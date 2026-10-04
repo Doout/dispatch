@@ -4,14 +4,16 @@ Machine snapshots retain provider disks independently of the source server. They
 complement application backups: the current capture mode is crash-consistent and
 does not quiesce databases or establish application integrity.
 
-In **Connections → Servers**, use **Machine snapshots** to choose an allocated
-source, a boot/all disk set and retention period. Review the exact disk identities,
-consistency and encryption before typing the snapshot name to accept. The provider
+Use the API workflow below or the
+[snapshot CLI commands](automation-client.md#capture-and-inspect-a-machine-snapshot)
+to select an allocated source, a boot/all disk set and retention period. Review
+the exact disk identities, consistency and encryption before supplying the exact
+snapshot name as `confirmName` to accept. The provider
 must advertise and have approved snapshot capabilities. Unsupported disk policies
 are rejected before allocation. No real VM provider adapter is bundled yet; the
 public mock exercises the contract without creating real VMs or disks.
 
-The API supports the same flow:
+The API workflow is:
 
 1. `POST /api/v1/infrastructure/servers/{id}/snapshot-review` with `name`, `diskSet`,
    `consistency: "crash-consistent"`, `encryption: {"mode":"provider-managed"}` and
@@ -41,12 +43,11 @@ operation and verified absence. Expired worker leases cannot change the result.
 
 ## Isolated restore
 
-**Restore isolated clone** opens the normal server review with a fixed source
-snapshot, project and provider. Select a compatible image and a network from the
-provider's `restore-networks` catalog. A fresh cloud-init bootstrap is required and
-pins the agent artifact before acceptance. The equivalent API uses
-`sourceSnapshotId` on `/api/v1/infrastructure/servers/review`, then accepts through
-`POST /api/v1/infrastructure/servers`. Both `infrastructure.create` and
+Request an isolated clone with `sourceSnapshotId`, the source project and provider
+on `POST /api/v1/infrastructure/servers/review`. Select a compatible image and a
+network from the provider's `restore-networks` catalog. A fresh cloud-init
+bootstrap is required and pins the agent artifact before acceptance. Accept the
+saved review through `POST /api/v1/infrastructure/servers`. Both `infrastructure.create` and
 `infrastructure.restore` permissions are required, including receipt replay.
 
 The provider must sanitize the copied disk **before** its old agent, copied
