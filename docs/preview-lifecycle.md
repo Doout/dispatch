@@ -6,6 +6,14 @@ Webhook and polling deliveries use durable comment receipts and one active templ
 
 Closure rechecks the primary PR and every linked PR. Closing one PR keeps the preview while another remains open. A delayed closure received after a reopen cannot remove the current preview. GitHub lookup failures keep the preview until the next successful reconciliation.
 
+Helm values submitted with `/preview values` belong to that preview's deployment.
+They survive source relinking, manual redeployment, automatic updates and controller
+restarts. A newer values comment replaces the overrides for its selected
+deployment; `/preview values clear` removes them. Each workflow revision captures
+its own values, so a later comment cannot change a queued or running revision.
+Existing run and deployment history retains those snapshots after cleanup. See
+[the comment syntax](application-config.md#helm-values-from-pr-comments).
+
 ## Cleanup acceptance and recovery
 
 Explicit removal, expiry, and final PR closure save a cleanup intent before cancelling work or touching the target. The intent captures generated applications owned by the preview, their target and specification, and one stable cleanup operation per application. Same-project legacy stage history can identify older generated applications; cross-project or conflicting ownership stops cleanup.

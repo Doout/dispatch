@@ -361,6 +361,9 @@ func workflowPreviewCommandHelp(revision core.WorkflowRevision, trigger core.Wor
 	fmt.Fprintf(&body, "- `%s ttl 1d`: shut down after one day from now; `%s ttl 0` removes the time limit.\n", command, command)
 	fmt.Fprintf(&body, "- `%s extend 1d`: add one day to the current shutdown deadline without rebuilding.\n", command)
 	fmt.Fprintf(&body, "- `%s live on`: deploy every new commit when detected. `%s live off` returns to this preview's configured update policy.\n", command, command)
+	fmt.Fprintf(&body, "- `%s values`: redeploy with Helm overrides supplied in a fenced `yaml` block below the command. Name a deployment after `values` when the preview has several deployments.\n", command)
+	fmt.Fprintf(&body, "- `%s values clear`: clear all comment overrides and redeploy with configured values. `%s values <deployment> clear` clears one deployment.\n", command, command)
+	body.WriteString("\nComment values replace the saved overrides for the selected deployment and remain attached to later deployments. Values from build output bindings still win. Keep credentials out of PR comments.\n")
 	if trigger.LiveReload {
 		body.WriteString("\nLive reload is on. Every detected new commit starts a deployment. A newer commit cancels queued or running work.\n")
 	} else if trigger.AutoDeploy {
@@ -422,6 +425,14 @@ func workflowPreviewReportForTrigger(revision core.WorkflowRevision, resource co
 		updateMode = "Limited automatic"
 	}
 	body += "\n**Commit updates:** " + updateMode + "\n"
+	if len(revision.PreviewValues) > 0 {
+		deployments := make([]string, 0, len(revision.PreviewValues))
+		for name := range revision.PreviewValues {
+			deployments = append(deployments, "`"+name+"`")
+		}
+		sort.Strings(deployments)
+		body += "\n**Helm comment overrides:** " + strings.Join(deployments, ", ") + "\n"
+	}
 	body += workflowPreviewCommandHelp(revision, trigger)
 	if source := trigger.TemplateSource; source != nil && source.CommitSHA != "" {
 		fileURL := strings.TrimRight(githubURL, "/") + "/" + source.Repository + "/blob/" + url.PathEscape(source.CommitSHA)

@@ -16,7 +16,7 @@ import (
 
 // Merge files before inline runtime values. File contents belong to Helm's tpl,
 // not the Pipeline expression renderer.
-func (s *Service) deploymentValues(ctx context.Context, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, spec HelmDeploymentSpec) (map[string]any, []string, error) {
+func (s *Service) deploymentValues(ctx context.Context, source core.ConfigSource, revision core.WorkflowRevision, stage StageSpec, deploymentName string, spec HelmDeploymentSpec) (map[string]any, []string, error) {
 	root, err := os.MkdirTemp("", "dispatch-values-")
 	if err != nil {
 		return nil, nil, err
@@ -74,11 +74,39 @@ func (s *Service) deploymentValues(ctx context.Context, source core.ConfigSource
 	paths = append(paths, inlinePath)
 	options := helmvalues.Options{ValueFiles: paths}
 	values, err := options.MergeValues(nil)
+	if err == nil && len(revision.PreviewValues[deploymentName]) > 0 {
+		// Helm's file decoder uses float64 for JSON numbers. Merge the captured
+		// native values afterward so large integer overrides remain exact. This
+		// matches Helm file layering, including list replacement and nulls.
+		copy, copyErr := core.CloneWorkflowPreviewValues(map[string]map[string]any{deploymentName: revision.PreviewValues[deploymentName]})
+		if copyErr != nil {
+			return nil, nil, copyErr
+		}
+		values = mergeLiteralHelmValues(values, copy[deploymentName])
+		recordValueSources(origins, "", copy[deploymentName], "Preview values")
+	}
 	if err == nil && len(origins) > 0 {
 		raw, _ := json.Marshal(origins)
 		evidence = append(evidence, "Helm value sources: "+string(raw))
 	}
 	return values, evidence, err
+}
+
+func mergeLiteralHelmValues(base, overlay map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(overlay))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range overlay {
+		if next, ok := value.(map[string]any); ok {
+			if current, ok := merged[key].(map[string]any); ok {
+				merged[key] = mergeLiteralHelmValues(current, next)
+				continue
+			}
+		}
+		merged[key] = value
+	}
+	return merged
 }
 
 func containedPath(root, path string) (string, error) {

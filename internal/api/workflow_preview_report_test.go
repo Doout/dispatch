@@ -67,7 +67,7 @@ func TestWorkflowPreviewCommandHelpUsesConfiguredSourcesAndCommand(t *testing.T)
 		if origin == "ui" {
 			other = "service"
 		}
-		for _, want := range []string{"<details>\n<summary>Preview commands and options</summary>", "`/try`", "`/try live on`", "`/try live off`", "/try with " + other + "=#<PR_NUMBER>", "/try with gitops=#<PR_NUMBER>", "Saved links remain attached", ",gitops=#<PR_NUMBER>"} {
+		for _, want := range []string{"<details>\n<summary>Preview commands and options</summary>", "`/try`", "`/try live on`", "`/try live off`", "`/try values`", "`/try values clear`", "/try with " + other + "=#<PR_NUMBER>", "/try with gitops=#<PR_NUMBER>", "Saved links remain attached", ",gitops=#<PR_NUMBER>"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("missing %q: %s", want, body)
 			}
@@ -82,7 +82,7 @@ func TestWorkflowPreviewCommandHelpUsesConfiguredSourcesAndCommand(t *testing.T)
 		}
 	}
 	body := workflowPreviewCommandHelp(core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"service": {Repository: "org/service"}}}, core.WorkflowPreviewTrigger{Repository: "org/service"})
-	if !strings.Contains(body, "`/preview`") || strings.Contains(body, "/preview with ") || !strings.Contains(body, "<details>") {
+	if !strings.Contains(body, "`/preview`") || !strings.Contains(body, "`/preview values`") || strings.Contains(body, "/preview with ") || !strings.Contains(body, "<details>") {
 		t.Fatalf("single-source help is misleading: %s", body)
 	}
 }
@@ -92,6 +92,14 @@ func TestWorkflowPreviewCommandHelpShowsLiveMode(t *testing.T) {
 	body := workflowPreviewCommandHelp(core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"service": {Repository: "org/service"}}}, trigger)
 	if !strings.Contains(body, "Live reload is on") || strings.Contains(body, "New commits do not deploy automatically") {
 		t.Fatalf("wrong update policy in help: %s", body)
+	}
+}
+
+func TestWorkflowPreviewReportNamesFrozenOverridesWithoutValues(t *testing.T) {
+	revision := core.WorkflowRevision{PreviewValues: map[string]map[string]any{"optimization": {"private": "do-not-copy-to-report"}}}
+	body := workflowPreviewReportForTrigger(revision, core.WorkflowResource{Name: "preview-42"}, nil, "https://preview.example.test", "https://github.example", core.WorkflowPreviewTrigger{Command: "/try"})
+	if !strings.Contains(body, "**Helm comment overrides:** `optimization`") || !strings.Contains(body, "/try values clear") || strings.Contains(body, "do-not-copy-to-report") {
+		t.Fatalf("report omitted override information or exposed values: %s", body)
 	}
 }
 

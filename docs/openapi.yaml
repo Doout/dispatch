@@ -3795,13 +3795,13 @@ paths:
   /workflow/preview-triggers:
     get:
       operationId: listWorkflowPreviewTriggers
-      description: Lists saved PR comment triggers for the owner editor, including linked PRs and closed state. Owner access is required.
+      description: Lists saved PR comment triggers for the owner editor, including linked PRs, closed state and current previewValues. Values are keyed by Helm deployment name and are set or cleared through trusted PR comments. Owner access is required.
       responses:
         "200": { $ref: "#/components/responses/JSONList" }
   /workflow/preview-triggers/{id}:
     put:
       operationId: updateWorkflowPreviewTrigger
-      description: Updates the PR, command, GitHub App, and report URL. Changing the primary PR or GitHub App clears the previous report comment and linked PRs. Owner access is required.
+      description: Updates the PR, command, GitHub App, and report URL. Changing the primary repository, PR or GitHub App clears the previous report comment, linked PRs and comment values. Owner access is required.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       requestBody:
@@ -3881,6 +3881,7 @@ paths:
   /workflow/revisions:
     get:
       operationId: listWorkflowRevisions
+      description: Lists revisions with their captured previewValues, keyed by Helm deployment name. Later preview comments do not change these values.
       parameters:
         - { in: query, name: resourceId, schema: { type: string } }
       responses:
@@ -3901,6 +3902,12 @@ paths:
                 properties:
                   id: { type: string }
                   state: { type: string }
+                  previewValues:
+                    type: object
+                    description: Immutable Helm comment overrides captured for this run, keyed by deployment name. Omitted when no overrides were used.
+                    additionalProperties:
+                      type: object
+                      additionalProperties: true
                   checks:
                     type: array
                     items: { $ref: "#/components/schemas/WorkflowCheckReport" }

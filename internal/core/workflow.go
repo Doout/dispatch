@@ -61,6 +61,7 @@ type WorkflowResource struct {
 
 // WorkflowPreviewTrigger binds an inline workflow to one pull request command.
 type WorkflowPreviewTrigger struct {
+	PreviewValues          map[string]map[string]any               `json:"previewValues,omitempty"`
 	SourceTrustPolicy      string                                  `json:"sourceTrustPolicy"`
 	LifetimeStartCommentID string                                  `json:"-"`
 	LifetimeReportPending  bool                                    `json:"-"`
@@ -173,10 +174,13 @@ type WorkflowFeedback struct {
 }
 
 type WorkflowRevision struct {
-	Checks       []WorkflowCheckReport       `json:"checks,omitempty"`
-	SourceTrust  *PreviewSourceTrustDecision `json:"sourceTrust,omitempty"`
-	PullRequests []WorkflowPullRequest       `json:"pullRequests,omitempty"`
-	Feedback     *WorkflowFeedback           `json:"feedback,omitempty"`
+	// PreviewValues captures the Helm overlay for this run independently from
+	// the mutable preview settings and the shared application document.
+	PreviewValues map[string]map[string]any   `json:"previewValues,omitempty"`
+	Checks        []WorkflowCheckReport       `json:"checks,omitempty"`
+	SourceTrust   *PreviewSourceTrustDecision `json:"sourceTrust,omitempty"`
+	PullRequests  []WorkflowPullRequest       `json:"pullRequests,omitempty"`
+	Feedback      *WorkflowFeedback           `json:"feedback,omitempty"`
 
 	ID         string                            `json:"id"`
 	ResourceID string                            `json:"resourceId"`

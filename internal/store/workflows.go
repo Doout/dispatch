@@ -353,9 +353,9 @@ func (s *SQLStore) CreateWorkflowRevision(ctx context.Context, item core.Workflo
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending,source_trust) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+	_, err = tx.ExecContext(ctx, s.q(`INSERT INTO workflow_revisions(id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,feedback_pending,source_trust,preview_values) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		item.ID, item.ResourceID, item.ConfigSHA, item.SpecDigest, item.State, item.Trigger, jsonText(item.Sources), jsonText(item.Outputs), item.Error,
-		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.PullRequests), jsonText(item.Feedback), item.Feedback != nil && !item.Feedback.Complete, jsonText(item.SourceTrust))
+		stamp(item.CreatedAt), nullTime(item.StartedAt), nullTime(item.FinishedAt), jsonText(item.PullRequests), jsonText(item.Feedback), item.Feedback != nil && !item.Feedback.Complete, jsonText(item.SourceTrust), jsonText(item.PreviewValues))
 	if err != nil {
 		return err
 	}
@@ -445,7 +445,7 @@ func (s *SQLStore) supersedeWorkflowRevisions(ctx context.Context, resourceID st
 	return ids, tx.Commit()
 }
 
-const workflowRevisionSelect = `SELECT id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,source_trust FROM workflow_revisions`
+const workflowRevisionSelect = `SELECT id,resource_id,config_sha,spec_digest,state,trigger_name,sources,outputs,error,created_at,started_at,finished_at,pull_requests,feedback,source_trust,preview_values FROM workflow_revisions`
 
 func (s *SQLStore) GetWorkflowRevision(ctx context.Context, id string) (core.WorkflowRevision, error) {
 	item, err := scanWorkflowRevision(s.db.QueryRowContext(ctx, s.q(workflowRevisionSelect+` WHERE id=?`), id))
@@ -484,10 +484,13 @@ func (s *SQLStore) ListWorkflowRevisions(ctx context.Context, resourceID string,
 
 func scanWorkflowRevision(row scanner) (core.WorkflowRevision, error) {
 	var item core.WorkflowRevision
-	var sources, outputs, created, pullRequests, feedback, sourceTrust string
+	var sources, outputs, created, pullRequests, feedback, sourceTrust, previewValues string
 	var started, finished sql.NullString
 	err := row.Scan(&item.ID, &item.ResourceID, &item.ConfigSHA, &item.SpecDigest, &item.State, &item.Trigger, &sources, &outputs,
-		&item.Error, &created, &started, &finished, &pullRequests, &feedback, &sourceTrust)
+		&item.Error, &created, &started, &finished, &pullRequests, &feedback, &sourceTrust, &previewValues)
+	if err == nil {
+		item.PreviewValues, err = core.DecodeWorkflowPreviewValues([]byte(previewValues))
+	}
 	_ = json.Unmarshal([]byte(sources), &item.Sources)
 	_ = json.Unmarshal([]byte(outputs), &item.Outputs)
 	_ = json.Unmarshal([]byte(pullRequests), &item.PullRequests)

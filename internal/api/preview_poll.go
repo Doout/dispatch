@@ -583,6 +583,16 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 	if err != nil {
 		return err
 	}
+	if event.PreviewValuesError != "" {
+		obsolete, err := a.workflowPreviewValuesErrorIsObsolete(ctx, target, event)
+		if err != nil {
+			return err
+		}
+		if obsolete {
+			return nil
+		}
+		return errors.New(event.PreviewValuesError)
+	}
 
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && fields[0] == "test" {
 		return a.processWorkflowPreviewTestComment(ctx, target, event)
@@ -646,6 +656,9 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		if bound {
 			continue
 		}
+		if event.PreviewValues != nil && event.PreviewValues.Clear {
+			return fmt.Errorf("no preview exists for this PR; post %s before clearing its values", event.Command)
+		}
 		if fields := strings.Fields(event.Arguments); len(fields) > 0 && strings.EqualFold(fields[0], "without") {
 			return fmt.Errorf("no preview exists for this PR; post %s before unlinking a source", event.Command)
 		}
@@ -666,6 +679,15 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			return fmt.Errorf("allocate preview from template %s: %w", template.Name, err)
 		}
 		variables.ID = previewID
+		if event.PreviewValues != nil {
+			documents, err := workflow.Parse("preview.yaml", []byte(rendered))
+			if err != nil || len(documents) != 1 || documents[0].Spec == nil {
+				return errors.New("temporary preview document is invalid")
+			}
+			if _, err := prepareWorkflowPreviewValues(core.WorkflowPreviewTrigger{Command: template.Command}, event.PreviewValues, documents[0].Spec); err != nil {
+				return err
+			}
+		}
 		defaults, err := workflowPreviewDefaults(rendered)
 		if err != nil {
 			return err
@@ -712,6 +734,7 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			}
 		}
 	}
+	matchedPreview := false
 	for index, trigger := range target.workflowTriggers {
 		if trigger.Command != event.Command || trigger.PullRequestNumber != event.PullRequestNumber {
 			continue
@@ -719,6 +742,9 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 		resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
 		if err != nil {
 			return err
+		}
+		if resource.Temporary && trigger.ClosedAt == nil {
+			matchedPreview = true
 		}
 		if resource.State == "expired" && trigger.LifetimeStartCommentID == event.SourceCommentID {
 			continue
@@ -755,6 +781,10 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			return err
 		}
 		prepared, updatedTrigger, err := a.prepareWorkflowPreviewLinks(ctx, resource, trigger, updates)
+		if err != nil {
+			return err
+		}
+		updatedTrigger, err = prepareWorkflowPreviewValues(updatedTrigger, event.PreviewValues, documents[0].Spec)
 		if err != nil {
 			return err
 		}
@@ -828,6 +858,9 @@ func (a *API) processWorkflowPreviewComment(ctx context.Context, target *preview
 			return err
 		}
 
+	}
+	if event.PreviewValues != nil && !matchedPreview {
+		return errors.New("Helm value overrides require a workflow preview for this PR")
 	}
 	return nil
 }

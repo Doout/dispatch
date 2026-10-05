@@ -632,6 +632,10 @@ func (s *Service) snapshotChanged(ctx context.Context, resource core.WorkflowRes
 	if err != nil || len(revisions) == 0 {
 		return true
 	}
+	values, err := s.capturePreviewValues(ctx, resource)
+	if err != nil || !samePreviewValues(values, revisions[0].PreviewValues) {
+		return true
+	}
 	if revisions[0].SpecDigest != resource.SpecDigest && !addsOnlyInputPaths(resource, revisions[0].SpecDigest) {
 		return true
 	}
@@ -910,6 +914,10 @@ func (s *Service) startWithSnapshot(ctx context.Context, resource core.WorkflowR
 	revision := core.WorkflowRevision{ID: ulid.Make().String(), ResourceID: resource.ID, ConfigSHA: resource.ConfigSHA, SpecDigest: resource.SpecDigest,
 		State: "queued", Trigger: trigger, Sources: snapshot, Outputs: map[string]map[string]string{}, CreatedAt: time.Now().UTC()}
 	var err error
+	revision.PreviewValues, err = s.capturePreviewValues(ctx, resource)
+	if err != nil {
+		return revision, err
+	}
 	revision.PullRequests, err = s.previewPullRequests(ctx, resource, snapshot)
 	if err != nil {
 		return revision, err
@@ -930,8 +938,13 @@ func (s *Service) startWithSnapshot(ctx context.Context, resource core.WorkflowR
 	if err := s.Store.CreateWorkflowRevision(ctx, revision); err != nil {
 		return revision, err
 	}
+	execution := revision
+	execution.PreviewValues, err = clonePreviewValues(revision.PreviewValues)
+	if err != nil {
+		return revision, err
+	}
 	s.launchRun(revision.ID, func(runCtx context.Context) {
-		s.runApplication(runCtx, resource, source, revision)
+		s.runApplication(runCtx, resource, source, execution)
 	})
 	return revision, nil
 }
