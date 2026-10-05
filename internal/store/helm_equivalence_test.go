@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/doout/dispatch/internal/core"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/doout/dispatch/internal/core"
 )
 
 type equivalenceFixture struct {
@@ -264,6 +265,36 @@ func testWorkflowEquivalence(t *testing.T, f equivalenceFixture) {
 	if !reflect.DeepEqual(loaded.Sources, observed.Sources) || !reflect.DeepEqual(loaded.Results, observed.Results) {
 		t.Fatal("resource comparison did not persist")
 	}
+	// An edit to independently stored preview values invalidates both a cached
+	// observation and a comparison that was prepared before that edit.
+	connection := core.GitHubAppConnection{ID: f.app.ID + "-github", Name: f.app.ID + "-github", State: "ready", CreatedAt: now, UpdatedAt: now}
+	must(s.CreateGitHubApp(ctx, connection))
+	trigger := core.WorkflowPreviewTrigger{ID: f.app.ID + "-trigger", ResourceID: resource.ID, GitHubAppID: connection.ID, Repository: "owner/app", PullRequestNumber: 42, Command: "/preview", PreviewValues: map[string]map[string]any{"web": {"gateway": "changed"}}, CreatedAt: now}
+	must(s.CreateWorkflowPreviewTrigger(ctx, trigger))
+	if _, err = s.GetWorkflowEquivalence(ctx, resource.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("preview values edit retained stale observation", err)
+	}
+	if err = s.SaveWorkflowEquivalence(ctx, observed); !errors.Is(err, ErrHelmEquivalenceChanged) {
+		t.Fatal("comparison prepared before values edit was accepted", err)
+	}
+	trigger.PreviewValues = nil
+	resource.Temporary = true
+	must(s.UpdateWorkflowResource(ctx, resource))
+	must(s.SaveWorkflowPreviewSources(ctx, resource, trigger))
+	must(s.SaveWorkflowEquivalence(ctx, observed))
+	frozen := revision
+	frozen.ID += "-values"
+	frozen.CreatedAt = now.Add(time.Second)
+	frozen.PreviewValues = map[string]map[string]any{"web": {"gateway": "previously deployed"}}
+	must(s.CreateWorkflowRevision(ctx, frozen))
+	withValues := observed
+	withValues.BaselineRevisionID = frozen.ID
+	if err = s.SaveWorkflowEquivalence(ctx, withValues); !errors.Is(err, ErrHelmEquivalenceChanged) {
+		t.Fatal("cleared current settings ignored a nonempty baseline snapshot", err)
+	}
+	_, err = s.db.ExecContext(ctx, s.q(`DELETE FROM workflow_revisions WHERE id=?`), frozen.ID)
+	must(err)
+	must(s.SaveWorkflowEquivalence(ctx, observed))
 	encoded, _ := json.Marshal(loaded)
 	if strings.Contains(string(encoded), "resource-spec") || strings.Contains(string(encoded), "appProofs") || strings.Contains(string(encoded), f.proof.TargetDigest) {
 		t.Fatal("private anchors exposed")

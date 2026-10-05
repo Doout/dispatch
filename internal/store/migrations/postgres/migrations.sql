@@ -1717,3 +1717,7 @@ CREATE TABLE infrastructure_action_requests (
  encrypted_request TEXT NOT NULL,
  cipher_digest TEXT NOT NULL
 );
+
+-- dispatch:migration 100_workflow_preview_values
+ALTER TABLE workflow_preview_triggers ADD COLUMN preview_values TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE workflow_revisions ADD COLUMN preview_values TEXT NOT NULL DEFAULT '{}';

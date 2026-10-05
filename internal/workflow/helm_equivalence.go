@@ -19,6 +19,14 @@ type workflowEquivalenceStore interface {
 // approvals, or finally jobs to run, and prior successful job results still match
 // all declared inputs including resolved secrets. Manual Start never uses this.
 func (s *Service) reuseEquivalentWorkflow(ctx context.Context, resource core.WorkflowResource, source core.ConfigSource, snapshot map[string]core.WorkflowSourceRevision) bool {
+	// Saved workflow observations have no independent preview-value anchor.
+	// Keep those previews on the ordinary effective Helm comparison path.
+	if resource.Temporary {
+		values, err := s.capturePreviewValues(ctx, resource)
+		if err != nil || len(values) != 0 {
+			return false
+		}
+	}
 	// Comparing cached outputs resolves job secrets and renders deployment inputs.
 	// It must obey the same source policy as a new execution.
 	candidateTrust := core.WorkflowRevision{ResourceID: resource.ID, SpecDigest: resource.SpecDigest, ConfigSHA: resource.ConfigSHA, Sources: snapshot}
@@ -54,6 +62,9 @@ func (s *Service) reuseEquivalentWorkflow(ctx context.Context, resource core.Wor
 		return false
 	}
 	previous := revisions[0]
+	if len(previous.PreviewValues) != 0 {
+		return false
+	}
 	if !onlyHelmInputsChanged(*spec, previous.Sources, snapshot) {
 		return false
 	}

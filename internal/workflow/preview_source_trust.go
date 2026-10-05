@@ -165,7 +165,8 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 		Sources                                                                          map[string]core.WorkflowSourceRevision
 		Origins                                                                          []core.PreviewSourceOrigin
 		Scope, Environments                                                              []string
-	}{resource.ID, source.ProjectID, resource.SpecDigest, resource.ConfigSHA, decision.Policy, trigger.ID, trigger.TemplateID, trigger.PreviewURL, exact, decision.Sources, scopes, environments}
+		PreviewValues                                                                    map[string]map[string]any `json:",omitempty"`
+	}{resource.ID, source.ProjectID, resource.SpecDigest, resource.ConfigSHA, decision.Policy, trigger.ID, trigger.TemplateID, trigger.PreviewURL, exact, decision.Sources, scopes, environments, revision.PreviewValues}
 	raw, _ := json.Marshal(input)
 	sum := sha256.Sum256(raw)
 	decision.Digest = "sha256:" + hex.EncodeToString(sum[:])

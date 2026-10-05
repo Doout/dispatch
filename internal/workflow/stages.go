@@ -205,7 +205,7 @@ func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.Workf
 	if !ok {
 		return prepared, fmt.Errorf("chart source %s is missing", spec.Helm.SourceRef)
 	}
-	values, evidence, err := s.deploymentValues(ctx, source, revision, stage, spec.Helm)
+	values, evidence, err := s.deploymentValues(ctx, source, revision, stage, deploymentName, spec.Helm)
 	if err != nil {
 		return prepared, err
 	}

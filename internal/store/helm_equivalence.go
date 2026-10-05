@@ -5,8 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/doout/dispatch/internal/core"
 	"sort"
+
+	"github.com/doout/dispatch/internal/core"
 )
 
 var ErrHelmEquivalenceChanged = errors.New("Helm comparison inputs changed")
@@ -132,13 +133,24 @@ func (s *SQLStore) validateWorkflowEquivalence(ctx context.Context, tx *changeTx
 	if err != nil {
 		return err
 	}
-	var id, state, revisionSpec string
-	err = tx.QueryRowContext(ctx, s.q(`SELECT id,state,spec_digest FROM workflow_revisions WHERE resource_id=? ORDER BY created_at DESC,id DESC LIMIT 1`), observed.ResourceID).Scan(&id, &state, &revisionSpec)
+	var id, state, revisionSpec, revisionValues string
+	err = tx.QueryRowContext(ctx, s.q(`SELECT id,state,spec_digest,preview_values FROM workflow_revisions WHERE resource_id=? ORDER BY created_at DESC,id DESC LIMIT 1`), observed.ResourceID).Scan(&id, &state, &revisionSpec, &revisionValues)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && (id != observed.BaselineRevisionID || state != "succeeded" || revisionSpec != observed.SpecDigest) {
 		return ErrHelmEquivalenceChanged
 	}
 	if err != nil {
 		return err
+	}
+	capturedValues, decodeErr := core.DecodeWorkflowPreviewValues([]byte(revisionValues))
+	if decodeErr != nil || len(capturedValues) != 0 {
+		return ErrHelmEquivalenceChanged
+	}
+	var scopedValues int
+	if err = tx.QueryRowContext(ctx, s.q(`SELECT count(*) FROM workflow_preview_triggers WHERE resource_id=? AND closed_at IS NULL AND preview_values NOT IN ('{}','null')`), observed.ResourceID).Scan(&scopedValues); err != nil {
+		return err
+	}
+	if scopedValues != 0 {
+		return ErrHelmEquivalenceChanged
 	}
 	var active int
 	if err = tx.QueryRowContext(ctx, s.q(`SELECT count(*) FROM workflow_revisions WHERE resource_id=? AND state NOT IN ('succeeded','failed','cancelled','canceled','skipped')`), observed.ResourceID).Scan(&active); err != nil {

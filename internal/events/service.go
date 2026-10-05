@@ -168,6 +168,13 @@ func ParseGitHubEvent(eventName, deliveryID string, body []byte, now time.Time) 
 		event.TrustedActor = trustedAuthorAssociation(event.ActorAssociation)
 		event.SourceCommentID = payload.Comment.ID.String()
 		event.Command, event.Arguments = ParseCommand(payload.Comment.Body)
+		if event.Command != "" {
+			arguments, values, valuesErr := parsePreviewValuesComment(payload.Comment.Body, event.Arguments)
+			event.Arguments, event.PreviewValues = arguments, values
+			if valuesErr != nil {
+				event.PreviewValuesError = valuesErr.Error()
+			}
+		}
 	case "pull_request":
 		event.Kind = core.EventKindPullRequest
 		event.PullRequestNumber = payload.PullRequest.Number
@@ -231,6 +238,17 @@ func NormalizeCommand(command, fallback string) (string, error) {
 }
 
 func (s *Service) Process(ctx context.Context, event core.IncomingEvent) (core.EventResult, error) {
+	if event.Kind == core.EventKindPullRequestComment {
+		if (event.PreviewValues != nil || event.PreviewValuesError != "") && !event.TrustedActor {
+			return core.EventResult{Event: event, Ignored: true}, nil
+		}
+		if event.PreviewValuesError != "" {
+			return core.EventResult{Event: event}, errors.New(event.PreviewValuesError)
+		}
+		if event.PreviewValues != nil {
+			return core.EventResult{Event: event}, errors.New("Helm values comments require a workflow preview")
+		}
+	}
 	if event.Kind == core.EventKindPullRequestComment && event.Action == "created" && event.Command != "" && event.TrustedActor && event.HeadSHA == "" && s.resolver != nil {
 		exists, err := s.store.IncomingEventExists(ctx, event.Provider, event.DeliveryID)
 		if err != nil {

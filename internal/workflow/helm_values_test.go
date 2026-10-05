@@ -125,7 +125,7 @@ func TestPinnedRefNeedsNoBranchHeadLookup(t *testing.T) {
 
 func TestDeploymentInlineValuesKeepRuntimeBehavior(t *testing.T) {
 	spec := HelmDeploymentSpec{Values: map[string]any{"revision": "{{ sources.app.commit }}", "list": []any{"one"}}}
-	got, evidence, err := (&Service{}).deploymentValues(context.Background(), core.ConfigSource{}, core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"app": {CommitSHA: "recorded"}}}, StageSpec{}, spec)
+	got, evidence, err := (&Service{}).deploymentValues(context.Background(), core.ConfigSource{}, core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"app": {CommitSHA: "recorded"}}}, StageSpec{}, "test", spec)
 	if err != nil {
 		t.Fatal(err)
 	}

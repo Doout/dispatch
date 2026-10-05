@@ -138,6 +138,9 @@ func (a *API) pollPreviewTarget(ctx context.Context, target *previewPollTarget) 
 // Signed webhooks use the same workflow command handler and comment reservation
 // as polling. Receiving both must never start the same comment twice.
 func (a *API) processWorkflowPreviewWebhook(ctx context.Context, event core.IncomingEvent) error {
+	if event.Kind == core.EventKindPullRequestComment && event.Action == "deleted" {
+		return nil
+	}
 	targets, err := a.previewPollTargets(ctx)
 	if err != nil {
 		return err
@@ -249,6 +252,9 @@ func (a *API) consumePolledComment(ctx context.Context, target *previewPollTarge
 	if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
 		return err
 	}
+	if event.PreviewValues != nil || event.PreviewValuesError != "" {
+		return nil
+	}
 	if fields := strings.Fields(event.Arguments); len(fields) > 0 && (fields[0] == "test" || fields[0] == "live") {
 		return nil
 	}
@@ -293,9 +299,15 @@ func (a *API) previewLegacyLinks(ctx context.Context, target *previewPollTarget,
 }
 
 func (a *API) consumeGitHubPreviewEvent(ctx context.Context, event core.IncomingEvent, groupService *groups.Service, eventService *events.Service) (result core.EventResult, resultErr error) {
+	if event.Kind == core.EventKindPullRequestComment && event.Action == "deleted" {
+		return core.EventResult{Event: event, Ignored: true}, nil
+	}
 	defer func() { resultErr = previewCommandError(event, resultErr) }()
 	if err := a.processWorkflowPreviewWebhook(ctx, event); err != nil {
 		return core.EventResult{}, err
+	}
+	if event.PreviewValues != nil || event.PreviewValuesError != "" {
+		return core.EventResult{Event: event}, nil
 	}
 	if fields := strings.Fields(event.Arguments); event.Kind == core.EventKindPullRequestComment && len(fields) > 0 && (fields[0] == "test" || fields[0] == "live") {
 		return core.EventResult{Event: event}, nil

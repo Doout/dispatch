@@ -435,6 +435,46 @@ To create one preview for a specific PR, choose **Add > One-off PR preview**. Pi
 
 To create a reusable Application template, choose **Add > PR preview template**. Configure the GitHub App, PR repository, command, HTTPS URL pattern, and Application YAML. Put `{{ instance.id }}` in the Application name, every Helm release name, and the URL. You can copy the YAML and settings from a saved preview or load YAML from a sample PR branch. When a trusted user posts `/preview` on an open PR in a watched repository, Dispatch creates an instance with the PR number as its ID and starts the workflow. If the preferred name or Helm release is already in use, Dispatch adds a short unique suffix. Later `/preview` comments on the same PR reuse its instance; `/preview with ui=#123` links a UI PR. The GitHub App reports the URL, source commits, and deployed images on the PR. The poller reads repository issue comments in one paginated stream and works even when the GitHub webhook is unavailable. Editing a template changes future instances; pause it to stop creating new instances. Deleting a template leaves existing instances running, which can each be deleted from their own row.
 
+### Helm values from PR comments
+
+Post a new comment to add Helm values for this preview and start a deployment:
+
+````text
+/preview values
+```yaml
+wxo_optimization:
+  configMap:
+    data:
+      AGENT_GATEWAY_URL: http://agent-gateway.archer-server.svc.cluster.local
+```
+````
+
+Use the command configured for your preview if it differs from `/preview`. With
+several Helm deployments, name the deployment from `spec.deployments`, for example
+`/preview values optimization`, above the YAML block. A bare `/preview` or
+`/preview with ui=#123` followed by a fenced YAML values block also works when
+there is one deployment.
+
+Each values comment replaces the saved overrides for that deployment. The values
+remain attached to later manual deployments, automatic deployments and live
+reload. Other previews and the shared template keep their configured values.
+Dispatch merges values files first, then inline Application values, then these
+comment overrides. Build output bindings still supply the final image values.
+Comment values are literal Helm data, so Dispatch does not evaluate workflow
+expressions inside them.
+
+Post `/preview values clear` to remove all comment overrides and redeploy, or
+`/preview values optimization clear` to clear only that deployment. These commands
+restore the configured values, including values files and inline values. Edit
+the YAML in a **new comment** to change the overrides. Replaying or editing a
+comment that already started a run does not start another run.
+
+Values must be one YAML map in one `yaml` or `yml` fence, no larger than 64 KiB.
+The `_pipeline` deployment-parameter key is reserved. Keep credentials out of PR
+comments and use the existing secret bindings for them.
+
+### Reusable preview templates
+
 Reusable preview YAML uses its own resource kind:
 
 ```yaml

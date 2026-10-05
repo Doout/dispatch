@@ -10,8 +10,21 @@ import (
 )
 
 func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T) {
+	testWorkflowPreviewTriggerState(t, filepath.Join(t.TempDir(), "preview-triggers.db"))
+}
+
+func TestWorkflowPreviewValuesPostgres(t *testing.T) {
+	dsn := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
+	if dsn == "" {
+		t.Skip("set DISPATCH_TEST_POSTGRES_URL to a disposable PostgreSQL database")
+	}
+	testWorkflowPreviewTriggerState(t, dsn)
+}
+
+func testWorkflowPreviewTriggerState(t *testing.T, dsn string) {
+	t.Helper()
 	ctx := context.Background()
-	data, err := Open(ctx, filepath.Join(t.TempDir(), "preview-triggers.db"))
+	data, err := Open(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +47,7 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 			return data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "resource", ConfigSourceID: "config", Kind: "Application", Name: "preview-42", Temporary: true, Active: true, State: "ready", CreatedAt: now, UpdatedAt: now})
 		},
 		func() error {
-			return data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "resource", GitHubAppID: "github", Repository: "Example/service", PullRequestNumber: 42, Command: "/preview", PreviewURL: "https://old.example.test", LinkedPullRequests: map[string]int{"ui": 84}, SourceDefaults: map[string]core.WorkflowPreviewSourceDefault{"ui": {Repository: "Example/ui", Branch: "develop"}}, CreatedAt: now})
+			return data.CreateWorkflowPreviewTrigger(ctx, core.WorkflowPreviewTrigger{ID: "trigger", ResourceID: "resource", GitHubAppID: "github", Repository: "Example/service", PullRequestNumber: 42, Command: "/preview", PreviewURL: "https://old.example.test", LinkedPullRequests: map[string]int{"ui": 84}, SourceDefaults: map[string]core.WorkflowPreviewSourceDefault{"ui": {Repository: "Example/ui", Branch: "develop"}}, PreviewValues: map[string]map[string]any{"app": {"gateway": "preview-42", "large": int64(9007199254740993), "unsigned": uint64(18446744073709551615)}}, CreatedAt: now})
 		},
 	} {
 		if err := create(); err != nil {
@@ -68,6 +81,9 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	if items[0].SourceDefaults["ui"].Branch != "develop" {
 		t.Fatal("source defaults did not survive persistence and editing")
 	}
+	if items[0].PreviewValues["app"]["gateway"] != "preview-42" || items[0].PreviewValues["app"]["large"] != int64(9007199254740993) || items[0].PreviewValues["app"]["unsigned"] != uint64(18446744073709551615) {
+		t.Fatal("same preview settings lost scoped values", items[0].PreviewValues)
+	}
 	trigger.PullRequestNumber = 1500
 	if err := data.UpdateWorkflowPreviewTrigger(ctx, trigger); err != nil {
 		t.Fatal(err)
@@ -76,8 +92,20 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	if err != nil || len(items) != 1 || items[0].PullRequestNumber != 1500 || items[0].ReportCommentID != "" || len(items[0].LinkedPullRequests) != 0 || items[0].LiveReloadCommentID != "" {
 		t.Fatalf("changing the PR kept old comment state: %+v, %v", items, err)
 	}
-	if err := data.CreateWorkflowRevision(ctx, core.WorkflowRevision{ID: "auto-run", ResourceID: "resource", State: "succeeded", Trigger: "pull request update", CreatedAt: now}); err != nil {
+	if len(items[0].PreviewValues) != 0 {
+		t.Fatal("rebinding another PR retained previous values", items[0].PreviewValues)
+	}
+	autoRun := core.WorkflowRevision{ID: "auto-run", ResourceID: "resource", State: "succeeded", Trigger: "pull request update", PreviewValues: map[string]map[string]any{"app": {"large": int64(9007199254740993), "unsigned": uint64(18446744073709551615)}}, CreatedAt: now}
+	if err := data.CreateWorkflowRevision(ctx, autoRun); err != nil {
 		t.Fatal(err)
+	}
+	autoRun.PreviewValues["app"]["large"] = int64(1)
+	if err := data.UpdateWorkflowRevision(ctx, autoRun); err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := data.GetWorkflowRevision(ctx, autoRun.ID)
+	if err != nil || frozen.PreviewValues["app"]["large"] != int64(9007199254740993) || frozen.PreviewValues["app"]["unsigned"] != uint64(18446744073709551615) {
+		t.Fatal("revision progress rounded or changed captured numeric values", frozen, err)
 	}
 	pending, err := data.PendingWorkflowPreviewReports(ctx, "trigger")
 	if err != nil || len(pending) != 1 || pending[0] != "auto-run" {
@@ -124,6 +152,7 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	resource.Document, resource.SpecDigest = "restored-document", "restored-digest"
 	trigger.LinkedPullRequests = map[string]int{"worker": 5}
 	trigger.SourceDefaults = map[string]core.WorkflowPreviewSourceDefault{"ui": {Repository: "Example/ui", Branch: "release"}}
+	trigger.PreviewValues = map[string]map[string]any{"app": {"gateway": "preview-1500"}, "worker": {"replicas": 2}}
 	if err := data.SaveWorkflowPreviewSources(ctx, resource, trigger); err != nil {
 		t.Fatal(err)
 	}
@@ -131,16 +160,23 @@ func TestUpdateWorkflowPreviewTriggerPreservesOrResetsCommentState(t *testing.T)
 	if err != nil || items[0].LinkedPullRequests["worker"] != 5 || items[0].SourceDefaults["ui"].Branch != "release" {
 		t.Fatalf("source defaults and links did not persist together: %+v, %v", items, err)
 	}
+	if items[0].PreviewValues["app"]["gateway"] != "preview-1500" || len(items[0].PreviewValues) != 2 {
+		t.Fatal("source relinking did not preserve scoped values", items[0].PreviewValues)
+	}
 	resource.Active = false
 	if err := data.UpdateWorkflowResource(ctx, resource); err != nil {
 		t.Fatal(err)
 	}
 	trigger.LinkedPullRequests = map[string]int{"ui": 99}
+	trigger.PreviewValues = nil
 	if err := data.SaveWorkflowPreviewSources(ctx, resource, trigger); err == nil {
 		t.Fatal("updated sources on an inactive preview")
 	}
 	items, err = data.ListWorkflowPreviewTriggers(ctx)
 	if err != nil || items[0].LinkedPullRequests["worker"] != 5 || items[0].LinkedPullRequests["ui"] != 0 {
 		t.Fatalf("failed resource update did not roll back links: %+v, %v", items, err)
+	}
+	if items[0].PreviewValues["app"]["gateway"] != "preview-1500" {
+		t.Fatal("failed resource update did not roll back scoped values", items[0].PreviewValues)
 	}
 }
