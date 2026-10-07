@@ -229,6 +229,8 @@ Open Settings and turn on **New interface** to use grouped navigation, applicati
 
 The new pages use existing APIs and permissions. New resource pages load only after opting in. Application and parallel deployment lists show the current inventory; Runs pages through retained deployment history. Workflow runs remain available in application details.
 
+Owners can enable recent resource workflows under **Settings → Experimental UI**. These controller-wide switches start off and cover machines, snapshots, workload backups, automation credentials, project assignments, and request receipts. They control UI access while existing jobs and APIs remain available. See the [feature audit and remaining validation](docs/ui-feature-flags.md).
+
 ## Development
 
 Use Go 1.27.1 or newer, Node.js 22, Corepack, and Docker for executor tests.

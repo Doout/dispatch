@@ -1991,7 +1991,8 @@ paths:
       description: >-
         Controller owner only, using the effective identity during impersonation.
         Read persisted controller settings. Operations defaults to disabled on new
-        and upgraded controllers until an owner explicitly enables it.
+        and upgraded controllers until an owner explicitly enables it. Every
+        uiFeatures flag defaults to false and controls UI visibility only.
       responses:
         '200':
           description: Current persisted controller settings.
@@ -2006,8 +2007,12 @@ paths:
       operationId: updateControllerSettings
       description: >-
         Controller owner only, using the effective identity during impersonation.
-        Persist an explicit operationsEnabled boolean; omitted, null, or non-boolean
-        values return 400. The last saved value wins. Disabling Operations blocks its
+        Update operationsEnabled and/or selected uiFeatures flags using explicit
+        booleans. Omitted settings retain their values, including during concurrent
+        updates to different flags. Unknown fields, null or non-boolean values,
+        empty patches, and empty uiFeatures objects return 400. The response includes
+        all saved settings. UI flags do not disable resource APIs or background jobs.
+        Disabling Operations blocks its
         management and browsing APIs but preserves saved data, audit collection,
         readable application owner labels, service impact and redeployment, and
         existing sign-in mapping enforcement and memberships.
@@ -2015,7 +2020,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ControllerSettings' }
+            schema: { $ref: '#/components/schemas/ControllerSettingsPatch' }
       responses:
         '200':
           description: Saved controller settings.
@@ -6097,12 +6102,39 @@ components:
             type: object
     ControllerSettings:
       type: object
-      required: [operationsEnabled]
+      required: [operationsEnabled, uiFeatures]
       properties:
         operationsEnabled:
           type: boolean
           default: false
           description: Persisted controller-wide feature flag. Only a controller owner can change it.
+        uiFeatures:
+          allOf:
+            - $ref: '#/components/schemas/ControllerUIFeatures'
+          required: [machineProvisioning, machineSnapshots, workloadBackups, automationCredentials, infrastructureAssignments, mutationReceipts]
+    ControllerSettingsPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        operationsEnabled: { type: boolean }
+        uiFeatures:
+          allOf:
+            - $ref: '#/components/schemas/ControllerUIFeatures'
+          minProperties: 1
+    ControllerUIFeatures:
+      type: object
+      additionalProperties: false
+      description: >-
+        Controller-wide UI visibility flags. All default to false. Disabling a flag
+        preserves saved resources, API access, and background work.
+      properties:
+        machineProvisioning: { type: boolean, default: false }
+        machineSnapshots: { type: boolean, default: false }
+        workloadBackups: { type: boolean, default: false }
+        automationCredentials: { type: boolean, default: false }
+        infrastructureAssignments: { type: boolean, default: false }
+        mutationReceipts: { type: boolean, default: false }
     OperationsSummary:
       type: object
       required: [observedAt, audit, ownership]

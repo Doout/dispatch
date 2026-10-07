@@ -3,12 +3,13 @@ import { ArrowClockwise, CheckCircle, ListChecks, ShieldCheck, SlidersHorizontal
 import { request, type ControllerSettings, type Overview } from "./api";
 import "./SettingsPage.css";
 import { InterfaceSettings, type InterfaceSettingsProps } from "./interface/InterfaceSettings";
+import { uiFeatures, type UIFeatureKey } from "./featureFlags";
 
 type Props = { overview: Overview; onChanged?: () => void | Promise<void>; interfaceSettings?: InterfaceSettingsProps };
 
 export function SettingsPage({ overview, onChanged, interfaceSettings }: Props) {
   const owner = overview.identity?.systemRole === "owner";
-  const observed = overview.controllerSettings?.operationsEnabled;
+  const observed = JSON.stringify(overview.controllerSettings);
   return <div className="page-layout settings-page">
     <header className="page-header settings-header"><div><h1>Settings</h1></div></header>
     {interfaceSettings && <InterfaceSettings {...interfaceSettings} />}
@@ -16,9 +17,16 @@ export function SettingsPage({ overview, onChanged, interfaceSettings }: Props) 
   </div>;
 }
 
-function FeatureSettings({ observed, onChanged }: { observed?: boolean; onChanged?: Props["onChanged"] }) {
+type SettingKey = "operationsEnabled" | UIFeatureKey;
+type PendingSetting = { key: SettingKey; enabled: boolean };
+
+function settingValue(settings: ControllerSettings | undefined, key: SettingKey) {
+  return key === "operationsEnabled" ? settings?.operationsEnabled === true : settings?.uiFeatures?.[key] === true;
+}
+
+function FeatureSettings({ observed, onChanged }: { observed?: string; onChanged?: Props["onChanged"] }) {
   const [settings, setSettings] = useState<ControllerSettings>();
-  const [pending, setPending] = useState<boolean>();
+  const [pending, setPending] = useState<PendingSetting>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -44,26 +52,27 @@ function FeatureSettings({ observed, onChanged }: { observed?: boolean; onChange
     return () => { current = false; };
   }, [observed, refresh]);
 
-  async function toggle(enabled: boolean) {
-    if (busy.current || loading || !settings || enabled === settings.operationsEnabled) return;
-    busy.current = true; setPending(enabled); setError(""); setNotice("");
+  async function toggle(key: SettingKey, enabled: boolean) {
+    if (busy.current || loading || !settings || enabled === settingValue(settings, key)) return;
+    busy.current = true; setPending({ key, enabled }); setError(""); setNotice("");
     const requestID = ++sequence.current;
+    const label = key === "operationsEnabled" ? "Operations" : uiFeatures.find(feature => feature.key === key)!.label;
+    const patch = key === "operationsEnabled" ? { operationsEnabled: enabled } : { uiFeatures: { [key]: enabled } };
     try {
-      const saved = await request<ControllerSettings>("/api/v1/settings", { method: "PUT", body: JSON.stringify({ operationsEnabled: enabled }) });
+      const saved = await request<ControllerSettings>("/api/v1/settings", { method: "PUT", body: JSON.stringify(patch) });
       if (!alive.current || sequence.current !== requestID) return;
       setSettings(saved);
       let navigationFailed = false;
       try { await onChanged?.(); }
       catch { navigationFailed = true; }
       if (!alive.current || sequence.current !== requestID) return;
-      // Another owner may restore the original value before the overview refresh,
-      // leaving its boolean unchanged. Read persisted settings after every save.
+      // Recheck after every save, including concurrent updates that restore the initial value.
       refreshAfterSave.current = false;
       try {
         const latest = await request<ControllerSettings>("/api/v1/settings");
         if (!alive.current || sequence.current !== requestID) return;
         setSettings(latest);
-        setNotice(navigationFailed ? "Setting saved. Navigation could not be refreshed." : `Operations ${latest.operationsEnabled ? "enabled" : "disabled"}.`);
+        setNotice(navigationFailed ? "Setting saved. Navigation could not be refreshed." : `${label} ${settingValue(latest, key) ? "enabled" : "disabled"}.`);
       } catch {
         if (alive.current && sequence.current === requestID) setNotice("Setting saved. Refresh to check the latest controller value.");
       }
@@ -79,15 +88,28 @@ function FeatureSettings({ observed, onChanged }: { observed?: boolean; onChange
   }
 
   const saving = pending !== undefined;
-  const enabled = pending ?? settings?.operationsEnabled ?? false;
-  return <section className="settings-features" aria-labelledby={`${id}-features`}>
+  function featureControl(key: SettingKey, helpID: string) {
+    const enabled = pending?.key === key ? pending.enabled : settingValue(settings, key);
+    return <div className="settings-feature-control"><span aria-live="polite">{pending?.key === key ? "Saving…" : loading ? "Loading…" : settings ? enabled ? "On" : "Off" : "Unavailable"}</span><label className="settings-switch"><input id={`${id}-${key}`} type="checkbox" role="switch" aria-describedby={helpID} checked={enabled} disabled={loading || saving || !settings} onChange={event => void toggle(key, event.target.checked)} /><span aria-hidden="true" /></label></div>;
+  }
+  return <>
+  <section className="settings-features" aria-labelledby={`${id}-features`}>
     <header><div><h2 id={`${id}-features`}><SlidersHorizontal size={17} />Features</h2><p>Changes save immediately and apply across this controller.</p></div><button type="button" className="quiet-button" disabled={loading || saving} onClick={() => { setNotice(""); setRefresh(value => value + 1); }}><ArrowClockwise size={14} />Refresh</button></header>
     <div className="settings-feature-row" aria-busy={loading || saving}>
       <span className="settings-feature-icon"><ListChecks size={21} /></span>
-      <div className="settings-feature-copy"><h3><label htmlFor={`${id}-operations`}>Operations</label><span>Off by default</span></h3><p id={`${id}-help`}>Enable activity history, application ownership, cleanup, and recovery tools for users who already have access. Existing roles still determine which tools each person can use.</p><p>Turning this off disables the management tools. Saved access mappings still apply at sign-in.</p></div>
-      <div className="settings-feature-control"><span aria-live="polite">{saving ? "Saving…" : loading ? "Loading…" : settings ? enabled ? "On" : "Off" : "Unavailable"}</span><label className="settings-switch"><input id={`${id}-operations`} type="checkbox" role="switch" aria-describedby={`${id}-help`} checked={enabled} disabled={loading || saving || !settings} onChange={event => void toggle(event.target.checked)} /><span aria-hidden="true" /></label></div>
+      <div className="settings-feature-copy"><h3><label htmlFor={`${id}-operationsEnabled`}>Operations</label><span>Off by default</span></h3><p id={`${id}-help`}>Enable activity history, application ownership, cleanup, and recovery tools for users who already have access. Existing roles still determine which tools each person can use.</p><p>Turning this off disables the management tools. Saved access mappings still apply at sign-in.</p></div>
+      {featureControl("operationsEnabled", `${id}-help`)}
     </div>
-    {error && <div className="settings-feedback settings-error" role="alert"><WarningCircle size={16} /><div><strong>{error}</strong><span>{settings ? "The last saved setting is shown. Try changing it again, or refresh to check the current value." : "Refresh to try loading the controller settings again."}</span></div></div>}
-    {notice && !error && <p className="settings-feedback settings-success" role="status"><CheckCircle size={16} />{notice}</p>}
-  </section>;
+  </section>
+  <section className="settings-features settings-experimental" aria-labelledby={`${id}-experimental`}>
+    <header><div><h2 id={`${id}-experimental`}><SlidersHorizontal size={17} />Experimental UI</h2><p>Off by default for this controller. Automated checks exist, but the workflows below still need validation.</p><p>These switches control pages and actions in both interfaces. Existing jobs and APIs keep running. Access still depends on each user's role.</p></div></header>
+    {uiFeatures.map(feature => <div key={feature.key} className="settings-feature-row" aria-busy={loading || pending?.key === feature.key}>
+      <span className="settings-feature-icon"><SlidersHorizontal size={21} /></span>
+      <div className="settings-feature-copy"><h3><label htmlFor={`${id}-${feature.key}`}>{feature.label}</label><span>{feature.validation}</span></h3><p id={`${id}-${feature.key}-help`}>{feature.description}</p></div>
+      {featureControl(feature.key, `${id}-${feature.key}-help`)}
+    </div>)}
+  </section>
+  {error && <div className="settings-feedback settings-error" role="alert"><WarningCircle size={16} /><div><strong>{error}</strong><span>{settings ? "The last saved settings are shown. Try changing them again, or refresh to check the current values." : "Refresh to try loading the controller settings again."}</span></div></div>}
+  {notice && !error && <p className="settings-feedback settings-success" role="status"><CheckCircle size={16} />{notice}</p>}
+  </>;
 }

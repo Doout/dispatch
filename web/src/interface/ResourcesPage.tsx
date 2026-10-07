@@ -9,6 +9,9 @@ import { Credentials } from "./resources/Credentials";
 import { Assignments } from "./resources/Assignments";
 import { Receipts } from "./resources/Receipts";
 import "./ResourcesPage.css";
+import { isUIFeatureEnabled, resourceUIFeature } from "../featureFlags";
+import { DisabledUIFeature } from "../DisabledUIFeature";
+import type { ResourceSection } from "../routes";
 
 const titles: Record<string, string> = {
   machines: "Machines", providers: "Providers", "workload-backups": "Workload backups",
@@ -17,6 +20,12 @@ const titles: Record<string, string> = {
 };
 
 export function ResourcesPage({ overview, section, onChanged }: { overview: Overview; section: string; onChanged: () => Promise<void> }) {
+  const feature = resourceUIFeature[section as ResourceSection];
+  if (feature && !isUIFeatureEnabled(overview, feature)) return <div className="page-layout resources-page"><header className="page-header"><h1>{titles[section]}</h1></header><DisabledUIFeature overview={overview} feature={feature} /></div>;
+  return <EnabledResourcesPage overview={overview} section={section} onChanged={onChanged} />;
+}
+
+function EnabledResourcesPage({ overview, section, onChanged }: { overview: Overview; section: string; onChanged: () => Promise<void> }) {
   const owner = overview.identity?.systemRole === "owner";
   const identityKey = JSON.stringify([overview.identity?.id, overview.identity?.systemRole, overview.projectPermissions]);
   const permitted = { ...overview, projects: overview.projects.filter(project => canManageProject(overview, project.id, "infrastructure.inspect")) };

@@ -9,6 +9,8 @@
 .settings-features header p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .settings-page .quiet-button { min-height: 32px; gap: 6px; padding: 6px 10px; border-radius: 6px; font-size: 11px; }
 .settings-feature-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 22px 20px; }
+.settings-features + .settings-features { margin-top: 22px; }
+.settings-experimental .settings-feature-row + .settings-feature-row { border-top: 1px solid var(--rule); }
 .settings-feature-icon { padding-top: 2px; color: var(--muted); }
 .settings-feature-copy h3 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; font-size: 13px; font-weight: 700; }
 .settings-feature-copy h3 > span { color: var(--muted); font-size: 10px; font-weight: 500; }

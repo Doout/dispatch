@@ -3,19 +3,30 @@ import { X } from "@phosphor-icons/react";
 import { registerDestructiveConfirmation, type DestructiveConfirmation, type DestructiveReview } from "./destructive";
 import { useDialogFocus } from "./useDialogFocus";
 
-type Pending = { review: DestructiveReview; resolve: (value: DestructiveConfirmation) => void; reject: (error: Error) => void };
+type Pending = { review: DestructiveReview; resolve: (value: DestructiveConfirmation) => void; reject: (error: Error) => void; detach: () => void };
 
 export function DestructiveConfirmations() {
   const [pending, setPending] = useState<Pending>();
   const active = useRef<Pending | undefined>(undefined);
   useEffect(() => {
-    const unregister = registerDestructiveConfirmation(review => new Promise((resolve, reject) => {
+    const unregister = registerDestructiveConfirmation((review, signal) => new Promise((resolve, reject) => {
+      if (signal?.aborted) { reject(signal.reason); return; }
       if (active.current) { reject(new Error("Finish the current confirmation first.")); return; }
-      active.current = { review, resolve, reject };
-      setPending(active.current);
+      const cancel = () => {
+        if (active.current !== next) return;
+        active.current = undefined;
+        next.detach();
+        setPending(undefined);
+        reject(signal?.reason ?? new DOMException("The action was cancelled.", "AbortError"));
+      };
+      const next: Pending = { review, resolve, reject, detach: () => signal?.removeEventListener("abort", cancel) };
+      active.current = next;
+      signal?.addEventListener("abort", cancel, { once: true });
+      setPending(next);
     }));
     return () => {
       unregister();
+      active.current?.detach();
       active.current?.reject(new Error(""));
       active.current = undefined;
     };
@@ -24,6 +35,7 @@ export function DestructiveConfirmations() {
     const value = active.current;
     if (!value) return;
     active.current = undefined;
+    value.detach();
     setPending(undefined);
     if (confirmed) value.resolve({ resourceId: value.review.resourceId, action: value.review.action, expectedVersion: value.review.version, confirmName: value.review.name });
     else value.reject(new Error(""));

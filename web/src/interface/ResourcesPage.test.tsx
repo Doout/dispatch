@@ -6,9 +6,59 @@ import { infrastructureApi } from "../InfrastructureProviders";
 import { ResourcesPage } from "./ResourcesPage";
 import { automationClient, Assignment } from "./resources/client";
 
-const overview = { identity: { id: "owner", systemRole: "owner", permissions: [] }, projects: [{ id: "p", name: "Project one" }, { id: "q", name: "Project two" }], secrets: [], servers: [], services: [], privateNetworks: [], projectPermissions: {} } as unknown as api.Overview;
+const enabledFeatures = { machineProvisioning: true, machineSnapshots: true, workloadBackups: true, automationCredentials: true, infrastructureAssignments: true, mutationReceipts: true };
+const overview = { controllerSettings: { operationsEnabled: false, uiFeatures: enabledFeatures }, identity: { id: "owner", systemRole: "owner", permissions: [] }, projects: [{ id: "p", name: "Project one" }, { id: "q", name: "Project two" }], secrets: [], servers: [], services: [], privateNetworks: [], projectPermissions: {} } as unknown as api.Overview;
 const changed = async () => {};
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each(["machines", "providers", "machine-snapshots", "workload-backups", "credentials", "assignments", "receipts"])("does not mount readers for disabled %s", section => {
+  const request = vi.spyOn(api, "request");
+  const providers = vi.spyOn(infrastructureApi, "list");
+  const accounts = vi.spyOn(automationClient, "accounts");
+  const assignments = vi.spyOn(automationClient, "assignments");
+  const backups = vi.spyOn(api.api, "workloadBackups");
+  render(<ResourcesPage overview={{ ...overview, controllerSettings: { operationsEnabled: false } }} section={section} onChanged={changed} />);
+  expect(screen.getByRole("status").textContent).toContain("is disabled");
+  expect(screen.getByRole("link", { name: "Settings → Experimental UI" }).getAttribute("href")).toBe("/settings");
+  for (const reader of [request, providers, accounts, assignments, backups]) expect(reader).not.toHaveBeenCalled();
+});
+
+it.each<{ section: string; feature: api.UIFeatureKey; role: "button" | "form" | "region"; name: string }>([
+  { section: "machines", feature: "machineProvisioning", role: "button", name: "Create server" },
+  { section: "providers", feature: "machineProvisioning", role: "button", name: "Register provider" },
+  { section: "machine-snapshots", feature: "machineSnapshots", role: "button", name: "Capture snapshot" },
+  { section: "workload-backups", feature: "workloadBackups", role: "region", name: "Workload backups" },
+  { section: "credentials", feature: "automationCredentials", role: "button", name: "Create account" },
+  { section: "assignments", feature: "infrastructureAssignments", role: "form", name: "Assign project resource" },
+  { section: "receipts", feature: "mutationReceipts", role: "form", name: "Find receipt" },
+])("opens $section with only its own feature enabled", async ({ section, feature, role, name }) => {
+  vi.spyOn(api, "request").mockResolvedValue([]);
+  vi.spyOn(infrastructureApi, "list").mockResolvedValue([]);
+  vi.spyOn(automationClient, "accounts").mockResolvedValue([]);
+  vi.spyOn(automationClient, "assignments").mockResolvedValue([]);
+  vi.spyOn(api.api, "workloadBackups").mockResolvedValue([]);
+  vi.spyOn(api.api, "serviceTemplates").mockResolvedValue([]);
+  render(<ResourcesPage overview={{ ...overview, controllerSettings: { operationsEnabled: false, uiFeatures: { [feature]: true } } }} section={section} onChanged={changed} />);
+  await act(async () => {});
+  expect(screen.getByRole(role, { name })).toBeTruthy();
+  expect(screen.queryByText(/is disabled$/)).toBeNull();
+});
+
+it("removes an open credential form when the controller disables the feature", async () => {
+  const accounts = vi.spyOn(automationClient, "accounts").mockResolvedValue([]);
+  const view = render(<ResourcesPage overview={overview} section="credentials" onChanged={changed} />);
+  fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+  fireEvent.change(screen.getByLabelText("Account name"), { target: { value: "Unsubmitted account" } });
+  await waitFor(() => expect(accounts).toHaveBeenCalledTimes(1));
+  accounts.mockClear();
+  view.rerender(<ResourcesPage overview={{ ...overview, controllerSettings: { operationsEnabled: false, uiFeatures: { ...enabledFeatures, automationCredentials: false } } }} section="credentials" onChanged={changed} />);
+  expect(screen.getByRole("heading", { name: "Automation credentials is disabled" })).toBeTruthy();
+  expect(screen.queryByRole("form", { name: "Create automation account" })).toBeNull();
+  expect(accounts).not.toHaveBeenCalled();
+  view.rerender(<ResourcesPage overview={overview} section="credentials" onChanged={changed} />);
+  await waitFor(() => expect(accounts).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole("form", { name: "Create automation account" })).toBeNull();
+});
 
 it("does not request owner-only resources for a member or disabled controller backups", () => {
   const request = vi.spyOn(api, "request");

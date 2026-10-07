@@ -16,7 +16,7 @@ export type DestructiveConfirmation = {
   confirmName: string;
 };
 
-type Confirm = (review: DestructiveReview) => Promise<DestructiveConfirmation>;
+type Confirm = (review: DestructiveReview, signal?: AbortSignal) => Promise<DestructiveConfirmation>;
 let handler: Confirm | undefined;
 
 export function registerDestructiveConfirmation(confirm: Confirm) {
@@ -24,7 +24,7 @@ export function registerDestructiveConfirmation(confirm: Confirm) {
   return () => { if (handler === confirm) handler = undefined; };
 }
 
-export function requestDestructiveConfirmation(review: DestructiveReview) {
+export function requestDestructiveConfirmation(review: DestructiveReview, signal?: AbortSignal) {
   if (!handler) return Promise.reject(new Error("The confirmation dialog is unavailable. Reload and try again."));
-  return handler(review);
+  return handler(review, signal);
 }

@@ -1,8 +1,15 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { api, Overview, WorkloadBackup, WorkloadBackupOperation } from "./api";
 import { canManageProject } from "./permissions";
+import { isUIFeatureEnabled } from "./featureFlags";
+import { DisabledUIFeature } from "./DisabledUIFeature";
 
-export function WorkloadBackups({ overview, project, paginated = false }: { overview: Overview; project: string; paginated?: boolean }) {
+export function WorkloadBackups(props: { overview: Overview; project: string; paginated?: boolean }) {
+ if (!isUIFeatureEnabled(props.overview, "workloadBackups")) return <DisabledUIFeature overview={props.overview} feature="workloadBackups" />;
+ return <EnabledWorkloadBackups {...props} />;
+}
+
+function EnabledWorkloadBackups({ overview, project, paginated = false }: { overview: Overview; project: string; paginated?: boolean }) {
  const [page,setPage]=useState(0);
  const [items,setItems]=useState<WorkloadBackup[]>([]);
  const [source,setSource]=useState("");
@@ -33,11 +40,13 @@ export function WorkloadBackups({ overview, project, paginated = false }: { over
 function BackupCard({item,overview,onChanged}:{item:WorkloadBackup;overview:Overview;onChanged:()=>Promise<void>}){
  const [open,setOpen]=useState(false);const [operations,setOperations]=useState<WorkloadBackupOperation[]>([]);const [destination,setDestination]=useState("");const [busy,setBusy]=useState(false);const [error,setError]=useState("");
  const manage=canManageProject(overview,item.projectId,"project.configure") && canManageProject(overview,item.projectId,"deployment.run");
+ const confirmationScope=useRef<AbortController|null>(null);
+ useEffect(()=>{const controller=new AbortController();confirmationScope.current=controller;return()=>controller.abort();},[manage]);
  const destinations=(overview.services??[]).filter(s=>s.type==="postgresql" && s.projectId===item.projectId && s.provisionRunId && s.provisionTarget?.serverId===item.serverId && s.provisionTarget.provider==="docker");
  async function load(){try{setOperations(await api.workloadBackupOperations(item.id));}catch(e){setError(e instanceof Error?e.message:String(e));}}
  useEffect(()=>{if(!open)return;void load();const timer=window.setInterval(()=>void load(),3000);return()=>window.clearInterval(timer);},[open,item.id]);
  const active=operations.some(o=>o.state==="running" || o.state==="unknown");
- async function act(action:"verify"|"restore"|"delete"|"reconcile",id?:string){setBusy(true);setError("");try{if(action==="verify")await api.verifyWorkloadBackup(item.id);else if(action==="restore")await api.restoreWorkloadBackup(item.id,destination);else if(action==="delete")await api.deleteWorkloadBackup(item.id);else await api.reconcileWorkloadBackup(item.id,id!);await load();await onChanged();}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
+ async function act(action:"verify"|"restore"|"delete"|"reconcile",id?:string){setBusy(true);setError("");try{if(action==="verify")await api.verifyWorkloadBackup(item.id);else if(action==="restore")await api.restoreWorkloadBackup(item.id,destination,confirmationScope.current?.signal);else if(action==="delete")await api.deleteWorkloadBackup(item.id,confirmationScope.current?.signal);else await api.reconcileWorkloadBackup(item.id,id!);await load();await onChanged();}catch(e){if(!(e instanceof DOMException && e.name==="AbortError"))setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
  return <details className="service-card" open={open} onToggle={e=>setOpen(e.currentTarget.open)}>
   <summary className="service-card-summary"><span><strong>PostgreSQL backup · {new Date(item.createdAt).toLocaleString()}</strong><small>{item.state} · Verification {item.verificationState.replaceAll("_"," ")}</small></span></summary>
   {open && <div className="service-card-body"><dl className="service-fields"><div><dt>Archive</dt><dd><code>{item.id}</code></dd></div><div><dt>Consistency</dt><dd>Database-native PostgreSQL snapshot</dd></div><div><dt>Storage</dt><dd>{item.state==="deleted"?"Archive deleted":`${item.bytes.toLocaleString()} encrypted bytes · Target local · Retained`}</dd></div><div><dt>Integrity</dt><dd>{item.checkCount} configured assertions · {item.checksum?"SHA-256 recorded":"Awaiting archive"}</dd></div><div><dt>Temporary cleanup</dt><dd>{item.cleanupState}</dd></div></dl>

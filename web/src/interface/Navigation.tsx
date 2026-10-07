@@ -4,6 +4,7 @@ import type { Overview } from "../api";
 import { type AppRoute, routePath, shouldHandleNavigation } from "../routes";
 import { Mark } from "../components/PageStates";
 import { canManageAnyProject } from "../permissions";
+import { isUIFeatureEnabled, resourceUIFeature } from "../featureFlags";
 
 type Group = "workloads" | "analytics" | "infrastructure" | "recovery" | "automation" | "projects" | "operations" | "settings";
 type Entry = { label: string; route: AppRoute; active: boolean };
@@ -18,7 +19,7 @@ export function navigationGroup(route: AppRoute): Group {
 
 export const groupTitles: Record<Group, string> = { workloads: "Workloads", analytics: "Analytics", infrastructure: "Infrastructure", recovery: "Recovery", automation: "Automation", projects: "Projects", operations: "Operations", settings: "Settings" };
 
-function entries(route: AppRoute, overview: Overview): Entry[] {
+function allEntries(route: AppRoute, overview: Overview): Entry[] {
   const group = navigationGroup(route);
   const owner = overview.identity?.systemRole === "owner";
   if (group === "workloads") return [
@@ -62,6 +63,14 @@ function entries(route: AppRoute, overview: Overview): Entry[] {
   return [];
 }
 
+function entries(route: AppRoute, overview: Overview): Entry[] {
+  return allEntries(route, overview).filter(entry => {
+    if (entry.route.resourceSection === "controller-backups") return overview.controllerSettings?.operationsEnabled === true;
+    const feature = entry.route.resourceSection ? resourceUIFeature[entry.route.resourceSection] : undefined;
+    return !feature || isUIFeatureEnabled(overview, feature);
+  });
+}
+
 function RouteLink({ entry, onNavigate, children, className }: { entry: Entry; onNavigate: (route: AppRoute) => void; children?: ReactNode; className?: string }) {
   return <a className={className} href={routePath(entry.route)} aria-current={entry.active ? "page" : undefined} onClick={event => {
     if (!shouldHandleNavigation(event)) return;
@@ -81,12 +90,14 @@ export function InterfaceNav({ route, overview, open, onClose, onNavigate }: { r
     return () => { cancelAnimationFrame(frame); window.removeEventListener("keydown", keydown); previous?.focus(); };
   }, [open]);
   const group = navigationGroup(route);
+  const availableRecovery = overview ? entries({ view: "recovery" }, overview)[0]?.route : undefined;
+  const availableAutomation = overview ? entries({ view: "automation" }, overview)[0]?.route : { view: "events" } as AppRoute;
   const items: Array<{ id: Group; icon: ReactNode; route: AppRoute }> = [
     { id: "workloads", icon: <Stack size={18} />, route: { view: "workloads", workloadSection: "applications" } },
     { id: "analytics", icon: <ChartBar size={18} />, route: { view: "analytics" } },
     { id: "infrastructure", icon: <HardDrives size={18} />, route: { view: "servers" } },
-    { id: "recovery", icon: <ClockCounterClockwise size={18} />, route: { view: "recovery", resourceSection: "workload-backups" } },
-    { id: "automation", icon: <Lightning size={18} />, route: { view: "automation", resourceSection: overview?.identity?.systemRole === "owner" ? "credentials" : "receipts" } },
+    ...(availableRecovery ? [{ id: "recovery" as Group, icon: <ClockCounterClockwise size={18} />, route: availableRecovery }] : []),
+    { id: "automation", icon: <Lightning size={18} />, route: availableAutomation ?? { view: "events" } },
     { id: "projects", icon: <FolderSimple size={18} />, route: { view: "projects" } },
     ...(overview?.controllerSettings?.operationsEnabled ? [{ id: "operations" as Group, icon: <Wrench size={18} />, route: { view: "operations" } as AppRoute }] : []),
     { id: "settings", icon: <GearSix size={18} />, route: { view: "settings" } },

@@ -63,11 +63,14 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function destructiveRequest<T>(path: string, init: RequestInit, previewPath?: string): Promise<T> {
+  init.signal?.throwIfAborted();
   const token = getToken(), impersonated = getImpersonatedUserID();
   const [pathname, query] = path.split("?");
   const preview = previewPath ?? (init.method === "DELETE" ? `${pathname}/delete-preview` : `${pathname}-preview`);
-  const review = await request<DestructiveReview>(`${preview}${query ? `?${query}` : ""}`, { method: "POST" });
-  const confirmation = await requestDestructiveConfirmation(review);
+  const review = await request<DestructiveReview>(`${preview}${query ? `?${query}` : ""}`, { method: "POST", ...(init.signal ? { signal: init.signal } : {}) });
+  init.signal?.throwIfAborted();
+  const confirmation = await requestDestructiveConfirmation(review, init.signal ?? undefined);
+  init.signal?.throwIfAborted();
   if (token !== getToken() || impersonated !== getImpersonatedUserID()) throw new Error("Your account changed. Review this action again.");
   const body = typeof init.body === "string" ? JSON.parse(init.body) : {};
   return request<T>(path, { ...init, body: JSON.stringify({ ...body, confirmation }) });
