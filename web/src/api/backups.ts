@@ -10,6 +10,6 @@ export const backupsApi = {
   workloadBackupOperations: (id:string) => request<WorkloadBackupOperation[]>(`/api/v1/workload-backups/${id}/operations`),
   verifyWorkloadBackup: (id:string) => request<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/verify`,{method:"POST"}),
   reconcileWorkloadBackup: (id:string,operationId:string) => request<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/operations/${operationId}/reconcile`,{method:"POST"}),
-  deleteWorkloadBackup: (id:string) => destructiveRequest<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/delete`,{method:"POST"}),
-  restoreWorkloadBackup: (id:string,destination:string) => destructiveRequest<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/restore/${destination}`,{method:"POST"},`/api/v1/workload-backups/${id}/restore/${destination}/preview`),
+  deleteWorkloadBackup: (id:string,signal?:AbortSignal) => destructiveRequest<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/delete`,{method:"POST",...(signal?{signal}:{})}),
+  restoreWorkloadBackup: (id:string,destination:string,signal?:AbortSignal) => destructiveRequest<WorkloadBackupOperation>(`/api/v1/workload-backups/${id}/restore/${destination}`,{method:"POST",...(signal?{signal}:{})},`/api/v1/workload-backups/${id}/restore/${destination}/preview`),
 };

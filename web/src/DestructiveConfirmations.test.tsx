@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { DestructiveConfirmations } from "./DestructiveConfirmations";
 import { destructiveRequest, setToken } from "./api";
@@ -68,5 +68,47 @@ it("lists references and blocks deletion when a resource is in use", async () =>
   expect((screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await cancelled;
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("closes an aborted confirmation and allows the next action to be reviewed", async () => {
+  const fetch = setup();
+  const controller = new AbortController();
+  const cancelled = destructiveRequest("/api/v1/apps/application-id", { method: "DELETE", signal: controller.signal }).catch(error => error);
+  await screen.findByRole("dialog");
+  act(() => controller.abort());
+  expect(await cancelled).toMatchObject({ name: "AbortError" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  fetch.mockReset().mockResolvedValueOnce(new Response(JSON.stringify(review), { status: 200 }));
+  const next = destructiveRequest("/api/v1/apps/application-id", { method: "DELETE" }).catch(error => error);
+  await screen.findByRole("dialog");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await next;
+});
+
+it("never opens a confirmation when its preview completes after cancellation", async () => {
+  const fetch = setup();
+  let complete!: (response: Response) => void;
+  fetch.mockReset().mockImplementation(() => new Promise<Response>(resolve => { complete = resolve; }));
+  const controller = new AbortController();
+  const cancelled = destructiveRequest("/api/v1/apps/application-id", { method: "DELETE", signal: controller.signal }).catch(error => error);
+  controller.abort();
+  await act(async () => complete(new Response(JSON.stringify(review), { status: 200 })));
+  expect(await cancelled).toMatchObject({ name: "AbortError" });
+  expect(fetch.mock.calls[0][1].signal).toBe(controller.signal);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("checks cancellation again before sending a confirmed mutation", async () => {
+  const fetch = setup();
+  const controller = new AbortController();
+  const cancelled = destructiveRequest("/api/v1/apps/application-id", { method: "DELETE", signal: controller.signal }).catch(error => error);
+  await screen.findByRole("dialog");
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Orders" } });
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  controller.abort();
+  expect(await cancelled).toMatchObject({ name: "AbortError" });
   expect(fetch).toHaveBeenCalledTimes(1);
 });

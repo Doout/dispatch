@@ -9,6 +9,8 @@ import { subscribeOverview } from "../overviewStream";
 import { catalogClient } from "../deployments/catalogClient";
 import { interfacePreferenceKey } from "./preference";
 
+const enabledFeatures = { machineProvisioning: true, machineSnapshots: true, workloadBackups: true, automationCredentials: true, infrastructureAssignments: true, mutationReceipts: true };
+
 const pages = vi.hoisted(() => ({ workloads: vi.fn() }));
 vi.mock("../overviewStream", () => ({ subscribeOverview: vi.fn(() => () => {}) }));
 vi.mock("../deployments/DeploymentsPage", () => ({ DeploymentsPage: () => <h1>Current deployment list</h1> }));
@@ -97,6 +99,7 @@ it.each([
   ["/recovery/workload-backups", "Workload backups"],
   ["/automation/receipts", "Receipts"],
 ])("opens saved direct route %s when the account has opted in", async (route, heading) => {
+  vi.mocked(client.api.overview).mockResolvedValue({ ...overview(), controllerSettings: { operationsEnabled: false, uiFeatures: enabledFeatures } });
   localStorage.setItem(interfacePreferenceKey("interface-member"), "new");
   path(route);
   render(<DispatchApp />);
@@ -124,7 +127,7 @@ it("keeps controller feature settings separate from a member's interface prefere
 
 it("requests automation credentials only after opting in and opening their page", async () => {
   path("/automation/credentials");
-  vi.mocked(client.api.overview).mockResolvedValue(overview("credentials-owner", true));
+  vi.mocked(client.api.overview).mockResolvedValue({ ...overview("credentials-owner", true), controllerSettings: { operationsEnabled: false, uiFeatures: { automationCredentials: true } } });
   vi.mocked(client.request).mockImplementation(async <T,>(url: string) => (url === "/api/v1/settings" ? { operationsEnabled: false } : []) as T);
   const user = userEvent.setup();
   render(<DispatchApp />);
@@ -146,11 +149,48 @@ it("requests automation credentials only after opting in and opening their page"
 });
 
 it("keeps owner-only resource readers unavailable to members even with the new interface on", async () => {
+  vi.mocked(client.api.overview).mockResolvedValue({ ...overview(), controllerSettings: { operationsEnabled: false, uiFeatures: { automationCredentials: true } } });
   localStorage.setItem(interfacePreferenceKey("interface-member"), "new");
   path("/automation/credentials");
   render(<DispatchApp />);
   await screen.findByText("A controller owner manages credentials.");
   expect(screen.getByRole("heading", { name: "Credentials" })).toBeTruthy();
   expect(within(screen.getByRole("navigation", { name: "Automation pages" })).queryByRole("link", { name: "Credentials" })).toBeNull();
+  expect(client.request).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["/infrastructure/machines", "Machine provisioning"],
+  ["/infrastructure/providers", "Machine provisioning"],
+  ["/recovery/machine-snapshots", "Machine snapshots"],
+  ["/recovery/workload-backups", "Workload backups"],
+  ["/automation/credentials", "Automation credentials"],
+  ["/automation/assignments", "Project assignments"],
+  ["/automation/receipts", "Request receipts"],
+])("does not let the new interface bypass a disabled feature at %s", async (route, label) => {
+  localStorage.setItem(interfacePreferenceKey("interface-owner"), "new");
+  vi.mocked(client.api.overview).mockResolvedValue(overview("interface-owner", true));
+  path(route);
+  render(<DispatchApp />);
+  await screen.findByRole("heading", { name: `${label} is disabled` });
+  expect(client.request).not.toHaveBeenCalled();
+  expect(window.location.pathname).toBe(route);
+});
+
+it("applies a controller feature disable from the overview stream without reloading", async () => {
+  const enabled = { ...overview("credentials-owner", true), controllerSettings: { operationsEnabled: false, uiFeatures: { automationCredentials: true } } };
+  localStorage.setItem(interfacePreferenceKey("credentials-owner"), "new");
+  vi.mocked(client.api.overview).mockResolvedValue(enabled);
+  vi.mocked(client.request).mockResolvedValue([]);
+  path("/automation/credentials");
+  render(<DispatchApp />);
+  await screen.findByRole("button", { name: "Create account" });
+  await waitFor(() => expect(client.request).toHaveBeenCalledWith("/api/v1/automation-accounts"));
+  vi.mocked(client.request).mockClear();
+  const stream = vi.mocked(subscribeOverview).mock.calls.at(-1)![0];
+  act(() => stream({ ...enabled, controllerSettings: { operationsEnabled: false, uiFeatures: { automationCredentials: false } } }));
+  expect(screen.getByRole("heading", { name: "Automation credentials is disabled" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create account" })).toBeNull();
+  expect(primary().getByRole("link", { name: "Automation" }).getAttribute("href")).toBe("/events");
   expect(client.request).not.toHaveBeenCalled();
 });

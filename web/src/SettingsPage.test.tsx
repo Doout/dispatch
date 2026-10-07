@@ -3,8 +3,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import * as client from "./api";
-import { type Overview } from "./api";
+import { type ControllerSettings, type Overview } from "./api";
 import { SettingsPage } from "./SettingsPage";
+import { uiFeatures } from "./featureFlags";
 
 const owner = { identity: { id: "owner", systemRole: "owner" }, projects: [], projectPermissions: {} } as unknown as Overview;
 const member: Overview = { ...owner, identity: { ...owner.identity!, systemRole: "member" } };
@@ -102,4 +103,85 @@ it("reconciles a concurrent owner restoring the initial value even when the over
  expect(control().checked).toBe(false); expect(control().disabled).toBe(false);
  expect(request.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "PUT", "GET"]);
  expect(changed).toHaveBeenCalledTimes(1);
+});
+
+it("defaults each experimental UI feature off when older settings omit the flags", async () => {
+ vi.spyOn(client, "request").mockResolvedValue({ operationsEnabled: true });
+ render(<SettingsPage overview={owner} />);
+ await waitFor(() => expect(control().disabled).toBe(false));
+ for (const feature of uiFeatures) {
+  const toggle = screen.getByRole("switch", { name: feature.label }) as HTMLInputElement;
+  expect(toggle.checked).toBe(false); expect(toggle.disabled).toBe(false);
+ }
+ expect(control().checked).toBe(true);
+ expect(screen.getByText(/Existing jobs and APIs keep running/)).toBeTruthy();
+ expect(screen.getAllByText("Needs provider validation")).toHaveLength(2);
+ expect(screen.getAllByText("Needs browser validation")).toHaveLength(4);
+});
+
+it("saves only the changed feature and retains independent flags after a page reload", async () => {
+ let saved: ControllerSettings = { operationsEnabled: true, uiFeatures: { machineSnapshots: true } };
+ const request = vi.spyOn(client, "request").mockImplementation(async <T,>(_path: string, init?: RequestInit) => {
+  if (init?.method === "PUT") {
+   const patch = JSON.parse(init.body as string) as Partial<ControllerSettings>;
+   saved = { ...saved, ...patch, uiFeatures: { ...saved.uiFeatures, ...patch.uiFeatures } };
+  }
+  return saved as T;
+ });
+ const changed = vi.fn(); const user = userEvent.setup();
+ const { unmount } = render(<SettingsPage overview={owner} onChanged={changed} />);
+ await waitFor(() => expect(control().disabled).toBe(false));
+ await user.click(screen.getByRole("switch", { name: "Automation credentials" }));
+ await screen.findByText("Automation credentials enabled.");
+ expect(request).toHaveBeenCalledWith("/api/v1/settings", { method: "PUT", body: JSON.stringify({ uiFeatures: { automationCredentials: true } }) });
+ expect((screen.getByRole("switch", { name: "Machine snapshots" }) as HTMLInputElement).checked).toBe(true);
+ expect((screen.getByRole("switch", { name: "Machine provisioning" }) as HTMLInputElement).checked).toBe(false);
+ expect(control().checked).toBe(true); expect(changed).toHaveBeenCalledTimes(1);
+ unmount(); render(<SettingsPage overview={owner} />);
+ await waitFor(() => expect(control().disabled).toBe(false));
+ expect((screen.getByRole("switch", { name: "Automation credentials" }) as HTMLInputElement).checked).toBe(true);
+ expect((screen.getByRole("switch", { name: "Machine snapshots" }) as HTMLInputElement).checked).toBe(true);
+ await user.click(screen.getByRole("switch", { name: "Automation credentials" }));
+ await screen.findByText("Automation credentials disabled.");
+ expect(request).toHaveBeenLastCalledWith("/api/v1/settings");
+ expect(request).toHaveBeenCalledWith("/api/v1/settings", { method: "PUT", body: JSON.stringify({ uiFeatures: { automationCredentials: false } }) });
+ expect((screen.getByRole("switch", { name: "Machine snapshots" }) as HTMLInputElement).checked).toBe(true);
+});
+
+it("refreshes flags when the same owner's overview changes without an Operations change", async () => {
+ const current: Overview = { ...owner, controllerSettings: { operationsEnabled: false, uiFeatures: { mutationReceipts: false } } };
+ const request = vi.spyOn(client, "request").mockResolvedValueOnce(current.controllerSettings).mockResolvedValue({ operationsEnabled: false, uiFeatures: { mutationReceipts: true } });
+ const { rerender } = render(<SettingsPage overview={current} />);
+ await waitFor(() => expect(control().disabled).toBe(false));
+ expect((screen.getByRole("switch", { name: "Request receipts" }) as HTMLInputElement).checked).toBe(false);
+ rerender(<SettingsPage overview={{ ...current, controllerSettings: { operationsEnabled: false, uiFeatures: { mutationReceipts: true } } }} />);
+ await waitFor(() => expect((screen.getByRole("switch", { name: "Request receipts" }) as HTMLInputElement).checked).toBe(true));
+ expect(request).toHaveBeenCalledTimes(2); expect(control().checked).toBe(false);
+});
+
+it("rolls back a failed experimental flag save and prevents overlapping writes", async () => {
+ let rejectSave!: (cause: Error) => void;
+ const request = vi.spyOn(client, "request").mockImplementation(async <T,>(_path: string, init?: RequestInit) => init?.method === "PUT" ? new Promise<unknown>((_resolve, reject) => { rejectSave = reject; }) as Promise<T> : { operationsEnabled: true, uiFeatures: { machineSnapshots: true } } as T);
+ const changed = vi.fn(); render(<SettingsPage overview={owner} onChanged={changed} />);
+ await waitFor(() => expect(control().disabled).toBe(false));
+ const toggle = screen.getByRole("switch", { name: "Workload backups" }) as HTMLInputElement;
+ fireEvent.click(toggle); fireEvent.click(screen.getByRole("switch", { name: "Project assignments" }));
+ expect(toggle.checked).toBe(true);
+ for (const item of screen.getAllByRole("switch")) expect((item as HTMLInputElement).disabled).toBe(true);
+ expect(request.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
+ await act(async () => rejectSave(new Error("Could not save feature")));
+ expect(toggle.checked).toBe(false); expect(toggle.disabled).toBe(false);
+ expect((screen.getByRole("switch", { name: "Machine snapshots" }) as HTMLInputElement).checked).toBe(true);
+ expect(screen.getByRole("alert").textContent).toContain("Could not save feature"); expect(changed).not.toHaveBeenCalled();
+});
+
+it("rechecks a flag after a concurrent owner reverses it during saving", async () => {
+ const request = vi.spyOn(client, "request").mockImplementation(async <T,>(_path: string, init?: RequestInit) => ({ operationsEnabled: true, uiFeatures: { workloadBackups: init?.method === "PUT", automationCredentials: true } }) as T);
+ const user = userEvent.setup(); render(<SettingsPage overview={owner} />);
+ await waitFor(() => expect(control().disabled).toBe(false));
+ await user.click(screen.getByRole("switch", { name: "Workload backups" }));
+ await screen.findByText("Workload backups disabled.");
+ expect((screen.getByRole("switch", { name: "Workload backups" }) as HTMLInputElement).checked).toBe(false);
+ expect((screen.getByRole("switch", { name: "Automation credentials" }) as HTMLInputElement).checked).toBe(true);
+ expect(request.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "PUT", "GET"]);
 });

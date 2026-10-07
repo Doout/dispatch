@@ -1784,3 +1784,11 @@ CREATE TABLE infrastructure_action_requests (
 -- dispatch:migration 100_workflow_preview_values
 ALTER TABLE workflow_preview_triggers ADD COLUMN preview_values TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE workflow_revisions ADD COLUMN preview_values TEXT NOT NULL DEFAULT '{}';
+
+-- dispatch:migration 101_controller_ui_features
+ALTER TABLE controller_settings ADD COLUMN machine_provisioning BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE controller_settings ADD COLUMN machine_snapshots BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE controller_settings ADD COLUMN workload_backups BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE controller_settings ADD COLUMN automation_credentials BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE controller_settings ADD COLUMN infrastructure_assignments BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE controller_settings ADD COLUMN mutation_receipts BOOLEAN NOT NULL DEFAULT FALSE;

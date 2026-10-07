@@ -2,7 +2,6 @@ package api
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -25,8 +24,14 @@ func TestControllerSettingsDefaultOffAndOperationsGates(t *testing.T) {
 	a := serviceTestAPI(t)
 	ctx := context.Background()
 	settings := serviceRequestTest(t, a, "GET", "/api/v1/settings", nil, 200)
-	if string(bytes.TrimSpace(settings)) != `{"operationsEnabled":false}` {
-		t.Fatal("Operations did not default to off", string(settings))
+	var defaults core.ControllerSettings
+	if err := json.Unmarshal(settings, &defaults); err != nil || defaults.OperationsEnabled || len(defaults.UIFeatures) != len(core.UIFeatureNames()) {
+		t.Fatal("unexpected default settings", string(settings), err)
+	}
+	for name, enabled := range defaults.UIFeatures {
+		if enabled {
+			t.Fatalf("UI feature %s must default to disabled", name)
+		}
 	}
 	apps, err := a.store.ListApps(ctx)
 	if err != nil || len(apps) == 0 {
@@ -87,11 +92,11 @@ func TestControllerSettingsOwnerPermissionsAndExplicitBoolean(t *testing.T) {
 	}
 	for _, method := range []string{"GET", "PUT"} {
 		unauthenticated := httptest.NewRecorder()
-		a.ServeHTTP(unauthenticated, httptest.NewRequest(method, "/api/v1/settings", strings.NewReader(`{"operationsEnabled":true}`)))
+		a.ServeHTTP(unauthenticated, httptest.NewRequest(method, "/api/v1/settings", strings.NewReader(`{"operationsEnabled":true,"uiFeatures":{"workloadBackups":true}}`)))
 		if unauthenticated.Code != 401 {
 			t.Fatal("settings accepted unauthenticated request", method, unauthenticated.Code)
 		}
-		r := tokenRequest(method, "/api/v1/settings", strings.NewReader(`{"operationsEnabled":true}`))
+		r := tokenRequest(method, "/api/v1/settings", strings.NewReader(`{"operationsEnabled":true,"uiFeatures":{"workloadBackups":true}}`))
 		r.Header.Set("Impersonate-User", member.ID)
 		w := httptest.NewRecorder()
 		a.ServeHTTP(w, r)
@@ -99,7 +104,7 @@ func TestControllerSettingsOwnerPermissionsAndExplicitBoolean(t *testing.T) {
 			t.Fatal("member/impersonation bypassed owner settings permission", method, w.Code)
 		}
 	}
-	for _, invalid := range []string{"", "null", "{}", `{"operationsEnabled":null}`, `{"operationsEnabled":"true"}`, `{"operationsEnabled":1}`, `{"operationsEnabled":[]}`, `{"operationsEnabled":true,"unknown":true}`, `{"operationsEnabled":true}{}`, `{"operationsEnabled":true}garbage`} {
+	for _, invalid := range []string{"", "null", "{}", `{"operationsEnabled":null}`, `{"operationsEnabled":"true"}`, `{"operationsEnabled":1}`, `{"operationsEnabled":[]}`, `{"operationsEnabled":true,"unknown":true}`, `{"operationsEnabled":true}{}`, `{"operationsEnabled":true}garbage`, `{"uiFeatures":null}`, `{"uiFeatures":{}}`, `{"uiFeatures":true}`, `{"uiFeatures":{"machineSnapshots":null}}`, `{"uiFeatures":{"machineSnapshots":"true"}}`, `{"uiFeatures":{"unknown":true}}`, `{"operationsEnabled":true,"uiFeatures":{"machineSnapshots":false,"unknown":true}}`} {
 		w := httptest.NewRecorder()
 		a.ServeHTTP(w, tokenRequest("PUT", "/api/v1/settings", strings.NewReader(invalid)))
 		if w.Code != 400 {
@@ -182,4 +187,55 @@ func TestControllerSettingsOverviewWatchUpdates(t *testing.T) {
 			t.Fatal("no settings change on overview stream")
 		}
 	}
+	for _, enabled := range []string{"true", "false"} {
+		result, err := http.DefaultClient.Do(request("PUT", "/api/v1/settings", `{"uiFeatures":{"workloadBackups":`+enabled+`}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result.Body.Close()
+		if result.StatusCode != 200 {
+			t.Fatal("UI feature update failed", result.StatusCode)
+		}
+		select {
+		case event := <-events:
+			if !strings.Contains(event, `"path":"/controllerSettings/uiFeatures/workloadBackups"`) || !strings.Contains(event, `"value":`+enabled) {
+				t.Fatal("UI feature change did not reach overview stream", event)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("no UI feature change on overview stream")
+		}
+	}
+}
+
+func TestControllerUIFeaturesPartialUpdates(t *testing.T) {
+	a := serviceTestAPI(t)
+	decode := func(body []byte) core.ControllerSettings {
+		t.Helper()
+		var settings core.ControllerSettings
+		if err := json.Unmarshal(body, &settings); err != nil {
+			t.Fatal(err)
+		}
+		if len(settings.UIFeatures) != len(core.UIFeatureNames()) {
+			t.Fatal("response omitted canonical UI features", string(body))
+		}
+		return settings
+	}
+	settings := decode(serviceRequestTest(t, a, "PUT", "/api/v1/settings", map[string]any{"uiFeatures": map[string]bool{"workloadBackups": true, "machineSnapshots": true}}, 200))
+	if settings.OperationsEnabled || !settings.UIFeatures["workloadBackups"] || !settings.UIFeatures["machineSnapshots"] {
+		t.Fatal("partial feature update failed", settings)
+	}
+	settings = decode(serviceRequestTest(t, a, "PUT", "/api/v1/settings", map[string]any{"operationsEnabled": true}, 200))
+	if !settings.OperationsEnabled || !settings.UIFeatures["workloadBackups"] || !settings.UIFeatures["machineSnapshots"] {
+		t.Fatal("older Operations-only request reset features", settings)
+	}
+	settings = decode(serviceRequestTest(t, a, "PUT", "/api/v1/settings", map[string]any{"uiFeatures": map[string]bool{"workloadBackups": false}}, 200))
+	if !settings.OperationsEnabled || settings.UIFeatures["workloadBackups"] || !settings.UIFeatures["machineSnapshots"] {
+		t.Fatal("feature disable changed other settings", settings)
+	}
+	var overview core.Overview
+	if err := json.Unmarshal(serviceRequestTest(t, a, "GET", "/api/v1/overview", nil, 200), &overview); err != nil || !overview.ControllerSettings.UIFeatures["machineSnapshots"] || overview.ControllerSettings.UIFeatures["workloadBackups"] {
+		t.Fatal("overview did not expose stored UI features", overview.ControllerSettings, err)
+	}
+	// UI flags do not gate the underlying resource APIs.
+	serviceRequestTest(t, a, "GET", "/api/v1/infrastructure/providers", nil, 200)
 }

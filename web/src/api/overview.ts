@@ -17,7 +17,12 @@ import type { PrivateNetwork } from "./networks";
 import type { EventTrigger } from "./events";
 import type { ServiceConnection } from "./services";
 
-export type ControllerSettings = { operationsEnabled: boolean };
+export type UIFeatureKey = "machineProvisioning" | "machineSnapshots" | "workloadBackups" | "automationCredentials" | "infrastructureAssignments" | "mutationReceipts";
+
+export type ControllerSettings = {
+  operationsEnabled: boolean;
+  uiFeatures?: Partial<Record<UIFeatureKey, boolean>>;
+};
 
 export type Overview = {
   controllerSettings?: ControllerSettings;

@@ -2,17 +2,34 @@
 
 Operations is disabled by default, including after upgrading an existing
 controller. A controller owner can enable it in **Settings**. The setting is saved
-in the controller database and survives restarts. Settings is visible only to
-owners; the Operations navigation entry appears when the feature is enabled.
+in the controller database and survives restarts. Only owners can change controller
+settings; the Operations navigation entry appears when the feature is enabled.
 Opening an Operations URL while disabled shows its disabled state.
 
-`GET /api/v1/settings` and `PUT /api/v1/settings` require controller owner access
-and return `{ "operationsEnabled": false }` or `{ "operationsEnabled": true }`.
-PUT requires an explicit boolean; an omitted, null, or non-boolean value returns
-400. Non-owners receive 403, including an owner impersonating a non-owner.
-Concurrent updates use the last saved value. All authenticated clients receive
-the current flag as `controllerSettings.operationsEnabled` in overview responses
-and updates, so they can show the appropriate navigation.
+`GET /api/v1/settings` and `PUT /api/v1/settings` require controller owner access.
+Both return `operationsEnabled` and a `uiFeatures` object containing every UI flag.
+PUT accepts a partial update, such as `{"uiFeatures":{"workloadBackups":true}}`.
+Omitted settings keep their current values. Concurrent changes to different flags
+do not overwrite one another. Existing clients that send only `operationsEnabled`
+preserve UI flags.
+
+Unknown fields, null or non-boolean values, an empty patch, or an empty
+`uiFeatures` object return 400. Non-owners receive 403, including an owner
+impersonating a non-owner. All authenticated clients receive current settings
+under `controllerSettings` in overview responses and live updates.
+
+Schema migration `101_controller_ui_features` adds six flags, all disabled by
+default on new and upgraded controllers. These flags control UI visibility only.
+Disabling them preserves API access, saved resources, and background jobs.
+
+| UI flag | Pages and controls |
+| --- | --- |
+| `machineProvisioning` | Managed machines and providers |
+| `machineSnapshots` | Machine snapshots |
+| `workloadBackups` | Workload backup lists and controls |
+| `automationCredentials` | Automation credentials |
+| `infrastructureAssignments` | Infrastructure assignments |
+| `mutationReceipts` | Mutation receipts |
 
 While disabled, Operations summary, ownership inventory and candidate selection,
 audit browsing, backup actions, retention management, ownership assignment, and
