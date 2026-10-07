@@ -223,6 +223,12 @@ OpenShift setup accepts a non-interactive `oc login` command or username and pas
 
 The managed OpenShift credential has cluster-wide privileges. Protect Dispatch storage and owner accounts as cluster-administrator credentials.
 
+## Interface settings
+
+Open Settings and turn on **New interface** to use grouped navigation, application and parallel deployment tables, paginated run history, and Analytics. The setting starts off and is saved for each account in the current browser. Turn it off to return to the current interface.
+
+The new pages use existing APIs and permissions. New resource pages load only after opting in. Application and parallel deployment lists show the current inventory; Runs pages through retained deployment history. Workflow runs remain available in application details.
+
 ## Development
 
 Use Go 1.27.1 or newer, Node.js 22, Corepack, and Docker for executor tests.

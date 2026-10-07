@@ -17,7 +17,10 @@ export const infrastructureApi = {
 const capabilities = ["server.inspect", "server.create", "server.delete"];
 const empty: Registration = { name: "", endpoint: "", privateNetworkId: "", credentialSecretId: "", enabled: true, capabilities };
 
-export function InfrastructureProviders({ overview }: { overview: Overview }) {
+export function InfrastructureProviders({ overview, extended = false }: { overview: Overview; extended?: boolean }) {
+  const [page, setPage] = useState(0);
+  const approvedOperations = extended ? [...capabilities, "snapshot.create", "snapshot.inspect", "snapshot.delete", "server.restore"] : capabilities;
+  const operationLabels: Record<string, string> = { "server.create": "Create servers", "server.delete": "Delete servers", "server.inspect": "Inspect servers", "snapshot.create": "Capture snapshots", "snapshot.inspect": "Inspect snapshots", "snapshot.delete": "Delete snapshots", "server.restore": "Restore isolated clones" };
   const [items, setItems] = useState<InfrastructureProvider[]>([]);
   const [input, setInput] = useState<Registration>(empty);
   const [editing, setEditing] = useState<InfrastructureProvider | null>(null);
@@ -57,17 +60,18 @@ export function InfrastructureProviders({ overview }: { overview: Overview }) {
         <label>Provider route<select value={input.privateNetworkId || ""} disabled={!!editing} onChange={event => setInput({ ...input, privateNetworkId: event.target.value })}><option value="">Direct</option>{(overview.privateNetworks || []).filter(node => node.driver === "dispatch_agent").map(node => <option key={node.id} value={node.id}>{node.name}</option>)}</select></label>
         <label>Authentication secret<select value={input.credentialSecretId || ""} onChange={event => setInput({ ...input, credentialSecretId: event.target.value })}><option value="">No authentication</option>{overview.secrets.filter(secret => !["environment_variable", "environment_json", "json", "ssh_private_key"].includes(secret.type)).map(secret => <option key={secret.id} value={secret.id}>{secret.name}</option>)}</select><small>Create or rotate credentials in Secrets. Values are never displayed here.</small></label>
       </div>
-      <fieldset><legend>Approved operations</legend>{capabilities.map(capability => <label key={capability}><input type="checkbox" checked={input.capabilities.includes(capability)} onChange={event => setInput({ ...input, capabilities: event.target.checked ? [...input.capabilities, capability] : input.capabilities.filter(value => value !== capability) })} />{capability === "server.create" ? "Create servers" : capability === "server.delete" ? "Delete servers" : "Inspect servers"}</label>)}</fieldset>
+      <fieldset><legend>Approved operations</legend>{approvedOperations.map(capability => <label key={capability}><input type="checkbox" checked={input.capabilities.includes(capability)} onChange={event => setInput({ ...input, capabilities: event.target.checked ? [...input.capabilities, capability] : input.capabilities.filter(value => value !== capability) })} />{operationLabels[capability]}</label>)}</fieldset>
       <label><input type="checkbox" checked={input.enabled} onChange={event => setInput({ ...input, enabled: event.target.checked })} />Enable approved operations after verification</label>
       <div className="connection-actions"><button className="quiet-button" type="button" onClick={() => setOpen(false)}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? "Verifying..." : "Save provider"}</button></div>
     </form>}
     {!items.length && !open && <p className="section-empty">No infrastructure providers registered.</p>}
-    {items.map(item => <article className="connection-row" key={item.id}>
+    {(extended ? items.slice(page * 20, page * 20 + 20) : items).map(item => <article className="connection-row" key={item.id}>
       <div className="connection-identity"><div><strong>{item.name}</strong><small>{item.endpoint}</small></div></div>
       <div className="connection-metadata"><StatusLabel state={item.state} /><span>{item.manifest?.displayName || "Manifest unverified"}{item.manifest ? ` · ${item.manifest.version}` : ""}</span></div>
       {item.lastError && <p className="form-error" role="alert">{item.lastError}</p>}
       <div className="connection-row-actions"><button type="button" className="table-action" onClick={() => { setEditing(item); setInput({ name: item.name, endpoint: item.endpoint, privateNetworkId: item.privateNetworkId || "", credentialSecretId: item.credentialSecretId || "", enabled: item.enabled, capabilities: item.capabilities, revision: item.revision }); setOpen(true); }}>Edit provider</button><button type="button" className="table-action" disabled={busy} onClick={() => void change(item, true)}>Verify provider</button><button type="button" className="table-action" disabled={busy} onClick={() => void change(item, false)}>{item.enabled ? "Disable provider" : "Enable provider"}</button></div>
       {item.manifest && <details><summary>Configuration schema and capabilities</summary><p>{item.manifest.apiVersion} · {item.capabilities.join(", ")}</p><pre>{JSON.stringify(item.manifest.configurationSchema, null, 2)}</pre></details>}
     </article>)}
+    {extended && items.length > 20 && <div className="resources-pagination"><span>{page * 20 + 1} to {Math.min(page * 20 + 20, items.length)} of {items.length}</span><button className="quiet-button" type="button" disabled={page === 0} onClick={() => setPage(value => value - 1)}>Previous</button><button className="quiet-button" type="button" disabled={(page + 1) * 20 >= items.length} onClick={() => setPage(value => value + 1)}>Next</button></div>}
   </section>;
 }

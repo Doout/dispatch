@@ -2,7 +2,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { api, Overview, WorkloadBackup, WorkloadBackupOperation } from "./api";
 import { canManageProject } from "./permissions";
 
-export function WorkloadBackups({ overview, project }: { overview: Overview; project: string }) {
+export function WorkloadBackups({ overview, project, paginated = false }: { overview: Overview; project: string; paginated?: boolean }) {
+ const [page,setPage]=useState(0);
  const [items,setItems]=useState<WorkloadBackup[]>([]);
  const [source,setSource]=useState("");
  const [hours,setHours]=useState("24");
@@ -12,7 +13,7 @@ export function WorkloadBackups({ overview, project }: { overview: Overview; pro
  const [error,setError]=useState("");
  const sources=(overview.services??[]).filter(s=>s.type==="postgresql" && s.provisionRunId && s.provisionTarget?.provider==="docker" && (!project || s.projectId===project) && canManageProject(overview,s.projectId,"project.configure") && canManageProject(overview,s.projectId,"deployment.run"));
  async function refresh(){try{setItems(await api.workloadBackups(project));setError("");}catch(e){setError(e instanceof Error?e.message:String(e));}}
- useEffect(()=>{setSource("");void refresh();const timer=window.setInterval(()=>void refresh(),5000);return()=>window.clearInterval(timer);},[project]);
+ useEffect(()=>{let current=true;setSource("");setItems([]);setPage(0);setError("");const update=async()=>{try{const next=await api.workloadBackups(project);if(current){setItems(Array.isArray(next)?next:[]);setError("");}}catch(cause){if(current)setError(cause instanceof Error?cause.message:String(cause));}};void update();const timer=window.setInterval(()=>void update(),5000);return()=>{current=false;window.clearInterval(timer);};},[project]);
  async function create(e:FormEvent){e.preventDefault();setBusy(true);setError("");try{await api.createWorkloadBackup({sourceRunId:source,verificationIntervalHours:Number(hours),checks:query.trim()?[{query:query.trim(),expected}]:[]});setQuery("");setExpected("");await refresh();}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
  return <section aria-label="Workload backups">
   <p className="service-help">PostgreSQL 17 or newer database backups from owned Docker services. Encrypted archives remain on their target when a service is removed and prevent target deletion until explicitly deleted.</p>
@@ -25,7 +26,8 @@ export function WorkloadBackups({ overview, project }: { overview: Overview; pro
   </form>}
   {error && <p role="alert" className="error">{error}</p>}
   {!items.length && <p className="empty-state">No workload backups in this project.</p>}
-  <div className="service-list">{items.map(item=><BackupCard key={item.id} item={item} overview={overview} onChanged={refresh}/>)}</div>
+  <div className="service-list">{(paginated?items.slice(page*20,page*20+20):items).map(item=><BackupCard key={item.id} item={item} overview={overview} onChanged={refresh}/>)}</div>
+  {paginated && items.length>20 && <div className="resources-pagination"><span>{page*20+1} to {Math.min(page*20+20,items.length)} of {items.length}</span><button type="button" className="quiet-button" disabled={page===0} onClick={()=>setPage(value=>value-1)}>Previous</button><button type="button" className="quiet-button" disabled={(page+1)*20>=items.length} onClick={()=>setPage(value=>value+1)}>Next</button></div>}
  </section>;
 }
 function BackupCard({item,overview,onChanged}:{item:WorkloadBackup;overview:Overview;onChanged:()=>Promise<void>}){

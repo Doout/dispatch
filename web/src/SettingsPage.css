@@ -1,4 +1,5 @@
 .settings-page { max-width: 1080px; gap: 22px; }
+.interface-settings { margin-bottom: 24px; }
 .settings-header { align-items: flex-start; }
 .settings-header p { margin: 7px 0 0; color: var(--muted); font-size: 13px; }
 .settings-header > span { display: flex; align-items: center; gap: 6px; padding-top: 9px; color: var(--muted); font-size: 11px; }

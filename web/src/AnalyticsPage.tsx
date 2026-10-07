@@ -13,7 +13,15 @@ const singular = { deployment: "deployment", workflow: "workflow", job: "job" };
 function calendarTime(value: string) { return new Date(value).toLocaleString("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" }); }
 function periodLabel(period: AnalyticsPeriod) { return `${calendarTime(period.start)} – ${calendarTime(period.end)} UTC`; }
 
-export function AnalyticsPage({ overview, onNavigate, filters, onFilters }: { overview?: Overview; onNavigate?: Navigate; filters?: AnalyticsFilters; onFilters?: (filters: AnalyticsFilters) => void }) {
+type AnalyticsPageProps = {
+  overview?: Overview;
+  onNavigate?: Navigate;
+  filters?: AnalyticsFilters;
+  onFilters?: (filters: AnalyticsFilters) => void;
+  newInterface?: boolean;
+};
+
+export function AnalyticsPage({ overview, onNavigate, filters, onFilters, newInterface = false }: AnalyticsPageProps) {
   const [localFilters, setLocalFilters] = useState<AnalyticsFilters>(filters ?? {});
   const selected = onFilters ? filters ?? {} : localFilters;
   const days = selected.days ?? 30;
@@ -40,8 +48,8 @@ export function AnalyticsPage({ overview, onNavigate, filters, onFilters }: { ov
     return () => { active = false; };
   }, [days, project, attempt]);
   const ready = data?.updatedAt && data?.totals && data.state !== "disabled";
-  return <section className="analytics-dashboard page-layout">
-    <header className="page-header analytics-header"><div><h1>Analytics</h1><p>See where delivery succeeds, fails, and slows down.</p></div><button type="button" className="quiet-button" disabled={loading} onClick={() => setAttempt(value => value + 1)}><ArrowClockwise size={16} />{loading ? "Loading…" : "Refresh"}</button></header>
+  return <section className={`analytics-dashboard page-layout${newInterface ? " analytics-dashboard-next" : ""}`}>
+    <header className="page-header analytics-header"><div><h1>Analytics</h1>{!newInterface && <p>See where delivery succeeds, fails, and slows down.</p>}</div><button type="button" className="quiet-button" disabled={loading} onClick={() => setAttempt(value => value + 1)}><ArrowClockwise size={16} />{loading ? "Loading…" : "Refresh"}</button></header>
     <div className="analytics-filter-bar" aria-label="Analytics filters">
       <label htmlFor="analytics-period">Period<select id="analytics-period" value={days} onChange={event => setDays(Number(event.target.value))}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select></label>
       <label htmlFor="analytics-project">Project<select id="analytics-project" value={project} onChange={event => setProject(event.target.value)}><option value="">All visible projects</option>{overview?.projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
@@ -55,12 +63,12 @@ export function AnalyticsPage({ overview, onNavigate, filters, onFilters }: { ov
       <div className="analytics-snapshot"><span title={new Date(data.updatedAt!).toLocaleString()}>Updated {relative(data.updatedAt!)}</span>{data.period && <span>{periodLabel(data.period)}</span>}</div>
       {data.state === "catching_up" && <p className="analytics-notice" role="status"><Info size={16} />Importing older runs. Counts may change as history arrives; period comparisons are paused.</p>}
       {data.state === "unavailable" && <p className="analytics-notice" role="status"><WarningCircle size={16} />Updates paused; showing the last available summary.</p>}
-      <DashboardContent data={data} kind={kind} project={project} overview={overview} tab={tab} setTab={setTab} onNavigate={onNavigate} />
+      <DashboardContent data={data} kind={kind} project={project} overview={overview} tab={tab} setTab={setTab} onNavigate={onNavigate} newInterface={newInterface} />
     </>}
   </section>;
 }
 
-function DashboardContent({ data, kind, project, overview, tab, setTab, onNavigate }: { data: AnalyticsDashboard; kind: AnalyticsKind; project: string; overview?: Overview; tab: "overview" | "data"; setTab: (tab: "overview" | "data") => void; onNavigate?: Navigate }) {
+function DashboardContent({ data, kind, project, overview, tab, setTab, onNavigate, newInterface }: { data: AnalyticsDashboard; kind: AnalyticsKind; project: string; overview?: Overview; tab: "overview" | "data"; setTab: (tab: "overview" | "data") => void; onNavigate?: Navigate; newInterface: boolean }) {
   const totals = data.totals[countKey[kind]];
   const previous = data.state === "catching_up" ? undefined : data.previousTotals?.[countKey[kind]];
   const hotspots = (data.failureHotspots ?? []).filter(item => item.kind === kind && item.failed > 0).slice(0, 6);
@@ -69,13 +77,16 @@ function DashboardContent({ data, kind, project, overview, tab, setTab, onNaviga
   function deploymentRoute(status?: string, period = data.period): AppRoute {
     return { view: "deployments", deploymentFilters: { layout: "list", project: project || undefined, status, ...(period ? { completedFrom: period.start, completedTo: period.end } : {}) } };
   }
-  function openDay(date: string) {
-    if (!data.period || !onNavigate) return;
+  function dayRoute(date: string, status?: string): AppRoute {
+    if (!data.period) return deploymentRoute(status);
     const dayStart = new Date(`${date}T00:00:00Z`);
     const nextDay = new Date(dayStart.getTime() + 86400000);
     const start = Date.parse(data.period.start) >= dayStart.getTime() ? data.period.start : dayStart.toISOString();
     const end = Date.parse(data.period.end) <= nextDay.getTime() ? data.period.end : nextDay.toISOString();
-    onNavigate(deploymentRoute(undefined, { start, end }));
+    return deploymentRoute(status, { start, end });
+  }
+  function openDay(date: string) {
+    onNavigate?.(dayRoute(date));
   }
   const compareTitle = data.previousPeriod ? `Previous period: ${periodLabel(data.previousPeriod)}` : undefined;
   return <>
@@ -86,15 +97,15 @@ function DashboardContent({ data, kind, project, overview, tab, setTab, onNaviga
       <Metric label="p95 duration" value={formatDuration(totals.p95DurationSeconds)} icon={<Clock size={16} />} note="Estimated upper end of successful run durations" comparison={<Comparison current={totals.p95DurationSeconds} previous={previous?.p95DurationSeconds} type="duration" title={compareTitle} />} />
     </dl>
     {kind === "job" && totals.runs > 0 && <p className="analytics-reuse"><strong>{formatCount(totals.reused)}</strong> of {formatCount(totals.runs)} completed jobs reused a prior result. Reused jobs are excluded from duration metrics.</p>}
-    <div className="analytics-section-switch"><div role="tablist" aria-label="Analytics view">{(["overview", "data"] as const).map(value => <button key={value} id={`analytics-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`analytics-panel-${value}`} tabIndex={tab === value ? 0 : -1} onKeyDown={event => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? "overview" : event.key === "End" ? "data" : tab === "overview" ? "data" : "overview"; setTab(next); document.getElementById(`analytics-tab-${next}`)?.focus(); }} onClick={() => setTab(value)}>{value === "overview" ? "Trends & insights" : "Data"}</button>)}</div>{kind === "deployment" && <AnalyticsLink route={deploymentRoute()} onNavigate={onNavigate}>View retained deployments<ArrowRight size={14} /></AnalyticsLink>}</div>
-    {!totals.runs ? <div className="analytics-state" role="status"><ChartBar size={24} /><strong>No completed {kindLabel[kind]} in this period</strong><span>Try a longer period or another project. In-progress runs are not counted.</span></div> : tab === "data" ? <div role="tabpanel" id="analytics-panel-data" aria-labelledby="analytics-tab-data"><DailyData data={data} kind={kind} /></div> : <div role="tabpanel" id="analytics-panel-overview" aria-labelledby="analytics-tab-overview">
+    <div className={newInterface ? "analytics-history-link" : "analytics-section-switch"}>{!newInterface && <div role="tablist" aria-label="Analytics view">{(["overview", "data"] as const).map(value => <button key={value} id={`analytics-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`analytics-panel-${value}`} tabIndex={tab === value ? 0 : -1} onKeyDown={event => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? "overview" : event.key === "End" ? "data" : tab === "overview" ? "data" : "overview"; setTab(next); document.getElementById(`analytics-tab-${next}`)?.focus(); }} onClick={() => setTab(value)}>{value === "overview" ? "Trends & insights" : "Data"}</button>)}</div>}{kind === "deployment" && <AnalyticsLink route={deploymentRoute()} onNavigate={onNavigate}>View retained deployments<ArrowRight size={14} /></AnalyticsLink>}</div>
+    {!totals.runs ? <div className="analytics-state" role="status"><ChartBar size={24} /><strong>No completed {kindLabel[kind]} in this period</strong><span>Try a longer period or another project. In-progress runs are not counted.</span></div> : tab === "data" ? <div role="tabpanel" id="analytics-panel-data" aria-labelledby={newInterface ? undefined : "analytics-tab-data"} aria-label={newInterface ? "Daily data" : undefined}><DailyData key={`${project}:${kind}:${data.days}`} data={data} kind={kind} paginated={newInterface} dayRoute={newInterface && kind === "deployment" && data.period ? dayRoute : undefined} onNavigate={onNavigate} /></div> : <div role="tabpanel" id="analytics-panel-overview" aria-labelledby={newInterface ? undefined : "analytics-tab-overview"} aria-label={newInterface ? "Trends" : undefined}>
       <div className="analytics-trends">
         <section className="analytics-panel"><header><div><h2>Delivery outcomes</h2><p>Completed {kindLabel[kind]} per UTC day</p></div>{totals.failed > 0 && kind === "deployment" && <AnalyticsLink route={deploymentRoute("failed")} onNavigate={onNavigate}>{formatCount(totals.failed)} failures<ArrowRight size={13} /></AnalyticsLink>}</header><div className="analytics-legend"><span><i className="succeeded" />Succeeded</span><span><i className="failed" />Failed</span><span><i className="cancelled" />Cancelled</span></div><OutcomeChart days={data.daily ?? []} kind={kind} onDay={kind === "deployment" && data.period && onNavigate ? openDay : undefined} /></section>
         <section className="analytics-panel"><header><div><h2>Duration trend</h2><p>Successful runs with recorded timing</p></div></header><div className="analytics-legend"><span><i className="median" />Median · estimated</span><span><i className="p95" />p95 · estimated</span></div><DurationChart days={data.daily ?? []} kind={kind} /></section>
       </div>
       <div className="analytics-insights">
-        <section className="analytics-panel"><header><div><h2>Failure hotspots</h2><p>Workloads with the most failed {kindLabel[kind]}</p></div><WarningCircle size={17} className="analytics-muted" /></header>{!hotspots.length ? <div className="analytics-insight-empty"><CheckCircle size={18} /><span>No failed {kindLabel[kind]} recorded in this period.</span></div> : <ol className="analytics-rank-list">{hotspots.map((item, index) => <li key={`${item.projectId}/${item.name}`}><span className="analytics-rank">{index + 1}</span><div className="analytics-workload"><strong>{item.name || `Unnamed ${singular[kind]}`}</strong><span>{projectName(item.projectId)} · {formatCount(item.runs)} completed runs</span>{item.latestFailedDeploymentId && kind === "deployment" && <AnalyticsLink route={{ view: "deployments", deploymentID: item.latestFailedDeploymentId }} onNavigate={onNavigate}>Inspect last failure<ArrowRight size={12} /></AnalyticsLink>}</div><div className="analytics-rank-value analytics-failure-value"><strong>{formatCount(item.failed)} failed</strong><span>{formatRate(item.failureRate)} failure rate</span></div></li>)}</ol>}</section>
-        <section className="analytics-panel"><header><div><h2>Slow workloads</h2><p>Highest mean duration among successful runs</p></div><Clock size={17} className="analytics-muted" /></header>{!slow.length ? <div className="analytics-insight-empty"><Clock size={18} /><span>No successful runs with recorded timing.</span></div> : <ol className="analytics-rank-list">{slow.map((item, index) => <li key={`${item.projectId}/${item.name}`}><span className="analytics-rank">{index + 1}</span><div className="analytics-workload"><strong>{item.name || `Unnamed ${singular[kind]}`}</strong><span>{projectName(item.projectId)} · {formatCount(item.durationSamples)} timed successful runs</span>{item.latestDeploymentId && kind === "deployment" && <AnalyticsLink route={{ view: "deployments", deploymentID: item.latestDeploymentId }} onNavigate={onNavigate}>Open timed success<ArrowRight size={12} /></AnalyticsLink>}</div><div className="analytics-rank-value"><strong>{formatDuration(item.meanDurationSeconds)}</strong><span>mean duration</span></div></li>)}</ol>}</section>
+        <section className="analytics-panel"><header><div><h2>{newInterface ? "Most failures" : "Failure hotspots"}</h2>{!newInterface && <p>Workloads with the most failed {kindLabel[kind]}</p>}</div><WarningCircle size={17} className="analytics-muted" /></header>{!hotspots.length ? <div className="analytics-insight-empty"><CheckCircle size={18} /><span>No failed {kindLabel[kind]} recorded in this period.</span></div> : <ol className="analytics-rank-list">{hotspots.map((item, index) => <li key={`${item.projectId}/${item.name}`}><span className="analytics-rank">{index + 1}</span><div className="analytics-workload"><strong>{item.name || `Unnamed ${singular[kind]}`}</strong><span>{projectName(item.projectId)} · {formatCount(item.runs)} completed runs</span>{item.latestFailedDeploymentId && kind === "deployment" && <AnalyticsLink route={{ view: "deployments", deploymentID: item.latestFailedDeploymentId }} onNavigate={onNavigate}>Inspect last failure<ArrowRight size={12} /></AnalyticsLink>}</div><div className="analytics-rank-value analytics-failure-value"><strong>{formatCount(item.failed)} failed</strong><span>{formatRate(item.failureRate)} failure rate</span></div></li>)}</ol>}</section>
+        <section className="analytics-panel"><header><div><h2>{newInterface ? "Longest average duration" : "Slow workloads"}</h2>{!newInterface && <p>Highest mean duration among successful runs</p>}</div><Clock size={17} className="analytics-muted" /></header>{!slow.length ? <div className="analytics-insight-empty"><Clock size={18} /><span>No successful runs with recorded timing.</span></div> : <ol className="analytics-rank-list">{slow.map((item, index) => <li key={`${item.projectId}/${item.name}`}><span className="analytics-rank">{index + 1}</span><div className="analytics-workload"><strong>{item.name || `Unnamed ${singular[kind]}`}</strong><span>{projectName(item.projectId)} · {formatCount(item.durationSamples)} timed successful runs</span>{item.latestDeploymentId && kind === "deployment" && <AnalyticsLink route={{ view: "deployments", deploymentID: item.latestDeploymentId }} onNavigate={onNavigate}>Open timed success<ArrowRight size={12} /></AnalyticsLink>}</div><div className="analytics-rank-value"><strong>{formatDuration(item.meanDurationSeconds)}</strong><span>mean duration</span></div></li>)}</ol>}</section>
       </div>
     </div>}
     <details className="analytics-method"><summary><Info size={14} />How these metrics are calculated</summary><p>Counts include completed runs whose completion timestamp falls inside the selected rolling period. The first and last daily buckets may be partial UTC days. Comparisons use the preceding period of the same length.</p><p>Recorded elapsed duration uses successful runs with valid recorded start and finish times; reused jobs are excluded. Older records may include waiting or zero durations when original timestamps were unavailable. Median and p95 are histogram estimates{data.capabilities ? ` with up to ${data.capabilities.durationPercentileMaxErrorPercent}% bucket rounding and ${data.capabilities.durationPercentileResolutionSeconds * 1000}ms minimum resolution` : ""}. They are not deployment-stage timings.</p><p>Workloads are grouped by the names recorded in history. Renames can create separate groups. Retained history does not record environment associations. Historical counts can include removed runs. The deployment list shows retained records; individual archived run links may be unavailable after cleanup.</p>{data.coverage?.firstCompletedAt && <p>Earliest recorded completion: {calendarTime(data.coverage.firstCompletedAt)} UTC.</p>}</details>
@@ -113,9 +124,53 @@ function Comparison({ current, previous, type, title }: { current: number | null
   const Icon = delta > 0 ? ArrowUp : ArrowDown;
   return <span className={`analytics-comparison ${type === "volume" ? "muted" : better ? "better" : "worse"}`} title={title}><Icon size={12} />{absolute.toFixed(1)}{type === "rate" ? " pp" : "%"} {delta > 0 ? "higher" : "lower"}<span className="analytics-comparison-context">vs previous period</span></span>;
 }
-function AnalyticsLink({ route, onNavigate, children }: { route: AppRoute; onNavigate?: Navigate; children: ReactNode }) {
-  return <a className="analytics-link" href={routePath(route)} onClick={event => { if (onNavigate && shouldHandleNavigation(event)) { event.preventDefault(); onNavigate(route); } }}>{children}</a>;
+function AnalyticsLink({ route, onNavigate, children, label }: { route: AppRoute; onNavigate?: Navigate; children: ReactNode; label?: string }) {
+  return <a className="analytics-link" aria-label={label} href={routePath(route)} onClick={event => { if (onNavigate && shouldHandleNavigation(event)) { event.preventDefault(); onNavigate(route); } }}>{children}</a>;
 }
-function DailyData({ data, kind }: { data: AnalyticsDashboard; kind: AnalyticsKind }) {
-  return <section className="analytics-panel analytics-data"><header><div><h2>Daily {kindLabel[kind]}</h2><p>Completed counts and estimated successful-run duration. All dates are UTC.</p></div></header><div className="analytics-data-scroll"><table><caption className="sr-only">Daily {kindLabel[kind]} counts and estimated timing</caption><thead><tr><th scope="col">Date</th><th scope="col">Completed</th><th scope="col">Succeeded</th><th scope="col">Failed</th><th scope="col">Cancelled</th><th scope="col">Success</th><th scope="col">Median</th><th scope="col">p95</th><th scope="col">Samples</th></tr></thead><tbody>{[...(data.daily ?? [])].reverse().map(day => { const count: AnalyticsCounts = day[countKey[kind]]; return <tr key={day.date}><th scope="row"><time dateTime={day.date}>{dayLabel(day.date)}</time></th><td>{formatCount(count.runs)}</td><td>{formatCount(count.succeeded)}</td><td>{formatCount(count.failed)}</td><td>{formatCount(count.cancelled)}</td><td>{formatRate(count.successRate)}</td><td>{formatDuration(count.medianDurationSeconds)}</td><td>{formatDuration(count.p95DurationSeconds)}</td><td>{formatCount(count.durationSamples)}</td></tr>; })}</tbody></table></div></section>;
+function DailyData({ data, kind, paginated, dayRoute, onNavigate }: {
+  data: AnalyticsDashboard;
+  kind: AnalyticsKind;
+  paginated: boolean;
+  dayRoute?: (date: string, status?: string) => AppRoute;
+  onNavigate?: Navigate;
+}) {
+  const [page, setPage] = useState(0);
+  const days = [...(data.daily ?? [])].reverse();
+  const pageSize = 10;
+  const pages = Math.max(1, Math.ceil(days.length / pageSize));
+  const currentPage = Math.min(page, pages - 1);
+  const start = paginated ? currentPage * pageSize : 0;
+  const visible = paginated ? days.slice(start, start + pageSize) : days;
+  return <section className="analytics-panel analytics-data">
+    <header><div><h2>Daily {kindLabel[kind]}</h2><p>Completed counts and estimated successful-run duration. All dates are UTC.</p></div></header>
+    <div className="analytics-data-scroll" role="region" aria-label={`Daily ${kindLabel[kind]} table`} tabIndex={0}>
+      <table>
+        <caption className="sr-only">Daily {kindLabel[kind]} counts and estimated timing</caption>
+        <thead><tr><th scope="col">Date</th><th scope="col">Completed</th><th scope="col">Succeeded</th><th scope="col">Failed</th><th scope="col">Cancelled</th><th scope="col">Success</th><th scope="col">Median</th><th scope="col">p95</th><th scope="col">Samples</th></tr></thead>
+        <tbody>{visible.map(day => {
+          const count: AnalyticsCounts = day[countKey[kind]];
+          const date = <time dateTime={day.date}>{dayLabel(day.date)}</time>;
+          return <tr key={day.date}>
+            <th scope="row">{dayRoute ? <AnalyticsLink route={dayRoute(day.date)} onNavigate={onNavigate} label={`View deployments completed ${dayLabel(day.date)} UTC`}>{date}</AnalyticsLink> : date}</th>
+            <td>{formatCount(count.runs)}</td>
+            <td>{formatCount(count.succeeded)}</td>
+            <td>{dayRoute && count.failed > 0 ? <AnalyticsLink route={dayRoute(day.date, "failed")} onNavigate={onNavigate} label={`View ${formatCount(count.failed)} failed ${count.failed === 1 ? "deployment" : "deployments"} completed ${dayLabel(day.date)} UTC`}>{formatCount(count.failed)}</AnalyticsLink> : formatCount(count.failed)}</td>
+            <td>{formatCount(count.cancelled)}</td>
+            <td>{formatRate(count.successRate)}</td>
+            <td>{formatDuration(count.medianDurationSeconds)}</td>
+            <td>{formatDuration(count.p95DurationSeconds)}</td>
+            <td>{formatCount(count.durationSamples)}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+    {paginated && <nav className="analytics-pagination" aria-label="Daily data pages">
+      <span role="status">{days.length ? `${start + 1} to ${start + visible.length} of ${days.length} days` : "No daily records"}</span>
+      <div>
+        <button className="quiet-button" type="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
+        <span aria-label={`Page ${currentPage + 1} of ${pages}`}>{currentPage + 1} / {pages}</span>
+        <button className="quiet-button" type="button" disabled={currentPage === pages - 1} onClick={() => setPage(currentPage + 1)}>Next</button>
+      </div>
+    </nav>}
+  </section>;
 }
