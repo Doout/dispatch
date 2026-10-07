@@ -107,7 +107,6 @@ export function InterfaceNav({ route, overview, open, onClose, onNavigate }: { r
     <aside ref={rail} id="primary-navigation" className={`rail interface-rail ${open ? "open" : ""}`} aria-label="Primary navigation">
       <div className="wordmark"><Mark /><span>Dispatch</span><button aria-label="Close navigation" onClick={onClose}><X size={20} /></button></div>
       <nav className="nav-list">{items.map(item => <RouteLink key={item.id} entry={{ label: groupTitles[item.id], route: item.route, active: group === item.id }} onNavigate={onNavigate} className="nav-link">{item.icon}</RouteLink>)}</nav>
-      <div className="interface-version"><span>New interface</span><a href="/settings" onClick={event => { if (!shouldHandleNavigation(event)) return; event.preventDefault(); onNavigate({ view: "settings" }); }}>Change</a></div>
     </aside>
   </>;
 }
