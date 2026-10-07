@@ -2,14 +2,16 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ArrowClockwise, CheckCircle, ListChecks, ShieldCheck, SlidersHorizontal, WarningCircle } from "@phosphor-icons/react";
 import { request, type ControllerSettings, type Overview } from "./api";
 import "./SettingsPage.css";
+import { InterfaceSettings, type InterfaceSettingsProps } from "./interface/InterfaceSettings";
 
-type Props = { overview: Overview; onChanged?: () => void | Promise<void> };
+type Props = { overview: Overview; onChanged?: () => void | Promise<void>; interfaceSettings?: InterfaceSettingsProps };
 
-export function SettingsPage({ overview, onChanged }: Props) {
+export function SettingsPage({ overview, onChanged, interfaceSettings }: Props) {
   const owner = overview.identity?.systemRole === "owner";
   const observed = overview.controllerSettings?.operationsEnabled;
   return <div className="page-layout settings-page">
-    <header className="page-header settings-header"><div><h1>Settings</h1><p>Manage features for this Dispatch controller.</p></div><span><ShieldCheck size={14} />Controller-wide</span></header>
+    <header className="page-header settings-header"><div><h1>Settings</h1></div></header>
+    {interfaceSettings && <InterfaceSettings {...interfaceSettings} />}
     {owner ? <FeatureSettings key={overview.identity?.id} observed={observed} onChanged={onChanged} /> : <section className="settings-access" role="status"><ShieldCheck size={22} /><h2>Owner access required</h2><p>A controller owner can view and change these settings.</p></section>}
   </div>;
 }

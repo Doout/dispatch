@@ -1,4 +1,14 @@
-export type View = "settings" | "operations" | "analytics" | "deployments" | "applications" | "events" | "projects" | "servers" | "services" | "secrets" | "connections" | "access";
+export type View = "settings" | "operations" | "analytics" | "deployments" | "applications" | "events" | "projects" | "servers" | "services" | "secrets" | "connections" | "access" | "workloads" | "infrastructure" | "recovery" | "automation";
+export type WorkloadSection = "applications" | "parallel" | "runs";
+export type ResourceSection = "machines" | "providers" | "workload-backups" | "machine-snapshots" | "controller-backups" | "credentials" | "assignments" | "receipts";
+export const resourceSections = {
+  infrastructure: ["machines", "providers"],
+  recovery: ["workload-backups", "machine-snapshots", "controller-backups"],
+  automation: ["credentials", "assignments", "receipts"],
+} as const;
+export function isNewInterfaceRoute(route: AppRoute) {
+  return route.view === "workloads" || route.view === "infrastructure" || route.view === "recovery" || route.view === "automation";
+}
 export type ApplicationSection = "applications" | "templates" | "helm" | "groups";
 export type EventSection = "rules" | "activity";
 export type DeploymentSection = "summary" | "topology" | "values" | "manifests" | "history";
@@ -23,6 +33,8 @@ export type AppRoute = {
   configurationSourceID?: string;
   applicationSection?: ApplicationSection;
   eventSection?: EventSection;
+  workloadSection?: WorkloadSection;
+  resourceSection?: ResourceSection;
 };
 
 const views = new Set<View>(["settings", "operations", "analytics","deployments", "applications", "events", "projects", "servers", "services", "secrets", "connections", "access"]);
@@ -30,6 +42,15 @@ const views = new Set<View>(["settings", "operations", "analytics","deployments"
 export function readRoute(location: Pick<Location, "pathname" | "search"> = window.location): AppRoute {
   const segments = location.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
   const first = segments[0] as View | undefined;
+  if (first === "workloads") {
+    const section = segments[1] === "parallel" || segments[1] === "runs" ? segments[1] : "applications";
+    const filters = readDeploymentFilters(new URLSearchParams(location.search));
+    return { view: first, workloadSection: section, ...(Object.keys(filters).length ? { deploymentFilters: filters } : {}) };
+  }
+  if (first === "infrastructure" || first === "recovery" || first === "automation") {
+    const allowed: readonly string[] = resourceSections[first];
+    return { view: first, resourceSection: (allowed.includes(segments[1]) ? segments[1] : allowed[0]) as ResourceSection };
+  }
   if (first === "deployments") {
     const params = new URLSearchParams(location.search);
     return {
@@ -86,6 +107,16 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
 }
 
 export function routePath(route: AppRoute) {
+  if (route.view === "workloads") {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(route.deploymentFilters ?? {})) if (value && value !== "board") params.set(key === "query" ? "q" : key, String(value));
+    return `/workloads/${route.workloadSection ?? "applications"}${params.size ? `?${params}` : ""}`;
+  }
+  if (route.view === "infrastructure" || route.view === "recovery" || route.view === "automation") {
+    const allowed: readonly string[] = resourceSections[route.view];
+    const section = route.resourceSection && allowed.includes(route.resourceSection) ? route.resourceSection : allowed[0];
+    return `/${route.view}/${section}`;
+  }
   if (route.view === "operations") {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(route.operationsFilters ?? {})) if (value !== undefined && value !== "" && value !== "overview") params.set(key === "query" ? "q" : key, String(value));

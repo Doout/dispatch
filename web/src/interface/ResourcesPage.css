@@ -1,0 +1,50 @@
+.resources-page { min-width: 0; }
+.resources-content { min-width: 0; display: grid; gap: 18px; }
+.resources-content p { margin: 0; line-height: 1.55; }
+.resources-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.resources-heading h2, .resources-form h2, .resources-detail h3 { margin: 0; font-size: 15px; }
+.resources-heading > p { max-width: 70ch; color: var(--muted); }
+.resources-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.resources-form, .resources-detail, .resources-token, .resources-confirm { display: grid; gap: 14px; min-width: 0; padding: 18px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
+.resources-form label, .resources-project, .resources-token label { display: grid; align-content: start; gap: 6px; font-size: 12px; }
+.resources-project { max-width: 320px; }
+.resources-form input:not([type="checkbox"]), .resources-form select, .resources-form textarea, .resources-project select, .resources-token textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--rule); border-radius: 5px; color: var(--ink); background: var(--paper); font: inherit; }
+.resources-form textarea, .resources-token textarea { min-height: 78px; resize: vertical; overflow-wrap: anywhere; }
+.resources-form > .primary-button { justify-self: start; }
+.resources-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.resources-permissions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.resources-permissions label { display: flex; align-items: center; overflow-wrap: anywhere; }
+.resources-permissions input { flex: 0 0 auto; }
+.resources-form fieldset { min-width: 0; border: 1px solid var(--rule); padding: 12px; }
+.resources-form legend { padding: 0 5px; font-size: 12px; }
+.resources-table-scroll { min-width: 0; overflow-x: auto; border: 1px solid var(--rule); border-radius: 7px; }
+.resources-table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+.resources-table th { color: var(--muted); background: var(--surface-subtle); font-size: 11px; font-weight: 600; }
+.resources-table td, .resources-table th { padding: 12px 14px; vertical-align: top; border-bottom: 1px solid var(--rule); }
+.resources-table tr:last-child td { border-bottom: 0; }
+.resources-table td { max-width: 400px; overflow-wrap: anywhere; }
+.resources-table small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+.resources-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 12px; }
+.resources-pagination > div { display: flex; gap: 8px; }
+.resources-error { display: flex; align-items: center; justify-content: space-between; gap: 14px; color: var(--red); }
+.resources-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 0; }
+.resources-facts div { min-width: 0; }
+.resources-facts dt { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
+.resources-facts dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
+.resources-json { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.resources-policy > summary { min-height: 40px; cursor: pointer; padding: 10px 0; }
+.resources-page .connection-row { min-width: 0; }
+.resources-page .connection-row > details, .resources-page pre { max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
+.resources-page .connection-grid { min-width: 0; }
+.resources-page .connection-grid label { min-width: 0; }
+@media (max-width: 700px) {
+  .resources-heading { align-items: flex-start; flex-direction: column; }
+  .resources-fields, .resources-permissions, .resources-facts { grid-template-columns: minmax(0, 1fr); }
+  .resources-form, .resources-detail, .resources-token, .resources-confirm { padding: 14px; }
+  .resources-table td, .resources-table th { padding: 10px; }
+}
+@media (pointer: coarse) {
+  .resources-page button, .resources-page select, .resources-page input:not([type="checkbox"]) { min-height: 44px; }
+  .resources-page input:not([type="checkbox"]), .resources-page select, .resources-page textarea { font-size: 16px; }
+  .resources-permissions label { min-height: 44px; }
+}

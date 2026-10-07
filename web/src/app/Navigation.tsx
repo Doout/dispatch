@@ -124,7 +124,7 @@ export function Nav({
             { id: "settings" as View, label: "Settings", icon: <GearSix size={18} />, count: 0 },
           ],
         }]
-      : []),
+      : [{ id: "preferences", label: "Preferences", entries: [{ id: "settings" as View, label: "Settings", icon: <GearSix size={18} />, count: 0 }] }]),
   ];
   const renderEntry = (entry: NavEntry) => (
     <a

@@ -153,7 +153,7 @@ describe("account menu", () => {
 });
 
 describe("optional Operations navigation", () => {
-  it("hides Operations until enabled and limits Settings to controller owners", () => {
+  it("hides Operations until enabled and keeps personal Settings available to members", () => {
     const owner = overview({ id: "owner", username: "owner", displayName: "Owner", systemRole: "owner", permissions: [] });
     const props = { open: false, view: "deployments" as const, onClose: vi.fn(), onNavigate: vi.fn() };
     const view = render(<Nav {...props} overview={owner} />);
@@ -162,7 +162,7 @@ describe("optional Operations navigation", () => {
     view.rerender(<Nav {...props} overview={{ ...owner, controllerSettings: { operationsEnabled: true } }} />);
     expect(screen.getByRole("link", { name: "Operations" }).getAttribute("href")).toBe("/operations");
     view.rerender(<Nav {...props} overview={{ ...owner, identity: { ...owner.identity!, systemRole: "member" }, controllerSettings: { operationsEnabled: true } }} />);
-    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings");
     expect(screen.getByRole("link", { name: "Operations" })).toBeTruthy();
     view.rerender(<Nav {...props} overview={{ ...owner, controllerSettings: { operationsEnabled: false } }} />);
     expect(screen.queryByRole("link", { name: "Operations" })).toBeNull();
@@ -197,7 +197,8 @@ describe("configuration navigation", () => {
 
     expect(screen.getByRole("region", { name: "Resources" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Controller" })).toBeNull();
-    for (const name of ["Variables", "Connections", "Access", "Settings"])
+    expect(within(screen.getByRole("region", { name: "Preferences" })).getByRole("link", { name: "Settings" })).toBeTruthy();
+    for (const name of ["Variables", "Connections", "Access"])
       expect(screen.queryByRole("link", { name })).toBeNull();
   });
 

@@ -147,3 +147,79 @@ it("preserves nanosecond period boundaries in day drilldowns and supports keyboa
  expect(screen.getByRole("tab", { name: "Data" }).getAttribute("aria-selected")).toBe("true");
  expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Data" }));
 });
+
+it("uses the shell's Analytics tabs and pages daily data only in the new interface", async () => {
+ const manyDays = Array.from({ length: 21 }, (_, index) => ({ ...totals, date: `2026-09-${String(index + 1).padStart(2, "0")}` }));
+ const request = vi.spyOn(analyticsClient, "summary").mockResolvedValue({ ...data, daily: manyDays });
+ const user = userEvent.setup();
+ render(<AnalyticsPage overview={overview} newInterface filters={{ section: "data" }} />);
+ const table = await screen.findByRole("table", { name: /Daily deployments counts/ });
+ expect(screen.getByRole("tabpanel", { name: "Daily data" })).toBeTruthy();
+ expect(screen.queryByRole("tablist", { name: "Analytics view" })).toBeNull();
+ expect(within(table).getAllByRole("row")).toHaveLength(11);
+ expect(screen.getByText("1 to 10 of 21 days")).toBeTruthy();
+ expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(true);
+ await user.click(screen.getByRole("button", { name: "Next" }));
+ expect(screen.getByText("11 to 20 of 21 days")).toBeTruthy();
+ await user.click(screen.getByRole("button", { name: "Next" }));
+ expect(screen.getByText("21 to 21 of 21 days")).toBeTruthy();
+ expect(within(table).getAllByRole("row")).toHaveLength(2);
+ expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
+ expect(request).toHaveBeenCalledTimes(1);
+ await user.click(screen.getByRole("button", { name: "Previous" }));
+ expect(screen.getByText("11 to 20 of 21 days")).toBeTruthy();
+ await user.click(screen.getByRole("button", { name: "Jobs" }));
+ expect(screen.getByText("1 to 10 of 21 days")).toBeTruthy();
+ expect(screen.queryByRole("link", { name: /View deployments completed/ })).toBeNull();
+ expect(request).toHaveBeenCalledTimes(1);
+ cleanup();
+ render(<AnalyticsPage overview={overview} filters={{ section: "data" }} />);
+ const legacyTable = await screen.findByRole("table", { name: /Daily deployments counts/ });
+ expect(within(legacyTable).getAllByRole("row")).toHaveLength(22);
+ expect(screen.queryByRole("navigation", { name: "Daily data pages" })).toBeNull();
+ expect(screen.getByRole("tab", { name: "Data" })).toBeTruthy();
+});
+
+it("resets daily pagination for project and period changes and honors shell tab changes", async () => {
+ const manyDays = Array.from({ length: 21 }, (_, index) => ({ ...totals, date: `2026-09-${String(index + 1).padStart(2, "0")}` }));
+ const request = vi.spyOn(analyticsClient, "summary").mockResolvedValue({ ...data, daily: manyDays });
+ const changes = vi.fn();
+ function Page({ section = "data" }: { section?: "overview" | "data" }) {
+   const [filters, setFilters] = useState<AnalyticsFilters>({ days: 30, projectId: "p" });
+   return <AnalyticsPage newInterface overview={overview} filters={{ ...filters, section }} onFilters={value => { changes(value); setFilters(value); }} />;
+ }
+ const user = userEvent.setup(); const { rerender } = render(<Page />);
+ await screen.findByText("1 to 10 of 21 days");
+ await user.click(screen.getByRole("button", { name: "Next" }));
+ await user.selectOptions(screen.getByLabelText("Project", { exact: true }), "other");
+ await screen.findByText("1 to 10 of 21 days");
+ expect(request).toHaveBeenLastCalledWith(30, "other");
+ await user.click(screen.getByRole("button", { name: "Next" }));
+ await user.selectOptions(screen.getByLabelText("Period", { exact: true }), "90");
+ await screen.findByText("1 to 10 of 21 days");
+ expect(request).toHaveBeenLastCalledWith(90, "other");
+ expect(changes).toHaveBeenLastCalledWith({ days: 90, projectId: "other", section: "data" });
+ rerender(<Page section="overview" />);
+ expect(screen.getByRole("tabpanel", { name: "Trends" })).toBeTruthy();
+ expect(screen.getByRole("heading", { name: "Most failures" })).toBeTruthy();
+ expect(screen.queryByRole("table")).toBeNull();
+ expect(request).toHaveBeenCalledTimes(3);
+});
+
+it("links daily failures to retained deployments with project, outcome, and exact period bounds", async () => {
+ const period = { start: "2026-08-20T12:00:00.000000123Z", end: "2026-09-19T12:00:00.000000789Z" };
+ vi.spyOn(analyticsClient, "summary").mockResolvedValue({ ...data, period });
+ const navigate = vi.fn(); const user = userEvent.setup();
+ render(<AnalyticsPage newInterface overview={overview} filters={{ projectId: "p", section: "data" }} onNavigate={navigate} />);
+ const firstFailure = await screen.findByRole("link", { name: "View 1 failed deployment completed Aug 20 UTC" });
+ const href = new URL(firstFailure.getAttribute("href")!, "https://dispatch.test");
+ expect(href.searchParams.get("project")).toBe("p");
+ expect(href.searchParams.get("status")).toBe("failed");
+ expect(href.searchParams.get("completedFrom")).toBe(period.start);
+ expect(href.searchParams.get("completedTo")).toBe("2026-08-21T00:00:00.000Z");
+ await user.click(firstFailure);
+ expect(navigate).toHaveBeenLastCalledWith({ view: "deployments", deploymentFilters: { layout: "list", project: "p", status: "failed", completedFrom: period.start, completedTo: "2026-08-21T00:00:00.000Z" } });
+ await user.click(screen.getByRole("link", { name: "View deployments completed Sep 19 UTC" }));
+ expect(navigate.mock.calls.at(-1)![0].deploymentFilters).toEqual(expect.objectContaining({ project: "p", completedFrom: "2026-09-19T00:00:00.000Z", completedTo: period.end }));
+ expect(screen.getByRole("region", { name: "Daily deployments table" }).getAttribute("tabindex")).toBe("0");
+});

@@ -7,7 +7,7 @@ import { NavigationShortcuts } from "./deployments/NavigationShortcuts";
 import { AnalyticsPage } from "./AnalyticsPage";
 import { ServicesPage } from "./ServicesPage";
 import { subscribeOverview } from "./overviewStream";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { List, UsersThree } from "@phosphor-icons/react";
 import {
   api,
@@ -20,7 +20,7 @@ import {
   setToken,
   User,
 } from "./api";
-import { AppRoute, readRoute, routePath, View } from "./routes";
+import { AppRoute, isNewInterfaceRoute, readRoute, resourceSections, routePath, View } from "./routes";
 import { ApplicationsPage } from "./ApplicationsPage";
 import { ConnectionsPage } from "./ConnectionsPage";
 import { PageHeader, pageTitles } from "./PageHeader";
@@ -40,6 +40,12 @@ import { EventsPage } from "./events/EventRulesPage";
 import { ServersPage } from "./servers/ServersPage";
 import { ProjectsPage } from "./projects/ProjectsPage";
 import { SecretsPage } from "./secrets/SecretsPage";
+import { useInterfacePreference } from "./interface/preference";
+import { InterfaceNav, InterfaceTabs, groupTitles, navigationGroup } from "./interface/Navigation";
+import "./interface/Interface.css";
+
+const WorkloadsPage = lazy(() => import("./interface/WorkloadsPage").then(module => ({ default: module.WorkloadsPage })));
+const ResourcesPage = lazy(() => import("./interface/ResourcesPage").then(module => ({ default: module.ResourcesPage })));
 
 // Keep existing component imports available while feature modules own their state.
 export { Nav, AccountMenu, ImpersonationBanner } from "./app/Navigation";
@@ -65,10 +71,13 @@ function restorePageScroll(scrollTop: number) {
 
 export default function DispatchApp() {
   const [overview, setOverview] = useState<Overview | null>(null);
+  const interfacePreference = useInterfacePreference(overview?.identity?.id);
+  const newInterface = interfacePreference.enabled;
   const [historicalDeployments, setHistoricalDeployments] = useState<Record<string, Deployment>>({});
   const [historicalError, setHistoricalError] = useState("");
   const [route, setRoute] = useState<AppRoute>(() => readRoute());
   const view = route.view;
+  const retainDeploymentWorkspace = !!route.deploymentApplicationID || route.deploymentFilters?.layout === "compare" || route.deploymentFilters?.pinned === true;
   const [dialog, setDialog] = useState<Dialog>(null);
   const [creatingApplication, setCreatingApplication] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -128,6 +137,13 @@ export default function DispatchApp() {
           nextState.deploymentReturnDepth = returnDepth + (options.replace ? 0 : 1);
         else if (!currentRoute.deploymentID && !options.replace)
           nextState.deploymentReturnDepth = 1;
+      }
+      if (next.view === "applications" && (next.applicationID || next.configurationSourceID)) {
+        const applicationReturnDepth = window.history.state?.applicationReturnDepth;
+        if ((currentRoute.applicationID || currentRoute.configurationSourceID) && Number.isSafeInteger(applicationReturnDepth) && applicationReturnDepth > 0)
+          nextState.applicationReturnDepth = applicationReturnDepth + (options.replace ? 0 : 1);
+        else if (!options.replace)
+          nextState.applicationReturnDepth = 1;
       }
       if (options.replace)
         window.history.replaceState(nextState, "", routePath(next));
@@ -318,6 +334,11 @@ export default function DispatchApp() {
     if (next !== "applications") setCreatingApplication(false);
     setMobileNav(false);
   };
+  const navigateInterface = (next: AppRoute) => {
+    navigateRoute(next, next.deploymentID ? { state: { deploymentReturnDepth: 1 } } : undefined);
+    if (next.view !== "applications") setCreatingApplication(false);
+    setMobileNav(false);
+  };
 
   const startImpersonating = async (user: User) => {
     setImpersonatedUserID(user.id);
@@ -364,17 +385,17 @@ export default function DispatchApp() {
     );
 
   return (
-    <DeploymentCatalogProvider key={overview?.identity?.id ?? "anonymous"} overview={overview} onNavigate={navigateRoute}><div className="shell">
+    <DeploymentCatalogProvider key={overview?.identity?.id ?? "anonymous"} overview={overview} onNavigate={navigateRoute}><div className={`shell${newInterface ? " interface-shell" : ""}`}>
       <a className="skip-link" href="#page-content">
         Skip to content
       </a>
-      <Nav
+      {newInterface ? <InterfaceNav route={route} overview={overview} open={mobileNav} onClose={() => setMobileNav(false)} onNavigate={navigateInterface} /> : <Nav
         open={mobileNav}
         view={view}
         overview={overview}
         onClose={() => setMobileNav(false)}
         onNavigate={navigate}
-      />
+      />}
 
       <main className="workspace">
         <header className="app-bar">
@@ -393,7 +414,7 @@ export default function DispatchApp() {
               <strong>Dispatch</strong>
             </div>
           </div>
-          <div className="workspace-location"><span>Workspace</span><span aria-hidden="true">/</span><strong>{pageTitles[view]}</strong></div>
+          <div className="workspace-location">{!newInterface && <><span>Workspace</span><span aria-hidden="true">/</span></>}<strong>{newInterface ? groupTitles[navigationGroup(route)] : pageTitles[view]}</strong></div>
           {overview && <NavigationShortcuts overview={overview} route={route} onNavigate={navigateRoute} />}
           {overview?.identity && (
             <AccountMenu
@@ -405,6 +426,7 @@ export default function DispatchApp() {
             />
           )}
         </header>
+        {newInterface && overview && <InterfaceTabs route={route} overview={overview} onNavigate={navigateInterface} />}
 
         {overview?.impersonator && overview.identity && (
           <ImpersonationBanner
@@ -424,6 +446,9 @@ export default function DispatchApp() {
 
         <div className="page-scroll" id="page-content">
           {loading && <PageLoading />}
+          {!loading && overview && !newInterface && isNewInterfaceRoute(route) && <div className="page-layout interface-required"><PageHeader view={view} /><p>This page is part of the new interface. Enable it in Settings to continue.</p><button className="primary-button" onClick={() => navigate("settings")}>Open settings</button></div>}
+          {!loading && overview && newInterface && (view === "workloads" || view === "deployments" && !route.deploymentID && !retainDeploymentWorkspace) && <Suspense fallback={<PageLoading />}><WorkloadsPage key={`${overview.identity?.id}:${view === "deployments" ? "runs" : route.workloadSection ?? "applications"}`} overview={overview} section={view === "deployments" ? "runs" : route.workloadSection ?? "applications"} filters={route.deploymentFilters} onFilters={filters => navigateRoute({ ...route, deploymentFilters: filters }, { replace: true, preserveScroll: true })} onNavigate={navigateInterface} onCreateApplication={() => { setCreatingApplication(true); navigateRoute({ view: "applications" }); }} /></Suspense>}
+          {!loading && overview && newInterface && (view === "infrastructure" || view === "recovery" || view === "automation") && <Suspense fallback={<PageLoading />}><ResourcesPage key={`${overview.identity?.id}:${route.resourceSection ?? resourceSections[view][0]}`} overview={overview} section={route.resourceSection ?? resourceSections[view][0]} onChanged={() => load(true)} /></Suspense>}
           {!loading &&
             overview &&
             view === "deployments" &&
@@ -489,7 +514,7 @@ export default function DispatchApp() {
           {!loading &&
             overview &&
             view === "deployments" &&
-            !route.deploymentID && (
+            !route.deploymentID && (!newInterface || retainDeploymentWorkspace) && (
               <DeploymentsPage
                 overview={overview}
                 onChanged={() => load(true)}
@@ -572,7 +597,11 @@ export default function DispatchApp() {
                   deploymentSection: "manifests",
                 })
               }
-              onCloseTopology={() => navigateRoute({ view: "applications" })}
+              onCloseTopology={() => {
+                const returnDepth = window.history.state?.applicationReturnDepth;
+                if (Number.isSafeInteger(returnDepth) && returnDepth > 0) window.history.go(-returnDepth);
+                else navigateRoute(newInterface && !route.configurationSourceID ? { view: "workloads", workloadSection: "applications" } : { view: "applications" });
+              }}
             />
           )}
           {!loading && overview && view === "events" && (
@@ -624,9 +653,9 @@ export default function DispatchApp() {
                 }
               />
             )}
-          {!loading && overview && view === "settings" && <SettingsPage key={overview.identity?.id} overview={overview} onChanged={() => load(true)} />}
+          {!loading && overview && view === "settings" && <SettingsPage key={overview.identity?.id} overview={overview} onChanged={() => load(true)} interfaceSettings={{ enabled: newInterface, onChange: interfacePreference.setEnabled, error: interfacePreference.saveError }} />}
           {!loading && overview && view === "operations" && <OperationsPage key={overview.identity?.id} overview={overview} filters={route.operationsFilters ?? {}} onFilters={filters => navigateRoute({view: "operations", operationsFilters: filters}, {replace: true, preserveScroll: true})} onNavigate={navigateRoute} onChanged={() => load(true)} />}
-          {!loading && overview && view === "analytics" && <AnalyticsPage key={overview.identity?.id} overview={overview} filters={route.analyticsFilters ?? {}} onFilters={filters => navigateRoute({view: "analytics", analyticsFilters: filters}, {replace: true, preserveScroll: true})} onNavigate={navigateRoute} />}
+          {!loading && overview && view === "analytics" && <AnalyticsPage key={overview.identity?.id} newInterface={newInterface} overview={overview} filters={route.analyticsFilters ?? {}} onFilters={filters => navigateRoute({view: "analytics", analyticsFilters: filters}, {replace: true, preserveScroll: true})} onNavigate={navigateRoute} />}
           {!loading && overview && view === "servers" && !route.serverID && (
             <ServersPage
               overview={overview}

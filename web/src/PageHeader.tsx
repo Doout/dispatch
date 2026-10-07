@@ -3,6 +3,10 @@ import { Plus } from "@phosphor-icons/react";
 import { shouldHandleNavigation, View } from "./routes";
 
 export const pageTitles: Record<View, string> = {
+  workloads: "Workloads",
+  infrastructure: "Infrastructure",
+  recovery: "Recovery",
+  automation: "Automation",
   deployments: "Deployments",
   operations: "Operations",
   settings: "Settings",
