@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -13,9 +14,9 @@ import (
 func TestReviewedBackupRetirementClientAndMCPContracts(t *testing.T) {
 	for _, operation := range []struct{ name, action, path string }{{"backup_retire_local", "retire-local", "retire-local"}, {"backup_delete_offsite", "delete-offsite", "delete-offsite"}} {
 		t.Run(operation.name, func(t *testing.T) {
-			calls := 0
+			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
+				calls.Add(1)
 				if r.URL.Path != "/api/v1/workload-backups/backup-1/"+operation.path || r.Header.Get("Idempotency-Key") != "stable-retirement-key" {
 					t.Error("wrong reviewed operation or retry key")
 				}
@@ -33,7 +34,7 @@ func TestReviewedBackupRetirementClientAndMCPContracts(t *testing.T) {
 				t.Fatal(err)
 			}
 			bad := Arguments{BackupID: "backup-1", Key: "stable-retirement-key", Input: confirmation("backup-1", "delete")}
-			if result := client.Call(context.Background(), operation.name, bad); result.OK || calls != 0 {
+			if result := client.Call(context.Background(), operation.name, bad); result.OK || calls.Load() != 0 {
 				t.Fatal("mismatched confirmation reached server")
 			}
 			args := bad

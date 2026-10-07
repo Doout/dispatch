@@ -6,15 +6,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
 const bootstrapFixture = `{"id":"bootstrap-1","serverId":"server-1","projectId":"project-1","digest":"original-digest","state":"accepted"}`
 
 func TestBootstrapClientPreservesOriginalInstallationAndFilters(t *testing.T) {
-	requests := 0
+	var requests atomic.Int32
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
 		switch r.URL.Path {
 		case "/api/v1/infrastructure/bootstrap":
 			if r.Method != "GET" || r.URL.Query().Get("serverId") != "server-1" || r.URL.Query().Get("projectId") != "project-1" {
@@ -54,8 +55,8 @@ func TestBootstrapClientPreservesOriginalInstallationAndFilters(t *testing.T) {
 			t.Fatal("lost original installation continuation", name, out)
 		}
 	}
-	if requests != 3 {
-		t.Fatal("repeated installation request", requests)
+	if got := requests.Load(); got != 3 {
+		t.Fatal("repeated installation request", got)
 	}
 }
 
@@ -67,9 +68,9 @@ func TestBootstrapClientRejectsChangedReceiptsAndNeverRetriesResponseLoss(t *tes
 			t.Fatal("accepted a changed installation", body, out)
 		}
 	}
-	requests := 0
+	var requests atomic.Int32
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
 		conn, _, err := w.(http.Hijacker).Hijack()
 		if err != nil {
 			t.Error(err)
@@ -78,17 +79,17 @@ func TestBootstrapClientRejectsChangedReceiptsAndNeverRetriesResponseLoss(t *tes
 		conn.Close()
 	})
 	out := c.Call(context.Background(), "bootstrap_retry", Arguments{BootstrapID: "bootstrap-1", Input: json.RawMessage(`{"digest":"original-digest"}`)})
-	if out.OK || requests != 1 || out.Continuation == nil || out.Continuation.ID != "bootstrap-1" || !strings.Contains(out.Error.Title, "No automatic retry") {
-		t.Fatal("lost or replayed the original installation", requests, out)
+	if got := requests.Load(); out.OK || got != 1 || out.Continuation == nil || out.Continuation.ID != "bootstrap-1" || !strings.Contains(out.Error.Title, "No automatic retry") {
+		t.Fatal("lost or replayed the original installation", got, out)
 	}
 }
 
 func TestBootstrapClientRequiresSavedDigestAndExposesOnlyRecoveryTools(t *testing.T) {
-	requests := 0
-	c := testClient(t, func(http.ResponseWriter, *http.Request) { requests++ })
+	var requests atomic.Int32
+	c := testClient(t, func(http.ResponseWriter, *http.Request) { requests.Add(1) })
 	for _, input := range []string{`null`, `{}`, `{"digest":""}`, `{"digest":"original-digest","confirmName":"invented"}`} {
 		out := c.Call(context.Background(), "bootstrap_retry", Arguments{BootstrapID: "bootstrap-1", Input: json.RawMessage(input)})
-		if out.OK || out.ExitCode() != 2 || requests != 0 {
+		if out.OK || out.ExitCode() != 2 || requests.Load() != 0 {
 			t.Fatal("invalid retry reached the controller", input, out)
 		}
 	}

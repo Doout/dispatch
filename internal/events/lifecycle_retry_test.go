@@ -16,25 +16,46 @@ import (
 
 func TestCompletionWaitsForDeployingStatusPersistence(t *testing.T) {
 	data, template := previewFixture(t)
-	deployments := deploy.NewService(data, deploy.SimulationExecutor{Delay: time.Millisecond})
-	lifecycle := DeploymentLifecycle{Store: data, Deployments: deployments, PollEvery: time.Millisecond}
+	// Finish before startup returns. This forces completion to race the first
+	// status comment without depending on a simulated deployment's speed.
+	completion := make(chan Completion, 1)
+	completion <- Completion{State: core.PreviewReady, Message: "Preview ready"}
+	close(completion)
+	lifecycle := &controlledLifecycle{store: data, completion: completion}
 	readyRecorded := make(chan struct{}, 1)
-	notifier := &recordingNotifier{readyRecorded: readyRecorded}
+	persisted := make(chan error, 1)
+	notifier := &recordingNotifier{readyRecorded: readyRecorded, observe: func(notification Notification) {
+		if notification.State != core.PreviewReady {
+			return
+		}
+		preview, err := data.GetPreviewEnvironment(context.Background(), notification.Preview.ID)
+		if err == nil && (preview.State != core.PreviewReady || preview.StatusCommentID != "status-1") {
+			err = errors.New("terminal state and initial comment must be persisted before notification")
+		}
+		persisted <- err
+	}}
 	service := New(data, nil, lifecycle, notifier)
 
 	result, err := service.Process(context.Background(), previewCommentEvent("delivery-fast"))
 	if err != nil || len(result.Previews) != 1 {
 		t.Fatalf("unexpected preview start: result=%#v err=%v", result, err)
 	}
-	preview := waitForPreviewState(t, data, result.Previews[0].ID, core.PreviewReady)
-	if preview.TemplateAppID != template.ID || preview.StatusCommentID != "status-1" {
-		t.Fatalf("unexpected completed preview: %#v", preview)
-	}
-	// The terminal state is saved before its notification runs.
 	select {
 	case <-readyRecorded:
-	case <-time.After(5 * time.Second):
-		t.Fatal("ready notification was not recorded")
+	case <-time.After(2 * time.Minute):
+		t.Fatal("completion worker did not notify ready")
+	}
+	// Join the completion worker's critical section before assertions and DB
+	// cleanup. It holds this lock through persistence and notification.
+	lock := service.previewLock(result.Previews[0].ID)
+	lock.Lock()
+	lock.Unlock()
+	preview, err := data.GetPreviewEnvironment(context.Background(), result.Previews[0].ID)
+	if err != nil || preview.State != core.PreviewReady || preview.TemplateAppID != template.ID || preview.StatusCommentID != "status-1" {
+		t.Fatalf("unexpected completed preview: preview=%#v err=%v", preview, err)
+	}
+	if err := <-persisted; err != nil {
+		t.Fatal(err)
 	}
 	states, commentIDs := notifier.snapshot()
 	if len(states) != 2 || states[0] != core.PreviewDeploying || states[1] != core.PreviewReady {
@@ -42,6 +63,43 @@ func TestCompletionWaitsForDeployingStatusPersistence(t *testing.T) {
 	}
 	if commentIDs[0] != "" || commentIDs[1] != "status-1" {
 		t.Fatalf("completion must update the persisted status comment, got IDs %v", commentIDs)
+	}
+}
+
+func TestLifecycleResumesCompletedDeployment(t *testing.T) {
+	data, template := previewFixture(t)
+	lifecycle := DeploymentLifecycle{Store: data}
+	for _, tc := range []struct {
+		deployment core.DeploymentState
+		preview    core.PreviewState
+	}{
+		{core.DeploymentSucceeded, core.PreviewReady},
+		{core.DeploymentFailed, core.PreviewFailed},
+		{core.DeploymentCancelled, core.PreviewClosed},
+	} {
+		t.Run(string(tc.deployment), func(t *testing.T) {
+			deployment := core.Deployment{ID: ulid.Make().String(), AppID: template.ID, CommitSHA: "abc123", SpecDigest: template.SpecDigest(), State: tc.deployment, Message: "Deployment finished", CreatedAt: time.Now().UTC()}
+			if err := data.CreateDeployment(context.Background(), deployment); err != nil {
+				t.Fatal(err)
+			}
+			completion := lifecycle.ResumePreview(core.PreviewEnvironment{DeploymentID: deployment.ID, URL: "pr-42.example.test"})
+			select {
+			case result, ok := <-completion:
+				if !ok || result.State != tc.preview || result.Message != deployment.Message || result.URL != "https://pr-42.example.test" {
+					t.Fatalf("unexpected resumed completion: %#v, open=%v", result, ok)
+				}
+			case <-time.After(2 * time.Minute):
+				t.Fatal("deployment watcher did not finish")
+			}
+			select {
+			case _, open := <-completion:
+				if open {
+					t.Fatal("deployment watcher sent more than one completion")
+				}
+			case <-time.After(2 * time.Minute):
+				t.Fatal("deployment watcher did not close its completion channel")
+			}
+		})
 	}
 }
 
@@ -267,6 +325,7 @@ type controlledLifecycle struct {
 	failCleanups int
 	startEntered chan struct{}
 	releaseStart chan struct{}
+	completion   <-chan Completion
 }
 
 func (l *controlledLifecycle) StartPreview(ctx context.Context, preview core.PreviewEnvironment) (StartResult, error) {
@@ -291,7 +350,7 @@ func (l *controlledLifecycle) StartPreview(ctx context.Context, preview core.Pre
 		close(l.startEntered)
 		<-l.releaseStart
 	}
-	return StartResult{AppID: instance.ID, DeploymentID: "deployment-1", URL: "https://preview.example.test", Message: "Preview deployment started"}, nil
+	return StartResult{AppID: instance.ID, DeploymentID: "deployment-1", URL: "https://preview.example.test", Message: "Preview deployment started", Completion: l.completion}, nil
 }
 
 func (l *controlledLifecycle) ResumePreview(core.PreviewEnvironment) <-chan Completion { return nil }
@@ -362,22 +421,4 @@ func previewClose(delivery string) core.IncomingEvent {
 	return core.IncomingEvent{ID: ulid.Make().String(), Provider: core.EventProviderGitHub, DeliveryID: delivery,
 		Kind: core.EventKindPullRequest, Action: "closed", Repository: "acme/checkout", PullRequestNumber: 42,
 		HeadRef: "feature/cart", HeadSHA: "abc123", BaseRef: "main", Actor: "octo", ReceivedAt: time.Now().UTC()}
-}
-
-func waitForPreviewState(t *testing.T, data *store.SQLStore, id string, expected core.PreviewState) core.PreviewEnvironment {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		preview, err := data.GetPreviewEnvironment(context.Background(), id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if preview.State == expected {
-			return preview
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	preview, _ := data.GetPreviewEnvironment(context.Background(), id)
-	t.Fatalf("timed out waiting for %s, last preview %#v", expected, preview)
-	return core.PreviewEnvironment{}
 }
