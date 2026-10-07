@@ -10,8 +10,6 @@
 .interface-shell .nav-link:hover { color: var(--ink); background: var(--surface-subtle); }
 .interface-shell .nav-link[aria-current="page"] { color: #1453ba; background: #edf3ff; box-shadow: none; }
 .interface-shell .nav-link:nth-last-child(2) { margin-top: 20px; }
-.interface-version { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 18px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 10px; }
-.interface-version a { color: var(--blue); }
 .interface-shell .app-bar { flex-basis: 58px; min-height: 58px; height: 58px; padding: 0 28px; background: #fff; }
 .interface-shell .workspace-location { font-size: 12px; }
 .interface-shell .workspace-location > strong { font-size: 13px; }
