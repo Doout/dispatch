@@ -94,18 +94,18 @@ function FeatureSettings({ observed, onChanged }: { observed?: string; onChanged
   }
   return <>
   <section className="settings-features" aria-labelledby={`${id}-features`}>
-    <header><div><h2 id={`${id}-features`}><SlidersHorizontal size={17} />Features</h2><p>Changes save immediately and apply across this controller.</p></div><button type="button" className="quiet-button" disabled={loading || saving} onClick={() => { setNotice(""); setRefresh(value => value + 1); }}><ArrowClockwise size={14} />Refresh</button></header>
+    <header><div><h2 id={`${id}-features`}><SlidersHorizontal size={17} />Features</h2><p>Changes save immediately and apply to all users.</p></div><button type="button" className="quiet-button" disabled={loading || saving} onClick={() => { setNotice(""); setRefresh(value => value + 1); }}><ArrowClockwise size={14} />Refresh</button></header>
     <div className="settings-feature-row" aria-busy={loading || saving}>
       <span className="settings-feature-icon"><ListChecks size={21} /></span>
-      <div className="settings-feature-copy"><h3><label htmlFor={`${id}-operationsEnabled`}>Operations</label><span>Off by default</span></h3><p id={`${id}-help`}>Enable activity history, application ownership, cleanup, and recovery tools for users who already have access. Existing roles still determine which tools each person can use.</p><p>Turning this off disables the management tools. Saved access mappings still apply at sign-in.</p></div>
+      <div className="settings-feature-copy"><h3><label htmlFor={`${id}-operationsEnabled`}>Operations</label><span>Off by default</span></h3><p id={`${id}-help`}>Show activity history, application ownership, cleanup, and recovery tools. Existing permissions still apply.</p><p>Turning this off disables these tools. Saved sign-in access rules still apply.</p></div>
       {featureControl("operationsEnabled", `${id}-help`)}
     </div>
   </section>
   <section className="settings-features settings-experimental" aria-labelledby={`${id}-experimental`}>
-    <header><div><h2 id={`${id}-experimental`}><SlidersHorizontal size={17} />Experimental UI</h2><p>Off by default for this controller. Automated checks exist, but the workflows below still need validation.</p><p>These switches control pages and actions in both interfaces. Existing jobs and APIs keep running. Access still depends on each user's role.</p></div></header>
+    <header><div><h2 id={`${id}-experimental`}><SlidersHorizontal size={17} />Experimental UI</h2><p>Try new pages and controls. All are off by default.</p><p>These switches show or hide features in both interfaces. Running jobs and API access stay active.</p></div></header>
     {uiFeatures.map(feature => <div key={feature.key} className="settings-feature-row" aria-busy={loading || pending?.key === feature.key}>
       <span className="settings-feature-icon"><SlidersHorizontal size={21} /></span>
-      <div className="settings-feature-copy"><h3><label htmlFor={`${id}-${feature.key}`}>{feature.label}</label><span>{feature.validation}</span></h3><p id={`${id}-${feature.key}-help`}>{feature.description}</p></div>
+      <div className="settings-feature-copy"><h3><label htmlFor={`${id}-${feature.key}`}>{feature.label}</label></h3><p id={`${id}-${feature.key}-help`}>{feature.description}</p></div>
       {featureControl(feature.key, `${id}-${feature.key}-help`)}
     </div>)}
   </section>

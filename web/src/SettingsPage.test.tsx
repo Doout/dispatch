@@ -19,7 +19,7 @@ it("loads the persisted default-off value before allowing an owner to enable Ope
  const request = vi.spyOn(client, "request").mockImplementation(async <T,>(_path: string, init?: RequestInit) => init?.method === "PUT" || reads++ > 0 ? { operationsEnabled: true } as T : new Promise<unknown>(resolve => { finishGet = resolve; }) as Promise<T>);
  const changed = vi.fn(); const user = userEvent.setup(); render(<SettingsPage overview={owner} onChanged={changed} />);
  expect(control().disabled).toBe(true); expect(control().checked).toBe(false); expect(screen.getByText("Off by default")).toBeTruthy();
- expect(screen.getByText(/users who already have access/)).toBeTruthy();
+ expect(screen.getByText(/Existing permissions still apply/)).toBeTruthy();
  await act(async () => finishGet({ operationsEnabled: false }));
  expect(control().disabled).toBe(false); expect(control().checked).toBe(false);
  await user.click(control()); await screen.findByText("Operations enabled.");
@@ -114,9 +114,7 @@ it("defaults each experimental UI feature off when older settings omit the flags
   expect(toggle.checked).toBe(false); expect(toggle.disabled).toBe(false);
  }
  expect(control().checked).toBe(true);
- expect(screen.getByText(/Existing jobs and APIs keep running/)).toBeTruthy();
- expect(screen.getAllByText("Needs provider validation")).toHaveLength(2);
- expect(screen.getAllByText("Needs browser validation")).toHaveLength(4);
+ expect(screen.getByText(/Running jobs and API access stay active/)).toBeTruthy();
 });
 
 it("saves only the changed feature and retains independent flags after a page reload", async () => {

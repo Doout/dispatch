@@ -3,42 +3,36 @@ import type { ResourceSection } from "./routes";
 
 export type { UIFeatureKey } from "./api/overview";
 
-export const uiFeatures: ReadonlyArray<{ key: UIFeatureKey; label: string; description: string; validation: string }> = [
+export const uiFeatures: ReadonlyArray<{ key: UIFeatureKey; label: string; description: string }> = [
   {
     key: "machineProvisioning",
     label: "Machine provisioning",
-    description: "Show machines and providers, including machine creation, deletion, and provider registration. Real provider allocation still needs validation.",
-    validation: "Needs provider validation",
+    description: "Create and delete machines, and manage infrastructure providers.",
   },
   {
     key: "machineSnapshots",
     label: "Machine snapshots",
-    description: "Show snapshot capture, deletion, and restore into an isolated clone. Capture and restore still need validation with a real provider.",
-    validation: "Needs provider validation",
+    description: "Create snapshots and restore them as isolated machines.",
   },
   {
     key: "workloadBackups",
     label: "Workload backups",
-    description: "Show database backup, restore, verification, and archive deletion. These actions still need a full browser check against a running database.",
-    validation: "Needs browser validation",
+    description: "Back up PostgreSQL databases, restore data, and manage backup archives.",
   },
   {
     key: "automationCredentials",
     label: "Automation credentials",
-    description: "Show automation accounts, credential issue, rotation, and revocation, and project permissions. The full credential lifecycle still needs a browser check.",
-    validation: "Needs browser validation",
+    description: "Manage automation accounts, API credentials, and their project permissions.",
   },
   {
     key: "infrastructureAssignments",
     label: "Project assignments",
-    description: "Show project resource assignments, including adding and removing access to targets, providers, SSH keys, and service templates. These changes still need a browser check.",
-    validation: "Needs browser validation",
+    description: "Choose which targets, providers, SSH keys, and service templates each project can use.",
   },
   {
     key: "mutationReceipts",
     label: "Request receipts",
-    description: "Show receipt lookup and linked operation details. Following a request through completion still needs a browser check.",
-    validation: "Needs browser validation",
+    description: "Look up a request by receipt ID and check its operation status.",
   },
 ];
 
