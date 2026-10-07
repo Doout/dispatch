@@ -49,9 +49,9 @@ func TestServerWaitStopsForIsolationApprovalAndRecovery(t *testing.T) {
 		{"paused", "operation_paused"},
 	} {
 		t.Run(tc.state, func(t *testing.T) {
-			calls := 0
+			var calls atomic.Int32
 			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-				calls++
+				calls.Add(1)
 				response := readinessResponse(tc.state)
 				if tc.state == "verified-isolated" {
 					response["sourceSnapshotId"], response["runtimeState"] = "snapshot-1", "verified-isolated"
@@ -59,8 +59,8 @@ func TestServerWaitStopsForIsolationApprovalAndRecovery(t *testing.T) {
 				json.NewEncoder(w).Encode(response)
 			})
 			out := c.Call(context.Background(), "server_wait", Arguments{ServerID: "server-1", TimeoutSeconds: 1})
-			if calls != 1 || out.OK != (tc.code == "") || out.Continuation == nil || out.Continuation.OperationID != "original-operation" || tc.code != "" && (out.Error == nil || out.Error.Code != tc.code) {
-				t.Fatal("wrong readiness stop", out, calls)
+			if got := calls.Load(); got != 1 || out.OK != (tc.code == "") || out.Continuation == nil || out.Continuation.OperationID != "original-operation" || tc.code != "" && (out.Error == nil || out.Error.Code != tc.code) {
+				t.Fatal("wrong readiness stop", out, got)
 			}
 			// Inspection succeeds even when the server needs recovery.
 			if get := c.Call(context.Background(), "server_get", Arguments{ServerID: "server-1"}); !get.OK {
@@ -96,10 +96,9 @@ func TestServerReadinessRejectsWrongIdentityAndContradictoryEvidence(t *testing.
 }
 
 func TestServerWaitRechecksCurrentAccessOnEveryPoll(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if calls > 1 {
+		if calls.Add(1) > 1 {
 			w.WriteHeader(403)
 			io.WriteString(w, `{"title":"Current project grant revoked"}`)
 			return
@@ -107,7 +106,7 @@ func TestServerWaitRechecksCurrentAccessOnEveryPoll(t *testing.T) {
 		json.NewEncoder(w).Encode(readinessResponse("waiting"))
 	})
 	out := c.Call(context.Background(), "server_wait", Arguments{ServerID: "server-1", TimeoutSeconds: 5})
-	if out.OK || out.ExitCode() != 3 || calls != 2 || out.Continuation == nil || out.Continuation.ID != "server-1" || out.Continuation.OperationID != "original-operation" {
+	if out.OK || out.ExitCode() != 3 || calls.Load() != 2 || out.Continuation == nil || out.Continuation.ID != "server-1" || out.Continuation.OperationID != "original-operation" {
 		t.Fatal("wait ignored revocation or lost original operation", out)
 	}
 }

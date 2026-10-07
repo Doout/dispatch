@@ -214,9 +214,9 @@ func TestRecoveryReadOnlyDiscoveryAndReviews(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			calls := 0
+			var calls atomic.Int32
 			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-				calls++
+				calls.Add(1)
 				op, _ := Find(test.name)
 				if r.Method != op.Method || r.URL.RequestURI() != "/api/v1"+test.path || r.Header.Get("Idempotency-Key") != "" {
 					t.Error("changed read/review scope")
@@ -224,7 +224,7 @@ func TestRecoveryReadOnlyDiscoveryAndReviews(t *testing.T) {
 				io.WriteString(w, `{"blockedReason":"Active operation must be reconciled"}`)
 			})
 			out := c.Call(context.Background(), test.name, test.args)
-			if !out.OK || calls != 1 || out.Continuation != nil || !strings.Contains(string(out.Data), "Active operation") {
+			if !out.OK || calls.Load() != 1 || out.Continuation != nil || !strings.Contains(string(out.Data), "Active operation") {
 				t.Fatal("review accepted action or hid blocker", out)
 			}
 		})
@@ -233,14 +233,14 @@ func TestRecoveryReadOnlyDiscoveryAndReviews(t *testing.T) {
 func TestRecoveryPreservesForbiddenAndStaleReviewErrors(t *testing.T) {
 	for _, status := range []int{403, 409, 422} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			calls := 0
+			var calls atomic.Int32
 			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-				calls++
+				calls.Add(1)
 				w.WriteHeader(status)
 				io.WriteString(w, `{"title":"Inspect the original resource","detail":"Current permission, ownership or review does not allow the action","review":{"blockedReason":"Retained data"}}`)
 			})
 			out := c.Call(context.Background(), "backup_restore", Arguments{BackupID: "backup-1", DestinationID: "destination-1", Key: "original-restore-key", Input: confirmation("backup-1", "restore")})
-			if out.OK || out.Status != status || calls != 1 || !strings.Contains(string(out.Error.Evidence), "Retained data") || out.Continuation == nil || out.Continuation.Key != "original-restore-key" {
+			if out.OK || out.Status != status || calls.Load() != 1 || !strings.Contains(string(out.Error.Evidence), "Retained data") || out.Continuation == nil || out.Continuation.Key != "original-restore-key" {
 				t.Fatal("error prompted extra mutation or lost evidence", out)
 			}
 		})
