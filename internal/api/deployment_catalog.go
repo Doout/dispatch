@@ -230,7 +230,7 @@ func (a *API) deploymentSearch(w http.ResponseWriter, r *http.Request) {
 
 // Both applications must be visible and belong to one project. This endpoint
 // intentionally allows different applications for environments whose generated
-// runtime application IDs differ. It uses only immutable, redacted snapshots.
+// runtime application IDs differ. It reads only saved deployment evidence.
 func (a *API) compareEnvironments(w http.ResponseWriter, r *http.Request) {
 	to, err := a.store.GetDeployment(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
@@ -253,7 +253,7 @@ func (a *API) compareEnvironments(w http.ResponseWriter, r *http.Request) {
 	if !a.requireProject(w, r, core.PermissionProjectView, from.App.ProjectID) {
 		return
 	}
-	writeJSON(w, 200, compareDeploymentSnapshots(from, to))
+	a.writeDeploymentComparison(w, r, from, to)
 }
 
 func (a *API) deploymentIdentity(w http.ResponseWriter, r *http.Request) {

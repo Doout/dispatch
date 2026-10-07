@@ -1671,8 +1671,10 @@ paths:
         type: string
     get:
       operationId: compareEnvironmentInputs
-      description: Requires project.view for both deployments in the same project. Compares immutable saved inputs
-        across different application environments; credentials and live state are excluded. Limited to 1000 changes.
+      description: Requires project.view for both deployments in the same project. Compares saved rendered resources
+        across application environments when either deployment recorded a chart or Kubernetes/OpenShift runtime; otherwise compares saved inputs.
+        Sensitive contents and live state are excluded. Resource comparison also excludes hooks and generated tracking metadata.
+        Missing resource evidence returns available false without falling back to inputs. Limited to 1000 changes.
       responses:
         '200':
           description: Successful result.
@@ -1692,6 +1694,12 @@ paths:
         schema:
           type: string
         required: true
+      - name: basis
+        in: query
+        description: Optional comparison selection. Repeating this parameter or supplying an unsupported value returns 400.
+        schema:
+          type: string
+          enum: [resources, inputs]
   /apps/{id}/observations:
     parameters:
     - name: id
@@ -2817,20 +2825,22 @@ paths:
       - { name: id, in: path, required: true, schema: { type: string } }
     get:
       operationId: compareDeploymentInputs
-      description: Compare saved inputs of two deployments of the same application. Requires project.view. Excludes sensitive fields, chart defaults, and live state. Missing snapshots return available false. At most 1000 changes are returned.
+      description: Compare two deployments of the same application. Requires project.view. Defaults to saved rendered resources when either deployment recorded a chart or Kubernetes/OpenShift runtime; otherwise compares saved inputs. Sensitive contents and live state are excluded. Resource comparison also excludes hooks and generated tracking metadata. Missing resource evidence returns available false without falling back to inputs. At most 1000 changes are returned.
       parameters:
         - { name: from, in: query, required: true, schema: { type: string }, description: Earlier deployment ID. }
+        - { name: basis, in: query, schema: { type: string, enum: [resources, inputs] }, description: Optional comparison selection. Repeated or unsupported values return 400. }
       responses:
         "200":
-          description: Snapshot comparison, including availability and redaction notices.
+          description: Saved resource or input comparison, including availability and redaction notices.
           content:
             application/json:
               schema:
                 type: object
-                required: [fromId, toId, available, changes, hidden, truncated, message]
+                required: [fromId, toId, basis, available, changes, hidden, truncated, message]
                 properties:
                   fromId: { type: string }
                   toId: { type: string }
+                  basis: { type: string, enum: [resources, inputs] }
                   available: { type: boolean }
                   changes:
                     type: array
@@ -2845,6 +2855,7 @@ paths:
                   hidden: { type: integer }
                   truncated: { type: boolean }
                   message: { type: string }
+        "400": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
   /apps/{id}/sync:
@@ -5821,6 +5832,9 @@ components:
           type: string
         toId:
           type: string
+        basis:
+          type: string
+          enum: [resources, inputs]
         available:
           type: boolean
         hidden:

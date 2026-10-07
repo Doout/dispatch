@@ -54,7 +54,7 @@ func (a *API) previewApplicationRelease(w http.ResponseWriter, r *http.Request) 
 		problem(w, 409, "Preview unavailable", "Wait for the active deployment or operation to finish.")
 		return
 	}
-	comparison := deploymentComparison{Changes: []deploymentChange{}, Message: "No successful deployment exists to compare."}
+	comparison := deploymentComparison{Basis: "inputs", Changes: []deploymentChange{}, Message: "No successful deployment exists to compare."}
 	if current, err := a.store.LatestSuccessfulDeployment(r.Context(), app.ID); err == nil {
 		comparison = compareDeploymentSnapshots(current, core.Deployment{ID: "preview", CommitSHA: result.Revision, Snapshot: result.Snapshot})
 	}

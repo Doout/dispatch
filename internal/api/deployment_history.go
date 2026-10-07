@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -56,6 +57,7 @@ type deploymentChange struct {
 type deploymentComparison struct {
 	FromID    string             `json:"fromId"`
 	ToID      string             `json:"toId"`
+	Basis     string             `json:"basis"`
 	Available bool               `json:"available"`
 	Changes   []deploymentChange `json:"changes"`
 	Hidden    int                `json:"hidden"`
@@ -79,11 +81,46 @@ func (a *API) compareDeployments(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	writeJSON(w, 200, compareDeploymentSnapshots(from, to))
+	a.writeDeploymentComparison(w, r, from, to)
+}
+
+func (a *API) writeDeploymentComparison(w http.ResponseWriter, r *http.Request, from, to core.Deployment) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		problem(w, 400, "Invalid comparison", "Use a valid comparison query.")
+		return
+	}
+	basis := ""
+	if values, supplied := query["basis"]; supplied {
+		if len(values) != 1 || values[0] != "resources" && values[0] != "inputs" {
+			problem(w, 400, "Invalid comparison", "Choose one comparison basis: resources or inputs.")
+			return
+		}
+		basis = values[0]
+	}
+	if basis == "" {
+		basis = "inputs"
+		for _, d := range []core.Deployment{from, to} {
+			if d.Snapshot.Chart != "" || core.IsKubernetesRuntime(d.Snapshot.Runtime) {
+				basis = "resources"
+				break
+			}
+		}
+	}
+	if basis == "inputs" {
+		writeJSON(w, 200, compareDeploymentSnapshots(from, to))
+		return
+	}
+	resources := drift.CompareRecordedResources(r.Context(), a.store, a.eventConfig.Vault, from, to)
+	result := deploymentComparison{FromID: from.ID, ToID: to.ID, Basis: "resources", Available: resources.Available, Changes: []deploymentChange{}, Hidden: resources.Hidden, Truncated: resources.Truncated, Message: resources.Message}
+	for _, change := range resources.Changes {
+		result.Changes = append(result.Changes, deploymentChange{Path: change.Path, Kind: change.Kind, Before: change.Before, After: change.After})
+	}
+	writeJSON(w, 200, result)
 }
 
 func compareDeploymentSnapshots(from, to core.Deployment) deploymentComparison {
-	result := deploymentComparison{FromID: from.ID, ToID: to.ID, Changes: []deploymentChange{}, Message: "Saved deployment inputs. Sensitive values are excluded; chart defaults and live changes are not compared."}
+	result := deploymentComparison{FromID: from.ID, ToID: to.ID, Basis: "inputs", Changes: []deploymentChange{}, Message: "Saved deployment inputs. These can include values the chart does not use. Sensitive values, chart defaults, and live changes are excluded."}
 	if from.Snapshot.TargetID == "" || to.Snapshot.TargetID == "" {
 		result.Message = "Saved inputs are unavailable for one of these deployments. Current application settings are not used as historical values."
 		return result

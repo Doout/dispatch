@@ -27,12 +27,15 @@ pins and recents, and opens the last successful release with one selection. It
 falls back to the latest attempt when there has been no successful deployment.
 Service impact rows and application inventory rows also link directly to releases.
 
-Environment comparisons use two last-successful deployment snapshots within the
-same project. They support repository-managed stages and separately registered
-applications. The comparison includes saved chart inputs, image values, target
-settings, and service configuration revisions. Credentials, chart defaults, and
-live cluster values are excluded. Missing snapshots are reported as unavailable.
-Use deployment History to select retained historical versions of one application.
+Environment comparisons use two last-successful deployments within the same
+project. They support repository-managed stages and separately registered
+applications. Helm comparisons default to saved rendered resources, so unused
+chart values do not appear. Live cluster changes, hooks, tracking metadata, and
+sensitive contents are excluded. Missing resources are reported as unavailable.
+Choose **Saved inputs** to compare supplied values, target settings, and service
+configuration revisions. This includes values the chart might not use and is the
+default for non-Helm deployments. Use deployment History to select retained
+historical versions of one application.
 
 ## API
 
@@ -44,7 +47,7 @@ records. GET operations below do not perform runtime checks.
 | `GET /api/v1/deployment-catalog` | Accessible applications with current/latest runs, environment and target metadata, and saved status summaries. |
 | `GET /api/v1/deployment-search` | At most 50 deployment summaries and an optional `next` cursor. Accepts `q`, `project`, `application`, `environment`, `target`, `status`, `revision`, and `before`. |
 | `GET /api/v1/deployments/{id}/identity` | Saved deployment target identity, environment, latest attempt, and last successful release. |
-| `GET /api/v1/deployments/{id}/compare-environment?from={id}` | Sanitized snapshot comparison across visible applications within the same project. |
+| `GET /api/v1/deployments/{id}/compare-environment?from={id}` | Saved resource or input comparison across visible applications within the same project. Accepts `basis=resources` or `basis=inputs`; the response identifies the selected `basis`. |
 
 The existing same-application history and comparison APIs remain available. The
 full request/response contract is in [OpenAPI](openapi.yaml).

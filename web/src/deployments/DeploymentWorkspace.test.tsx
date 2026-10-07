@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { type Deployment, type Overview } from "../api";
+import { type Deployment, type DeploymentComparison, type Overview } from "../api";
 import { type DeploymentFilters, readRoute, routePath } from "../routes";
 import { useState } from "react";
 import { catalogClient, type CatalogItem } from "./catalogClient";
@@ -63,4 +63,59 @@ it("keeps analytics completion bounds on pagination and clears them when switchi
  await user.click(screen.getByRole("button",{name:"Load older deployments"}));await screen.findByText("Running release");
  expect(vi.mocked(catalogClient.search).mock.calls[1][0].get("completedFrom")).toBe(from);
  await user.click(screen.getByRole("button",{name:"Board"}));expect(onFilters).toHaveBeenLastCalledWith({layout:"board",project:"p",completedFrom:undefined,completedTo:undefined});
+});
+
+const savedResources: DeploymentComparison = { fromId:"running", toId:"production", basis:"resources", available:true, changes:[], hidden:1, truncated:false, message:"Saved resources." };
+function pendingComparison(){
+ let resolve!:(value:DeploymentComparison)=>void;
+ const promise=new Promise<DeploymentComparison>(yes=>{resolve=yes;});
+ return {promise,resolve};
+}
+
+it("keeps missing environment resources unavailable until inputs are selected explicitly",async()=>{
+ const compare=vi.spyOn(catalogClient,"compare").mockResolvedValueOnce({...savedResources,available:false,message:"Saved resources are unavailable."}).mockResolvedValue({...savedResources,basis:"inputs",changes:[{path:"/values/replicas",kind:"changed",before:2,after:3}]});
+ const user=userEvent.setup();render(<EnvironmentComparison items={items} onOpen={()=>{}}/>);
+ await user.selectOptions(screen.getByLabelText("From environment"),"running");
+ await user.selectOptions(screen.getByLabelText("To environment"),"production");
+ await screen.findByText("Comparison unavailable");
+ expect(compare).toHaveBeenCalledTimes(1);
+ expect(screen.queryByText("No changes to the saved resources.")).toBeNull();
+ expect((screen.getByLabelText("Comparison details") as HTMLSelectElement).value).toBe("resources");
+ await user.selectOptions(screen.getByLabelText("Comparison details"),"inputs");
+ await screen.findByText("/values/replicas");
+ expect(compare).toHaveBeenLastCalledWith("production","running","inputs");
+ expect(screen.getByText("Sensitive values hidden")).toBeTruthy();
+});
+
+it("ignores stale environment comparisons after changing modes",async()=>{
+ const pending=pendingComparison();
+ vi.spyOn(catalogClient,"compare").mockResolvedValueOnce({...savedResources,changes:[{path:"/resources/replicas",kind:"changed",before:2,after:3}]}).mockReturnValueOnce(pending.promise).mockResolvedValueOnce({...savedResources,changes:[]});
+ const user=userEvent.setup();render(<EnvironmentComparison items={items} onOpen={()=>{}}/>);
+ await user.selectOptions(screen.getByLabelText("From environment"),"running");
+ await user.selectOptions(screen.getByLabelText("To environment"),"production");
+ await screen.findByText("/resources/replicas");
+ await user.type(screen.getByLabelText("Filter environment changes"),"replicas");
+ await user.selectOptions(screen.getByLabelText("Comparison details"),"inputs");
+ expect(screen.getByRole("status").textContent).toBe("Comparing deployments…");
+ await user.selectOptions(screen.getByLabelText("Comparison details"),"resources");
+ await screen.findByText("No changes to the saved resources.");
+ await act(async()=>pending.resolve({...savedResources,basis:"inputs",changes:[{path:"/values/unused",kind:"added",before:null,after:1}]}));
+ expect(screen.queryByText("/values/unused")).toBeNull();
+ expect(screen.queryByText("No fields match this filter.")).toBeNull();
+ expect(screen.getByText("No changes to the saved resources.")).toBeTruthy();
+});
+
+it("resets automatic comparison mode when selecting another source environment",async()=>{
+ const compare=vi.spyOn(catalogClient,"compare").mockResolvedValueOnce(savedResources).mockResolvedValue({...savedResources,basis:"inputs"});
+ const user=userEvent.setup();render(<EnvironmentComparison items={items} onOpen={()=>{}}/>);
+ await user.selectOptions(screen.getByLabelText("From environment"),"running");
+ await user.selectOptions(screen.getByLabelText("To environment"),"production");
+ await screen.findByText("No changes to the saved resources.");
+ await user.selectOptions(screen.getByLabelText("Comparison details"),"inputs");
+ await screen.findByText("No visible input changes between these deployments.");
+ await user.selectOptions(screen.getByLabelText("From environment"),"production");
+ await user.selectOptions(screen.getByLabelText("To environment"),"running");
+ await waitFor(()=>expect(compare).toHaveBeenLastCalledWith("running","production"));
+ await screen.findByText("No visible input changes between these deployments.");
+ expect(screen.queryByLabelText("Comparison details")).toBeNull();
 });
