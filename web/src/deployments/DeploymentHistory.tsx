@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, ArrowsLeftRight, CaretDown, CaretRight, CheckCircle, ClockCounterClockwise, CircleNotch, WarningCircle } from "@phosphor-icons/react";
-import { api, Deployment, DeploymentComparison } from "../api";
+import { api, Deployment, DeploymentComparison, DeploymentComparisonBasis } from "../api";
 import { relative, short } from "../presentation";
 import { routePath, shouldHandleNavigation } from "../routes";
+import { ComparisonBasisPicker } from "./ComparisonBasisPicker";
 
 const versionLabel = (d: Deployment) => `${short(d.commitSha) || "No revision"} · ${new Date(d.createdAt).toLocaleString()} · ${d.id.slice(-6)}`;
 const display = (v: unknown) => typeof v === "string" ? v : JSON.stringify(v);
@@ -39,6 +40,8 @@ function ApplicationDeploymentHistory({ deployment, onSelectDeployment }: Histor
  const [from, setFrom] = useState("");
  const [to, setTo] = useState(deployment.id);
  const [comparison, setComparison] = useState<DeploymentComparison>();
+ const [basis, setBasis] = useState<DeploymentComparisonBasis>();
+ const [resourceComparison, setResourceComparison] = useState(false);
  const [comparing, setComparing] = useState(false);
  const [compareError, setCompareError] = useState("");
  const [filter, setFilter] = useState("");
@@ -109,9 +112,10 @@ function ApplicationDeploymentHistory({ deployment, onSelectDeployment }: Histor
   let alive = true; setComparison(undefined); setCompareError("");
   if (!from || !to || from === to) { setComparing(false); return; }
   setComparing(true);
-  void api.compareDeployments(to, from).then(result => { if (alive) setComparison(result); }).catch(e => { if (alive) setCompareError(e.message); }).finally(() => { if (alive) setComparing(false); });
+  const request = basis ? api.compareDeployments(to, from, basis) : api.compareDeployments(to, from);
+  void request.then(result => { if (alive) { setComparison(result); if (result.basis === "resources") setResourceComparison(true); } }).catch(e => { if (alive) setCompareError(e.message); }).finally(() => { if (alive) setComparing(false); });
   return () => { alive = false; };
- }, [from, to]);
+ }, [from, to, basis]);
  async function loadMore() {
   if (paging.current || loading) return;
   paging.current = true;
@@ -162,17 +166,18 @@ function ApplicationDeploymentHistory({ deployment, onSelectDeployment }: Histor
   </div><div className="history-comparison">
    <h3>Compare versions</h3>
    <div className="history-selectors"><label>From<select aria-label="Compare from deployment" value={from} onChange={event => { manualComparison.current = true; revealVersion(event.target.value); setFrom(event.target.value); }}><option value="">Select a version</option>{versions.map(item => <option key={item.id} value={item.id} disabled={item.id === to}>{versionLabel(item)}</option>)}</select></label><ArrowRight size={16} aria-hidden="true" /><label>To<select aria-label="Compare to deployment" value={to} onChange={event => selectTo(event.target.value)}>{versions.map(item => <option key={item.id} value={item.id}>{versionLabel(item)}</option>)}</select></label></div>
+   {resourceComparison && <ComparisonBasisPicker value={basis ?? comparison?.basis ?? "resources"} onChange={setBasis} />}
    {compareError && <p role="alert" className="error-message">{compareError}</p>}
-   {comparing && <p role="status" className="history-empty">Comparing saved inputs…</p>}
-   {!from && !comparing && <p className="history-empty">Select two deployments to compare their saved values, release settings, and service revisions. Load older deployments to find more versions.</p>}
+   {comparing && <p role="status" className="history-empty">Comparing deployments…</p>}
+   {!from && !comparing && <p className="history-empty">Select two deployments to compare. Load older deployments to find more versions.</p>}
    {comparison && <>
-    <div className="history-comparison-meta"><span>{comparison.available ? `${comparison.changes.length}${comparison.truncated ? "+" : ""} changes` : "Comparison unavailable"}</span>{comparison.hidden > 0 && <span>Sensitive fields excluded</span>}</div>
+    <div className="history-comparison-meta"><span>{comparison.available ? `${comparison.changes.length}${comparison.truncated ? "+" : ""} changes` : "Comparison unavailable"}</span>{comparison.hidden > 0 && <span>Sensitive values hidden</span>}</div>
     <p className="history-note">{comparison.message}</p>
     {comparison.available && comparison.changes.length > 0 && <><input className="history-filter" aria-label="Filter changed fields" placeholder="Filter changed fields…" value={filter} onChange={event => setFilter(event.target.value)} />
      <div className="history-diff"><table><thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead><tbody>{changes.map(change => <tr key={change.path}><td data-label="Field"><span className={`change-kind ${change.kind}`}>{change.kind}</span><code>{change.path}</code></td><td data-label="Before" className="change-before"><code>{change.kind === "added" ? "Not present" : display(change.before)}</code></td><td data-label="After" className="change-after"><code>{change.kind === "removed" ? "Not present" : display(change.after)}</code></td></tr>)}</tbody></table></div>
      {!changes.length && <p className="history-empty">No fields match this filter.</p>}
     </>}
-    {comparison.available && !comparison.changes.length && <p className="history-empty">No visible input changes between these deployments.</p>}
+    {comparison.available && !comparison.changes.length && <p className="history-empty">{comparison.basis === "resources" ? "No changes to the saved resources." : "No visible input changes between these deployments."}</p>}
     {comparison.truncated && <p className="history-note">Showing the first 1,000 changed fields.</p>}
    </>}
   </div></div>

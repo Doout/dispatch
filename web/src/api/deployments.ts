@@ -114,7 +114,10 @@ export type DeploymentHistoryPage = {
   repeats?: Record<string, string>;
 };
 
+export type DeploymentComparisonBasis = "resources" | "inputs";
+
 export type DeploymentComparison = {
+ basis?: DeploymentComparisonBasis;
  fromId: string; toId: string; available: boolean; hidden: number; truncated: boolean; message: string;
  changes: { path: string; kind: "added" | "removed" | "changed"; before: unknown; after: unknown }[];
 };
@@ -124,7 +127,7 @@ export const deploymentsApi = {
     request<DeploymentLog[]>(`/api/v1/deployments/${id}/logs`),
   deployment: (id: string) => request<Deployment>(`/api/v1/deployments/${encodeURIComponent(id)}`),
   applicationHistory: (id: string, before = "") => request<DeploymentHistoryPage>(`/api/v1/apps/${id}/deployment-history${before ? `?before=${encodeURIComponent(before)}` : ""}`),
-  compareDeployments: (to: string, from: string) => request<DeploymentComparison>(`/api/v1/deployments/${to}/compare?from=${encodeURIComponent(from)}`),
+  compareDeployments: (to: string, from: string, basis?: DeploymentComparisonBasis) => request<DeploymentComparison>(`/api/v1/deployments/${to}/compare?from=${encodeURIComponent(from)}${basis ? `&basis=${basis}` : ""}`),
   deploymentTopology: (id: string, chartValues = false) =>
     request<DeploymentTopology>(`/api/v1/deployments/${id}/topology${chartValues ? "?values=chart" : ""}`),
   deploymentManifests: (id: string) =>

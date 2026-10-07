@@ -11,7 +11,7 @@ it("compares saved versions, filters changes, and loads older runs", async () =>
  const history = vi.spyOn(api, "applicationHistory").mockResolvedValueOnce({ items: [current, older], next: "old" }).mockResolvedValueOnce({ items: [{ ...older, id: "oldest" }] });
  const compare = vi.spyOn(api, "compareDeployments").mockResolvedValue({ fromId: "old", toId: "new", available: true, hidden: 1, truncated: false, message: "Saved inputs.", changes: [{ path: "/values/replicas", kind: "changed", before: 2, after: 3 }, { path: "/values/image", kind: "added", before: null, after: "api:v2" }] });
  render(<DeploymentHistory deployment={current} />);
- await screen.findByText("/values/replicas"); expect(compare).toHaveBeenCalledWith("new", "old"); expect(screen.getByText("Sensitive fields excluded")).toBeTruthy();
+ await screen.findByText("/values/replicas"); expect(compare).toHaveBeenCalledWith("new", "old"); expect(screen.getByText("Sensitive values hidden")).toBeTruthy();
  const user = userEvent.setup(); await user.type(screen.getByRole("textbox", { name: "Filter changed fields" }), "replicas"); expect(screen.queryByText("/values/image")).toBeNull();
  await user.click(screen.getByRole("button", { name: "Load older deployments" })); await waitFor(() => expect(history).toHaveBeenLastCalledWith("app", "old"));
  await user.selectOptions(screen.getByRole("combobox", { name: "Compare from deployment" }), "oldest"); await waitFor(() => expect(compare).toHaveBeenLastCalledWith("new", "oldest"));
@@ -187,4 +187,72 @@ it("navigates in-app while retaining loaded history, filters, and the list eleme
  expect(document.querySelector(".history-runs")).toBe(list); expect(list.scrollTop).toBe(170);
  expect((screen.getByRole("textbox", { name: "Filter changed fields" }) as HTMLInputElement).value).toBe("replicas");
  expect(screen.getByRole("link", { name: "oldest-s" })).toBeTruthy();
+});
+
+const resourceComparison: DeploymentComparison = { ...savedComparison, basis: "resources", message: "Saved resources.", changes: [{ path: "/resources/Deployment/api/spec/replicas", kind: "changed", before: 2, after: 3 }] };
+
+it("defaults to rendered resources and preserves explicit input mode while paging and filtering", async () => {
+ const oldest = { ...older, id: "oldest", createdAt: "2026-09-17T00:00:00Z" };
+ vi.spyOn(api, "applicationHistory").mockResolvedValueOnce({ items: [current, older], next: "old" }).mockResolvedValueOnce({ items: [oldest] });
+ const compare = vi.spyOn(api, "compareDeployments").mockResolvedValueOnce(resourceComparison).mockResolvedValue({ ...savedComparison, basis: "inputs" });
+ const view = render(<DeploymentHistory deployment={current} />);
+ const user = userEvent.setup();
+ await screen.findByText("/resources/Deployment/api/spec/replicas");
+ expect(compare).toHaveBeenCalledWith("new", "old");
+ expect((screen.getByLabelText("Comparison details") as HTMLSelectElement).value).toBe("resources");
+ await user.type(screen.getByLabelText("Filter changed fields"), "replicas");
+ await user.selectOptions(screen.getByLabelText("Comparison details"), "inputs");
+ await screen.findByText("/values/replicas");
+ expect(compare).toHaveBeenLastCalledWith("new", "old", "inputs");
+ expect((screen.getByLabelText("Filter changed fields") as HTMLInputElement).value).toBe("replicas");
+ await user.click(screen.getByRole("button", { name: "Load older deployments" }));
+ await user.selectOptions(screen.getByLabelText("Compare from deployment"), "oldest");
+ await waitFor(() => expect(compare).toHaveBeenLastCalledWith("new", "oldest", "inputs"));
+ view.rerender(<DeploymentHistory deployment={older} />);
+ await waitFor(() => expect(compare).toHaveBeenLastCalledWith("old", "oldest", "inputs"));
+ expect((screen.getByLabelText("Comparison details") as HTMLSelectElement).value).toBe("inputs");
+});
+
+it("does not silently fall back to inputs when saved resources are missing", async () => {
+ vi.spyOn(api, "applicationHistory").mockResolvedValue({ items: [current, older] });
+ const compare = vi.spyOn(api, "compareDeployments").mockResolvedValueOnce({ ...resourceComparison, available: false, message: "Saved resources are unavailable.", changes: [] }).mockResolvedValue({ ...savedComparison, basis: "inputs" });
+ render(<DeploymentHistory deployment={current} />);
+ await screen.findByText("Comparison unavailable");
+ expect(screen.queryByText("No changes to the saved resources.")).toBeNull();
+ expect(screen.queryByText("/values/replicas")).toBeNull();
+ expect(compare).toHaveBeenCalledTimes(1);
+ await userEvent.setup().selectOptions(screen.getByLabelText("Comparison details"), "inputs");
+ await screen.findByText("/values/replicas");
+ expect(compare).toHaveBeenLastCalledWith("new", "old", "inputs");
+});
+
+it("ignores an input response after switching back to resources", async () => {
+ const pending = deferred<DeploymentComparison>();
+ vi.spyOn(api, "applicationHistory").mockResolvedValue({ items: [current, older] });
+ vi.spyOn(api, "compareDeployments").mockResolvedValueOnce(resourceComparison).mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ ...resourceComparison, changes: [] });
+ render(<DeploymentHistory deployment={current} />);
+ const user = userEvent.setup();
+ await screen.findByText("/resources/Deployment/api/spec/replicas");
+ await user.selectOptions(screen.getByLabelText("Comparison details"), "inputs");
+ expect(screen.getByRole("status").textContent).toBe("Comparing deployments…");
+ await user.selectOptions(screen.getByLabelText("Comparison details"), "resources");
+ await screen.findByText("No changes to the saved resources.");
+ await act(async () => pending.resolve({ ...savedComparison, basis: "inputs" }));
+ expect(screen.queryByText("/values/replicas")).toBeNull();
+ expect(screen.getByText("No changes to the saved resources.")).toBeTruthy();
+});
+
+it("resets the comparison basis for another application and keeps non-Helm comparisons simple", async () => {
+ const other = { ...current, id: "other", appId: "another-app" };
+ const otherOlder = { ...older, id: "other-old", appId: "another-app" };
+ vi.spyOn(api, "applicationHistory").mockResolvedValueOnce({ items: [current, older] }).mockResolvedValueOnce({ items: [other, otherOlder] });
+ const compare = vi.spyOn(api, "compareDeployments").mockResolvedValueOnce(resourceComparison).mockResolvedValue({ ...savedComparison, basis: "inputs", changes: [] });
+ const view = render(<DeploymentHistory deployment={current} />);
+ await screen.findByText("/resources/Deployment/api/spec/replicas");
+ await userEvent.setup().selectOptions(screen.getByLabelText("Comparison details"), "inputs");
+ await screen.findByText("No visible input changes between these deployments.");
+ view.rerender(<DeploymentHistory deployment={other} />);
+ await waitFor(() => expect(compare).toHaveBeenLastCalledWith("other", "other-old"));
+ await screen.findByText("No visible input changes between these deployments.");
+ expect(screen.queryByLabelText("Comparison details")).toBeNull();
 });

@@ -1,11 +1,12 @@
 import { ReactNode, useEffect, useState } from "react";
 import { ArrowRight, PushPin, X } from "@phosphor-icons/react";
-import { Deployment, DeploymentComparison, Overview } from "../api";
+import { Deployment, DeploymentComparison, DeploymentComparisonBasis, Overview } from "../api";
 import { relative, short } from "../presentation";
 import { DeploymentFilters, DeploymentSection, routePath, shouldHandleNavigation } from "../routes";
 import { CatalogItem, catalogClient } from "./catalogClient";
 import { DeploymentStatusPills, useDeploymentCatalog } from "./DeploymentCatalog";
 import { useNavigationPreferences } from "./navigationPreferences";
+import { ComparisonBasisPicker } from "./ComparisonBasisPicker";
 
 export function matchesCatalog(item:CatalogItem,filters:DeploymentFilters,pins:string[]=[]){
  const terms=`${item.appName} ${item.resourceName??""} ${item.environment} ${item.targetName} ${item.current?.commitSha??""} ${item.latest?.commitSha??""}`.toLowerCase();
@@ -29,12 +30,40 @@ function DeploymentRunList({filters,items,pins,onPin,onOpen}:{filters:Deployment
 }
 export function EnvironmentComparison({items,onOpen}:{items:CatalogItem[];onOpen:(id:string,section?:DeploymentSection)=>void}){
  const [from,setFrom]=useState("");const [to,setTo]=useState("");const [result,setResult]=useState<DeploymentComparison>();const [error,setError]=useState("");const [loading,setLoading]=useState(false);const [filter,setFilter]=useState("");
+ const [basis,setBasis]=useState<DeploymentComparisonBasis>();
+ const [resourceComparison,setResourceComparison]=useState(false);
  const candidates=items.filter(i=>i.current);const source=candidates.find(i=>i.current?.id===from);const targets=candidates.filter(i=>(!source||i.projectId===source.projectId)&&i.current?.id!==from);
- useEffect(()=>{let alive=true;setResult(undefined);setError("");if(!from||!to||from===to){setLoading(false);return;}setLoading(true);void catalogClient.compare(to,from).then(v=>{if(alive)setResult(v);}).catch(e=>{if(alive)setError(e.message);}).finally(()=>{if(alive)setLoading(false);});return()=>{alive=false;};},[from,to]);
- useEffect(()=>{if(from&&!items.some(i=>i.current?.id===from)){setFrom("");setTo("");}else if(to&&!items.some(i=>i.current?.id===to))setTo("");},[items,from,to]);
+ function selectSource(id:string){setFrom(id);setTo("");setBasis(undefined);setResourceComparison(false);}
+ useEffect(()=>{
+  let alive=true;setResult(undefined);setError("");
+  if(!from||!to||from===to){setLoading(false);return;}
+  setLoading(true);
+  const request=basis?catalogClient.compare(to,from,basis):catalogClient.compare(to,from);
+  void request.then(value=>{if(alive){setResult(value);if(value.basis==="resources")setResourceComparison(true);}}).catch(e=>{if(alive)setError(e.message);}).finally(()=>{if(alive)setLoading(false);});
+  return()=>{alive=false;};
+ },[from,to,basis]);
+ useEffect(()=>{if(from&&!items.some(i=>i.current?.id===from)){selectSource("");}else if(to&&!items.some(i=>i.current?.id===to))setTo("");},[items,from,to]);
  const label=(i:CatalogItem)=>`${i.resourceName||i.appName} · ${i.environment} · ${short(i.current!.commitSha)}`;
  const changes=result?.changes.filter(c=>c.path.toLowerCase().includes(filter.toLowerCase()))??[];
- return <section className="environment-comparison" aria-label="Environment comparison"><h2>Compare running releases</h2><p>Compare the last successful saved inputs within one project. Values, images, and service revisions are included; credentials are hidden.</p><div className="history-selectors"><label>From environment<select value={from} onChange={e=>{setFrom(e.target.value);setTo("");}}><option value="">Choose an environment</option>{candidates.map(i=><option key={i.appId} value={i.current!.id}>{label(i)}</option>)}</select></label><ArrowRight size={16}/><label>To environment<select value={to} onChange={e=>setTo(e.target.value)}><option value="">Choose an environment</option>{targets.map(i=><option key={i.appId} value={i.current!.id}>{label(i)}</option>)}</select></label></div>{source&&<p><button className="quiet-button" onClick={()=>onOpen(from,"history")}>Browse source deployment history</button></p>}{loading&&<p role="status">Comparing saved inputs…</p>}{error&&<p role="alert">{error}</p>}{result&&<><p>{result.available?`${result.changes.length} changes${result.truncated?" (truncated)":""}`:"Comparison unavailable"} · {result.message}</p>{result.available&&<><input aria-label="Filter environment changes" placeholder="Filter changed fields…" value={filter} onChange={e=>setFilter(e.target.value)}/><div className="history-diff"><table><thead><tr><th>Field</th><th>From</th><th>To</th></tr></thead><tbody>{changes.map(c=><tr key={c.path}><td><span className={`change-kind ${c.kind}`}>{c.kind}</span><code>{c.path}</code></td><td className="change-before"><code>{c.kind==="added"?"Not present":show(c.before)}</code></td><td className="change-after"><code>{c.kind==="removed"?"Not present":show(c.after)}</code></td></tr>)}</tbody></table></div>{!changes.length&&<p>No visible changes match.</p>}</>}</>}</section>;
+ return <section className="environment-comparison" aria-label="Environment comparison">
+  <h2>Compare running releases</h2><p>Compare the last successful deployments within one project.</p>
+  <div className="history-selectors"><label>From environment<select value={from} onChange={e=>selectSource(e.target.value)}><option value="">Choose an environment</option>{candidates.map(i=><option key={i.appId} value={i.current!.id}>{label(i)}</option>)}</select></label><ArrowRight size={16}/><label>To environment<select value={to} onChange={e=>setTo(e.target.value)}><option value="">Choose an environment</option>{targets.map(i=><option key={i.appId} value={i.current!.id}>{label(i)}</option>)}</select></label></div>
+  {resourceComparison&&<ComparisonBasisPicker value={basis??result?.basis??"resources"} onChange={setBasis}/>}
+  {source&&<p><button className="quiet-button" onClick={()=>onOpen(from,"history")}>Browse source deployment history</button></p>}
+  {loading&&<p role="status">Comparing deployments…</p>}
+  {error&&<p role="alert">{error}</p>}
+  {result&&<>
+   <div className="history-comparison-meta"><span>{result.available?`${result.changes.length}${result.truncated?"+":""} changes`:"Comparison unavailable"}</span>{result.hidden>0&&<span>Sensitive values hidden</span>}</div>
+   <p className="history-note">{result.message}</p>
+   {result.available&&result.changes.length>0&&<>
+    <input aria-label="Filter environment changes" placeholder="Filter changed fields…" value={filter} onChange={e=>setFilter(e.target.value)}/>
+    <div className="history-diff"><table><thead><tr><th>Field</th><th>From</th><th>To</th></tr></thead><tbody>{changes.map(c=><tr key={c.path}><td data-label="Field"><span className={`change-kind ${c.kind}`}>{c.kind}</span><code>{c.path}</code></td><td data-label="From" className="change-before"><code>{c.kind==="added"?"Not present":show(c.before)}</code></td><td data-label="To" className="change-after"><code>{c.kind==="removed"?"Not present":show(c.after)}</code></td></tr>)}</tbody></table></div>
+    {!changes.length&&<p>No fields match this filter.</p>}
+   </>}
+   {result.available&&!result.changes.length&&<p>{result.basis==="resources"?"No changes to the saved resources.":"No visible input changes between these deployments."}</p>}
+   {result.truncated&&<p className="history-note">Showing the first 1,000 changed fields.</p>}
+  </>}
+ </section>;
 }
 const show=(v:unknown)=>typeof v==="string"?v:JSON.stringify(v);
 

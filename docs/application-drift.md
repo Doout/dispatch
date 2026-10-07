@@ -146,17 +146,27 @@ This is a display cleanup. Every deployment, log, input snapshot, rollback
 reference, and analytics record is retained. History requests do not contact the
 cluster or reconstruct historical manifests from current chart inputs.
 
-Choose **From** and **To** to compare saved inputs, including supplied Helm values,
-release settings, code revisions, and applied service configuration revisions.
-Added, removed, and changed fields are listed with before/after values and a path
-filter. Comparisons use snapshots, never the application's current editable
-settings or the cluster's current release. A failed deployment's snapshot describes
-its attempted inputs, not a successful rollout. Chart defaults and live resource
-changes are outside this comparison.
+Choose **From** and **To** to compare two deployments. Helm deployments default to
+**Rendered resources**, which compares the resources saved after each successful
+deployment. Values that the chart never used do not appear. Changes caused by chart
+defaults do appear when they change a saved resource. Added, removed, and changed
+fields have before/after values and a path filter.
 
-Sensitive fields are excluded. Their presence does not establish whether a hidden
-value changed. Older records without saved inputs show **Comparison unavailable**.
+This comparison excludes live cluster changes, Helm hooks, and generated tracking
+metadata such as resource UIDs and Dispatch deployment IDs. Sensitive contents are
+hidden. Missing or unreadable resources show **Comparison unavailable**. Dispatch
+does not rebuild old manifests from today's chart or substitute raw inputs.
+
+Choose **Saved inputs** to inspect supplied chart values, release settings, code
+revisions, and service configuration revisions. This option can include unused
+chart values. It is the default for non-Helm deployments. A failed deployment's
+snapshot describes its attempted inputs, not a successful rollout. Chart defaults
+and live changes are outside this input comparison.
+
+Both comparisons use saved evidence, never the application's current editable
+settings. Resource comparisons mark changed sensitive content as `[redacted]`.
+Input comparisons omit sensitive fields without establishing whether they changed.
 The response includes at most 1,000 changed fields and identifies truncation.
 
 - `GET /api/v1/apps/{id}/deployment-history?before={deploymentId}`: paginated saved runs for an application. The response contains `items`, an optional `next` cursor, and optional `repeats` links from an older deployment ID to its immediately newer matching run. The newer run can be the previous page's cursor. No private manifest values or comparison fingerprints are returned.
-- `GET /api/v1/deployments/{id}/compare?from={deploymentId}`: compare two deployments belonging to the same application. Requires project view permission, as does history.
+- `GET /api/v1/deployments/{id}/compare?from={deploymentId}`: compare two deployments belonging to the same application. Requires project view permission, as does history. Optional `basis=resources` or `basis=inputs` selects the comparison; repeating `basis` or supplying another value returns 400. The response identifies its `basis`. Without this parameter, a saved chart or Kubernetes/OpenShift runtime on either deployment selects resources; other deployments use inputs.
