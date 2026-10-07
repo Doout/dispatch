@@ -30,7 +30,7 @@ type InventoryItem = {
   updatedAt: string;
   route: AppRoute;
   deployment?: Deployment;
-  refs?: string[];
+  refs?: { label: string; url?: string }[];
 };
 const pageSize = 25;
 const titles: Record<Section, string> = { applications: "Applications", parallel: "Parallel deployments", runs: "Runs" };
@@ -69,7 +69,7 @@ function Inventory({ overview, section, items, filters, onFilters, onNavigate }:
     if (selection === "active" && inactive.has(item.state)) return false;
     if (selection === "attention" && !attention.has(item.state)) return false;
     const projectNames = item.projectIDs.map(id => overview.projects.find(project => project.id === id)?.name ?? id);
-    return !query || [item.name, item.id, item.source, item.target, item.state, ...projectNames, ...(item.refs ?? [])].join(" ").toLocaleLowerCase().includes(query);
+    return !query || [item.name, item.id, item.source, item.target, item.state, ...projectNames, ...(item.refs ?? []).map(ref => ref.label)].join(" ").toLocaleLowerCase().includes(query);
   }), [items, filters.project, query, selection, overview.projects]);
   const key = `${filters.project ?? ""}:${query}:${selection}`;
   const page = Math.min(pagination.key === key ? pagination.page : 0, Math.max(0, Math.ceil(filtered.length / pageSize) - 1));
@@ -92,7 +92,7 @@ function Inventory({ overview, section, items, filters, onFilters, onNavigate }:
         <thead><tr><th scope="col">Name</th><th scope="col">Source</th><th scope="col">Target</th><th scope="col">Status</th><th scope="col">Updated</th><th scope="col"><span className="sr-only">Release</span></th></tr></thead>
         <tbody>{visible.map(item => <tr key={item.id}>
           <td><RouteLink route={item.route} onNavigate={onNavigate} className="next-workloads-name">{item.name}</RouteLink><small>{item.projectIDs.map(id => overview.projects.find(project => project.id === id)?.name ?? id).join(", ") || "Project unavailable"}<span className="next-workloads-separator">·</span>{item.kind}</small></td>
-          <td><span className="next-workloads-truncate" title={item.source}>{item.source || "No repository"}</span>{!!item.refs?.length && <small>{item.refs.join(", ")}</small>}</td>
+          <td><span className="next-workloads-truncate" title={item.source}>{item.source || "No repository"}</span>{!!item.refs?.length && <small>{item.refs.map((ref, index) => <span key={`${ref.label}:${index}`}>{index > 0 && ", "}{ref.url ? <a href={ref.url} target="_blank" rel="noopener noreferrer">{ref.label}</a> : ref.label}</span>)}</small>}</td>
           <td><span className="next-workloads-truncate" title={item.target}>{item.target || "No target"}</span></td>
           <td><Status state={item.state} message={item.message} /></td>
           <td><Timestamp value={item.updatedAt} /></td>
@@ -235,7 +235,7 @@ function inventoryItems(overview: Overview, catalog: CatalogItem[], section: Sec
       state: cleanup ? "cleanup_failed" : inactive.has(resource.state) ? resource.state : workflowResourceStatus(resource, revision?.state), message: cleanup?.error || resource.lastError || revision?.error,
       updatedAt: revision && revision.createdAt > resource.updatedAt ? revision.createdAt : resource.updatedAt,
       route: { view: "applications", applicationID: resource.id }, deployment: deployments.find(item => item.current)?.current || deployments.find(item => item.latest)?.latest,
-      refs: resource.previewPullRequests?.map(pr => `${pr.repository} #${pr.number}`),
+      refs: resource.previewPullRequests?.map(pr => ({ label: `${pr.repository} #${pr.number}`, url: pr.url })),
     };
   };
   const rows = (overview.workflowResources ?? []).filter(resource => Boolean(resource.temporary) === (section === "parallel") && resource.kind !== "ServiceTemplate").map(resourceItem);
@@ -249,13 +249,13 @@ function inventoryItems(overview: Overview, catalog: CatalogItem[], section: Sec
   } else {
     for (const preview of overview.previews) {
       const app = apps.get(preview.appId);
-      rows.push({ id: `preview:${preview.id}`, name: app?.name || preview.repository, projectIDs: app ? [app.projectId] : [], kind: "Pull request", source: preview.repository, target: app ? targets.get(app.serverId) || app.serverId : "", state: preview.state, message: preview.message, updatedAt: preview.updatedAt, refs: [`PR #${preview.pullRequestNumber}`], route: preview.deploymentId ? { view: "deployments", deploymentID: preview.deploymentId } : { view: "deployments", deploymentFilters: { app: preview.appId } } });
+      rows.push({ id: `preview:${preview.id}`, name: app?.name || preview.repository, projectIDs: app ? [app.projectId] : [], kind: "Pull request", source: preview.repository, target: app ? targets.get(app.serverId) || app.serverId : "", state: preview.state, message: preview.message, updatedAt: preview.updatedAt, refs: [{ label: `PR #${preview.pullRequestNumber}` }], route: preview.deploymentId ? { view: "deployments", deploymentID: preview.deploymentId } : { view: "deployments", deploymentFilters: { app: preview.appId } } });
     }
     for (const run of overview.previewGroupRuns) {
       const group = overview.previewGroups.find(group => group.id === run.groupId);
       const componentApps = (group?.components ?? run.group?.components ?? []).map(component => apps.get(component.appId)).filter(app => app !== undefined);
       const deployment = run.components.find(component => component.deploymentId)?.deploymentId;
-      rows.push({ id: `group:${run.id}`, name: run.slug || group?.name || run.id, projectIDs: [...new Set(componentApps.map(app => app.projectId))], kind: "Group", source: run.sources.map(source => source.repository).join(", "), target: [...new Set(componentApps.map(app => targets.get(app.serverId) || app.serverId))].join(", "), state: run.state, message: run.message, updatedAt: run.updatedAt, refs: run.sources.filter(source => source.pullRequest).map(source => `${source.alias} #${source.pullRequest}`), route: deployment ? { view: "deployments", deploymentID: deployment } : { view: "applications", applicationSection: "groups" } });
+      rows.push({ id: `group:${run.id}`, name: run.slug || group?.name || run.id, projectIDs: [...new Set(componentApps.map(app => app.projectId))], kind: "Group", source: run.sources.map(source => source.repository).join(", "), target: [...new Set(componentApps.map(app => targets.get(app.serverId) || app.serverId))].join(", "), state: run.state, message: run.message, updatedAt: run.updatedAt, refs: run.sources.filter(source => source.pullRequest).map(source => ({ label: `${source.alias} #${source.pullRequest}` })), route: deployment ? { view: "deployments", deploymentID: deployment } : { view: "applications", applicationSection: "groups" } });
     }
   }
   return rows.sort((a, b) => section === "applications" ? a.name.localeCompare(b.name) : b.updatedAt.localeCompare(a.updatedAt) || a.name.localeCompare(b.name));
