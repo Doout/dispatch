@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Overview, type WorkflowJobResult, type WorkflowResource, type WorkflowRevision } from "../api";
@@ -65,6 +65,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("workflow resource run details", () => {
@@ -291,5 +293,97 @@ describe("workflow resource run details", () => {
     expect(screen.getByRole("region", { name: "build-ui job output" })).not.toBeNull();
     expect(screen.getByText(/Image pushed/)).not.toBeNull();
     expect(screen.queryByText(/authorization denied/)).toBeNull();
+  });
+});
+
+describe("live workflow job output", () => {
+  function setupLive() {
+    const running = { ...overview.workflowRevisions![0], state: "running", error: undefined };
+    vi.mocked(api.workflowRevision).mockResolvedValue(running);
+    vi.mocked(api.workflowRevisions).mockResolvedValue([running]);
+    const jobs = vi.spyOn(api, "workflowJobs").mockResolvedValue([
+      job({ id: "finished-job", jobName: "build-ui", state: "succeeded", log: "UI image pushed" }),
+      job({ id: "active-job", jobName: "build-api", state: "running", error: undefined, log: "Preparing" }),
+    ]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const signals: AbortSignal[] = [];
+    const fetcher = vi.fn(async (_url, options) => {
+      signals.push(options.signal);
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) { streams.push(controller); } }), { headers: { "Content-Type": "text/event-stream" } });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const send = (id: string, text: string, state = "running", keep = 0, connection = 0) => streams[connection].enqueue(new TextEncoder().encode(`event: log\ndata: ${JSON.stringify({ id, name: id === "active-job" ? "build-api" : id === "next-job" ? "publish" : "build-ui", state, keep, text, error: "" })}\n\n`));
+    const props = { resource, overview: { ...overview, workflowRevisions: [running] }, onClose: vi.fn(), onChanged: vi.fn(), onOpenDeploymentManifests: vi.fn() };
+    return { running, jobs, streams, signals, fetcher, send, props };
+  }
+
+  it("shows active output before completion, follows output, and copies the selected live job", async () => {
+    const user = userEvent.setup();
+    const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const live = setupLive();
+    const view = render(<WorkflowResourceDialog {...live.props} />);
+    expect(await screen.findByRole("region", { name: "build-api job output" })).toBeTruthy();
+    const pre = view.container.querySelector(".workflow-job-output > pre")!;
+    Object.defineProperty(pre, "scrollHeight", { configurable: true, value: 600 });
+    await act(async () => live.send("active-job", "Compiling service"));
+    expect(pre.textContent).toBe("Compiling service");
+    expect(pre.scrollTop).toBe(600);
+    await user.click(screen.getByRole("checkbox", { name: "Follow output" }));
+    pre.scrollTop = 20;
+    await act(async () => {
+      live.send("finished-job", "UI saved output", "succeeded");
+      live.send("active-job", "\nPushing service", "running", 17);
+    });
+    expect(pre.scrollTop).toBe(20);
+    expect(pre.textContent).toBe("Compiling service\nPushing service");
+    await user.click(screen.getByRole("button", { name: "Copy build-api output" }));
+    expect(copy).toHaveBeenLastCalledWith("Compiling service\nPushing service");
+    await user.click(screen.getByRole("checkbox", { name: "Follow output" }));
+    expect(pre.scrollTop).toBe(600);
+    await user.click(screen.getByRole("button", { name: "build-ui, succeeded" }));
+    expect(screen.getByRole("region", { name: "build-ui job output" }).textContent).toContain("UI saved output");
+    await act(async () => live.send("active-job", "Service still building"));
+    expect(screen.getByRole("region", { name: "build-ui job output" })).toBeTruthy();
+    expect(live.fetcher).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(live.signals[0].aborted).toBe(true);
+  });
+
+  it("moves automatically to the next active job until an operator selects a job", async () => {
+    const live = setupLive();
+    render(<WorkflowResourceDialog {...live.props} />);
+    expect(await screen.findByRole("region", { name: "build-api job output" })).toBeTruthy();
+    await act(async () => {
+      live.send("active-job", "Service pushed", "succeeded");
+      live.send("next-job", "Publishing release");
+    });
+    expect(screen.getByRole("region", { name: "publish job output" }).textContent).toContain("Publishing release");
+    fireEvent.click(screen.getByRole("button", { name: "build-ui, succeeded" }));
+    await act(async () => live.send("next-job", "Release publication failed", "failed"));
+    expect(screen.getByRole("region", { name: "build-ui job output" })).toBeTruthy();
+    expect(live.fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores stale metadata and keeps saved final output through disconnect and reconnect", async () => {
+    vi.useFakeTimers();
+    const live = setupLive();
+    let view!: ReturnType<typeof render>;
+    await act(async () => { view = render(<WorkflowResourceDialog {...live.props} />); });
+    await act(async () => live.send("active-job", "Latest streamed progress"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(view.container.querySelector(".workflow-job-output > pre")?.textContent).toBe("Latest streamed progress");
+    await act(async () => live.streams[0].close());
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy();
+    live.jobs.mockResolvedValue([job({ id: "active-job", jobName: "build-api", state: "failed", log: "Full saved output\nBuild failed", error: "Build failed" })]);
+    vi.mocked(api.workflowRevision).mockResolvedValue({ ...live.running, state: "failed" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(view.container.querySelector(".workflow-job-output > pre")?.textContent).toBe("Full saved output\nBuild failed");
+    expect(screen.getByRole("button", { name: "build-api, failed" })).toBeTruthy();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reconnect" })));
+    expect(view.container.querySelector(".workflow-job-output > pre")?.textContent).toBe("Full saved output\nBuild failed");
+    await act(async () => live.send("active-job", "Full saved output\nBuild failed", "failed", 0, 1));
+    expect(view.container.querySelector(".workflow-job-output > pre")?.textContent).toBe("Full saved output\nBuild failed");
+    expect(live.fetcher).toHaveBeenCalledTimes(2);
   });
 });
