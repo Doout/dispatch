@@ -12,11 +12,16 @@ import { canManageProject } from "../permissions";
 import { isPreviewCheckRun, workflowResourceStatus, workflowResourceStatusLabel } from "./status";
 import { BuildStepTiming, RunTiming } from "./RunTiming";
 import { formatRunDuration, itemDuration } from "./runTiming";
+import { useWorkflowRevisions } from "./useWorkflowRevisions";
 
 export function WorkflowResourceDialog({ resource, overview, onClose, onChanged, onOpenDeploymentManifests, initialRevisionID }:  { resource: WorkflowResource; overview: Overview; initialRevisionID?: string; onClose: () => void; onChanged: () => Promise<void>; onOpenDeploymentManifests: (deploymentID: string) => void }) {
   const dialogRef = useDialogFocus(onClose);
-  const revisions = (overview.workflowRevisions ?? []).filter((item) => item.resourceId === resource.id).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  const [revisionID, setRevisionID] = useState(initialRevisionID ?? revisions[0]?.id ?? "");
+  const history = useWorkflowRevisions(resource.id, overview.workflowRevisions);
+  const revisions = history.revisions;
+  const [selection, setSelection] = useState({ resourceID: resource.id, initialRevisionID, revisionID: initialRevisionID ?? "" });
+  const selectedRevisionID = selection.resourceID === resource.id && selection.initialRevisionID === initialRevisionID ? selection.revisionID : "";
+  const latestRevision = revisions.find(item => !isPreviewCheckRun(item)) ?? revisions[0];
+  const revisionID = selectedRevisionID || initialRevisionID || latestRevision?.id || "";
   const [jobs, setJobs] = useState<WorkflowJobResult[]>([]);
   const [stages, setStages] = useState<WorkflowStageRun[]>([]);
   const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
@@ -36,6 +41,10 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const isOwner = overview.identity?.systemRole === "owner";
   const selectedJob = jobs.find((job) => job.id === selectedJobID) ?? jobs[0];
   const resourceStatus = workflowResourceStatus(resource, revisions.find((item) => !isPreviewCheckRun(item))?.state);
+
+  useEffect(() => {
+    if (!history.loading && !history.error && revisionID && !selectedRevisionID) setSelection({ resourceID: resource.id, initialRevisionID, revisionID });
+  }, [history.loading, history.error, resource.id, initialRevisionID, revisionID, selectedRevisionID]);
 
   useEffect(() => {
     let active = true;
@@ -142,8 +151,10 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
         {resource.lastEvaluation && <details className="workflow-evaluation"><summary><CheckCircle size={16} weight="fill" /><strong>No deployment changes</strong><time dateTime={resource.lastEvaluation.checkedAt} title={new Date(resource.lastEvaluation.checkedAt).toLocaleString()}>Checked {relative(resource.lastEvaluation.checkedAt)}</time></summary><p>Rendered resources match the last deployments. No new run was needed.</p><ul aria-label="Latest checked sources">{Object.entries(resource.lastEvaluation.sources).map(([alias, input]) => <li key={alias}><span>{alias}</span><code title={input.commitSha}>{input.commitSha.slice(0, 12)}</code></li>)}</ul></details>}
         <div className="workflow-resource-columns">
           <section><div className="workflow-section-heading"><h3>Configuration</h3><span>{resource.apiVersion}</span></div>{resource.kind === "Application" && <div className="workflow-managed-guide"><strong>Add another application</strong><span>Add another YAML file under <code>{source?.path || "the watched path"}</code>. The next sync adds it as a separate row pending activation.</span></div>}<pre className="workflow-document">{resource.document}</pre></section>
-          <section><div className="workflow-section-heading"><h3>Runs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setRevisionID(event.target.value)}>{revisions.map((item) => <option key={item.id} value={item.id}>{isPreviewCheckRun(item) ? "Checks · " : ""}{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
-            {!revision && <p className="workflow-empty-note">No runs.</p>}
+          <section><div className="workflow-section-heading"><h3>Runs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setSelection({ resourceID: resource.id, initialRevisionID, revisionID: event.target.value })}>{!revisions.some(item => item.id === revisionID) && <option value={revisionID}>Selected run</option>}{revisions.map((item) => <option key={item.id} value={item.id}>{isPreviewCheckRun(item) ? "Checks · " : ""}{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
+            {history.loading && <p className="workflow-empty-note" role="status">Loading run history...</p>}
+            {history.error && <p className="form-error" role="alert">Could not load run history. {history.error} <button className="quiet-button" onClick={history.retry}>Retry run history</button></p>}
+            {!revision && !history.loading && !history.error && !runLoading && <p className="workflow-empty-note">No runs.</p>}
             {revision && <><dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>{revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
               {revision.sourceTrust && <SourceTrustReview revision={revision} isOwner={isOwner} onChanged={onChanged} />}
               {revision.feedback && <RunFeedback feedback={revision.feedback} overview={overview} />}

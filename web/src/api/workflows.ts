@@ -215,6 +215,7 @@ export const workflowsApi = {
   approvePreviewSourceTrust: (id: string, confirmDigest: string, expiresAt: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals`, { method: "POST", body: JSON.stringify({ confirmDigest, expiresAt }) }),
   revokePreviewSourceTrust: (id: string, approvalId: string) => request(`/api/v1/workflow/revisions/${id}/source-trust/approvals/${approvalId}`, { method: "DELETE" }),
   workflowRevision: (id: string) => request<WorkflowRevision>(`/api/v1/workflow/revisions/${id}`),
+  workflowRevisions: (resourceId: string) => request<WorkflowRevision[]>(`/api/v1/workflow/revisions?${new URLSearchParams({ resourceId })}`),
   workflowPreviewTriggers: () =>
     request<WorkflowPreviewTrigger[]>("/api/v1/workflow/preview-triggers"),
   createWorkflowPreviewTemplate: (body: Omit<WorkflowPreviewTemplate, "id" | "createdAt" | "updatedAt">) =>

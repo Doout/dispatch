@@ -124,7 +124,17 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
     const resource = (overview.workflowResources ?? []).find((item) => item.id === applicationID);
     if (!resource) return <div className="page-layout topology-page"><PageHeader view="applications" title="Application unavailable" action={{ label: "Back", onClick: onCloseTopology, icon: <ArrowLeft size={16} />, tone: "quiet" }} /><p className="topology-error">This application is no longer available.</p></div>;
     const source = (overview.configSources ?? []).find((item) => item.id === resource.configSourceId);
-    return <><div className="application-environment-links">{catalog.items.filter(item => item.resourceId === resource.id).map(item => <ApplicationDeploymentLink key={item.appId} appId={item.appId} label={`Open ${item.environment} release`} onNavigate={route => route.deploymentID && onOpenDeployment?.(route.deploymentID)} />)}</div><WorkflowTopologyPage resource={resource} source={source} canRun={Boolean(source && canManageProject(overview, source.projectId, "deployment.run"))} onBack={onCloseTopology} onRun={async () => { await api.runWorkflowResource(resource.id); await onChanged(); }} /></>;
+    return <>
+      <div className="application-environment-links">{catalog.items.filter(item => item.resourceId === resource.id).map(item => <ApplicationDeploymentLink key={item.appId} appId={item.appId} label={`Open ${item.environment} release`} onNavigate={route => route.deploymentID && onOpenDeployment?.(route.deploymentID)} />)}</div>
+      <WorkflowTopologyPage
+        resource={resource} source={source} revisions={overview.workflowRevisions}
+        canRun={Boolean(source && canManageProject(overview, source.projectId, "deployment.run"))}
+        onBack={onCloseTopology}
+        onRun={async () => { await api.runWorkflowResource(resource.id); await onChanged(); }}
+        onOpenRuns={() => setWorkflowDetail(resource)}
+      />
+      {workflowDetail?.id === resource.id && <WorkflowResourceDialog key={resource.id} resource={resource} overview={overview} onClose={() => setWorkflowDetail(null)} onChanged={onChanged} onOpenDeploymentManifests={onOpenDeploymentManifests} />}
+    </>;
   }
 
   if (syncApplication) return <ApplicationSync application={syncApplication} overview={overview} onBack={() => setSyncApplication(null)} />;

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type Overview, type WorkflowJobResult, type WorkflowResource } from "../api";
+import { api, type Overview, type WorkflowJobResult, type WorkflowResource, type WorkflowRevision } from "../api";
 import { WorkflowResourceDialog } from "./ResourceDialog";
 
 const resource: WorkflowResource = {
@@ -58,6 +58,7 @@ function job(values: Partial<WorkflowJobResult>): WorkflowJobResult {
 }
 
 beforeEach(() => {
+  vi.spyOn(api, "workflowRevisions").mockResolvedValue([]);
   vi.spyOn(api, "workflowRevision").mockResolvedValue(overview.workflowRevisions![0]);
 });
 
@@ -67,6 +68,85 @@ afterEach(() => {
 });
 
 describe("workflow resource run details", () => {
+  it("loads the latest failed build outside the overview window, ahead of newer preview checks", async () => {
+    const failed = overview.workflowRevisions![0];
+    const old = { ...failed, id: "old-success", state: "succeeded", error: undefined, createdAt: "2026-08-01T00:00:00Z" };
+    const check = { ...failed, id: "new-check", state: "succeeded", error: undefined, trigger: "pull request test 42", createdAt: "2026-09-02T00:00:00Z" };
+    vi.mocked(api.workflowRevisions).mockResolvedValue([check, failed, old]);
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([job({ log: "Saved dependency hash mismatch\n" })]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    render(<WorkflowResourceDialog resource={resource} overview={{ ...overview, workflowRevisions: [] }} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+
+    expect(await screen.findByText(/Saved dependency hash mismatch/)).toBeTruthy();
+    expect(api.workflowRevisions).toHaveBeenCalledWith(resource.id);
+    expect((screen.getByRole("combobox", { name: "Workflow run" }) as HTMLSelectElement).value).toBe(failed.id);
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+  });
+
+  it("keeps a manually selected historical run when resource history finishes loading", async () => {
+    const latest = overview.workflowRevisions![0];
+    const old = { ...latest, id: "old-success", state: "succeeded", error: undefined, createdAt: "2026-08-01T00:00:00Z" };
+    let finishHistory!: (revisions: WorkflowRevision[]) => void;
+    vi.mocked(api.workflowRevisions).mockImplementation(() => new Promise(resolve => { finishHistory = resolve; }));
+    vi.mocked(api.workflowRevision).mockImplementation(async id => id === old.id ? old : latest);
+    vi.spyOn(api, "workflowJobs").mockImplementation(async id => [job({ id: `job-${id}`, revisionId: id, state: id === old.id ? "succeeded" : "failed", log: id === old.id ? "Historical image pushed" : "Latest build failed" })]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    render(<WorkflowResourceDialog resource={resource} overview={{ ...overview, workflowRevisions: [latest, old] }} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Workflow run" }), old.id);
+    expect(await screen.findByText("Historical image pushed")).toBeTruthy();
+    await act(async () => finishHistory([{ ...latest, id: "newer-failure", createdAt: "2026-09-03T00:00:00Z" }, latest, old]));
+    expect((screen.getByRole("combobox", { name: "Workflow run" }) as HTMLSelectElement).value).toBe(old.id);
+    expect(screen.getByText("Historical image pushed")).toBeTruthy();
+  });
+
+  it("retries failed history loading and selects the fresh latest run", async () => {
+    const latest = overview.workflowRevisions![0];
+    const old = { ...latest, id: "old-success", state: "succeeded", error: undefined, createdAt: "2026-08-01T00:00:00Z" };
+    vi.mocked(api.workflowRevisions).mockRejectedValueOnce(new Error("History unavailable")).mockResolvedValue([latest, old]);
+    vi.mocked(api.workflowRevision).mockImplementation(async id => id === old.id ? old : latest);
+    vi.spyOn(api, "workflowJobs").mockImplementation(async id => id === latest.id ? [job({ log: "Recovered failure output" })] : []);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    render(<WorkflowResourceDialog resource={resource} overview={{ ...overview, workflowRevisions: [old] }} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
+    expect(await screen.findByText(/Could not load run history. History unavailable/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Retry run history" }));
+    expect(await screen.findByText("Recovered failure output")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Workflow run" }) as HTMLSelectElement).value).toBe(latest.id);
+  });
+
+  it("ignores pending history from a resource after switching to another resource", async () => {
+    const nextResource = { ...resource, id: "next-resource", name: "Other application" };
+    const nextRevision = { ...overview.workflowRevisions![0], id: "next-revision", resourceId: nextResource.id };
+    let finishPrevious!: (revisions: WorkflowRevision[]) => void;
+    vi.mocked(api.workflowRevisions).mockImplementationOnce(() => new Promise(resolve => { finishPrevious = resolve; })).mockResolvedValue([nextRevision]);
+    vi.mocked(api.workflowRevision).mockResolvedValue(nextRevision);
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([job({ id: "next-job", resourceId: nextResource.id, revisionId: nextRevision.id, log: "Other application output" })]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    const props = { overview: { ...overview, workflowRevisions: [] }, onClose: vi.fn(), onChanged: vi.fn(), onOpenDeploymentManifests: vi.fn() };
+    const view = render(<WorkflowResourceDialog resource={resource} {...props} />);
+    view.rerender(<WorkflowResourceDialog resource={nextResource} {...props} />);
+    expect(await screen.findByText("Other application output")).toBeTruthy();
+    await act(async () => finishPrevious(overview.workflowRevisions!));
+    expect((screen.getByRole("combobox", { name: "Workflow run" }) as HTMLSelectElement).value).toBe(nextRevision.id);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(api.workflowJobs).not.toHaveBeenCalledWith("revision-1");
+  });
+
+  it("keeps explicit historical runs and follows a changed initial run", async () => {
+    const latest = overview.workflowRevisions![0];
+    const old = { ...latest, id: "old-success", state: "succeeded", error: undefined, createdAt: "2026-08-01T00:00:00Z" };
+    vi.mocked(api.workflowRevisions).mockResolvedValue([latest, old]);
+    vi.mocked(api.workflowRevision).mockImplementation(async id => id === old.id ? old : latest);
+    vi.spyOn(api, "workflowJobs").mockImplementation(async id => [job({ id: `job-${id}`, revisionId: id, log: id === old.id ? "Historical output" : "Latest output" })]);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    const props = { resource, overview, onClose: vi.fn(), onChanged: vi.fn(), onOpenDeploymentManifests: vi.fn() };
+    const view = render(<WorkflowResourceDialog {...props} initialRevisionID={old.id} />);
+    expect(await screen.findByText("Historical output")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Workflow run" }) as HTMLSelectElement).value).toBe(old.id);
+    view.rerender(<WorkflowResourceDialog {...props} initialRevisionID={latest.id} />);
+    expect(await screen.findByText("Latest output")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Workflow run" }) as HTMLSelectElement).value).toBe(latest.id);
+  });
+
   it("refreshes reporting for a terminal run without legacy feedback", async () => {
     vi.spyOn(api, "workflowJobs").mockResolvedValue([]);
     vi.spyOn(api, "workflowStages").mockResolvedValue([]);
@@ -145,7 +225,8 @@ describe("workflow resource run details", () => {
       { id: "deployment", resourceId: resource.id, configSha: "abc123", specDigest: "sha256:test", state: "succeeded", trigger: "pull request comment 1", sources: {}, createdAt: "2026-09-01T20:01:00Z" },
     ] } as Overview;
     render(<WorkflowResourceDialog resource={resource} overview={withChecks} onClose={vi.fn()} onChanged={vi.fn()} onOpenDeploymentManifests={vi.fn()} />);
-    expect(screen.getByText("succeeded")).toBeTruthy();
+    expect(screen.getByText("succeeded", { selector: ".status-label" })).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Workflow run" }) as HTMLSelectElement).value).toBe("deployment");
     expect(screen.getByRole("option", { name: /Checks · failed/ })).toBeTruthy();
   });
 
