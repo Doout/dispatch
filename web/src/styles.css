@@ -1654,6 +1654,13 @@ code { font-family: var(--mono); }
 .workflow-job-output > header button:hover:not(:disabled) { color: #fff; background: #243440; }
 .workflow-job-output > header button:disabled { opacity: .4; cursor: not-allowed; }
 .workflow-job-output > p { margin: 0; padding: 9px 13px; color: #f1c778; background: #27251e; border-bottom: 1px solid #4a412b; font: 11px/1.45 var(--mono); overflow-wrap: anywhere; }
+.workflow-log-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 13px; color: #a8bdcb; border-bottom: 1px solid #2b3944; font-size: 11px; }
+.workflow-log-controls > span { flex: 1 1 120px; min-width: 0; overflow-wrap: anywhere; }
+.workflow-log-controls > label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.workflow-log-controls input { margin: 0; accent-color: #8fbeef; }
+.workflow-log-controls .quiet-button { color: #d9e3e9; border-color: #354651; }
+.workflow-log-waiting { padding: 13px; color: var(--muted); font-size: 12px; }
+.workflow-log-waiting p { margin: 8px 0; }
 .workflow-build-steps { border-bottom: 1px solid #2b3944; font-size: 11px; }
 .workflow-build-steps summary { padding: 9px 13px; color: #b9cbd7; cursor: pointer; }
 .workflow-build-steps summary:hover { color: #fff; }

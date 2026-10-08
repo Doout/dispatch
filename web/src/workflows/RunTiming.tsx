@@ -17,7 +17,7 @@ export function RunTiming({ revision, jobs, stages }: { revision: WorkflowRevisi
   </section>;
 }
 
-export function BuildStepTiming({ job }: { job: WorkflowJobResult }) {
+export function BuildStepTiming({ job }: { job: Pick<WorkflowJobResult, "log" | "reusedFromId"> }) {
   if (job.reusedFromId) return null;
   const { slowest, cachedSteps } = buildLogTiming(job.log);
   if (slowest.length === 0) return null;

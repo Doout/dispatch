@@ -13,6 +13,10 @@ import { isPreviewCheckRun, workflowResourceStatus, workflowResourceStatusLabel 
 import { BuildStepTiming, RunTiming } from "./RunTiming";
 import { formatRunDuration, itemDuration } from "./runTiming";
 import { useWorkflowRevisions } from "./useWorkflowRevisions";
+import { useWorkflowLogs } from "./useWorkflowLogs";
+import { WorkflowLogOutput } from "./WorkflowLogOutput";
+
+type JobOutput = Pick<WorkflowJobResult, "id" | "jobName" | "state" | "log" | "error" | "reusedFromId" | "startedAt" | "finishedAt">;
 
 export function WorkflowResourceDialog({ resource, overview, onClose, onChanged, onOpenDeploymentManifests, initialRevisionID }:  { resource: WorkflowResource; overview: Overview; initialRevisionID?: string; onClose: () => void; onChanged: () => Promise<void>; onOpenDeploymentManifests: (deploymentID: string) => void }) {
   const dialogRef = useDialogFocus(onClose);
@@ -26,6 +30,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const [stages, setStages] = useState<WorkflowStageRun[]>([]);
   const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
   const [selectedJobID, setSelectedJobID] = useState("");
+  const [followOutput, setFollowOutput] = useState(true);
   const [copiedJobID, setCopiedJobID] = useState("");
   const [configurationOpen, setConfigurationOpen] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
@@ -40,7 +45,24 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const canRun = Boolean(source && canManageProject(overview, source.projectId, "deployment.run"));
   const canApprove = Boolean(source && canManageProject(overview, source.projectId, "stage.approve"));
   const isOwner = overview.identity?.systemRole === "owner";
-  const selectedJob = jobs.find((job) => job.id === selectedJobID) ?? jobs[0];
+  const logs = useWorkflowLogs(revisionID, revision?.state === "running" || revision?.state === "queued", `${resource.id}:${revisionID}`);
+  const currentJobs = jobs.filter(job => job.revisionId === revisionID && job.resourceId === resource.id);
+  const outputJobs: JobOutput[] = currentJobs.map(job => {
+    const log = logs.jobs[job.id];
+    // A terminal database snapshot includes the final log. Prefer it over an
+    // earlier running stream snapshot, including while reconnecting.
+    const savedFinal = ["succeeded", "failed", "cancelled"].includes(job.state)
+      && (logs.phase === "error" || !log || !["succeeded", "failed", "cancelled"].includes(log.state));
+    return log && !savedFinal ? { ...job, state: log.state, error: log.error, log: log.text } : job;
+  });
+  // A stream can discover the next job before the metadata poll does.
+  for (const log of Object.values(logs.jobs)) {
+    if (!outputJobs.some(job => job.id === log.id)) outputJobs.push({ id: log.id, jobName: log.name, state: log.state, error: log.error, log: log.text });
+  }
+  const selectedJob = outputJobs.find(job => job.id === selectedJobID)
+    ?? outputJobs.find(job => job.state === "failed")
+    ?? outputJobs.find(job => job.state === "running" || job.state === "queued")
+    ?? outputJobs[0];
   const resourceStatus = workflowResourceStatus(resource, revisions.find((item) => !isPreviewCheckRun(item))?.state);
 
   useEffect(() => {
@@ -68,6 +90,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     setStages([]);
     setSelectedJobID("");
     setCopiedJobID("");
+    setFollowOutput(true);
     setRunLoading(Boolean(revisionID));
     if (!revisionID) return () => { active = false; };
     let timer: ReturnType<typeof setTimeout>;
@@ -78,7 +101,6 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
           setLiveRevision(nextRevision);
           setJobs(nextJobs);
           setStages(nextStages);
-          setSelectedJobID(current => current || nextJobs.find(job => job.state === "failed")?.id || nextJobs[0]?.id || "");
           setError("");
         }
       } catch (cause) {
@@ -92,9 +114,9 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
     }
     void refresh();
     return () => { active = false; clearTimeout(timer); };
-  }, [revisionID,initialRevisionID]);
+  }, [resource.id,revisionID,initialRevisionID]);
 
-  async function copyJobLog(job: WorkflowJobResult) {
+  async function copyJobLog(job: JobOutput) {
     await navigator.clipboard.writeText(job.log || job.error || "");
     setCopiedJobID(job.id);
     window.setTimeout(() => setCopiedJobID((current) => current === job.id ? "" : current), 1400);
@@ -158,8 +180,19 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
             {revision && <>
               {revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}
-              {jobs.length > 0 && <div className="workflow-run-list workflow-job-list"><h4>Jobs</h4>{jobs.map((job) => <button type="button" key={job.id} className={job.id === selectedJob?.id ? "active" : ""} aria-pressed={job.id === selectedJob?.id} aria-label={`${job.jobName}, ${job.state}`} onClick={() => setSelectedJobID(job.id)}><span className={`status-label ${job.state}`}><i />{job.state}</span><strong>{job.jobName}</strong><small>{job.reusedFromId ? "Reused" : formatRunDuration(itemDuration(job))}</small></button>)}</div>}
-              {selectedJob && <section className="workflow-job-output" aria-label={`${selectedJob.jobName} job output`}><header><div><TerminalWindow size={15} /><strong>{selectedJob.jobName}</strong><span>{selectedJob.state}</span></div><button type="button" aria-label={`Copy ${selectedJob.jobName} output`} title={copiedJobID === selectedJob.id ? "Copied" : "Copy output"} disabled={!selectedJob.log && !selectedJob.error} onClick={() => void copyJobLog(selectedJob)}>{copiedJobID === selectedJob.id ? <Check size={15} /> : <Copy size={15} />}</button></header>{selectedJob.error && <p>{selectedJob.error}</p>}<BuildStepTiming job={selectedJob} /><pre tabIndex={0}>{selectedJob.log || selectedJob.error || "No output was captured."}</pre></section>}
+              {outputJobs.length > 0 && <div className="workflow-run-list workflow-job-list"><h4>Jobs</h4>{outputJobs.map((job) => <button type="button" key={job.id} className={job.id === selectedJob?.id ? "active" : ""} aria-pressed={job.id === selectedJob?.id} aria-label={`${job.jobName}, ${job.state}`} onClick={() => setSelectedJobID(job.id)}><span className={`status-label ${job.state}`}><i />{job.state}</span><strong>{job.jobName}</strong><small>{job.reusedFromId ? "Reused" : formatRunDuration(itemDuration(job))}</small></button>)}</div>}
+              {selectedJob && <section className="workflow-job-output" aria-label={`${selectedJob.jobName} job output`}>
+                <header><div><TerminalWindow size={15} /><strong>{selectedJob.jobName}</strong><span>{selectedJob.state}</span></div><button type="button" aria-label={`Copy ${selectedJob.jobName} output`} title={copiedJobID === selectedJob.id ? "Copied" : "Copy output"} disabled={!selectedJob.log && !selectedJob.error} onClick={() => void copyJobLog(selectedJob)}>{copiedJobID === selectedJob.id ? <Check size={15} /> : <Copy size={15} />}</button></header>
+                <div className="workflow-log-controls">
+                  <span role="status">{logs.status}</span>
+                  <label><input type="checkbox" checked={followOutput} onChange={event => setFollowOutput(event.target.checked)} /> Follow output</label>
+                  {logs.phase === "error" && <button type="button" className="quiet-button" onClick={logs.reconnect}>Reconnect</button>}
+                </div>
+                {selectedJob.error && <p>{selectedJob.error}</p>}
+                <BuildStepTiming job={selectedJob} />
+                <WorkflowLogOutput key={selectedJob.id} text={selectedJob.log || selectedJob.error || ""} follow={followOutput} emptyText={selectedJob.state === "running" || selectedJob.state === "queued" ? "Waiting for command output…" : "No output was captured."} />
+              </section>}
+              {!selectedJob && logs.started && <div className="workflow-log-waiting"><span role="status">{logs.status}</span><p>Waiting for a build job to start. It may be checking sources or waiting for a shared build.</p>{logs.phase === "error" && <button type="button" className="quiet-button" onClick={logs.reconnect}>Reconnect</button>}</div>}
               {stages.length > 0 && <div className="workflow-run-list"><h4>Stages</h4>{stages.map((stage) => <div className="workflow-stage-row" key={stage.id}><span className={`status-label ${stage.state}`}><i />{stage.state.replaceAll("_", " ")}</span><strong>{stage.stageName}</strong><small>{stage.targetRef}{itemDuration(stage) !== undefined ? ` · ${formatRunDuration(itemDuration(stage))}` : ""}</small>{canApprove && stage.state === "awaiting_approval" && <button className="quiet-button" disabled={busy} onClick={() => void approve(stage)}>Approve</button>}<button className="quiet-button" aria-expanded={Boolean(expandedStages[stage.id])} onClick={() => setExpandedStages(current => ({ ...current, [stage.id]: !current[stage.id] }))}>{expandedStages[stage.id] ? "Hide progress" : "View progress & logs"}</button>{stage.error && !expandedStages[stage.id] && <p className="form-error workflow-stage-progress" role="alert">{stage.error}</p>}<StageTests stage={stage} definitions={configuredStageTests(resource, revision, stage.stageName)} definitionMatches={resource.specDigest === revision.specDigest} command={previewCommand} />{expandedStages[stage.id] && <StageProgress stage={stage} onOpenManifests={id => { onClose(); onOpenDeploymentManifests(id); }} />}{stage.deploymentIds?.map((deploymentID) => { const deployment = overview.deployments.find((item) => item.id === deploymentID); const result = stage.deploymentResults?.find(item => item.deploymentId === deploymentID); return <button className="workflow-manifest-link" key={deploymentID} title={result?.reason} onClick={() => { onClose(); onOpenDeploymentManifests(deploymentID); }}><FileCode size={14} /><span>{deployment?.app?.name ?? "Managed deployment"}</span><strong>{result?.outcome === "unchanged" ? "Unchanged · Manifests" : "Manifests"}</strong></button>; })}</div>)}</div>}
               <dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>
               <RunTiming revision={revision} jobs={jobs} stages={stages} />
