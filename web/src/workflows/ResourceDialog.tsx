@@ -27,6 +27,7 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
   const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
   const [selectedJobID, setSelectedJobID] = useState("");
   const [copiedJobID, setCopiedJobID] = useState("");
+  const [configurationOpen, setConfigurationOpen] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -149,24 +150,28 @@ export function WorkflowResourceDialog({ resource, overview, onClose, onChanged,
         {error && <p className="form-error" role="alert">{error}</p>}
         {commandError && <p className="form-error" role="alert">{commandError}</p>}
         {resource.lastEvaluation && <details className="workflow-evaluation"><summary><CheckCircle size={16} weight="fill" /><strong>No deployment changes</strong><time dateTime={resource.lastEvaluation.checkedAt} title={new Date(resource.lastEvaluation.checkedAt).toLocaleString()}>Checked {relative(resource.lastEvaluation.checkedAt)}</time></summary><p>Rendered resources match the last deployments. No new run was needed.</p><ul aria-label="Latest checked sources">{Object.entries(resource.lastEvaluation.sources).map(([alias, input]) => <li key={alias}><span>{alias}</span><code title={input.commitSha}>{input.commitSha.slice(0, 12)}</code></li>)}</ul></details>}
-        <div className="workflow-resource-columns">
-          <section><div className="workflow-section-heading"><h3>Configuration</h3><span>{resource.apiVersion}</span></div>{resource.kind === "Application" && <div className="workflow-managed-guide"><strong>Add another application</strong><span>Add another YAML file under <code>{source?.path || "the watched path"}</code>. The next sync adds it as a separate row pending activation.</span></div>}<pre className="workflow-document">{resource.document}</pre></section>
-          <section><div className="workflow-section-heading"><h3>Runs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setSelection({ resourceID: resource.id, initialRevisionID, revisionID: event.target.value })}>{!revisions.some(item => item.id === revisionID) && <option value={revisionID}>Selected run</option>}{revisions.map((item) => <option key={item.id} value={item.id}>{isPreviewCheckRun(item) ? "Checks · " : ""}{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
+        <section className="workflow-resource-runs" aria-label="Runs and logs">
+          <div className="workflow-section-heading"><h3>Runs &amp; logs</h3>{revisions.length > 0 && <select aria-label="Workflow run" value={revisionID} onChange={(event) => setSelection({ resourceID: resource.id, initialRevisionID, revisionID: event.target.value })}>{!revisions.some(item => item.id === revisionID) && <option value={revisionID}>Selected run</option>}{revisions.map((item) => <option key={item.id} value={item.id}>{isPreviewCheckRun(item) ? "Checks · " : ""}{item.state} · {relative(item.createdAt)}</option>)}</select>}</div>
             {history.loading && <p className="workflow-empty-note" role="status">Loading run history...</p>}
             {history.error && <p className="form-error" role="alert">Could not load run history. {history.error} <button className="quiet-button" onClick={history.retry}>Retry run history</button></p>}
             {!revision && !history.loading && !history.error && !runLoading && <p className="workflow-empty-note">No runs.</p>}
-            {revision && <><dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>{revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
-              {revision.sourceTrust && <SourceTrustReview revision={revision} isOwner={isOwner} onChanged={onChanged} />}
-              {revision.feedback && <RunFeedback feedback={revision.feedback} overview={overview} />}
-              {revision.checks && <RunChecks checks={revision.checks} />}
+            {revision && <>
+              {revision.error && <p className="workflow-source-warning"><WarningCircle size={15} weight="fill" />{revision.error}</p>}
               {runLoading && <p className="workflow-empty-note">Loading run...</p>}
-              <RunTiming revision={revision} jobs={jobs} stages={stages} />
               {jobs.length > 0 && <div className="workflow-run-list workflow-job-list"><h4>Jobs</h4>{jobs.map((job) => <button type="button" key={job.id} className={job.id === selectedJob?.id ? "active" : ""} aria-pressed={job.id === selectedJob?.id} aria-label={`${job.jobName}, ${job.state}`} onClick={() => setSelectedJobID(job.id)}><span className={`status-label ${job.state}`}><i />{job.state}</span><strong>{job.jobName}</strong><small>{job.reusedFromId ? "Reused" : formatRunDuration(itemDuration(job))}</small></button>)}</div>}
               {selectedJob && <section className="workflow-job-output" aria-label={`${selectedJob.jobName} job output`}><header><div><TerminalWindow size={15} /><strong>{selectedJob.jobName}</strong><span>{selectedJob.state}</span></div><button type="button" aria-label={`Copy ${selectedJob.jobName} output`} title={copiedJobID === selectedJob.id ? "Copied" : "Copy output"} disabled={!selectedJob.log && !selectedJob.error} onClick={() => void copyJobLog(selectedJob)}>{copiedJobID === selectedJob.id ? <Check size={15} /> : <Copy size={15} />}</button></header>{selectedJob.error && <p>{selectedJob.error}</p>}<BuildStepTiming job={selectedJob} /><pre tabIndex={0}>{selectedJob.log || selectedJob.error || "No output was captured."}</pre></section>}
               {stages.length > 0 && <div className="workflow-run-list"><h4>Stages</h4>{stages.map((stage) => <div className="workflow-stage-row" key={stage.id}><span className={`status-label ${stage.state}`}><i />{stage.state.replaceAll("_", " ")}</span><strong>{stage.stageName}</strong><small>{stage.targetRef}{itemDuration(stage) !== undefined ? ` · ${formatRunDuration(itemDuration(stage))}` : ""}</small>{canApprove && stage.state === "awaiting_approval" && <button className="quiet-button" disabled={busy} onClick={() => void approve(stage)}>Approve</button>}<button className="quiet-button" aria-expanded={Boolean(expandedStages[stage.id])} onClick={() => setExpandedStages(current => ({ ...current, [stage.id]: !current[stage.id] }))}>{expandedStages[stage.id] ? "Hide progress" : "View progress & logs"}</button>{stage.error && !expandedStages[stage.id] && <p className="form-error workflow-stage-progress" role="alert">{stage.error}</p>}<StageTests stage={stage} definitions={configuredStageTests(resource, revision, stage.stageName)} definitionMatches={resource.specDigest === revision.specDigest} command={previewCommand} />{expandedStages[stage.id] && <StageProgress stage={stage} onOpenManifests={id => { onClose(); onOpenDeploymentManifests(id); }} />}{stage.deploymentIds?.map((deploymentID) => { const deployment = overview.deployments.find((item) => item.id === deploymentID); const result = stage.deploymentResults?.find(item => item.deploymentId === deploymentID); return <button className="workflow-manifest-link" key={deploymentID} title={result?.reason} onClick={() => { onClose(); onOpenDeploymentManifests(deploymentID); }}><FileCode size={14} /><span>{deployment?.app?.name ?? "Managed deployment"}</span><strong>{result?.outcome === "unchanged" ? "Unchanged · Manifests" : "Manifests"}</strong></button>; })}</div>)}</div>}
+              <dl className="workflow-run-summary"><div><dt>Status</dt><dd>{revision.state}</dd></div><div><dt>Trigger</dt><dd>{revision.trigger}</dd></div><div><dt>Sources</dt><dd>{Object.keys(revision.sources).length}</dd></div></dl>
+              <RunTiming revision={revision} jobs={jobs} stages={stages} />
+              {revision.sourceTrust && <SourceTrustReview revision={revision} isOwner={isOwner} onChanged={onChanged} />}
+              {revision.feedback && <RunFeedback feedback={revision.feedback} overview={overview} />}
+              {revision.checks && <RunChecks checks={revision.checks} />}
             </>}
-          </section>
-        </div>
+        </section>
+        <details className="workflow-resource-configuration" onToggle={event => setConfigurationOpen(event.currentTarget.open)}>
+          <summary tabIndex={0}>Configuration <span>{resource.apiVersion}</span></summary>
+          <pre className="workflow-document" tabIndex={configurationOpen ? 0 : -1} aria-label="Workflow configuration">{resource.document}</pre>
+        </details>
       </div>
     </section>
   </div>;
