@@ -2,10 +2,10 @@
 
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApplicationsPage } from "./ApplicationsPage";
 import { observationsClient } from "./observationsClient";
-import { api, type App, type Overview } from "./api";
+import { api, type App, type Overview, type WorkflowResource } from "./api";
 
 const application = (values: Partial<App>): App => ({
   id: "app-1",
@@ -64,6 +64,10 @@ const overview: Overview = {
   githubApps: [],
   relayWebhooks: [],
 };
+
+beforeEach(() => {
+  vi.spyOn(api, "workflowRevisions").mockResolvedValue([]);
+});
 
 afterEach(() => {
   cleanup();
@@ -249,6 +253,36 @@ describe("applications overview", () => {
 
     expect(await screen.findByRole("heading", { name: "checkout" })).not.toBeNull();
     expect(await screen.findByLabelText("Application topology")).not.toBeNull();
+  });
+
+  it("opens the latest failed preview build logs from its application route before any deployment exists", async () => {
+    const resource: WorkflowResource = { id: "preview-resource", configSourceId: "config-1", apiVersion: "dispatch/v1alpha1", kind: "Application", name: "dev-005-preview-47", path: "temporary/preview.yaml", document: "", specDigest: "sha256:test", configSha: "abc123", temporary: true, active: true, state: "ready", sourceCount: 2, jobCount: 2, createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-10-08T00:00:00Z" };
+    const failed = { id: "failed-revision", resourceId: resource.id, configSha: "abc123", specDigest: "sha256:test", state: "failed", trigger: "pull request comment 47", sources: {}, error: "job build-service: command failed: exit status 1", createdAt: "2026-10-08T00:00:00Z" };
+    const configured: Overview = {
+      ...overview,
+      identity: { ...overview.identity!, systemRole: "member" },
+      projectPermissions: { "project-1": ["project.view"] },
+      configSources: [{ id: "config-1", projectId: "project-1", name: "Platform config", repository: "platform/deployments", branch: "main", path: ".dispatch", syncMode: "poll", pollIntervalSeconds: 60, active: true, state: "ready", createdAt: resource.createdAt, updatedAt: resource.updatedAt }],
+      workflowResources: [resource], workflowRevisions: [],
+    };
+    vi.spyOn(api, "workflowTopology").mockResolvedValue({ columns: [], nodes: [], edges: [] });
+    vi.mocked(api.workflowRevisions).mockResolvedValue([failed]);
+    vi.spyOn(api, "workflowRevision").mockResolvedValue(failed);
+    vi.spyOn(api, "workflowStages").mockResolvedValue([]);
+    vi.spyOn(api, "workflowJobs").mockResolvedValue([
+      { id: "ui-job", resourceId: resource.id, revisionId: failed.id, jobName: "build-ui", fingerprint: "ui", state: "succeeded", sources: {}, log: "UI image pushed", createdAt: failed.createdAt },
+      { id: "service-job", resourceId: resource.id, revisionId: failed.id, jobName: "build-service", fingerprint: "service", state: "failed", sources: {}, error: "command failed: exit status 1", log: "ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE", createdAt: failed.createdAt },
+    ]);
+    const run = vi.spyOn(api, "runWorkflowResource");
+    render(<ApplicationsPage overview={configured} section="applications" applicationID={resource.id} creating={false} onToggleCreate={vi.fn()} onChanged={async () => undefined} onDeploy={vi.fn()} onDelete={vi.fn()} onDeleteGroup={vi.fn()} onNavigate={vi.fn()} />);
+    expect(await screen.findByText(/Latest run failed. job build-service/)).toBeTruthy();
+    expect(screen.getByText("failed")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Runs & logs" }));
+    const output = await screen.findByRole("region", { name: "build-service job output" });
+    expect(within(output).getByText(/THESE PACKAGES DO NOT MATCH/)).toBeTruthy();
+    expect(screen.queryByText("UI image pushed")).toBeNull();
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("shows every configured application resource without a category switcher", () => {
