@@ -1640,7 +1640,8 @@ code { font-family: var(--mono); }
 .workflow-run-list strong { overflow: hidden; color: #2c3944; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-run-list small { color: var(--muted); font-size: 11px; }
 .workflow-run-list button { min-height: 29px; padding: 0 8px; font-size: 11px; }
-.workflow-job-list > button { display: grid; grid-template-columns: 105px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; min-height: 42px; padding: 7px 13px 7px 11px; color: inherit; text-align: left; background: #fff; border: 0; border-top: 1px solid #edf0f2; border-left: 2px solid transparent; border-radius: 0; cursor: pointer; }
+.workflow-job-list > button { display: grid; grid-template-columns: 14px 105px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; min-height: 42px; padding: 7px 13px 7px 11px; color: inherit; text-align: left; background: #fff; border: 0; border-top: 1px solid #edf0f2; border-left: 2px solid transparent; border-radius: 0; cursor: pointer; }
+.workflow-job-list > button[aria-expanded="true"] > .workflow-job-caret { transform: rotate(90deg); }
 .workflow-job-list > button:hover { background: #f7f9fb; }
 .workflow-job-list > button.active { background: #f2f7fc; border-left-color: var(--blue); }
 .workflow-job-list > button:focus-visible { position: relative; z-index: 1; outline: 2px solid #6aa6e8; outline-offset: -2px; }
