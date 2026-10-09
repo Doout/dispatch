@@ -1792,3 +1792,33 @@ ALTER TABLE controller_settings ADD COLUMN workload_backups BOOLEAN NOT NULL DEF
 ALTER TABLE controller_settings ADD COLUMN automation_credentials BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE controller_settings ADD COLUMN infrastructure_assignments BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE controller_settings ADD COLUMN mutation_receipts BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- dispatch:migration 102_workflow_workers
+CREATE TABLE workflow_worker_jobs (
+ id TEXT PRIMARY KEY,
+ node_id TEXT NOT NULL,
+ generation BIGINT NOT NULL,
+ project_id TEXT NOT NULL,
+ resource_id TEXT NOT NULL,
+ revision_id TEXT NOT NULL,
+ kind TEXT NOT NULL,
+ mode TEXT NOT NULL,
+ state TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ request TEXT NOT NULL,
+ progress TEXT NOT NULL DEFAULT '',
+ result TEXT NOT NULL DEFAULT '',
+ attempt INTEGER NOT NULL DEFAULT 0,
+ lease_token TEXT NOT NULL DEFAULT '',
+ lease_until TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE INDEX workflow_worker_pending ON workflow_worker_jobs(node_id,state,created_at);
+CREATE INDEX workflow_worker_revision ON workflow_worker_jobs(revision_id);
+
+-- dispatch:migration 103_tenant_usage_indexes
+CREATE INDEX workflow_job_usage_finished ON workflow_job_results(finished_at) WHERE reused_from_id='' AND state IN ('succeeded','failed','cancelled');
+CREATE INDEX deployment_usage_finished ON deployments(finished_at) WHERE state IN ('succeeded','failed','cancelled');

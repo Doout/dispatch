@@ -10,7 +10,7 @@ import (
 
 func (a *API) routes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.Recoverer, a.securityHeaders, a.logRequest)
+	r.Use(middleware.RequestID, middleware.Recoverer, a.securityHeaders, a.logRequest, a.hostedBoundary, a.hostedExecutionBoundary)
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

@@ -150,6 +150,7 @@ type SourceSpec struct {
 }
 
 type JobSpec struct {
+	WorkerMode  string                   `json:"workerMode,omitempty" yaml:"workerMode,omitempty"`
 	Needs       []string                 `json:"needs,omitempty" yaml:"needs,omitempty"`
 	Builder     string                   `json:"builder,omitempty" yaml:"builder,omitempty"`
 	SourcePaths map[string][]string      `json:"sourcePaths,omitempty" yaml:"sourcePaths,omitempty"`
@@ -633,11 +634,17 @@ func validateJobs(prefix string, jobs map[string]JobSpec, sources map[string]Sou
 		if !aliasPattern.MatchString(name) {
 			return fmt.Errorf("%s.%s has an invalid name", prefix, name)
 		}
-		if _, ok := sources[job.RunFrom]; !ok && (!sourceFree || job.RunFrom != "") {
+		if _, ok := sources[job.RunFrom]; !ok && (!sourceFree && job.WorkerMode != "managed" || job.RunFrom != "") {
 			return fmt.Errorf("%s.%s.runFrom references unknown source %q", prefix, name, job.RunFrom)
 		}
 		if strings.TrimSpace(job.Run) == "" {
 			return fmt.Errorf("%s.%s.run is required", prefix, name)
+		}
+		if job.WorkerMode != "" && job.WorkerMode != "tenant" && job.WorkerMode != "managed" {
+			return fmt.Errorf("job %s: workerMode must be tenant or managed", name)
+		}
+		if job.WorkerMode == "managed" && (job.Builder != "" || job.RunFrom != "" || len(job.Sources) != 0 || len(job.SourcePaths) != 0) {
+			return fmt.Errorf("job %s: managed workers cannot use repositories or Docker", name)
 		}
 		if job.Builder != "" && job.Builder != "docker" {
 			return fmt.Errorf("%s.%s.builder must be docker", prefix, name)

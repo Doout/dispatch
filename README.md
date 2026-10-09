@@ -233,7 +233,7 @@ Owners can enable recent resource workflows under **Settings → Experimental UI
 
 ## Development
 
-Use Go 1.27.1 or newer, Node.js 22, Corepack, and Docker for executor tests.
+Use Go 1.27.2 or newer, Node.js 22, Corepack, and Docker for executor tests.
 
 ```sh
 make web

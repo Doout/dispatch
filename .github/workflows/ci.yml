@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -race -count=1 -timeout 40m -json ./internal/store | python3 scripts/check-test-results.py --require-name postgres
+          go test -race -count=1 -timeout 40m -json ./internal/store ./internal/tenancy | python3 scripts/check-test-results.py --require-name postgres
   docker-lifecycle:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -65,6 +65,25 @@ jobs:
               --require-test TestTemporaryEnvironmentDockerRestartExpiryIntegration \
               --require-test TestPackagedMockProviderCLIAndMCPAcceptanceIntegration \
               --require-test TestWorkloadBackupSeparateDaemonsSourceLossIntegration
+  hosted-workers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build isolated worker image
+        run: docker build -f Containerfile.worker -t dispatch-worker:test .
+      - name: Verify sandbox execution and cancellation
+        shell: bash
+        run: |
+          set -o pipefail
+          export DISPATCH_WORKER_TEST_IMAGE=$(docker image inspect --format '{{.Id}}' dispatch-worker:test)
+          go test -race -count=1 -timeout 10m -json ./internal/workflowrunner -run 'TestDisposable.*Integration' \
+            | python3 scripts/check-test-results.py \
+              --require-test TestDisposableManagedWorkerIntegration \
+              --require-test TestDisposableWorkerCancellationIntegration
   api-race:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -157,10 +176,14 @@ jobs:
           cache-to: type=gha,mode=max,scope=dispatch-runtime
           tags: dispatch:test
   test:
-    needs: [build-checks, api-coverage]
+    needs: [build-checks, api-coverage, hosted-workers]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Require hosted worker integration
+        env:
+          HOSTED_WORKERS_RESULT: ${{ needs.hosted-workers.result }}
+        run: test "$HOSTED_WORKERS_RESULT" = success
       - name: Require build checks and complete API race coverage
         env:
           BUILD_CHECKS_RESULT: ${{ needs.build-checks.result }}

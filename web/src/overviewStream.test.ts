@@ -6,6 +6,14 @@ import { api, setToken, setImpersonatedUserID } from "./api";
 import { subscribeOverview } from "./overviewStream";
 const baseline = () => setOverviewState({version:"v1",value:{projects:[]} as unknown as Overview});
 let stop: (() => void) | undefined;
+it("opens overview streams for hosted cookie sessions without bearer credentials", async () => {
+  baseline();
+  const fetcher = vi.fn().mockImplementation(() => new Promise(() => {}));
+  vi.stubGlobal("fetch", fetcher);
+  stop = subscribeOverview(vi.fn(), vi.fn(), true);
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls[0][1].headers.Authorization).toBeUndefined();
+});
 afterEach(() => { stop?.(); sessionStorage.clear(); setOverviewState(undefined, false); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 it("keeps one connection, decodes split events, and pauses hidden tabs", async () => {
   vi.useFakeTimers();

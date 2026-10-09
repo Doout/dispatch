@@ -63,6 +63,9 @@ func (a *API) updateApplicationConfiguration(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	candidate := applyApplicationUpdate(app, input)
+	if !a.hostedSourceInput(w, candidate.SourceRepo) {
+		return
+	}
 	credentialChange := input.SourceAuthType != nil || input.SourceCredentialID != nil || candidate.SourceRepo != app.SourceRepo && candidate.SourceCredentialID != ""
 	if !a.requireCredentialOwner(w, r, credentialChange) {
 		return

@@ -28,3 +28,6 @@
 /release/
 /api-race-results/
 /scripts/__pycache__/
+/dispatch-platform
+/dispatch-dns
+/dispatch-worker

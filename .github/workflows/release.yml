@@ -83,4 +83,4 @@ jobs:
       - name: Publish CLI assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" release/dispatch-linux-*.tar.gz release/SHA256SUMS --verify-tag --generate-notes --title "Dispatch $GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" release/dispatch-linux-*.tar.gz release/dispatch-platform-linux-*.tar.gz release/SHA256SUMS --verify-tag --generate-notes --title "Dispatch $GITHUB_REF_NAME"

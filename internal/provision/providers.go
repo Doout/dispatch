@@ -34,10 +34,12 @@ type SecretResolver interface {
 	Resolve(context.Context, string) ([]byte, error)
 }
 type Manager struct {
-	Bootstrap *bootstrap.Manager
-	Store     ProviderStore
-	Secrets   SecretResolver
-	Edge      *edge.Broker
+	// RequireRelay keeps hosted provider traffic off the controller network.
+	RequireRelay bool
+	Bootstrap    *bootstrap.Manager
+	Store        ProviderStore
+	Secrets      SecretResolver
+	Edge         *edge.Broker
 	// HTTPClient is injectable for certificate-pinned tests and managed transport.
 	HTTPClient *http.Client
 	Vault      *secretcrypto.Vault
@@ -78,6 +80,9 @@ func (m *Manager) input(ctx context.Context, in Registration) (core.Infrastructu
 	if len(p.Name) == 0 || len(p.Name) > 80 {
 		return p, errors.New("provider name must contain 1 to 80 bytes")
 	}
+	if m.RequireRelay && p.PrivateNetworkID == "" {
+		return p, errors.New("hosted infrastructure providers require an enrolled tenant relay")
+	}
 	endpoint, err := Endpoint(in.Endpoint, p.PrivateNetworkID)
 	if err != nil {
 		return p, err
@@ -95,7 +100,7 @@ func (m *Manager) input(ctx context.Context, in Registration) (core.Infrastructu
 	}
 	if p.PrivateNetworkID != "" {
 		network, err := m.Store.GetPrivateNetwork(ctx, p.PrivateNetworkID)
-		if err != nil || network.Driver != edge.DriverAgent {
+		if err != nil || network.Driver != edge.DriverAgent || m.RequireRelay && network.Config["workflowMode"] != "" && network.Config["workflowMode"] != "disabled" {
 			return p, errors.New("choose an enrolled edge node for private provider access")
 		}
 	}
@@ -165,6 +170,9 @@ type transportFunc func(*http.Request) (*http.Response, error)
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func (m *Manager) client(ctx context.Context, p core.InfrastructureProvider) (*provider.Client, string, error) {
+	if m.RequireRelay && p.PrivateNetworkID == "" {
+		return nil, "", errors.New("hosted infrastructure providers require an enrolled tenant relay")
+	}
 	var token string
 	if p.CredentialSecretID != "" {
 		if m.Secrets == nil {
@@ -187,7 +195,7 @@ func (m *Manager) client(ctx context.Context, p core.InfrastructureProvider) (*p
 	client := m.HTTPClient
 	if p.PrivateNetworkID != "" {
 		network, err := m.Store.GetPrivateNetwork(ctx, p.PrivateNetworkID)
-		if err != nil || network.Driver != edge.DriverAgent || m.Edge == nil {
+		if err != nil || network.Driver != edge.DriverAgent || m.Edge == nil || m.RequireRelay && network.Config["workflowMode"] != "" && network.Config["workflowMode"] != "disabled" {
 			return nil, "", errors.New("private provider route is unavailable")
 		}
 		client = &http.Client{Timeout: 30 * time.Second, Transport: transportFunc(func(r *http.Request) (*http.Response, error) { return m.Edge.Do(r.Context(), network, r) })}

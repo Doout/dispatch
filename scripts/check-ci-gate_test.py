@@ -28,7 +28,7 @@ class RequiredStatusTest(unittest.TestCase):
         gate = self.jobs["test"]
         needs = re.search(r"(?m)^    needs: \[([^\]]+)\]$", gate)
         self.assertIsNotNone(needs)
-        self.assertEqual([job.strip() for job in needs[1].split(",")], ["build-checks", "api-coverage"])
+        self.assertEqual([job.strip() for job in needs[1].split(",")], ["build-checks", "api-coverage", "hosted-workers"])
         self.assertRegex(gate, r"(?m)^    if: always\(\)$")
         self.assertIn("BUILD_CHECKS_RESULT: ${{ needs.build-checks.result }}", gate)
         self.assertIn("API_COVERAGE_RESULT: ${{ needs.api-coverage.result }}", gate)

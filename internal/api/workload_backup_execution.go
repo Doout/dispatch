@@ -73,6 +73,9 @@ func (a *API) runWorkloadBackup(ctx context.Context, input core.WorkloadBackupRe
 		return a.workloadBackupBackend(ctx, input, server)
 	}
 	if server.AgentNodeID == "" {
+		if a.auth.Hosted != nil {
+			return core.WorkloadBackupResult{}, errors.New("hosted backups require an enrolled deployment agent")
+		}
 		return (deploy.DockerExecutor{WorkloadBackupDirectory: a.eventConfig.WorkloadBackupDirectory}).RunWorkloadBackup(ctx, input, server)
 	}
 	broker := a.runtimeBroker()

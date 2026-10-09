@@ -87,6 +87,13 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Runtime = normalizeServerRuntime(input.Runtime)
+	if a.auth.Hosted != nil && input.Runtime == core.ServerRuntimeKubernetes && input.ProjectID == "" {
+		problem(w, http.StatusUnprocessableEntity, "Project required", "Choose the project whose worker will validate this cluster.")
+		return
+	}
+	if a.auth.Hosted != nil && !a.hostedServerInput(w, input.Runtime, input.AgentNodeID, input.Kubernetes) {
+		return
+	}
 	if input.AgentNodeID != "" && input.Runtime != core.ServerRuntimeDocker {
 		problem(w, 422, "Agent target invalid", "Only Docker servers accept a runtime node binding.")
 		return
@@ -126,7 +133,7 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusBadRequest, "Kubernetes connection required", detail)
 			return
 		}
-		if !a.inspectKubernetesTarget(w, r, kubernetes, nil) {
+		if !a.inspectKubernetesTarget(w, r, kubernetes, nil, input.ProjectID) {
 			return
 		}
 		item.Address, item.State, item.AgentMode, item.Kubernetes = kubernetesAddress(kubernetes), "ready", "direct", kubernetes
@@ -210,6 +217,9 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Server name required", "Enter a server name before saving it.")
 		return
 	}
+	if a.auth.Hosted != nil && !a.hostedServerInput(w, item.Runtime, item.AgentNodeID, input.Kubernetes) {
+		return
+	}
 	servers, err := a.store.ListServers(r.Context())
 	if err != nil {
 		a.internal(w, err)
@@ -238,7 +248,7 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusBadRequest, "Kubernetes connection required", detail)
 			return
 		}
-		if !a.inspectKubernetesTarget(w, r, kubernetes, item.Kubernetes) {
+		if !a.inspectKubernetesTarget(w, r, kubernetes, item.Kubernetes, item.ProjectID) {
 			return
 		}
 		item.Address, item.Kubernetes = kubernetesAddress(kubernetes), kubernetes

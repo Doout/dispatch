@@ -58,24 +58,20 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "Unsupported runtime version", "The runtime agent must advertise the supported typed protocol.")
 		return
 	}
-	if node.Details == nil {
-		node.Details = map[string]string{}
-	}
 	artifact := r.Header.Get("X-Dispatch-Agent-Artifact")
 	if decoded, err := hex.DecodeString(artifact); artifact != "" && (err != nil || len(decoded) != 32) {
 		problem(w, 422, "Invalid agent artifact", "Provide the installed artifact SHA-256.")
 		return
 	}
-	node.Details["agentArtifactSHA256"] = artifact
-	node.Details["runtimeVersion"] = remoteruntime.APIVersion
-	node.Details["runtimeCheckedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 	advertised, err := remoteruntime.ParseCapabilities(r.Header.Get("X-Dispatch-Runtime-Capabilities"))
 	if err != nil {
 		problem(w, 422, "Invalid capabilities", "The capability list exceeds its limit.")
 		return
 	}
-	node.Details["runtimeCapabilities"] = strings.Join(advertised, ",")
-	a.touchEdgeNode(r.Context(), node, r)
+	a.touchEdgeNode(r.Context(), node, r, map[string]string{
+		"agentArtifactSHA256": artifact, "runtimeVersion": remoteruntime.APIVersion,
+		"runtimeCheckedAt": time.Now().UTC().Format(time.RFC3339Nano), "runtimeCapabilities": strings.Join(advertised, ","),
+	})
 	job, err := broker.Lease(r.Context(), node.ID)
 	if err != nil {
 		a.runtimeJobProblem(w, err)

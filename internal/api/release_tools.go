@@ -174,6 +174,9 @@ func (a *API) updateDeploymentRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) previewDeploymentRollback(w http.ResponseWriter, r *http.Request) {
+	if !a.hostedRollbackAllowed(w, r) {
+		return
+	}
 	preview, err := a.deploy.PreviewRollback(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		problem(w, 409, "Rollback unavailable", err.Error())
@@ -182,6 +185,9 @@ func (a *API) previewDeploymentRollback(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, preview)
 }
 func (a *API) rollbackDeploymentRelease(w http.ResponseWriter, r *http.Request) {
+	if !a.hostedRollbackAllowed(w, r) {
+		return
+	}
 	var input struct {
 		ConfirmDeploymentID         string `json:"confirmDeploymentId"`
 		ExpectedCurrentDeploymentID string `json:"expectedCurrentDeploymentId"`

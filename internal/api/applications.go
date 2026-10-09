@@ -84,6 +84,9 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.SourceRepo = strings.TrimSpace(input.SourceRepo)
+	if !a.hostedSourceInput(w, input.SourceRepo) {
+		return
+	}
 	input.SourceAuthType = strings.TrimSpace(input.SourceAuthType)
 	input.SourceCredentialID = strings.TrimSpace(input.SourceCredentialID)
 	input.ComposeContent = strings.TrimSpace(input.ComposeContent)
@@ -341,6 +344,9 @@ func (a *API) inspectHelmSource(w http.ResponseWriter, r *http.Request) {
 	input.SourceAuthType = strings.TrimSpace(input.SourceAuthType)
 	input.SourceCredentialID = strings.TrimSpace(input.SourceCredentialID)
 	input.SourceRepo = deploy.RepositoryForSourceAuth(input.SourceRepo, input.SourceAuthType)
+	if !a.hostedSourceInput(w, input.SourceRepo) {
+		return
+	}
 	if input.Branch == "" {
 		input.Branch = "main"
 	}
