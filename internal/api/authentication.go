@@ -28,6 +28,10 @@ func (a *API) authorize(next http.Handler) http.Handler {
 			return
 		}
 
+		if a.auth.Hosted != nil {
+			unauthorized(w, false)
+			return
+		}
 		username, password, basic := r.BasicAuth()
 		if !basic {
 			unauthorized(w, false)
@@ -61,6 +65,10 @@ const impersonateUserHeader = "Impersonate-User"
 func (a *API) authorizedContext(w http.ResponseWriter, r *http.Request, actor core.Identity) (context.Context, bool) {
 	ctx := withIdentity(r.Context(), actor)
 	targetID := strings.TrimSpace(r.Header.Get(impersonateUserHeader))
+	if a.auth.Hosted != nil && targetID != "" {
+		problem(w, http.StatusForbidden, "Impersonation denied", "Tenant access requires your own membership.")
+		return nil, false
+	}
 	if actor.Kind == core.PrincipalServiceAccount && targetID != "" {
 		problem(w, 403, "Impersonation denied", "Automation identities cannot impersonate users.")
 		return nil, false
@@ -91,10 +99,17 @@ func (a *API) authorizedContext(w http.ResponseWriter, r *http.Request, actor co
 
 func (a *API) bearerIdentity(r *http.Request) (core.Identity, bool) {
 	provided, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if a.auth.Hosted != nil && (!ok || !strings.HasPrefix(provided, "dsa_")) {
+		if a.auth.Hosted.Authenticate == nil {
+			return core.Identity{}, false
+		}
+		identity, err := a.auth.Hosted.Authenticate(r)
+		return identity, err == nil && identity.ID != ""
+	}
 	if !ok {
 		return core.Identity{}, false
 	}
-	if a.auth.AdminToken != "" && secureEqual(provided, a.auth.AdminToken) {
+	if a.auth.Hosted == nil && a.auth.AdminToken != "" && secureEqual(provided, a.auth.AdminToken) {
 		return controllerIdentity("token"), true
 	}
 	now := time.Now().UTC()
@@ -111,6 +126,9 @@ func (a *API) bearerIdentity(r *http.Request) (core.Identity, bool) {
 			return core.Identity{}, false
 		}
 		return core.Identity{ID: account.ID, Kind: core.PrincipalServiceAccount, CredentialID: credential.ID, Username: account.Name, DisplayName: account.Name, SystemRole: core.UserRoleMember}, true
+	}
+	if a.auth.Hosted != nil {
+		return core.Identity{}, false
 	}
 	user, err := a.store.SessionUser(r.Context(), sessionHash(provided), now)
 	if err == nil && user.State == core.UserStateActive {

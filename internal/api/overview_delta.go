@@ -24,7 +24,7 @@ type overviewCache struct {
 }
 
 func overviewScope(r *http.Request) string {
-	sum := sha256.Sum256([]byte(r.Header.Get("Authorization") + "\x00" + r.Header.Get("Impersonate-User")))
+	sum := sha256.Sum256([]byte(r.Host + "\x00" + r.Header.Get("Authorization") + "\x00" + r.Header.Get("Cookie") + "\x00" + r.Header.Get("Impersonate-User")))
 	return hex.EncodeToString(sum[:])
 }
 func (c *overviewCache) remember(scope string, data []byte) string {

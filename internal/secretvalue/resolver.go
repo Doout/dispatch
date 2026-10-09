@@ -300,13 +300,17 @@ func (r *Resolver) clientForStore(ctx context.Context, store core.SecretStore, e
 	}
 	clone := transport.Clone()
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	baseDial := clone.DialContext
+	if baseDial == nil {
+		baseDial = dialer.DialContext
+	}
 	expectedHost := endpoint.Hostname()
 	clone.DialContext = func(ctx context.Context, network, target string) (net.Conn, error) {
 		host, port, splitErr := net.SplitHostPort(target)
 		if splitErr == nil && strings.EqualFold(host, expectedHost) {
 			target = net.JoinHostPort(ip.String(), port)
 		}
-		return dialer.DialContext(ctx, network, target)
+		return baseDial(ctx, network, target)
 	}
 	return &http.Client{Transport: clone, Timeout: base.Timeout}, nil
 }
