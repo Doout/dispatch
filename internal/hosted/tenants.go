@@ -51,7 +51,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, ns := range s.Config.Nameservers {
-		if input.Slug+"."+s.Config.RootDomain == ns {
+		if slug, managed := s.Config.nameserverTenantSlug(ns); managed && input.Slug == slug {
 			problem(w, http.StatusConflict, "That name is reserved.")
 			return
 		}

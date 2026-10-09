@@ -106,6 +106,19 @@ func (s *Server) addressRecords(ctx context.Context, owner, tenant, host string,
 }
 
 func (s *Server) prepareZone(ctx context.Context) error {
+	// Nameserver glue belongs to the platform. Reserve its entire tenant
+	// subtree, including when a restart changes the nameserver configuration.
+	for _, ns := range s.Config.Nameservers {
+		slug, managed := s.Config.nameserverTenantSlug(ns)
+		if !managed {
+			continue
+		}
+		if _, err := s.Catalog.TenantBySlug(ctx, slug); err == nil {
+			return errors.New("nameservers cannot use an existing tenant's domain")
+		} else if !errors.Is(err, tenancy.ErrNotFound) {
+			return err
+		}
+	}
 	encoded, err := json.Marshal(struct {
 		Zone        string
 		Nameservers []string
@@ -227,6 +240,12 @@ func (s *Server) tenantDNS(w http.ResponseWriter, r *http.Request, tenant tenanc
 	}
 	owner := "records:" + tenant.ID
 	id := recordID(owner, input.Name, input.Type)
+	for _, record := range records {
+		if record.Name == input.Name && record.OwnerID != owner {
+			problem(w, http.StatusConflict, "That name is managed by Dispatch.")
+			return
+		}
+	}
 	if r.Method == http.MethodDelete {
 		if err = s.Catalog.DeleteZoneRecord(r.Context(), id, owner, input.Generation); err != nil {
 			catalogError(w, err)

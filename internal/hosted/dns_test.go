@@ -3,7 +3,9 @@ package hosted
 import (
 	"context"
 	"errors"
+	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -183,5 +185,102 @@ func TestHostedDNSRootIsImmutableAndOldGlueIsRemoved(t *testing.T) {
 		if strings.HasSuffix(record.Name, "other.example.test") {
 			t.Fatal("failed root change partially altered the zone")
 		}
+	}
+}
+
+func TestHostedNameserversReserveTheirTenantSubtree(t *testing.T) {
+	for _, prefix := range []string{"alpha", "authority.alpha", "authority.region.alpha"} {
+		t.Run(prefix, func(t *testing.T) {
+			f := newHostedFixture(t)
+			root := f.server.Config.RootDomain
+			ns := prefix + "." + root
+			f.server.Config.Nameservers = []string{ns, "ns2.example.net"}
+			f.server.Config.NameserverAddresses = map[string][]string{ns: {"192.0.2.53"}}
+			if err := f.server.Config.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.server.Prepare(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			token := f.session(t, "platform", tenancy.AudiencePlatform)
+			w := f.request(t, root, http.MethodPost, "/api/v1/platform/tenants", token, map[string]string{"slug": "alpha", "name": "Alpha", "ownerEmail": "owner-a@example.test"})
+			if w.Code != http.StatusConflict {
+				t.Fatalf("tenant took a nameserver's subtree: %d %s", w.Code, w.Body.String())
+			}
+			if _, err := f.catalog.TenantBySlug(t.Context(), "alpha"); !errors.Is(err, tenancy.ErrNotFound) {
+				t.Fatal("reserved tenant was created", err)
+			}
+			// A label that merely starts with the reserved slug remains usable.
+			f.tenant(t, "alphax", "owner-a")
+		})
+	}
+	t.Run("external nameserver", func(t *testing.T) {
+		f := newHostedFixture(t)
+		f.server.Config.Nameservers = []string{"authority.alpha.example.net", "ns2.example.net"}
+		f.tenant(t, "alpha", "owner-a")
+	})
+}
+
+func TestHostedDNSCannotMoveNameserversIntoExistingTenant(t *testing.T) {
+	f := newHostedFixture(t)
+	tenant := f.tenant(t, "alpha", "owner-a")
+	if err := f.server.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.prepareTenantDNS(t.Context(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	generation, records, err := f.catalog.ZoneRecords(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"alpha", "authority.alpha", "authority.region.alpha"} {
+		ns := prefix + "." + f.server.Config.RootDomain
+		f.server.Config.Nameservers = []string{ns, "ns2.example.net"}
+		f.server.Config.NameserverAddresses = map[string][]string{ns: {"192.0.2.53"}}
+		if err := f.server.Config.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.server.Prepare(t.Context()); err == nil {
+			t.Fatal("nameserver reconfiguration took an existing tenant's domain", ns)
+		}
+		afterGeneration, afterRecords, err := f.catalog.ZoneRecords(t.Context())
+		if err != nil || generation != afterGeneration || !reflect.DeepEqual(records, afterRecords) {
+			t.Fatal("rejected nameserver reconfiguration changed DNS records", err)
+		}
+	}
+}
+
+func TestHostedTenantCannotChangePlatformOwnedDNSName(t *testing.T) {
+	f := newHostedFixture(t)
+	tenant := f.tenant(t, "alpha", "owner-a")
+	host := "alpha." + f.server.Config.RootDomain
+	name := "authority." + host
+	// Defense for existing catalog state: even a platform-owned record below
+	// a tenant's domain must not gain tenant-controlled values or record types.
+	_, err := f.catalog.SaveZoneRecord(t.Context(), tenancy.ZoneRecord{ID: "platform-glue", OwnerID: platformOwner, TenantID: platformOwner, Name: name, Type: "A", Values: []string{"192.0.2.53"}, TTL: 300})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, records, err := f.catalog.ZoneRecords(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := f.session(t, "owner-a", tenancy.TenantAudience(tenant.ID))
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		for kind, values := range map[string][]string{"A": {"192.0.2.99"}, "AAAA": {"2001:db8::99"}, "TXT": {"tenant-value"}} {
+			w := f.request(t, host, method, "/api/v1/hosted/dns", token, map[string]any{"name": name, "type": kind, "values": values, "ttl": 300})
+			if w.Code != http.StatusConflict {
+				t.Fatalf("tenant changed a platform-owned name: %s %s: %d %s", method, kind, w.Code, w.Body.String())
+			}
+		}
+	}
+	afterGeneration, afterRecords, err := f.catalog.ZoneRecords(t.Context())
+	if err != nil || generation != afterGeneration || !reflect.DeepEqual(records, afterRecords) {
+		t.Fatal("tenant writes changed platform records", err)
+	}
+	w := f.request(t, host, http.MethodPut, "/api/v1/hosted/dns", token, map[string]any{"name": "app." + host, "type": "A", "values": []string{"192.0.2.99"}, "ttl": 300})
+	if w.Code != http.StatusOK {
+		t.Fatalf("tenant's own DNS name was rejected: %d %s", w.Code, w.Body.String())
 	}
 }

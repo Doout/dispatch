@@ -108,6 +108,15 @@ func validHostname(host string) bool {
 func (c Config) Origin() string                  { return "https://" + c.RootDomain }
 func (c Config) TenantOrigin(slug string) string { return "https://" + slug + "." + c.RootDomain }
 
+func (c Config) nameserverTenantSlug(nameserver string) (string, bool) {
+	prefix, found := strings.CutSuffix(nameserver, "."+c.RootDomain)
+	if !found {
+		return "", false
+	}
+	labels := strings.Split(prefix, ".")
+	return labels[len(labels)-1], true
+}
+
 func canonicalHost(raw string) (string, bool) {
 	if strings.ContainsAny(raw, " /\\\t\r\n@%") {
 		return "", false
