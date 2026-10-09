@@ -147,10 +147,11 @@ func TestHostedCertificateRestartLoadsValidBundleBeforeRenewal(t *testing.T) {
 	result := hostedCertificateFixture(t, root, "*."+root)
 	request := authoritativedns.CertificateRequest{ID: root, OwnerID: platformOwner, Generation: 1, Domains: []string{"*." + root, root}}
 	state := struct {
+		DirectoryURL   string                              `json:"directoryUrl"`
 		Request        authoritativedns.CertificateRequest `json:"request"`
 		CertificatePEM []byte                              `json:"certificatePem"`
 		PrivateKeyPEM  []byte                              `json:"privateKeyPem"`
-	}{request, result.CertificatePEM, result.PrivateKeyPEM}
+	}{"https://ca.example.test/directory", request, result.CertificatePEM, result.PrivateKeyPEM}
 	raw, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +175,7 @@ func TestHostedCertificateRestartLoadsValidBundleBeforeRenewal(t *testing.T) {
 	if cert, err := tlsFixtureHandshake(t, f.server, root); err != nil || cert.VerifyHostname(root) != nil {
 		t.Fatal("renewal failure hid a valid saved certificate", err)
 	}
-	loader := authoritativedns.Reconciler{StoreDirectory: directory, Now: func() time.Time { return result.NotAfter.Add(time.Minute) }}
+	loader := authoritativedns.Reconciler{DirectoryURL: f.server.Config.Certificates.DirectoryURL, StoreDirectory: directory, Now: func() time.Time { return result.NotAfter.Add(time.Minute) }}
 	if _, err := loader.Cached(request); err == nil {
 		t.Fatal("expired saved certificate accepted")
 	}
