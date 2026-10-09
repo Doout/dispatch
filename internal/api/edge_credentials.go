@@ -41,16 +41,10 @@ func (a *API) enrollEdgeNode(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusUnauthorized, "Enrollment refused", "The enrollment token is invalid, expired or already used.")
 		return
 	}
-	item, _ := a.store.GetPrivateNetwork(r.Context(), id)
-	if item.Details == nil {
-		item.Details = map[string]string{}
-	}
-	item.Details["credentialMode"] = "short_session"
-	item.Details["keyFingerprint"] = edge.KeyFingerprint(input.PublicKey)
-	item.Details["sessionExpiresAt"] = session.ExpiresAt.Format(time.RFC3339)
-	delete(item.Details, "enrollmentExpiresAt")
-	item.TokenHash = ""
-	a.touchEdgeNode(r.Context(), item, r)
+	a.recordEdgeNodeHealth(r.Context(), id, session.Token, r, map[string]string{
+		"credentialMode": "short_session", "keyFingerprint": edge.KeyFingerprint(input.PublicKey),
+		"sessionExpiresAt": session.ExpiresAt.Format(time.RFC3339),
+	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, session)
 }
@@ -93,12 +87,7 @@ func (a *API) createEdgeSession(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusUnauthorized, "Authentication required", "The signed challenge is invalid, expired or already used.")
 		return
 	}
-	item, _ := a.store.GetPrivateNetwork(r.Context(), id)
-	if item.Details == nil {
-		item.Details = map[string]string{}
-	}
-	item.Details["sessionExpiresAt"] = session.ExpiresAt.Format(time.RFC3339)
-	a.touchEdgeNode(r.Context(), item, r)
+	a.recordEdgeNodeHealth(r.Context(), id, session.Token, r, map[string]string{"sessionExpiresAt": session.ExpiresAt.Format(time.RFC3339)})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, session)
 }
