@@ -384,9 +384,11 @@ func privateNetworkInput(input privateNetworkRequest, existing *core.PrivateNetw
 		if mode != "" && mode != "tenant" && mode != "managed" && mode != "disabled" {
 			return item, "Choose tenant, managed or disabled workflow execution."
 		}
-		if mode != "" && mode != "disabled" {
+		if mode != "" {
 			item.Config["workflowMode"] = mode
-			item.Config["workflowProjectId"] = project
+			if mode != "disabled" {
+				item.Config["workflowProjectId"] = project
+			}
 		}
 
 	}

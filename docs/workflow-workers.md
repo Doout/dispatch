@@ -8,6 +8,10 @@ Create a private network through the tenant API with `driver: dispatch_agent` an
 `workflowMode: tenant`. Set `workflowProjectId` to restrict the worker to one
 project, or leave it empty for the tenant's projects. The creation response
 contains a single-use enrollment token. `workflowMode: disabled` stops new work.
+The project restriction also applies to Docker deployments, backups and other
+typed runtime operations. A restricted worker can inspect storage only on targets
+assigned to its project. Changing its project or disabling it stops active
+operations at their next heartbeat.
 Existing installations keep local execution unless hosted mode enables the
 remote requirement.
 
