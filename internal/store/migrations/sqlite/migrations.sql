@@ -1818,3 +1818,7 @@ CREATE TABLE workflow_worker_jobs (
 );
 CREATE INDEX workflow_worker_pending ON workflow_worker_jobs(node_id,state,created_at);
 CREATE INDEX workflow_worker_revision ON workflow_worker_jobs(revision_id);
+
+-- dispatch:migration 103_tenant_usage_indexes
+CREATE INDEX workflow_job_usage_finished ON workflow_job_results(finished_at) WHERE reused_from_id='' AND state IN ('succeeded','failed','cancelled');
+CREATE INDEX deployment_usage_finished ON deployments(finished_at) WHERE state IN ('succeeded','failed','cancelled');
