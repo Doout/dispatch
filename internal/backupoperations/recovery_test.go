@@ -191,8 +191,7 @@ func (c recoveryChannel) Dispatch(op core.WorkloadBackupOperation, recovering bo
 }
 
 func TestCompetingRecoveryTicksClaimOriginalOperationOnce(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := t.Context()
 	data, err := store.Open(ctx, filepath.Join(t.TempDir(), "recovery.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -236,6 +235,8 @@ func TestCompetingRecoveryTicksClaimOriginalOperationOnce(t *testing.T) {
 	records := concurrentRecoveryRecords{SQLStore: data, arrived: make(chan struct{}, 2), release: make(chan struct{})}
 	dispatches := make(recoveryChannel, 2)
 	scheduler := RecoveryScheduler{Records: records, Authority: currentPolicyAuthority{}, Dispatch: dispatches, Now: func() time.Time { return now.Add(32 * time.Minute) }}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	var workers sync.WaitGroup
 	workers.Add(2)
 	for range 2 {
