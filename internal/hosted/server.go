@@ -2,6 +2,7 @@ package hosted
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -26,15 +27,27 @@ type TenantRuntime struct {
 
 type RuntimeFactory func(context.Context, tenancy.Tenant, *api.HostedAuth) (*TenantRuntime, error)
 
+type runtimeInitialization struct {
+	ready   chan struct{}
+	runtime *TenantRuntime
+	err     error
+}
+
+var errServerClosed = errors.New("hosted server closed")
+
 type Server struct {
 	Config       Config
 	Catalog      *tenancy.Catalog
 	OpenRuntime  RuntimeFactory
 	Logger       *slog.Logger
 	ctx          context.Context
+	cancel       context.CancelFunc
 	platform     http.Handler
 	mu           sync.Mutex
 	runtimes     map[string]*TenantRuntime
+	initializing map[string]*runtimeInitialization
+	closed       bool
+	closeDone    chan struct{}
 	throttle     loginThrottle
 	dnsMu        sync.Mutex
 	certificates certificateCache
@@ -47,20 +60,38 @@ func New(ctx context.Context, cfg Config, catalog *tenancy.Catalog, factory Runt
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{Config: cfg, Catalog: catalog, OpenRuntime: factory, Logger: logger, ctx: ctx, runtimes: map[string]*TenantRuntime{}}
+	ctx, cancel := context.WithCancel(ctx)
+	s := &Server{Config: cfg, Catalog: catalog, OpenRuntime: factory, Logger: logger, ctx: ctx, cancel: cancel, runtimes: map[string]*TenantRuntime{}, initializing: map[string]*runtimeInitialization{}, closeDone: make(chan struct{})}
 	s.platform = s.platformRoutes()
 	return s, nil
 }
 
 func (s *Server) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, runtime := range s.runtimes {
+	if s.closed {
+		s.mu.Unlock()
+		<-s.closeDone
+		return
+	}
+	s.closed = true
+	runtimes := s.runtimes
+	s.runtimes = nil
+	pending := make([]<-chan struct{}, 0, len(s.initializing))
+	for _, initialization := range s.initializing {
+		pending = append(pending, initialization.ready)
+	}
+	s.mu.Unlock()
+
+	s.cancel()
+	for _, runtime := range runtimes {
 		if runtime.Close != nil {
 			runtime.Close()
 		}
-		delete(s.runtimes, id)
 	}
+	for _, ready := range pending {
+		<-ready
+	}
+	close(s.closeDone)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -127,10 +158,47 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) runtime(tenant tenancy.Tenant) (*TenantRuntime, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, errServerClosed
+	}
 	if runtime := s.runtimes[tenant.ID]; runtime != nil {
+		s.mu.Unlock()
 		return runtime, nil
 	}
+	if initialization := s.initializing[tenant.ID]; initialization != nil {
+		s.mu.Unlock()
+		select {
+		case <-initialization.ready:
+			return initialization.runtime, initialization.err
+		case <-s.ctx.Done():
+			return nil, s.ctx.Err()
+		}
+	}
+	initialization := &runtimeInitialization{ready: make(chan struct{})}
+	s.initializing[tenant.ID] = initialization
+	s.mu.Unlock()
+
+	runtime, err := s.openRuntime(tenant)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		if runtime != nil && runtime.Close != nil {
+			runtime.Close()
+		}
+		runtime, err = nil, errServerClosed
+		s.mu.Lock()
+	} else if err == nil {
+		s.runtimes[tenant.ID] = runtime
+	}
+	initialization.runtime, initialization.err = runtime, err
+	delete(s.initializing, tenant.ID)
+	close(initialization.ready)
+	s.mu.Unlock()
+	return runtime, err
+}
+
+func (s *Server) openRuntime(tenant tenancy.Tenant) (*TenantRuntime, error) {
 	auth := &api.HostedAuth{TenantID: tenant.ID, LoginURL: s.Config.Origin()}
 	auth.Authenticate = func(r *http.Request) (core.Identity, error) {
 		user, err := s.Catalog.AuthenticateSession(r.Context(), requestToken(r, tenantCookie), tenancy.TenantAudience(tenant.ID))
@@ -165,7 +233,6 @@ func (s *Server) runtime(tenant tenancy.Tenant) (*TenantRuntime, error) {
 		}
 		return nil, err
 	}
-	s.runtimes[tenant.ID] = runtime
 	return runtime, nil
 }
 
