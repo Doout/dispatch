@@ -44,6 +44,9 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 				}
 				return s.RemoteDockerServices(ctx, request, *d, server)
 			}
+			if s.RequireRemote {
+				return nil, errors.New("hosted Docker services require an enrolled deployment agent")
+			}
 			return (deploy.DockerExecutor{}).Provision(ctx, request, *d, server)
 		}
 		h := *spec.Provision.Helm
@@ -54,6 +57,12 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 		if err != nil {
 			return nil, errors.New("Helm provisioner server is unavailable")
 		}
+		if s.RemoteHelmServices != nil {
+			return s.RemoteHelmServices(ctx, request, h, server)
+		}
+		if s.RequireRemote {
+			return nil, errors.New("hosted Helm services require an enrolled worker")
+		}
 		return (deploy.HelmExecutor{}).Provision(ctx, request, h, server)
 	}
 	var source core.ConfigSource
@@ -63,6 +72,7 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 			return nil, errors.New("repository access for the template is unavailable")
 		}
 	}
+	source.ProjectID = projectID
 	snapshot := map[string]core.WorkflowSourceRevision{}
 	for alias, ref := range spec.Sources {
 		sha, err := s.repositoryHead(ctx, source, ref.Repository, sourceRevisionRef(ref))
@@ -78,6 +88,12 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 	defer os.RemoveAll(root)
 	revision := core.WorkflowRevision{ID: ulid.Make().String(), ResourceID: resource.ID, Sources: snapshot, CreatedAt: time.Now().UTC()}
 	runtime := &jobRuntime{service: s, serviceTemplate: &resource, source: source, revision: revision, root: root, paths: map[string]string{}, inputs: map[string]string{}}
+	if len(runs) > 0 {
+		runtime.serviceRunID = runs[0].ID
+	}
+	if s.RequireRemote && runtime.serviceRunID == "" {
+		return nil, errors.New("remote service provisioning requires an accepted provision run")
+	}
 	defer runtime.close()
 	secrets, err := runtime.resolveSecrets(ctx, spec.Provision.Secrets)
 	if err != nil {

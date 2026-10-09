@@ -72,6 +72,7 @@ type jobRuntime struct {
 	// Saved service templates are accepted from their own inventory and have no
 	// workflow-resource row. Keep their reviewed resource for the trust check.
 	serviceTemplate *core.WorkflowResource
+	serviceRunID    string
 	maxParallelJobs int
 	service         *Service
 	source          core.ConfigSource
@@ -80,9 +81,13 @@ type jobRuntime struct {
 	paths           map[string]string
 	inputs          map[string]string
 	worktrees       []*cachedWorktree
+	workerSources   map[string]workerSource
 }
 
 func (r *jobRuntime) checkExecutionTrust(ctx context.Context) error {
+	if r.workerSources != nil {
+		return ctx.Err()
+	}
 	if r.serviceTemplate == nil {
 		return r.service.checkRevisionTrust(ctx, r.revision)
 	}
@@ -188,6 +193,9 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 }
 
 func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map[string]string, progress func(string)) (map[string]string, string, error) {
+	if r.service != nil && (r.service.RemoteJobs != nil || r.service.RequireRemote || job.WorkerMode != "") {
+		return r.runRemoteJob(ctx, job, secrets, progress)
+	}
 	prelude := ""
 	aliases := jobSourceAliases(job)
 	for _, alias := range aliases {
@@ -400,6 +408,9 @@ func selectJSONKey(contents []byte, path string) (string, error) {
 }
 
 func (r *jobRuntime) checkout(ctx context.Context, alias string) (string, error) {
+	if r.workerSources != nil {
+		return r.checkoutWorkerSource(ctx, alias)
+	}
 	if path := r.paths[alias]; path != "" {
 		return path, nil
 	}

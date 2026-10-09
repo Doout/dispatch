@@ -27,6 +27,16 @@ func immutableCommit(value string) bool {
 // ConfigureSourceResolution resolves a live source before the accepted record is
 // written. Simulation intentionally does not fetch user repositories.
 func (s *Service) ConfigureSourceResolution(auth SourceAuthExecutor) {
+	s.configureSourceResolution(auth, false)
+}
+
+// ConfigureHostedSourceResolution resolves source refs without controller Git
+// credentials or configuration. Deployment execution still belongs to workers.
+func (s *Service) ConfigureHostedSourceResolution(auth SourceAuthExecutor) {
+	s.configureSourceResolution(auth, true)
+}
+
+func (s *Service) configureSourceResolution(auth SourceAuthExecutor, isolated bool) {
 	s.resolveRevision = func(ctx context.Context, app core.App, revision string) (string, error) {
 		if app.BuildType == core.BuildTypeCompose && strings.TrimSpace(app.ComposeContent) != "" {
 			return "inline", nil
@@ -41,7 +51,18 @@ func (s *Service) ConfigureSourceResolution(auth SourceAuthExecutor) {
 		if err != nil {
 			return "", err
 		}
-		return (DockerExecutor{}).resolveRevision(ctx, resolved, revision)
+		executor := DockerExecutor{}
+		if isolated {
+			environment, cleanup, err := PrepareIsolatedGitEnvironment(resolved)
+			if err != nil {
+				return "", err
+			}
+			defer cleanup()
+			executor.run = func(ctx context.Context, input io.Reader, output io.Writer, binary string, args ...string) error {
+				return commandWithEnvironment(ctx, environment, input, output, binary, args...)
+			}
+		}
+		return executor.resolveRevision(ctx, resolved, revision)
 	}
 }
 
