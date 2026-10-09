@@ -1,6 +1,7 @@
 package authoritativedns
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -8,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"os"
@@ -213,5 +215,79 @@ func TestACMEWaitFailureAndForeignAuthorization(t *testing.T) {
 				t.Fatal("published outside authorized names")
 			}
 		})
+	}
+}
+
+func TestACMEDirectorySwitchDoesNotReuseAnotherIssuersCertificate(t *testing.T) {
+	server, err := NewServer(filepath.Join(t.TempDir(), "zone.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := fixtureSnapshot()
+	if err = server.Apply(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	solver := &fixtureSolver{server: server, address: serveFixture(t, server), snapshot: snapshot}
+	staging := &fixtureCA{now: time.Now().UTC()}
+	production := &fixtureCA{now: staging.now}
+	r := Reconciler{DirectoryURL: "https://staging-ca.example.test/directory", TermsAccepted: true, StoreDirectory: t.TempDir(), Solver: solver, Now: func() time.Time { return staging.now }, Factory: func(crypto.Signer) ACMEClient { return staging }}
+	request := CertificateRequest{ID: "workloads", OwnerID: "team", Generation: 1, Domains: []string{"*.team.dispatch.example.test"}}
+	stagingCertificate, err := r.Ensure(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r.DirectoryURL = "https://production-ca.example.test/directory"
+	r.Factory = func(crypto.Signer) ACMEClient { return production }
+	if _, err = r.Cached(request); err == nil {
+		t.Fatal("production reconciler accepted a staging certificate")
+	}
+	// A production issuance failure must not relabel the saved staging bundle.
+	solver.failWait = true
+	if _, err = r.Ensure(t.Context(), request); err == nil {
+		t.Fatal("production issuance succeeded before DNS propagation")
+	}
+	if _, err = r.Cached(request); err == nil {
+		t.Fatal("failed production issuance made a staging certificate available")
+	}
+	solver.failWait = false
+	certificate, err := r.Ensure(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if production.orders != 2 || bytes.Equal(certificate.CertificatePEM, stagingCertificate.CertificatePEM) {
+		t.Fatal("production did not issue its own certificate")
+	}
+	cached, err := r.Cached(request)
+	if err != nil || !bytes.Equal(cached.CertificatePEM, certificate.CertificatePEM) {
+		t.Fatal("production certificate was not saved", err)
+	}
+	if _, err = r.Ensure(t.Context(), request); err != nil || production.orders != 2 {
+		t.Fatal("matching production certificate was not reused", err)
+	}
+
+	// State written without the issuer identity must also be reissued.
+	path := filepath.Join(r.StoreDirectory, digest(request.OwnerID+":"+request.ID)+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err = json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	delete(state, "directoryUrl")
+	raw, err = json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.Cached(request); err == nil {
+		t.Fatal("certificate without issuer identity was accepted")
+	}
+	if _, err = r.Ensure(t.Context(), request); err != nil || production.orders != 3 {
+		t.Fatal("certificate without issuer identity was not reissued", err)
 	}
 }

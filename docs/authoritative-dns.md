@@ -120,6 +120,10 @@ lifetime has passed, then renew it. Failed issuance preserves the previous store
 certificate. The gateway must retain its last working certificate when renewal
 returns an error and must alert before expiry.
 
+Saved certificates also record the ACME directory that issued them. Changing
+from a staging directory to production requires a new certificate immediately.
+The reconciler never serves a staging certificate as a production fallback.
+
 The hosted gateway loads a still-valid saved certificate before attempting
 renewal, including after a restart. Renewal runs every five minutes independently
 of deployment jobs. Tenant owners and administrators can retrieve their own

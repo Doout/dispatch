@@ -81,6 +81,7 @@ type Reconciler struct {
 }
 
 type certificateState struct {
+	DirectoryURL   string             `json:"directoryUrl"`
 	Request        CertificateRequest `json:"request"`
 	CertificatePEM []byte             `json:"certificatePem,omitempty"`
 	PrivateKeyPEM  []byte             `json:"privateKeyPem,omitempty"`
@@ -238,8 +239,10 @@ func (r *Reconciler) Ensure(ctx context.Context, request CertificateRequest) (re
 	if r.Now != nil {
 		now = r.Now()
 	}
-	if cached, e := inspectCertificate(state.CertificatePEM, state.PrivateKeyPEM, request.Domains, now); e == nil && now.Before(cached.RenewAfter) {
-		return cached, nil
+	if state.DirectoryURL == r.DirectoryURL {
+		if cached, e := inspectCertificate(state.CertificatePEM, state.PrivateKeyPEM, request.Domains, now); e == nil && now.Before(cached.RenewAfter) {
+			return cached, nil
+		}
 	}
 	signer, e := accountKey(ctx, filepath.Join(r.StoreDirectory, "account-"+digest(r.DirectoryURL)+".pem"))
 	if e != nil {
@@ -346,6 +349,7 @@ func (r *Reconciler) Ensure(ctx context.Context, request CertificateRequest) (re
 	}
 	state.CertificatePEM = certificate
 	state.PrivateKeyPEM = encoded
+	state.DirectoryURL = r.DirectoryURL
 	if e = save(); e != nil {
 		return CertificateResult{}, e
 	}
@@ -370,6 +374,9 @@ func (r *Reconciler) Cached(request CertificateRequest) (CertificateResult, erro
 	var state certificateState
 	if err = json.Unmarshal(raw, &state); err != nil {
 		return CertificateResult{}, err
+	}
+	if r.DirectoryURL == "" || state.DirectoryURL != r.DirectoryURL {
+		return CertificateResult{}, errors.New("saved certificate ACME directory does not match")
 	}
 	if state.Request.ID != request.ID || state.Request.OwnerID != request.OwnerID || request.Generation < state.Request.Generation || !reflect.DeepEqual(state.Request.Domains, request.Domains) {
 		return CertificateResult{}, errors.New("saved certificate ownership or names do not match")
