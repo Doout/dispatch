@@ -14,12 +14,30 @@ import (
 // PrepareIsolatedGitEnvironment gives hosted source reads only the credential
 // supplied by this tenant. The controller's environment, Git configuration,
 // credential helpers, SSH configuration and agent are never inherited.
+// Commands that use a tenant checkout must select its --git-dir explicitly.
 func PrepareIsolatedGitEnvironment(app core.App) ([]string, func(), error) {
 	directory, err := os.MkdirTemp("", "dispatch-hosted-git-")
 	if err != nil {
 		return nil, func() {}, err
 	}
 	cleanup := func() { _ = os.RemoveAll(directory) }
+	// Git otherwise discovers .git/config in the controller's working directory,
+	// even with system and global configuration disabled. Bind repository-less
+	// reads to an empty private repository. Tenant cache commands override this
+	// with their own explicit --git-dir; init still uses its destination argument.
+	repository := filepath.Join(directory, "repository.git")
+	for _, name := range []string{"objects", "refs"} {
+		if err = os.MkdirAll(filepath.Join(repository, name), 0700); err != nil {
+			cleanup()
+			return nil, func() {}, err
+		}
+	}
+	for name, contents := range map[string]string{"HEAD": "ref: refs/heads/main\n", "config": "[core]\nrepositoryformatversion = 0\nbare = true\n"} {
+		if err = os.WriteFile(filepath.Join(repository, name), []byte(contents), 0600); err != nil {
+			cleanup()
+			return nil, func() {}, err
+		}
+	}
 	templates := filepath.Join(directory, "templates")
 	if err = os.Mkdir(templates, 0700); err != nil {
 		cleanup()
@@ -29,6 +47,7 @@ func PrepareIsolatedGitEnvironment(app core.App) ([]string, func(), error) {
 		"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + directory, "XDG_CONFIG_HOME=" + directory, "LC_ALL=C",
 		"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_SYSTEM=" + os.DevNull,
 		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_ALLOW_PROTOCOL=https:ssh", "GIT_TEMPLATE_DIR=" + templates,
+		"GIT_DIR=" + repository,
 	}
 	config := [][2]string{{"credential.helper", ""}, {"core.hooksPath", os.DevNull}, {"http.followRedirects", "false"}}
 	ssh := "ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new -o GlobalKnownHostsFile=/dev/null -o PermitLocalCommand=no -o ProxyCommand=none -o ProxyJump=none -o UserKnownHostsFile=" + gitShellQuote(filepath.Join(directory, "known_hosts"))

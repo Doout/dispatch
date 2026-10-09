@@ -16,6 +16,15 @@ func TestHostedGitIgnoresControllerCredentialsAndConfiguration(t *testing.T) {
 		t.Skip("git is required")
 	}
 	directory := t.TempDir()
+	controller := filepath.Join(directory, "controller")
+	command := exec.Command(git, "init", "--quiet", controller)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("controller checkout fixture: %v %s", err, output)
+	}
+	localConfig := "[core]\nrepositoryformatversion = 0\nbare = false\n[http \"https://github.com/\"]\nextraHeader = AUTHORIZATION: basic controller-private-token\n[credential]\nhelper = controller-private-helper\n[url \"file:///controller/private/\"]\ninsteadOf = https://tenant.example/\n"
+	if err = os.WriteFile(filepath.Join(controller, ".git", "config"), []byte(localConfig), 0600); err != nil {
+		t.Fatal(err)
+	}
 	config := filepath.Join(directory, "controller.gitconfig")
 	if err = os.WriteFile(config, []byte("[credential]\nhelper = controller-private-helper\n[url \"file:///controller/private/\"]\ninsteadOf = https://tenant.example/\n[http]\nextraHeader = Authorization: Bearer controller-private-token\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -37,7 +46,8 @@ func TestHostedGitIgnoresControllerCredentialsAndConfiguration(t *testing.T) {
 			t.Fatalf("inherited controller setting: %q", value)
 		}
 	}
-	command := exec.Command(git, "config", "--list", "--show-origin")
+	command = exec.Command(git, "config", "--list", "--show-origin")
+	command.Dir = controller
 	command.Env = environment
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -47,6 +57,7 @@ func TestHostedGitIgnoresControllerCredentialsAndConfiguration(t *testing.T) {
 		t.Fatalf("controller configuration leaked: %s", output)
 	}
 	command = exec.Command(git, "ls-remote", "file://"+directory)
+	command.Dir = controller
 	command.Env = environment
 	output, err = command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "transport 'file' not allowed") {
