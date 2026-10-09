@@ -1,0 +1,804 @@
+openapi: 3.1.0
+info:
+  title: Dispatch hosted API
+  version: 0.1.0
+  description: Hosted identity, metadata-only platform administration, tenant membership and delegated
+    DNS. Browser mutations require an exact Origin when cookies are present. No CORS access is granted
+    to sibling workload hosts. Tenant operational endpoints are documented separately in openapi.yaml.
+servers:
+- url: https://{host}/api/v1
+  variables:
+    host:
+      default: dispatch.cicd.onl
+      description: Use the root host for account/platform APIs and an exact tenant console host for tenant
+        APIs.
+security:
+- platformSession: []
+- bearerSession: []
+paths:
+  /hosted:
+    get:
+      operationId: hostedMode
+      description: Available on the root and registered tenant console hosts. Returns mode, origin, and
+        either registrationEnabled or tenant and loginUrl.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                    enum:
+                    - platform
+                    - tenant
+                  origin: &id001
+                    type: string
+                  registrationEnabled:
+                    type: boolean
+                  tenant:
+                    $ref: '#/components/schemas/Tenant'
+                  loginUrl: *id001
+        default:
+          $ref: '#/components/responses/Problem'
+      security: []
+  /account/login:
+    post:
+      operationId: hostedLogin
+      description: Root host only. Creates the secure HttpOnly host-only platform cookie. Credentials
+        are never returned in JSON.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: *id001
+                password:
+                  type: string
+                  format: password
+              required:
+              - email
+              - password
+      security: []
+  /account/register:
+    post:
+      operationId: registerHostedAccount
+      description: Root host only. Sends a recipient verification link when registration is configured.
+        No password is accepted before email verification. Repeating the request can resend an expired
+        link.
+      responses:
+        '202':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: *id001
+                name: *id001
+              required:
+              - email
+              - name
+      security: []
+  /account/verify-email:
+    post:
+      operationId: verifyHostedAccount
+      description: Consumes the emailed token, sets the recipient-selected first password, and creates
+        a platform session cookie. Omitting name keeps the name supplied during registration.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: *id001
+                name: *id001
+                password:
+                  type: string
+                  format: password
+                  description: The UTF-8 encoded password must contain 12 to 72 bytes.
+                  maxLength: 72
+              required:
+              - token
+              - password
+      security: []
+  /account:
+    get:
+      operationId: hostedAccount
+      description: Root host only. Returns the current global account.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/logout:
+    post:
+      operationId: logoutHostedAccount
+      description: Revokes the current platform session and clears its cookie.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/password:
+    put:
+      operationId: changeHostedPassword
+      description: Checks the old password, changes it, and revokes all existing account sessions and
+        handoffs.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                oldPassword:
+                  type: string
+                  format: password
+                newPassword:
+                  type: string
+                  format: password
+                  description: The UTF-8 encoded password must contain 12 to 72 bytes.
+                  maxLength: 72
+              required:
+              - oldPassword
+              - newPassword
+  /account/tenants:
+    get:
+      operationId: myHostedTenants
+      description: Returns only this account's active memberships and recipient-matched invitations.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memberships:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tenant:
+                          $ref: '#/components/schemas/Tenant'
+                        role: &id002
+                          type: string
+                          enum:
+                          - owner
+                          - admin
+                          - member
+                        url: *id001
+                  invitations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tenant'
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/invitations/{id}/accept:
+    post:
+      operationId: acceptHostedInvitation
+      description: Accepts an invitation only for its active verified email recipient. The platform role
+        does not override this check.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: *id001
+  /account/handoffs:
+    post:
+      operationId: createTenantHandoff
+      description: Root host only. Requires current membership. Returns a server-derived tenant callback
+        URL containing a one-use code in its fragment. The S256 challenge came from the tenant auth/start
+        route.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: *id001
+                required:
+                - url
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tenantId: *id001
+                codeChallenge: *id001
+              required:
+              - tenantId
+              - codeChallenge
+  /hosted/auth/start:
+    get:
+      operationId: startTenantLogin
+      description: Tenant console only. Sets a secure HttpOnly PKCE verifier cookie and redirects to the
+        root login host with tenant and challenge parameters.
+      responses:
+        '303':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      security: []
+  /hosted/auth/exchange:
+    post:
+      operationId: exchangeTenantLogin
+      description: Tenant console only. Requires the verifier cookie and a matching one-minute handoff
+        code. Sets a secure host-only tenant cookie and clears the verifier.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: *id001
+              required:
+              - code
+      security: []
+  /hosted/auth/logout:
+    post:
+      operationId: logoutTenant
+      description: Revokes only this tenant session and clears its cookie.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      security: &id003
+      - tenantSession: []
+      - bearerSession: []
+  /platform/tenants:
+    get:
+      operationId: listHostedTenants
+      description: Platform administrator only. Metadata only; this does not open tenant operational databases.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tenant'
+        default:
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: createHostedTenant
+      description: Platform administrator only. Creates a pending tenant with an explicit verified owner
+        or recipient-bound email invitation. Does not enroll the creator. Provisioning retries in the
+        background.
+      responses:
+        '202':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                slug: *id001
+                name: *id001
+                ownerEmail: *id001
+              required:
+              - slug
+              - name
+              - ownerEmail
+  /platform/tenants/{id}:
+    get:
+      operationId: getHostedTenant
+      description: Platform administrator only. No post-creation mutation methods exist.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: *id001
+  /platform/tenants/{id}/usage:
+    get:
+      operationId: getHostedTenantUsage
+      description: Platform administrator only. Daily aggregate buckets. Current-day data is partial.
+        Only fields named in measured are measurements; unavailable metrics are not measured zero.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Usage'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: *id001
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 30
+  /tenants/{id}/members:
+    get:
+      operationId: listTenantMembers
+      description: Root host only. Requires owner or admin membership in this tenant; a platform administrator
+        without membership is denied.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Member'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: *id001
+    post:
+      operationId: addTenantMember
+      description: Root host only. Tenant owner only. The email must identify an existing active verified
+        account.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: *id001
+                role: *id002
+              required:
+              - email
+              - role
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: *id001
+  /tenants/{id}/members/{userId}:
+    put:
+      operationId: changeTenantMember
+      description: Tenant owner only. Changes invalidate existing tenant sessions. The last active owner
+        cannot be removed or demoted.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: *id002
+                state:
+                  type: string
+                  enum:
+                  - active
+                  - disabled
+              required:
+              - role
+              - state
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: *id001
+      - in: path
+        name: userId
+        required: true
+        schema: *id001
+    delete:
+      operationId: removeTenantMember
+      description: Tenant owner only. Revokes membership and its sessions. Re-adding the user cannot revive
+        old credentials.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: *id001
+      - in: path
+        name: userId
+        required: true
+        schema: *id001
+  /hosted/dns:
+    get:
+      operationId: listTenantDNS
+      description: Tenant console only. Owner/admin only. Lists this tenant's public records, excluding
+        ACME challenges.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DNSRecord'
+        default:
+          $ref: '#/components/responses/Problem'
+      security: *id003
+    put:
+      operationId: writeTenantDNS
+      description: Tenant console only. Owner/admin only. Names must be one label below the tenant console
+        hostname. Console, wildcard, ACME and other tenant names are reserved. New records use generation
+        0; updates require the existing generation.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DNSRecord'
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DNSWrite'
+      security: *id003
+    delete:
+      operationId: deleteTenantDNS
+      description: Deletes only a user-managed record with the exact expected generation.
+      responses:
+        '204':
+          description: Success.
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: *id001
+                type: *id001
+                generation:
+                  type: integer
+                  minimum: 1
+              required:
+              - name
+              - type
+              - generation
+      security: *id003
+  /hosted/certificate:
+    get:
+      operationId: getTenantCertificate
+      description: Tenant console only. Owner/admin only. Returns only this tenant's workload wildcard
+        certificate and private key. Returns 503 until issuance succeeds. Never returns the console wildcard
+        key.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  certificatePem: *id001
+                  privateKeyPem:
+                    type: string
+                    format: password
+                  notAfter: &id004
+                    type: string
+                    format: date-time
+                  renewAfter: *id004
+        default:
+          $ref: '#/components/responses/Problem'
+      security: *id003
+  /internal/dns/snapshot:
+    get:
+      operationId: readAuthoritativeZone
+      description: Root host only. Dedicated DNS replication bearer token, at least 32 characters. Platform
+        and tenant sessions are not accepted. Contains public DNS records and challenge TXT values, never
+        certificate keys.
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: '#/components/responses/Problem'
+      security:
+      - dnsReplicaToken: []
+components:
+  securitySchemes:
+    platformSession:
+      type: apiKey
+      in: cookie
+      name: __Host-dispatch-platform
+    tenantSession:
+      type: apiKey
+      in: cookie
+      name: __Host-dispatch-tenant
+    bearerSession:
+      type: http
+      scheme: bearer
+      description: An audience-bound user session, not a legacy installation admin token.
+    dnsReplicaToken:
+      type: http
+      scheme: bearer
+      description: Dedicated read-only DNS replica credential.
+  responses:
+    Problem:
+      description: Request rejected or service unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    User:
+      type: object
+      properties:
+        id: *id001
+        email: *id001
+        name: *id001
+        state: *id001
+        platformAdmin:
+          type: boolean
+        emailVerified:
+          type: boolean
+        createdAt: *id004
+      required:
+      - id
+      - email
+      - name
+      - platformAdmin
+    Tenant:
+      type: object
+      properties:
+        id: *id001
+        slug: *id001
+        name: *id001
+        state:
+          type: string
+          enum:
+          - pending
+          - provisioning
+          - active
+          - failed
+        createdAt: *id004
+      required:
+      - id
+      - slug
+      - name
+      - state
+      - createdAt
+    Member:
+      type: object
+      properties:
+        tenantId: *id001
+        userId: *id001
+        role: *id002
+        state:
+          type: string
+          enum:
+          - active
+          - disabled
+        createdAt: *id004
+        user:
+          type: object
+          properties:
+            id: *id001
+            email: *id001
+            name: *id001
+          required:
+          - id
+          - email
+          - name
+    Usage:
+      type: object
+      properties:
+        tenantId: *id001
+        periodStart: *id004
+        periodEnd: *id004
+        updatedAt: *id004
+        measured:
+          type: array
+          items:
+            type: string
+            enum:
+            - projects
+            - applications
+            - members
+            - builds
+            - deployments
+            - buildSeconds
+            - runtimeSeconds
+            - storageBytes
+            - transferBytes
+        projects:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current project count at collection time. Do not sum across daily buckets.
+        applications:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current non-closed application count at collection time, excluding templates.
+        members:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current active membership count at collection time. Do not sum across daily buckets.
+        builds:
+          type: integer
+          format: int64
+          minimum: 0
+        deployments:
+          type: integer
+          format: int64
+          minimum: 0
+        buildSeconds:
+          type: integer
+          format: int64
+          minimum: 0
+        runtimeSeconds:
+          type: integer
+          format: int64
+          minimum: 0
+        storageBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        transferBytes:
+          type: integer
+          format: int64
+          minimum: 0
+    DNSRecord:
+      type: object
+      properties:
+        id: *id001
+        ownerId: *id001
+        tenantId: *id001
+        name: *id001
+        type:
+          type: string
+          enum:
+          - A
+          - AAAA
+          - CNAME
+          - TXT
+        values:
+          type: array
+          items: *id001
+        ttl:
+          type: integer
+          minimum: 60
+          maximum: 86400
+        generation:
+          type: integer
+          minimum: 0
+    DNSWrite:
+      type: object
+      properties:
+        name: *id001
+        type:
+          type: string
+          enum:
+          - A
+          - AAAA
+          - CNAME
+          - TXT
+        values:
+          type: array
+          items: *id001
+        ttl:
+          type: integer
+          minimum: 60
+          maximum: 86400
+        generation:
+          type: integer
+          minimum: 0
+      required:
+      - name
+      - type
+      - values
+      - ttl
+      - generation
+    Problem:
+      type: object
+      properties:
+        status:
+          type: integer
+        title: *id001
+        detail: *id001
+      required:
+      - status
+      - title
+      - detail
