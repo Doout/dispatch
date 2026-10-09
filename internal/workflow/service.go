@@ -18,13 +18,18 @@ import (
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflowrunner"
 	"github.com/oklog/ulid/v2"
 )
 
 const defaultPollInterval = 5 * 60
 
 type Service struct {
+	RemoteJobs             workflowrunner.Runner
+	RequireRemote          bool
+	WorkerMode             string
 	PreparePreviewServices func(context.Context, core.WorkflowResource, core.WorkflowRevision, Document) error
+	RemoteHelmServices     func(context.Context, core.ServiceProvisionRequest, core.HelmServiceProvision, core.Server) (map[string]string, error)
 	RemoteDockerServices   func(context.Context, core.ServiceProvisionRequest, core.DockerServiceProvision, core.Server) (map[string]string, error)
 	// ResolvePreviewSource is a provider metadata adapter; production defaults to GitHub.
 	ResolvePreviewSource func(context.Context, string, string, int) (githubapp.PullRequestHead, error)

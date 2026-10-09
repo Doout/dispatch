@@ -189,7 +189,14 @@ func (s *Service) repositoryFiles(ctx context.Context, source core.ConfigSource,
 }
 
 func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource, repository string) (repositoryAccess, error) {
+	prepareEnvironment := deploy.PrepareGitEnvironment
+	if s.RequireRemote {
+		prepareEnvironment = deploy.PrepareIsolatedGitEnvironment
+	}
 	repositoryURL, err := s.repositoryCloneURL(ctx, source, repository)
+	if err == nil && s.RequireRemote && !remoteWorkerSourceURL(repositoryURL) {
+		return repositoryAccess{}, errors.New("hosted repositories must use HTTPS or SSH")
+	}
 	if err != nil {
 		return repositoryAccess{}, err
 	}
@@ -198,7 +205,7 @@ func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource
 		if err != nil {
 			return repositoryAccess{}, err
 		}
-		environment, cleanup, err := deploy.PrepareGitEnvironment(core.App{SourceAuthType: deploy.SourceAuthGitHubApp, SourceCredential: token})
+		environment, cleanup, err := prepareEnvironment(core.App{SourceAuthType: deploy.SourceAuthGitHubApp, SourceCredential: token})
 		return repositoryAccess{url: repositoryURL, credentialID: "github-app:" + source.GitHubAppID, environment: environment, cleanup: cleanup}, err
 	}
 	if source.CredentialSecretID == "" || s.Secrets == nil {
@@ -220,7 +227,7 @@ func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource
 	if err := deploy.ValidateSourceCredentialType(authType, secret.Type); err != nil {
 		return repositoryAccess{}, err
 	}
-	environment, cleanup, err := deploy.PrepareGitEnvironment(core.App{SourceAuthType: authType, SourceCredential: string(credential)})
+	environment, cleanup, err := prepareEnvironment(core.App{SourceAuthType: authType, SourceCredential: string(credential)})
 	return repositoryAccess{url: repositoryURL, credentialID: "secret:" + secret.ID, environment: environment, cleanup: cleanup}, err
 }
 
