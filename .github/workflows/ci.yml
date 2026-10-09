@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -race -count=1 -timeout 40m -json ./internal/store | python3 scripts/check-test-results.py --require-name postgres
+          go test -race -count=1 -timeout 40m -json ./internal/store ./internal/tenancy | python3 scripts/check-test-results.py --require-name postgres
   docker-lifecycle:
     runs-on: ubuntu-latest
     timeout-minutes: 25
