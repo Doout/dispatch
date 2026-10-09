@@ -38,7 +38,7 @@ export function useWorkflowLogs(revisionID: string, start = true, scope = revisi
       try {
         const impersonated = getImpersonatedUserID();
         const response = await fetch(`/api/v1/workflow/revisions/${encodeURIComponent(revisionID)}/logs/watch`, {
-          headers: { Accept: "text/event-stream", Authorization: `Bearer ${getToken()}`, ...(impersonated ? { "Impersonate-User": impersonated } : {}) },
+          headers: { Accept: "text/event-stream", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}), ...(impersonated ? { "Impersonate-User": impersonated } : {}) },
           signal: controller.signal, cache: "no-store",
         });
         if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) throw new Error(`Cannot open build logs (${response.status}).`);

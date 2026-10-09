@@ -43,6 +43,8 @@ import { SecretsPage } from "./secrets/SecretsPage";
 import { useInterfacePreference } from "./interface/preference";
 import { InterfaceNav, InterfaceTabs, groupTitles, navigationGroup } from "./interface/Navigation";
 import "./interface/Interface.css";
+import { useHostedTenant } from "./hosted/context";
+import { hostedRequest } from "./hosted/client";
 
 const WorkloadsPage = lazy(() => import("./interface/WorkloadsPage").then(module => ({ default: module.WorkloadsPage })));
 const ResourcesPage = lazy(() => import("./interface/ResourcesPage").then(module => ({ default: module.ResourcesPage })));
@@ -70,6 +72,7 @@ function restorePageScroll(scrollTop: number) {
 }
 
 export default function DispatchApp() {
+  const hosted = useHostedTenant();
   const [overview, setOverview] = useState<Overview | null>(null);
   const interfacePreference = useInterfacePreference(overview?.identity?.id);
   const newInterface = interfacePreference.enabled;
@@ -241,7 +244,8 @@ export default function DispatchApp() {
   useEffect(() => subscribeOverview(
     (next) => { setOverview(next); setNeedsAuth(false); setError(""); },
     () => { void load(true); },
-  ), [load]);
+    Boolean(hosted),
+  ), [load, hosted]);
 
   useEffect(() => {
     if (!overview || needsAuth || connectionCallbackHandled.current) return;
@@ -341,6 +345,7 @@ export default function DispatchApp() {
   };
 
   const startImpersonating = async (user: User) => {
+    if (hosted) return;
     setImpersonatedUserID(user.id);
     setViewingAccountProfile(false);
     setChangingPassword(false);
@@ -359,6 +364,13 @@ export default function DispatchApp() {
   };
 
   const logout = async () => {
+    if (hosted) {
+      try {
+        await hostedRequest("/hosted/auth/logout", "POST");
+        setToken(""); setOverview(null); setMobileNav(false); setChangingPassword(false); setNeedsAuth(true); setLoading(false);
+      } catch (cause) { setError((cause as Error).message); }
+      return;
+    }
     try {
       await api.logout();
     } catch {
@@ -736,8 +748,8 @@ export default function DispatchApp() {
             overview.identity?.systemRole === "owner" && (
               <AccessPage
                 identityID={overview.identity.id}
-                onChangePassword={() => setChangingPassword(true)}
-                onImpersonate={(user) => void startImpersonating(user)}
+                onChangePassword={hosted ? undefined : () => setChangingPassword(true)}
+                onImpersonate={hosted ? undefined : (user) => void startImpersonating(user)}
               />
             )}
           {!loading &&
@@ -792,12 +804,12 @@ export default function DispatchApp() {
           }}
         />
       )}
-      {changingPassword && (
+      {changingPassword && !hosted && (
         <ChangePasswordDialog onClose={() => setChangingPassword(false)} onChanged={() => void logout()} />
       )}
       {viewingAccountProfile && (
         <AccountProfileDialog
-          readOnly={Boolean(overview?.impersonator)}
+          readOnly={Boolean(overview?.impersonator) || Boolean(hosted)}
           notice={accountLinkNotice}
           initialError={accountLinkError}
           onChangePassword={() => {

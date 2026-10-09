@@ -2,7 +2,7 @@ import { applyOverviewDelta, getOverviewState, setOverviewState } from "./overvi
 import { api, getToken, getImpersonatedUserID, type Overview } from "./api";
 
 // One connection per visible page. Fetch preserves bearer and impersonation headers.
-export function subscribeOverview(onOverview: (value: Overview) => void, onAuthError: () => void) {
+export function subscribeOverview(onOverview: (value: Overview) => void, onAuthError: () => void, cookieSession = false) {
   let controller: AbortController | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let delay = 1000;
@@ -13,7 +13,7 @@ export function subscribeOverview(onOverview: (value: Overview) => void, onAuthE
   };
   const connect = async () => {
     disconnect();
-    if (stopped || document.hidden || !getToken() || !getOverviewState()) return;
+    if (stopped || document.hidden || !cookieSession && !getToken() || !getOverviewState()) return;
     let baseline = getOverviewState()!;
     const current = new AbortController();
     controller = current;
@@ -34,7 +34,7 @@ export function subscribeOverview(onOverview: (value: Overview) => void, onAuthE
         headers: {
           Accept: "text/event-stream",
           "Last-Event-ID": baseline.version,
-          Authorization: `Bearer ${getToken()}`,
+          ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
           ...(impersonated ? { "Impersonate-User": impersonated } : {}),
         },
         signal: current.signal,
