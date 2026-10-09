@@ -8,7 +8,7 @@ RUN --mount=type=cache,target=/root/.npm --mount=type=cache,target=/pnpm/store \
 COPY web/ ./
 RUN pnpm build
 
-FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.2-bookworm AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG DISPATCH_VERSION=development
