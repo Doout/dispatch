@@ -30,3 +30,4 @@
 /scripts/__pycache__/
 /dispatch-dns
 /dispatch-worker
+/dispatch-platform
