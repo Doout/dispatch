@@ -31,6 +31,9 @@ func (b *Broker) Submit(ctx context.Context, id string, r Request) (core.Runtime
 	if err := r.Validate(); err != nil {
 		return core.RuntimeJob{}, err
 	}
+	if err := b.validateWorkerScope(ctx, r); err != nil {
+		return core.RuntimeJob{}, err
+	}
 	raw, err := json.Marshal(r)
 	if err != nil {
 		return core.RuntimeJob{}, err
@@ -101,6 +104,9 @@ func (b *Broker) request(j core.RuntimeJob) (Request, error) {
 func (b *Broker) executionRequest(ctx context.Context, j core.RuntimeJob) (Request, error) {
 	r, err := b.request(j)
 	if err != nil {
+		return r, err
+	}
+	if err = b.validateWorkerScope(ctx, r); err != nil {
 		return r, err
 	}
 	if err = b.validateServiceOwner(ctx, j, r); err != nil {

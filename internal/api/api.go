@@ -31,6 +31,7 @@ type AuthConfig struct {
 	Password          string
 	PublicURL         string
 	TrustedProxyCIDRs string
+	Hosted            *HostedAuth
 }
 
 type EventConfig struct {

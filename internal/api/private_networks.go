@@ -19,11 +19,13 @@ import (
 )
 
 type privateNetworkRequest struct {
-	Name       string `json:"name"`
-	Driver     string `json:"driver"`
-	SocketPath string `json:"socketPath"`
-	Authority  string `json:"authority"`
-	Route      string `json:"route"`
+	WorkflowMode      string `json:"workflowMode"`
+	WorkflowProjectID string `json:"workflowProjectId"`
+	Name              string `json:"name"`
+	Driver            string `json:"driver"`
+	SocketPath        string `json:"socketPath"`
+	Authority         string `json:"authority"`
+	Route             string `json:"route"`
 }
 
 type lanewayConnectorInstallRequest struct {
@@ -48,10 +50,20 @@ func (a *API) createPrivateNetwork(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+	if a.auth.Hosted != nil && input.Driver != edge.DriverAgent {
+		problem(w, http.StatusUnprocessableEntity, "Worker required", "Hosted tenants use enrolled workers. Choose an outbound agent connection.")
+		return
+	}
 	item, detail := privateNetworkInput(input, nil)
 	if detail != "" {
 		problem(w, http.StatusBadRequest, "Invalid private network", detail)
 		return
+	}
+	if project := item.Config["workflowProjectId"]; project != "" {
+		if _, err := a.store.GetProject(r.Context(), project); err != nil {
+			a.notFoundOrInternal(w, err, "Worker project")
+			return
+		}
 	}
 	now := time.Now().UTC()
 	item.ID, item.State, item.CreatedAt, item.UpdatedAt = ulid.Make().String(), "unverified", now, now
@@ -98,10 +110,20 @@ func (a *API) updatePrivateNetwork(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+	if a.auth.Hosted != nil && input.Driver != edge.DriverAgent {
+		problem(w, http.StatusUnprocessableEntity, "Worker required", "Hosted tenants use enrolled workers. Choose an outbound agent connection.")
+		return
+	}
 	item, detail := privateNetworkInput(input, &existing)
 	if detail != "" {
 		problem(w, http.StatusBadRequest, "Invalid private network", detail)
 		return
+	}
+	if project := item.Config["workflowProjectId"]; project != "" {
+		if _, err := a.store.GetProject(r.Context(), project); err != nil {
+			a.notFoundOrInternal(w, err, "Worker project")
+			return
+		}
 	}
 	item.ID, item.CreatedAt, item.UpdatedAt = existing.ID, existing.CreatedAt, time.Now().UTC()
 	item.TokenHash = existing.TokenHash
@@ -351,6 +373,27 @@ func privateNetworkInput(input privateNetworkRequest, existing *core.PrivateNetw
 		}
 	} else {
 		item.Config["mode"] = "agent"
+		mode := strings.TrimSpace(input.WorkflowMode)
+		project := strings.TrimSpace(input.WorkflowProjectID)
+		if mode == "" && existing != nil {
+			mode = existing.Config["workflowMode"]
+			if project == "" {
+				project = existing.Config["workflowProjectId"]
+			}
+		}
+		if mode != "" && mode != "tenant" && mode != "managed" && mode != "disabled" {
+			return item, "Choose tenant, managed or disabled workflow execution."
+		}
+		if mode != "" {
+			item.Config["workflowMode"] = mode
+			if mode != "disabled" {
+				item.Config["workflowProjectId"] = project
+			}
+		}
+
+	}
+	if input.Driver != edge.DriverAgent && (input.WorkflowMode != "" || input.WorkflowProjectID != "") {
+		return item, "Workflow execution requires an enrolled Dispatch agent."
 	}
 	if existing != nil && existing.Driver != input.Driver {
 		return item, "The private network driver cannot be changed."

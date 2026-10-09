@@ -23,7 +23,7 @@ func (a *API) infrastructureManager() *provision.Manager {
 	if !ok {
 		return nil
 	}
-	return &provision.Manager{Store: data, Secrets: a.secretResolver, Edge: a.edge, Vault: a.eventConfig.Vault, Admission: quota.InfrastructureQuotaAdmission, Authorize: a.authorizeInfrastructure, Bootstrap: a.bootstrapManager()}
+	return &provision.Manager{RequireRelay: a.auth.Hosted != nil, Store: data, Secrets: a.secretResolver, Edge: a.edge, Vault: a.eventConfig.Vault, Admission: quota.InfrastructureQuotaAdmission, Authorize: a.authorizeInfrastructure, Bootstrap: a.bootstrapManager()}
 }
 func (a *API) infrastructureRoutes(r chi.Router) {
 	a.infrastructureLifecycleRoutes(r)

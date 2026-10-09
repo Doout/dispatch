@@ -14,6 +14,8 @@ import (
 var ErrRuntimeJobConflict = errors.New("runtime operation identity or lease changed")
 
 type RuntimeJobStore interface {
+	GetPrivateNetwork(context.Context, string) (core.PrivateNetwork, error)
+	GetServer(context.Context, string) (core.Server, error)
 	GetStorage(context.Context, string) (core.StorageResource, error)
 	GetEdgeCredential(context.Context, string) (core.EdgeCredential, error)
 	GetServiceProvisionRun(context.Context, string) (core.ServiceProvisionRun, error)
