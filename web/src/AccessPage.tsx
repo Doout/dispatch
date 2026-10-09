@@ -28,6 +28,8 @@ import { PageHeader } from "./PageHeader";
 import { useDialogFocus } from "./useDialogFocus";
 import { SignInMethods } from "./SignInMethods";
 import { AccountProfileDialog } from "./AccountProfileDialog";
+import { accountURL, useHostedTenant } from "./hosted/context";
+import { ProjectAccess as HostedProjectAccess } from "./hosted/ProjectAccess";
 
 type Section = "users" | "teams" | "signin";
 type Editor =
@@ -79,6 +81,28 @@ function reviewingPendingFromURL(): boolean {
 }
 
 export function AccessPage({
+  identityID,
+  onChangePassword,
+  onImpersonate,
+}: {
+  identityID?: string;
+  onChangePassword?: () => void;
+  onImpersonate?: (user: User) => void;
+}) {
+  const hosted = useHostedTenant();
+  return hosted ? <HostedAccessPage /> : <LocalAccessPage identityID={identityID} onChangePassword={onChangePassword} onImpersonate={onImpersonate} />;
+}
+
+function HostedAccessPage() {
+  const hosted = useHostedTenant()!;
+  const [access, setAccess] = useState<AccessOverview | null>(null), [error, setError] = useState("");
+  const [editor, setEditor] = useState<Editor>(null), [deleting, setDeleting] = useState<DeleteTarget>(null), [projectUser, setProjectUser] = useState<User | null>(null);
+  const load = useCallback(async () => { try { setAccess(await api.access()); setError(""); } catch (cause) { setError((cause as Error).message); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  return <div className="page-layout access-page"><PageHeader view="access" /><div className="hosted-access-notice"><span>Manage tenant membership from your account.</span><a className="quiet-button" href={accountURL(hosted, "mine")}>My tenants</a></div>{error && <p role="alert" className="form-error">{error}<button className="quiet-button" onClick={() => void load()}>Retry</button></p>}{!access && !error && <p role="status">Loading access...</p>}{access && <><section className="hosted-panel"><h2>Project access</h2><div className="hosted-table-wrap"><table className="hosted-table"><thead><tr><th>Member</th><th>Direct access</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{access.users.filter(user => user.state === "active").map(user => <tr key={user.id}><td>{user.displayName}</td><td>{user.systemRole === "owner" ? "All projects" : <GrantList access={access} grants={access.assignments.filter(grant => grant.principalType === "user" && grant.principalId === user.id)} />}</td><td>{user.systemRole !== "owner" && <button className="quiet-button" onClick={() => setProjectUser(user)}>Edit project access</button>}</td></tr>)}</tbody></table></div></section><section className="hosted-panel"><header className="hosted-panel-header"><h2>Teams</h2><button className="primary-button" onClick={() => setEditor({ kind: "team" })}>Add team</button></header><TeamsTable access={access} onEdit={team => setEditor({ kind: "team", item: team })} onDelete={team => setDeleting({ kind: "team", item: team })} /></section></>}{editor && access && <AccessEditor access={access} editor={editor} onChangePassword={() => {}} onClose={() => setEditor(null)} onSaved={async () => { setEditor(null); await load(); }} />}{deleting && <AccessDeleteDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={async () => { setDeleting(null); await load(); }} />}{projectUser && access && <HostedProjectAccess access={access} user={projectUser} onClose={() => setProjectUser(null)} onSaved={load} />}</div>;
+}
+
+function LocalAccessPage({
   identityID,
   onChangePassword,
   onImpersonate,

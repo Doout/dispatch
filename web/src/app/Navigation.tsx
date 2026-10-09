@@ -21,6 +21,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Overview } from "../api";
 import { routePath, shouldHandleNavigation, View } from "../routes";
 import { Mark } from "../components/PageStates";
+import { accountURL, useHostedTenant } from "../hosted/context";
 
 export function Nav({
   open,
@@ -205,6 +206,7 @@ export function AccountMenu({
   onLogout: () => void;
 }) {
   const name = identity.displayName || identity.username;
+  const hosted = useHostedTenant();
   const secondary =
     identity.username !== name
       ? identity.username
@@ -237,14 +239,14 @@ export function AccountMenu({
             <span>{secondary}</span>
           </div>
           <DropdownMenu.Separator className="account-menu-separator" />
-          <DropdownMenu.Item
+          {hosted ? <><DropdownMenu.Item asChild className="account-menu-item"><a href={accountURL(hosted)}><UserCircle size={18} />Account settings</a></DropdownMenu.Item><DropdownMenu.Item asChild className="account-menu-item"><a href={accountURL(hosted, "mine")}><UsersThree size={18} />My tenants</a></DropdownMenu.Item></> : <DropdownMenu.Item
             className="account-menu-item"
             onSelect={onOpenProfile}
           >
             <UserCircle size={18} />
             My profile
-          </DropdownMenu.Item>
-          {identity.id !== "controller-owner" && !impersonating && (
+          </DropdownMenu.Item>}
+          {!hosted && identity.id !== "controller-owner" && !impersonating && (
             <>
               <DropdownMenu.Item
                 className="account-menu-item"
