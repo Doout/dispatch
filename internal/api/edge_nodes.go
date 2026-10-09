@@ -166,17 +166,25 @@ func (a *API) authenticateEdge(r *http.Request) (core.PrivateNetwork, bool) {
 	return item, subtle.ConstantTimeCompare([]byte(encoded), []byte(item.TokenHash)) == 1
 }
 
-func (a *API) touchEdgeNode(ctx context.Context, item core.PrivateNetwork, r *http.Request) {
-	now := time.Now().UTC()
-	if item.Details == nil {
-		item.Details = map[string]string{}
+func (a *API) touchEdgeNode(ctx context.Context, item core.PrivateNetwork, r *http.Request, updates ...map[string]string) {
+	a.recordEdgeNodeHealth(ctx, item.ID, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), r, updates...)
+}
+
+func (a *API) recordEdgeNodeHealth(ctx context.Context, id, token string, r *http.Request, updates ...map[string]string) {
+	data, ok := a.store.(store.EdgeNodeHealthStore)
+	if !ok {
+		return
 	}
-	item.Details["lastSeenAt"] = now.Format(time.RFC3339Nano)
+	details := map[string]string{}
+	for _, update := range updates {
+		for key, value := range update {
+			details[key] = value
+		}
+	}
 	if version := strings.TrimSpace(r.Header.Get("X-Dispatch-Agent-Version")); version != "" {
-		item.Details["version"] = version
+		details["version"] = version
 	}
-	item.State, item.LastVerifiedAt, item.UpdatedAt = "ready", &now, now
-	_ = a.store.UpdatePrivateNetwork(ctx, item)
+	_ = data.UpdateEdgeNodeHealth(ctx, id, edge.TokenHash(token), details, time.Now().UTC())
 }
 
 func (a *API) leaseEdgeJob(w http.ResponseWriter, r *http.Request) {
