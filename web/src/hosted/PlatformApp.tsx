@@ -95,7 +95,10 @@ export function PlatformApp({
           tenantDestination(result.url, configuration.origin),
         ),
       )
-      .catch((cause) => setError((cause as Error).message));
+      .catch((cause) => {
+        transferring.current = false;
+        setError((cause as Error).message);
+      });
   }, [account, handoff, configuration.origin]);
   const logout = async () => {
     try {

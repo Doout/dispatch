@@ -260,3 +260,30 @@ it("rejects handoff addresses outside an exact tenant host", () => {
   ])
     expect(() => tenantDestination(url, platform.origin)).toThrow();
 });
+
+it("retries tenant sign-in after a failed handoff", async () => {
+  window.history.replaceState({}, "", "/?tenant=tenant-a&challenge=challenge");
+  const user = userEvent.setup();
+  let handoffs = 0;
+  const fetcher = vi.fn(async (path: string) => {
+    if (path === "/api/v1/account") return json(account);
+    if (path === "/api/v1/account/tenants")
+      return json({ memberships: [], invitations: [] });
+    if (path === "/api/v1/account/handoffs") {
+      handoffs++;
+      if (handoffs === 1)
+        return json({ detail: "Sign-in is temporarily unavailable." }, 503);
+      // Hold the retried request before navigation so the browser stays here.
+      return new Promise<Response>(() => {});
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<PlatformApp configuration={platform} />);
+  await screen.findByText("Sign-in is temporarily unavailable.");
+  expect(handoffs).toBe(1);
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(handoffs).toBe(2));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText("Opening your tenant...")).not.toBeNull();
+});
