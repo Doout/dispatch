@@ -106,6 +106,9 @@ func (c *Catalog) Migrate(ctx context.Context) error {
 			return fmt.Errorf("initialize tenant catalog: %w", err)
 		}
 	}
+	if err = c.initializeDNSChanges(ctx, tx); err != nil {
+		return fmt.Errorf("initialize DNS publication: %w", err)
+	}
 	return tx.Commit()
 }
 
@@ -127,6 +130,10 @@ var catalogSchema = []string{
 	`CREATE TABLE IF NOT EXISTS tenant_zone_generation (id INTEGER PRIMARY KEY CHECK(id=1), generation BIGINT NOT NULL)`,
 	`INSERT INTO tenant_zone_generation(id,generation) VALUES(1,0) ON CONFLICT(id) DO NOTHING`,
 	`CREATE TABLE IF NOT EXISTS tenant_zone_records (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, tenant_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, values_json TEXT NOT NULL, ttl BIGINT NOT NULL, generation BIGINT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS tenant_dns_provider (slot INTEGER PRIMARY KEY CHECK(slot=1), target TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS tenant_dns_changes (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, tenant_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, values_json TEXT NOT NULL, ttl BIGINT NOT NULL, record_generation BIGINT NOT NULL, generation BIGINT NOT NULL, delete_record INTEGER NOT NULL CHECK(delete_record IN (0,1)))`,
+	`CREATE INDEX IF NOT EXISTS tenant_dns_changes_generation ON tenant_dns_changes(generation,id)`,
+	`CREATE INDEX IF NOT EXISTS tenant_dns_changes_tenant ON tenant_dns_changes(tenant_id,generation,id)`,
 	`INSERT INTO tenancy_schema(version) VALUES(1) ON CONFLICT(version) DO NOTHING`,
 }
 
