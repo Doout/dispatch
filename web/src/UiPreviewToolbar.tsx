@@ -57,6 +57,7 @@ export function UiPreviewToolbar({
         <label>
           Data source
           <select
+            aria-label="Data source"
             value={configuration.source}
             disabled={busy}
             onChange={(event) =>
