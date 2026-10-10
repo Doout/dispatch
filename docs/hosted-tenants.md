@@ -164,21 +164,26 @@ Delegation alone cannot bootstrap that HTTPS connection. Supply a trusted
 bootstrap certificate and establish both nameservers before switching to ACME
 issuance. Do not disable certificate verification to get through bootstrap.
 
-For Dispatch-managed renewal, configure an explicit ACME directory and contact:
+Keep certificate or proxy TLS mode while testing DNS-01 issuance. Renewal runs
+whenever an ACME directory is configured, independently of the serving mode:
 
 ```sh
-export DISPATCH_HOSTED_TLS_MODE=acme
+export DISPATCH_HOSTED_TLS_MODE=certificate
 export DISPATCH_HOSTED_ACME_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory
 export DISPATCH_HOSTED_ACME_EMAIL=operations@example.com
 export DISPATCH_HOSTED_ACME_ACCEPT_TERMS=true
 ```
 
-Use staging until DNS-01 and certificate installation work. Select the production
-directory only during the deployment/configuration task. ACME mode can retain
-the configured bootstrap certificate for the root host until its first managed
-certificate is ready. Renewal runs every five minutes, independently of builds
-and deployments. Existing certificates remain available during renewal failures
-until they expire.
+Use staging until DNS-01 and certificate installation work. Keep the trusted
+bootstrap certificate configured so DNS replicas can still fetch their zone.
+Staging issuance must not serve console HTTPS; ACME serving mode rejects the
+Let's Encrypt staging directory. Switch to the production directory while
+keeping certificate or proxy mode. Once production issuance works, select
+`DISPATCH_HOSTED_TLS_MODE=acme` if the controller terminates HTTPS. ACME mode can
+retain the configured bootstrap certificate for the root host until its first
+managed certificate is ready. Renewal runs every five minutes, independently of
+builds and deployments. Existing certificates remain available during renewal
+failures until they expire.
 
 The controller obtains one certificate for the root and tenant consoles, and a
 separate wildcard certificate for each tenant's workload namespace. DNS replicas
@@ -186,8 +191,10 @@ receive TXT records, never certificate private keys. An authenticated tenant
 owner or admin can retrieve only that tenant's workload bundle at
 `GET /api/v1/hosted/certificate`. The response includes `certificatePem`,
 `privateKeyPem`, `notAfter`, and `renewAfter`. Configure the workload ingress to
-install and refresh its tenant bundle; it must not receive the platform key.
-Certificate installation at an external ingress remains part of deployment setup.
+install and refresh its tenant bundle with `dispatch-certificate-sync`. A tenant
+owner or admin issues a separate 90-day download credential; the ingress does not
+need a browser session or the platform key. See [certificate installation](certificate-installation.md)
+for credential rotation, atomic file installation, nginx reload and the timer.
 
 Alternatively, terminate HTTPS in a proxy on the same machine with
 `DISPATCH_HOSTED_TLS_MODE=proxy` and a loopback listener. Set

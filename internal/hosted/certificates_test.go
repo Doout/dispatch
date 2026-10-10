@@ -185,3 +185,42 @@ func TestHostedCertificateRestartLoadsValidBundleBeforeRenewal(t *testing.T) {
 		t.Fatal("saved certificate used for different names")
 	}
 }
+
+func TestHostedCertificateInstallerCannotUseOtherTenantAPIs(t *testing.T) {
+	f := newHostedFixture(t)
+	a := f.tenant(t, "alpha", "owner-a")
+	b := f.tenant(t, "bravo", "owner-b")
+	root := f.server.Config.RootDomain
+	f.server.cacheCertificate(a.ID, hostedCertificateFixture(t, "*.alpha."+root))
+	f.server.cacheCertificate(b.ID, hostedCertificateFixture(t, "*.bravo."+root))
+	host := "alpha." + root
+	path := "/api/v1/hosted/certificate/token"
+	session := f.session(t, "owner-a", tenancy.TenantAudience(a.ID))
+	for _, token := range []string{f.session(t, "platform", tenancy.AudiencePlatform), f.session(t, "owner-b", tenancy.TenantAudience(b.ID)), f.server.Config.DNSReadToken, ""} {
+		if w := f.request(t, host, http.MethodPost, path, token, nil); w.Code != http.StatusForbidden {
+			t.Fatal("nonowner obtained installer token", w.Code)
+		}
+	}
+	response := f.request(t, host, http.MethodPost, path, session, nil)
+	var credential struct {
+		Token string `json:"token"`
+	}
+	if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &credential) != nil || credential.Token == "" || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("installer credential not issued privately", response.Code)
+	}
+	token := credential.Token
+	if w := f.request(t, host, http.MethodGet, "/api/v1/hosted/certificate", token, nil); w.Code != http.StatusOK {
+		t.Fatal("installer could not download bundle", w.Code)
+	}
+	for _, request := range []struct{ host, method, path string }{{host, http.MethodPost, path}, {host, http.MethodDelete, path}, {host, http.MethodGet, "/api/v1/hosted/dns"}, {host, http.MethodGet, "/api/v1/projects"}, {"bravo." + root, http.MethodGet, "/api/v1/hosted/certificate"}, {root, http.MethodGet, "/api/v1/platform/tenants"}} {
+		if w := f.request(t, request.host, request.method, request.path, token, nil); w.Code < 400 {
+			t.Fatal("installer gained unrelated access", request, w.Code)
+		}
+	}
+	if w := f.request(t, host, http.MethodDelete, path, session, nil); w.Code != http.StatusNoContent {
+		t.Fatal(w.Code)
+	}
+	if w := f.request(t, host, http.MethodGet, "/api/v1/hosted/certificate", token, nil); w.Code != http.StatusForbidden {
+		t.Fatal("revoked installer downloaded certificate", w.Code)
+	}
+}

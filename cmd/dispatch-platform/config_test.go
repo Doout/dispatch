@@ -137,3 +137,27 @@ func TestExplicitCatalogCannotOpenAnUnrelatedSQLiteFile(t *testing.T) {
 		t.Fatal("explicit SQLite path bypassed hosted catalog boundary")
 	}
 }
+
+func TestStagingIssuanceKeepsTrustedConsoleTLS(t *testing.T) {
+	configFixture(t)
+	t.Setenv("DISPATCH_HOSTED_ACME_DIRECTORY", "https://acme-staging-v02.api.letsencrypt.org/directory")
+	t.Setenv("DISPATCH_HOSTED_ACME_EMAIL", "operations@example.test")
+	t.Setenv("DISPATCH_HOSTED_ACME_ACCEPT_TERMS", "true")
+	t.Setenv("DISPATCH_HOSTED_TLS_CERT_FILE", "/bootstrap/fullchain.pem")
+	t.Setenv("DISPATCH_HOSTED_TLS_KEY_FILE", privateTestFile(t, "bootstrap-key", "fixture key"))
+	for _, mode := range []string{"proxy", "certificate"} {
+		t.Setenv("DISPATCH_HOSTED_TLS_MODE", mode)
+		config, err := readConfiguration()
+		if err != nil || config.TLSMode != mode || config.Hosted.Certificates.DirectoryURL == "" {
+			t.Fatal("staging issuance cannot coexist with trusted console TLS", err)
+		}
+	}
+	t.Setenv("DISPATCH_HOSTED_TLS_MODE", "acme")
+	if _, err := readConfiguration(); err == nil {
+		t.Fatal("staging issuance can replace trusted console TLS")
+	}
+	t.Setenv("DISPATCH_HOSTED_ACME_DIRECTORY", "https://acme-v02.api.letsencrypt.org/directory")
+	if _, err := readConfiguration(); err != nil {
+		t.Fatal("production ACME serving rejected", err)
+	}
+}

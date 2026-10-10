@@ -556,8 +556,8 @@ paths:
   /hosted/certificate:
     get:
       operationId: getTenantCertificate
-      description: Tenant console only. Owner/admin only. Returns only this tenant's workload wildcard
-        certificate and private key. Returns 503 until issuance succeeds. Never returns the console wildcard
+      description: Tenant console only. Accepts an owner/admin session or that tenant's certificate installer
+        bearer token. Returns only this tenant's workload wildcard certificate and private key. Returns 503 until issuance succeeds. Never returns the console wildcard
         key.
       responses:
         '200':
@@ -577,7 +577,41 @@ paths:
                   renewAfter: *id004
         default:
           $ref: '#/components/responses/Problem'
+      security:
+      - tenantSession: []
+      - bearerSession: []
+      - certificateInstallerToken: []
+  /hosted/certificate/token:
+    post:
+      operationId: rotateTenantCertificateToken
+      description: Tenant console only. Requires an owner/admin session. Replaces the tenant's installer
+        credential and returns its plaintext once. Expires after 90 days. Changing the issuing user's
+        membership revokes the credential. The token permits certificate download only.
       security: *id003
+      responses:
+        '201':
+          description: Credential created. The response is never cached.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expiresAt]
+                properties:
+                  token:
+                    type: string
+                    format: password
+                  expiresAt: *id004
+        default:
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: revokeTenantCertificateToken
+      description: Tenant console only. Requires an owner/admin session. Revokes the installer credential immediately.
+      security: *id003
+      responses:
+        '204':
+          description: Credential revoked.
+        default:
+          $ref: '#/components/responses/Problem'
   /internal/dns/snapshot:
     get:
       operationId: readAuthoritativeZone
@@ -609,6 +643,10 @@ components:
       type: http
       scheme: bearer
       description: An audience-bound user session, not a legacy installation admin token.
+    certificateInstallerToken:
+      type: http
+      scheme: bearer
+      description: Tenant-scoped workload certificate download credential. Cannot access other tenant APIs.
     dnsReplicaToken:
       type: http
       scheme: bearer

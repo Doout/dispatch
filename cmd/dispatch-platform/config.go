@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,6 +133,10 @@ func readConfiguration() (configuration, error) {
 	case "acme":
 		if c.Hosted.Certificates.DirectoryURL == "" {
 			return c, errors.New("ACME TLS mode requires configured ACME issuance")
+		}
+		directory, _ := url.Parse(c.Hosted.Certificates.DirectoryURL)
+		if directory != nil && strings.EqualFold(strings.TrimSuffix(directory.Hostname(), "."), "acme-staging-v02.api.letsencrypt.org") {
+			return c, errors.New("staging ACME certificates cannot serve console HTTPS; use certificate or proxy TLS mode while testing issuance")
 		}
 		if (c.CertificateFile == "") != (c.KeyFile == "") {
 			return c, errors.New("provide both bootstrap TLS certificate and key")

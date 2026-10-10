@@ -143,6 +143,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.tenantDNS(w, r, tenant)
 		return
 	}
+	if r.URL.Path == "/api/v1/hosted/certificate/token" {
+		s.tenantCertificateToken(w, r, tenant)
+		return
+	}
 	if r.URL.Path == "/api/v1/hosted/certificate" {
 		s.tenantCertificate(w, r, tenant)
 		return

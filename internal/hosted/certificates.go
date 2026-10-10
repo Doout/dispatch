@@ -181,7 +181,7 @@ func (s *Server) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 }
 
 func (s *Server) tenantCertificate(w http.ResponseWriter, r *http.Request, tenant tenancy.Tenant) {
-	if !s.tenantOwner(r, tenant) {
+	if !s.tenantOwner(r, tenant) && s.Catalog.AuthenticateCertificateToken(r.Context(), tenant.ID, certificateBearer(r)) != nil {
 		problem(w, http.StatusForbidden, "Tenant administrator access required.")
 		return
 	}
