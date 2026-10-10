@@ -99,9 +99,17 @@ Tenant workers run in their own containers or on separate hosts. The hosted
 controller image contains no Docker CLI or socket mount.
 
 Create a private data directory and credential files readable only by the service
-account. Use a dedicated PostgreSQL catalog database. The tenant database
-provisioner must create databases owned by restricted login roles and revoke
-public access to them. These credentials stay outside tenant runtime connections.
+account. Use PostgreSQL 16 or later with separate catalog and provisioner logins.
+The catalog login owns its catalog database and does not need `CREATEDB`,
+`CREATEROLE` or superuser access. The provisioner needs `LOGIN`, `CREATEDB`,
+`CREATEROLE` and `NOINHERIT`, with `NOSUPERUSER`, `NOREPLICATION` and `NOBYPASSRLS`.
+It needs `CONNECT` on the maintenance database in its connection URL.
+
+The provisioner creates a restricted login and database for each tenant. It grants
+itself permission to assume that tenant role with `INHERIT FALSE, SET TRUE`, then
+uses `SET ROLE` to revoke public access to the tenant database. Tenant logins have
+no role memberships. Tenant runtimes receive only their own database credentials.
+See [tenant data isolation](tenant-data-isolation.md) for the access boundary.
 
 Save these values in `hosted.env` for the controller container:
 
@@ -142,7 +150,28 @@ docker run --rm --env-file hosted.env \
 
 The password must contain 12 to 72 bytes. Bootstrap only works on an empty identity
 catalog. It cannot elevate an existing user or create another administrator after
-accounts exist. Start the controller after bootstrap:
+accounts exist.
+
+Without email delivery, verify the initial tenant owner's identity and create
+their account before starting the controller:
+
+```sh
+docker run --rm --env-file hosted.env \
+  --mount type=bind,src=/srv/dispatch-platform,dst=/var/lib/dispatch-platform \
+  --mount type=bind,src=/srv/dispatch-platform-secrets,dst=/run/secrets,readonly \
+  dispatch-platform:local create-user \
+  --email owner@example.com --name 'Tenant owner' \
+  --password-file /run/secrets/dispatch-owner-password
+```
+
+`create-user` creates an active, verified account. It refuses an existing email
+and grants no platform role or tenant membership. After startup, sign in as the
+platform administrator and create a tenant using that owner's email. Creation
+assigns the existing account as owner without sending email. Give the owner their
+initial password privately; they can change it in account settings after signing
+in. Remove the initial password files after provisioning.
+
+Start the controller:
 
 ```sh
 docker run -d --name dispatch-platform --restart unless-stopped \
@@ -153,7 +182,32 @@ docker run -d --name dispatch-platform --restart unless-stopped \
   dispatch-platform:local serve
 ```
 
-Add SMTP settings to `hosted.env` to let invited owners and other users register:
+Account provisioning and administrator recovery are offline commands. They take
+the same directory and catalog locks as the controller. Stop the controller
+before running either command on an existing installation, and use the same
+catalog configuration and data mount.
+
+To recover an existing platform administrator:
+
+```sh
+docker stop dispatch-platform
+docker run --rm --env-file hosted.env \
+  --mount type=bind,src=/srv/dispatch-platform,dst=/var/lib/dispatch-platform \
+  --mount type=bind,src=/srv/dispatch-platform-secrets,dst=/run/secrets,readonly \
+  dispatch-platform:local recover-admin \
+  --email admin@example.com \
+  --password-file /run/secrets/dispatch-recovery-password
+docker start dispatch-platform
+```
+
+Recovery requires an active, verified platform administrator. It changes the
+password and invalidates existing sessions and sign-in handoffs. It cannot create,
+enable or promote an account, and tenant memberships stay unchanged. Remove the
+recovery password file after use. Self-service forgotten-password recovery is
+not available.
+
+Email delivery is optional. Add SMTP settings to `hosted.env` to let invited
+owners and other users register:
 
 ```dotenv
 DISPATCH_HOSTED_SMTP_ADDRESS=smtp.example.com:587
@@ -165,13 +219,19 @@ DISPATCH_HOSTED_SMTP_PASSWORD_FILE=/run/secrets/dispatch-smtp-password
 SMTP requires STARTTLS with certificate verification. Registration sends a
 verification link; its recipient chooses the first password. If SMTP is not
 configured, registration is unavailable. The initial tenant owner must be an
-existing verified user or the exact email recipient of an invitation. Invitations
-appear after that person verifies and signs into their account. A platform admin
-cannot claim them on the recipient's behalf.
+existing verified user, including an account created with `create-user`, or the
+exact email recipient of an invitation. Invitations appear after that person
+verifies and signs into their account. A platform admin cannot claim them on the
+recipient's behalf.
 
 SQLite is available for disposable development with
 `DISPATCH_HOSTED_ALLOW_SQLITE=true`. It creates a catalog file and separate tenant
 files under the new data directory. Production hosted mode expects PostgreSQL.
+
+The root console's `/healthz` endpoint reports that the HTTP process is running.
+`/readyz` also queries the migrated catalog and returns `503` during shutdown or
+when the catalog is unavailable or uninitialized. Neither endpoint verifies DNS
+publication, certificate issuance, worker availability or individual tenant databases.
 
 ## TLS bootstrap and renewal
 
@@ -187,6 +247,7 @@ DISPATCH_HOSTED_ACME_ACCEPT_TERMS=true
 
 Issuance runs independently of the TLS serving mode. Keep certificate or proxy
 mode during staging tests, because staging certificates are not publicly trusted.
+ACME serving mode rejects the Let's Encrypt staging directory.
 After DNS-01 works, switch to the production directory and verify issuance. Then
 use `DISPATCH_HOSTED_TLS_MODE=acme` if Dispatch should serve and renew the console
 certificate itself. Without a bootstrap certificate, ACME serving becomes

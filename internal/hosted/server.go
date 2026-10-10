@@ -238,6 +238,7 @@ func (s *Server) openRuntime(tenant tenancy.Tenant) (*TenantRuntime, error) {
 
 func (s *Server) platformRoutes() http.Handler {
 	r := chi.NewRouter()
+	r.Get("/readyz", s.readiness)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

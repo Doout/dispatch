@@ -1,0 +1,109 @@
+name: dispatch-platform-dev
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dispatch_db_admin
+      POSTGRES_DB: dispatch_maintenance
+      POSTGRES_PASSWORD_FILE: /run/secrets/database-admin-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ${DISPATCH_HOSTED_STATE_DIR:?Set the private state directory}/database-secrets:/run/secrets:ro
+      - ./init-postgres.sh:/docker-entrypoint-initdb.d/10-dispatch.sh:ro
+    networks:
+      - database
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U dispatch_db_admin -d dispatch_maintenance]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    logging:
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  gateway:
+    image: nginxinc/nginx-unprivileged:1.28-alpine
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      DISPATCH_HOSTED_ROOT_DOMAIN: ${DISPATCH_HOSTED_ROOT_DOMAIN:?Set the console hostname}
+      DISPATCH_INGRESS_PROXY_CIDR: ${DISPATCH_INGRESS_PROXY_CIDR:?Set the Traefik IP with a /32 prefix}
+    volumes:
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    tmpfs:
+      - /tmp
+      - /etc/nginx/conf.d:uid=101,gid=101,mode=755
+    networks:
+      - web
+      - database
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: ${DISPATCH_INGRESS_NETWORK:-web}
+      traefik.http.routers.dispatch-platform-dev.entrypoints: websecure
+      traefik.http.routers.dispatch-platform-dev.rule: ${DISPATCH_HOSTED_ROUTER_RULE:?Set an exact root and one-label tenant host rule}
+      traefik.http.routers.dispatch-platform-dev.tls: 'true'
+      traefik.http.routers.dispatch-platform-dev.tls.certresolver: ${DISPATCH_CERT_RESOLVER:-letsencrypt}
+      traefik.http.routers.dispatch-platform-dev.tls.domains[0].main: ${DISPATCH_HOSTED_ROOT_DOMAIN}
+      traefik.http.routers.dispatch-platform-dev.tls.domains[0].sans: '*.${DISPATCH_HOSTED_ROOT_DOMAIN}'
+      traefik.http.services.dispatch-platform-dev.loadbalancer.server.port: '8080'
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O /dev/null --header="Host: $$DISPATCH_HOSTED_ROOT_DOMAIN" http://127.0.0.1:8080/readyz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  platform:
+    image: ${DISPATCH_PLATFORM_IMAGE:-ghcr.io/doout/dispatch-platform:main}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    network_mode: service:gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+        restart: true
+    environment:
+      DISPATCH_HOSTED_DATA_DIR: /var/lib/dispatch-platform
+      DISPATCH_HOSTED_CATALOG_URL_FILE: /run/secrets/catalog-url
+      DISPATCH_HOSTED_POSTGRES_ADMIN_URL_FILE: /run/secrets/provisioner-url
+      DISPATCH_HOSTED_ROOT_DOMAIN: ${DISPATCH_HOSTED_ROOT_DOMAIN}
+      DISPATCH_HOSTED_CONSOLE_ADDRESSES: ${DISPATCH_HOSTED_CONSOLE_ADDRESSES:?Set the console IP}
+      DISPATCH_HOSTED_WORKLOAD_GATEWAY: ${DISPATCH_HOSTED_WORKLOAD_GATEWAY:-}
+      DISPATCH_HOSTED_DNS_PROVIDER: cloudflare
+      DISPATCH_HOSTED_CLOUDFLARE_ZONE_ID: ${DISPATCH_HOSTED_CLOUDFLARE_ZONE_ID:?Set the Cloudflare zone ID}
+      DISPATCH_HOSTED_CLOUDFLARE_API_TOKEN_FILE: /run/secrets/cloudflare-token
+      DISPATCH_HOSTED_ADDR: 127.0.0.1:8081
+      DISPATCH_HOSTED_TLS_MODE: proxy
+      DISPATCH_HOSTED_TRUSTED_PROXIES: 127.0.0.1/32
+    volumes:
+      - ${DISPATCH_HOSTED_STATE_DIR}/data:/var/lib/dispatch-platform
+      - ${DISPATCH_HOSTED_STATE_DIR}/platform-secrets:/run/secrets:ro
+    tmpfs:
+      - /tmp:uid=65532,gid=65532,mode=700
+    logging:
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  postgres-data:
+
+networks:
+  database:
+    internal: true
+  web:
+    external: true
+    name: ${DISPATCH_INGRESS_NETWORK:-web}
