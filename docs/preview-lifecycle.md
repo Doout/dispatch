@@ -1,5 +1,7 @@
 # PR preview lifecycle
 
+For commands, linked pull requests and reporting APIs, see [pull request deployment commands](preview-commands.md).
+
 PR previews deploy on an explicit comment by default. Automatic deployment and live reload are opt-in. Automatic runs retain their rolling hourly limit and cancel superseded work. A TTL of `0` remains unlimited.
 
 Webhook and polling deliveries use durable comment receipts and one active template binding for each GitHub App, repository, PR, and command. A delayed commit event resolves the current PR head before selecting sources. Replaying a command from a removed binding cannot create a replacement. A newer comment may create a new instance. A completed expired instance keeps its binding and can be renewed by a new comment.

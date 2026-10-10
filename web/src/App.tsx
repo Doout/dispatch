@@ -1,3 +1,4 @@
+import "./styles.css";
 import { useDeploymentLogs } from "./deployments/useDeploymentLogs";
 import { OperationsPage } from "./OperationsPage";
 import { SettingsPage } from "./SettingsPage";

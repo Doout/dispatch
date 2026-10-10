@@ -15,6 +15,12 @@ import (
 var files embed.FS
 
 func Handler() http.Handler {
+	return HandlerWithHeadMarkup(nil)
+}
+
+// HandlerWithHeadMarkup adds trusted, request-specific markup to the HTML
+// entrypoint. Assets remain unchanged, and modified HTML is never cached.
+func HandlerWithHeadMarkup(head func(*http.Request) []byte) http.Handler {
 	root, _ := fs.Sub(files, "dist")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requested := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
@@ -34,8 +40,13 @@ func Handler() http.Handler {
 			http.Error(w, "interface asset unavailable", http.StatusInternalServerError)
 			return
 		}
+		if requested == "index.html" && head != nil {
+			contents = bytes.Replace(contents, []byte("</head>"), append(head(r), []byte("</head>")...), 1)
+		}
 		if strings.HasPrefix(requested, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else if requested == "index.html" && head != nil {
+			w.Header().Set("Cache-Control", "no-store")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
 		}

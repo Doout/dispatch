@@ -29,6 +29,7 @@ export type HostedPlatform = {
   mode: "platform";
   origin: string;
   registrationEnabled: boolean;
+  dataOrigin?: string;
 };
 export type HostedTenant = {
   mode: "tenant";

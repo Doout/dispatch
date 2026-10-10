@@ -1,147 +1,83 @@
 # Dispatch
 
-Dispatch is a self-hosted deployment and infrastructure controller. It connects repositories to Docker, Kubernetes, and OpenShift targets and manages server operations through provider adapters. The controller stores each deployment revision, configuration snapshot, log, output, and runtime resource.
+Dispatch builds images and deploys applications from Git repositories. It supports Dockerfile and Compose deployments, plus Helm releases on Kubernetes and OpenShift.
 
-> Dispatch is under active development. Keep the controller and its agents on a trusted network.
+Each run saves its source commits, configuration, job outputs and logs. The controller includes a React UI, HTTP API, CLI and stdio MCP server. Operational data uses SQLite or PostgreSQL; historical reporting uses embedded DuckDB.
 
-## Current support
+Dispatch is under active development. Keep the controller and its agents on a trusted network. The bundled machine provider is a mock. Allocating real servers and restoring machine snapshots require an external provider adapter and tests against that provider.
 
-- One Go controller with an embedded React application
-- SQLite or PostgreSQL storage
-- Dockerfile, Compose, and Helm deployments
-- Docker, Kubernetes, and OpenShift targets
-- Repository-managed Applications and Pipelines
-- Selective job reuse and staged promotion
-- GitHub Apps for GitHub.com and GitHub Enterprise Server
-- Repository polling, signed webhooks, and a durable webhook relay
-- Pull request previews across one or more repositories
-- Finite-lifetime Docker environments with reviewed creation and resumable cleanup
-- Project-scoped PostgreSQL and generic services with application connection bindings
-- Owned service recovery and encrypted PostgreSQL backups with restore verification
-- Reviewed server allocation, agent installation, machine snapshots and isolated clone workflows
-- Encrypted local secrets and IBM Cloud Secrets Manager references
-- Enrolled outbound agents for Docker workloads and private provider endpoints
-- Laneway application and private-network connections
-- Users, teams, project roles, external sign-in, account linking, and impersonation
-- Expiring automation credentials, infrastructure grants and project quotas
-- A DevOps CLI and stdio MCP server using the same reviews and operation receipts
-- Deployment, application, server, and runtime topology views
+## What it does
 
-The bundled infrastructure provider is a mock. Real VM allocation and safe snapshot
-clones require an external adapter and live validation. See the
-[roadmap](docs/roadmap.md) for supported paths and remaining release gates.
+- Run build jobs, reuse matching job results and promote the same revision through deployment stages.
+- Create parallel deployments for pull requests, link changes across repositories and clean up after all linked pull requests close.
+- Read live build and deployment logs, inspect saved runs and compare deployment versions.
+- Connect GitHub.com or GitHub Enterprise Server through a GitHub App. Use polling, signed webhooks or an event relay.
+- Register services, map their connection values into applications and store credentials encrypted.
+- Use outbound agents for Docker jobs and access to private services.
+- Grant access through users, teams and project roles. Issue expiring credentials for automation.
+- Inspect runtime resources, back up managed services and verify restores.
+
+See the [roadmap](docs/roadmap.md) for provider limitations and the checks required before a release.
 
 ## Install and upgrade
 
-Dispatch includes a Docker installer and upgrade CLI:
+The installer runs Dispatch in Docker on Linux, on amd64 or arm64. Install Docker and Compose 2.30 or newer first, then download the CLI:
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install.sh | sh
 sudo dispatch install
-sudo dispatch upgrade
-sudo dispatch auto-upgrade enable  # Optional daily checks
 ```
 
-Upgrades preserve configuration and back up the controller data before replacing its container. An unhealthy replacement restores the previous image and data. Automatic upgrades are disabled by default.
+The download script checks the release archive against `SHA256SUMS`. The controller listens on `127.0.0.1:8080`. Open <http://127.0.0.1:8080> to create the owner account. For a remote server, use an SSH tunnel or configure a reverse proxy.
 
-See [installation](docs/installation.md) for CLI downloads, configuration, recovery, and building from source.
+```sh
+sudo dispatch upgrade --check
+sudo dispatch upgrade
+```
 
-## Run with Compose
+Upgrades preserve configuration and back up controller data before replacing the container. If the replacement fails its health check, Dispatch restores the previous image and data. Upgrades interrupt the controller, so schedule them outside active deployments.
 
-The included Compose file exposes Dispatch on `127.0.0.1:8080` and expects an external Docker network named `web` for Traefik.
+Automatic updates are optional and run in a separate Docker container:
+
+```sh
+sudo dispatch auto-upgrade enable
+sudo dispatch auto-upgrade status
+sudo dispatch auto-upgrade disable
+```
+
+See the [installation guide](docs/installation.md) for image tags, proxy settings, backups, recovery and private registry access.
+
+### Build and run with Compose
+
+From a checkout of this repository:
 
 ```sh
 cp .env.example .env
+# Set DOCKER_GID in .env to the group shown by this command:
+stat -c '%g' /var/run/docker.sock
 docker network inspect web >/dev/null 2>&1 || docker network create web
 docker compose up -d --build
 ```
 
-Open <http://127.0.0.1:8080>. If the environment does not define an administrator, the first visit opens the owner setup screen.
+The Compose file binds the controller to `127.0.0.1:8080`, mounts the host Docker socket and joins the external `web` network for Traefik. If `.env` has no administrator credentials, the first visit opens owner setup. Set `DISPATCH_HOST` and `DISPATCH_PUBLIC_URL` when using a public hostname.
 
-Compose enables the Docker executor and mounts the host Docker socket. Set `DOCKER_GID` to the group that owns `/var/run/docker.sock`.
+### Hosted tenants
 
-## Hosted tenants
+Multi-tenant installations use the separate `dispatch-platform` controller, tenant databases and enrolled workers. Cloudflare publishes tenant DNS records through the DNS provider interface.
 
-For a multi-tenant installation, run the separate hosted controller with isolated
-tenant databases and enrolled workers. Cloudflare publishes tenant DNS records.
-See [hosted setup](docs/hosted-tenants.md) and [DNS providers](docs/dns-providers.md)
-for container configuration and token permissions.
+See [hosted setup](docs/hosted-tenants.md) for the Docker stack, initial accounts and tenant configuration, and [DNS providers](docs/dns-providers.md) for provider credentials.
 
-## Applications
+## Configure a deployment
 
-An application can use an HTTPS or SSH repository, or a Compose document saved in Dispatch. Private repositories can use a GitHub App, token, or SSH key.
+Add an application from a repository or save a Compose document in Dispatch. Private repositories can use a GitHub App, token or SSH key. Helm sources can use an OCI chart, an HTTPS chart repository or a chart directory in Git.
 
-Templates save reusable Dockerfile, Compose, or Helm definitions without deploying them. Event rules and preview groups create applications from those templates.
+For jobs and promotion stages, add a repository configuration under Applications. Dispatch reads `dispatch/v1alpha1` YAML or JSON, resolves source branches to exact commits and runs jobs for the sources that changed. Each stage deploys that revision and its saved outputs. Polling works without a public controller URL; webhooks can start the same sync sooner.
 
-Helm sources support:
+The [repository configuration guide](docs/application-config.md) has the schema, a complete Application example, build-output bindings and Helm values syntax. The [deployment workspace guide](docs/deployment-workspace.md) covers the UI.
 
-- OCI chart references
-- chart names from HTTPS Helm repositories
-- chart directories in Git repositories
-- GitHub folder URLs that contain a branch and chart path
+### Parallel deployments for pull requests
 
-The Helm editor reads `Chart.yaml`, `values.yaml`, optional value profiles, and `values.schema.json`. It stores values that differ from the chart defaults. Raw YAML is available when the generated fields are not enough.
-
-Helm operations use the Go SDK. The controller does not require a `helm` binary.
-
-## Repository configuration
-
-Dispatch imports `dispatch/v1alpha1` YAML or JSON from a GitHub repository. One Application can watch several repositories. A source change reruns only the jobs that declare that source. Applications in the same repository configuration can share a build when their declared inputs match and every required output is available.
-
-Each run resolves source branches to exact commits before any job starts. Promotion stages deploy that same revision and its saved outputs to each target in order.
-
-Add a GitHub configuration from **Applications > Add > GitHub configuration**. Applications deploy automatically after a valid import. Paused applications stay paused. Polling works without a public controller URL. Webhooks can start the same sync sooner.
-
-See [repository configuration](docs/application-config.md) for the schema and a promotion example.
-
-## Services
-
-Register an existing PostgreSQL database or generic dependency under **Services**. Connect it to an application through environment mappings for Docker and Compose, or Kubernetes Secret references for Helm. Each deployment captures its bindings. Connection changes show which applications need redeployment.
-
-Service credentials are encrypted and write-only. Manual connection checks run from the controller. Registering a connection leaves the external service under your control. ServiceTemplates can provision owned workloads with separate inspection, recovery and reviewed deletion actions.
-
-See [services and application bindings](docs/services.md) for setup, stage overrides, APIs, and integration tests.
-
-## Secrets
-
-Local secrets can contain text, API tokens, GitHub tokens, SSH private keys, or registry passwords. Paste a value or upload a text file up to 64 KiB.
-
-Dispatch can generate an Ed25519 deploy key. It encrypts the private key and returns only the public key after creation.
-
-IBM Cloud Secrets Manager references remain external. Dispatch stores the API key encrypted and reads the current secret when a checkout, hook, or SSH operation starts. A private provider endpoint can use an edge node in the same network.
-
-Job definitions bind credentials by name:
-
-```yaml
-secrets:
-  REGISTRY_HOST:
-    secretRef: registry-host
-  REGISTRY_USERNAME:
-    secretRef: registry-username
-  REGISTRY_PASSWORD:
-    secretRef: registry-password
-```
-
-Dispatch passes resolved secrets to the job process. Job scripts can print those values or write them to outputs, so review scripts before granting credentials. Avoid shell tracing such as `set -x` in jobs that use secrets.
-
-## GitHub events
-
-The GitHub App manifest flow creates an App with the required callback, setup, repository permissions, and event subscriptions. Existing Apps can connect with an App ID, RSA private key, webhook secret, and optional installation ID.
-
-The manifest requests Contents read, Pull requests write for PR comments, Issues write, Commit statuses write, Checks write, and Metadata read. In Connections, **Verify** compares the App registration, installation, and issued token with those requirements. If the App registration lacks access, edit its permissions in GitHub first. Then approve the updated installation permissions or reinstall the App, select its repositories, and verify again.
-
-A GitHub App uses one installation webhook. It does not require a webhook for each repository. Polling can run alone or alongside webhooks.
-
-When GitHub cannot reach the controller, install `dispatch-relay` on a public node. The relay writes each request before returning `202 Accepted`. Dispatch polls it and acknowledges an event after signature verification and local processing. An unacknowledged lease expires and the relay sends the event again.
-
-Create a relay under **Servers > Add server > Webhook relay**. The installer can use SSH or a command copied to the relay host. Both paths support systemd and Docker Compose.
-
-The legacy shared webhook endpoint remains available at `/api/v1/events/github` when `DISPATCH_GITHUB_WEBHOOK_SECRET` is set.
-
-## Pull request previews
-
-An event rule listens for a command such as `/preview` on a pull request. A trusted repository member can start a preview. Dispatch checks out the pull request revision, runs its hooks, deploys the application, and updates one status comment. When webhooks are unavailable, Dispatch polls repository issue comments every 30 seconds. It saves a cursor per repository, checks only comments with a matching command, and checks active pull requests for closure. Webhooks and polling use the same comment ID for deduplication.
-
-Preview groups link components stored in different repositories. A command can select another open pull request:
+An event rule can start a deployment from a trusted repository member's comment:
 
 ```text
 /preview
@@ -149,145 +85,54 @@ Preview groups link components stored in different repositories. A command can s
 /preview with owner/repository=#123
 ```
 
-Dispatch keeps a linked preview running until all explicitly linked pull requests close. An operator can also clean it from the console. The status comment lists the preview URL and the full commit ID for every linked component.
+Linked deployments stay active until all explicitly linked pull requests close. Commands can also supply Helm values for one deployment. Dispatch keeps run history after cleanup.
 
-For a repository-managed workflow preview, an owner can call `POST /api/v1/workflow/revisions/{id}/preview-report` after the revision succeeds. Send `githubAppId`, `repository`, `pullRequestNumber`, and the verified HTTPS `url`. Dispatch posts or updates a comment with the target, deployment, full source commits, and built image tags. If an enterprise GitHub App rejects comment writes, a configured `DISPATCH_GITHUB_TOKEN` provides a fallback for this manual endpoint.
+See [pull request commands](docs/preview-commands.md) for setup, inline Applications, value overrides and reporting APIs. The [preview lifecycle guide](docs/preview-lifecycle.md) explains expiry, cleanup retries and recovery.
 
-To deploy a one-off workflow preview without committing configuration to its repository, choose **Applications > Add > PR preview** and save the Application YAML, GitHub App, PR, `/preview` command, and preview URL. Dispatch lists it under **PR previews**, separate from the repository configuration used for credentials. The same flow is available through `POST /api/v1/workflow/temporary-resources` with `configSourceId` and one complete Application YAML document. Pin the pull request source to its full head commit and choose a unique deployment and Helm release. Then call `POST /api/v1/workflow/temporary-resources/{id}/preview-trigger` with `githubAppId`, `repository`, `pullRequestNumber`, and the HTTPS `previewUrl`. A trusted `/preview` comment starts the revision through the repository-wide poller; repeat polls of the same comment do not start it again. Use `/preview with ui=#123` or `/preview with owner/repository=#123` to link another source pull request. The link persists on the trigger; later `/preview` comments refresh both pull request heads, Helm provenance includes both PRs, and cleanup waits until both close. After a successful revision, the poller posts or updates a single preview report with the GitHub App installation token. It retries failed reports and does not use `DISPATCH_GITHUB_TOKEN`. To change an inline Application without a configuration repository PR, call `PUT /api/v1/workflow/temporary-resources/{id}` with the complete `document`; the next run upgrades the same Helm release. To add a URL to an existing trigger, call `PUT /api/v1/workflow/preview-triggers/{id}/url` with `previewUrl`. Repository sync preserves the temporary resource.
+### Services and secrets
 
-Every Helm install and upgrade records the Dispatch application and deployment IDs on the release Secret and rendered resources. Preview releases also carry the linked pull request numbers and repositories, workflow resource and revision IDs, and pinned source commits in the `dispatch.app/provenance` annotation and Helm release description. The `dispatch.app/has-pr=true` label on Helm release Secrets supports finding orphaned preview releases if automatic close cleanup misses one.
+Register a PostgreSQL database or generic dependency under Services. Map connection values into Docker or Compose environment variables, or Kubernetes Secrets for Helm. Each deployment saves its bindings so connection changes can identify applications that need redeployment.
 
-For repeated previews, put `__PREVIEW_ID__` in every identity value in the document (Application name, Helm release, workload names, and labels) and send `previewId` with the PR number. Dispatch uses that ID when free and appends a short random suffix if a resource name or Helm release is already in use. This keeps service and UI pull requests with the same number separate.
+Local credentials are encrypted and write-only. IBM Cloud Secrets Manager references stay external and are read when an operation starts. Job scripts receive resolved secrets and can print them, so review scripts before granting credentials and avoid `set -x` in jobs that use secrets.
 
-Hooks receive `DISPATCH_EVENT_*` variables for the triggering event and `DISPATCH_COMPONENT_<ALIAS>_<OUTPUT>` variables for available component outputs. A hook should write named results with `dispatch-hook` or use `DISPATCH_OUTPUT_FILE` for legacy scripts.
+See [services and application bindings](docs/services.md) and [controller configuration](docs/configuration.md) for setup.
 
-## Access control
+## Access and interface settings
 
-The first local account becomes the controller owner. The owner can add local users, configure external GitHub sign-in, approve pending users, link identities, create teams, and grant project roles.
+The first local account becomes the controller owner. Owners manage users, external sign-in, teams and project access. New external identities stay pending until an owner approves or links them. Project roles are `admin`, `operator`, `deployer` and `viewer`; the API checks permissions for each protected operation.
 
-External sign-in does not grant project access. A new external identity remains pending until an owner approves it or links it to an existing user.
+Under Settings, turn on New interface for grouped navigation, parallel deployment tables, paginated run history and Analytics. This preference is saved for each account in the current browser. Turn it off to use the existing layout.
 
-Project roles are `admin`, `operator`, `deployer`, and `viewer`. The API checks every protected operation. The interface hides actions the current identity cannot use.
+Owners can enable recent resource pages under Settings > Experimental UI. These switches control UI access for everyone on the controller. They do not change API permissions or stop accepted jobs. See [experimental UI settings](docs/ui-feature-flags.md) for the available switches and checks still needed.
 
-Owners can impersonate another user to inspect that user's view. Dispatch displays an impersonation banner and blocks credential changes until the owner returns to their own account.
-
-## Private routes
-
-An edge node polls Dispatch and runs typed HTTP work near a private service. It does not accept inbound connections or arbitrary commands.
-
-A Laneway network connection lets Dispatch manage one Laneway network. A Laneway Connector handles the other direction when Laneway nodes need to reach a private Dispatch controller.
-
-See [edge nodes and private routes](docs/private-networks.md).
-
-## Configuration
-
-### Controller
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `DISPATCH_ADDR` | `127.0.0.1:8080` | Controller listen address |
-| `DISPATCH_PUBLIC_URL` | none | HTTPS origin for callbacks and browser security headers |
-| `DISPATCH_TRUSTED_PROXY_CIDRS` | none | Comma-separated CIDRs for reverse proxies allowed to supply client addresses and HTTPS scheme |
-| `DISPATCH_HOST` | `dispatch.localhost` | Hostname in the Compose Traefik route |
-| `DATABASE_URL` | `dispatch.db` | SQLite path or PostgreSQL URL |
-| `DISPATCH_EXECUTOR` | `simulation` | `simulation` or `docker` |
-| `DISPATCH_DEMO` | `false` | Add demo records to an empty store |
-| `DISPATCH_ADMIN_USERNAME` | none | Environment-managed owner username |
-| `DISPATCH_ADMIN_PASSWORD` | none | Environment-managed owner password |
-| `DISPATCH_ADMIN_TOKEN` | none | Bearer token for API automation |
-| `DISPATCH_MASTER_KEY_FILE` | none | File containing the 32-byte encryption key |
-| `DISPATCH_DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket used for local execution and inventory |
-| `DOCKER_GID` | `1001` | Group allowed to access the mounted Docker socket |
-| `DISPATCH_KUBECONFIG_DIR` | `./kubeconfigs` | Host directory mounted read-only at `/kubeconfigs` |
-| `DISPATCH_REPOSITORY_CACHE` | `repository-cache` | Credential-scoped Git mirrors |
-| `DISPATCH_GITHUB_WEBHOOK_SECRET` | none | HMAC secret for the legacy shared webhook |
-| `DISPATCH_PREVIEW_COMMAND` | `/preview` | Default pull request command |
-| `DISPATCH_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base for legacy token access |
-| `DISPATCH_GITHUB_TOKEN` | none | GitHub token for legacy event access |
-| `DISPATCH_GIT_TOKEN` | none | Token for private hook checkout |
-| `HELM_REPOSITORY_USERNAME` | none | HTTPS Helm repository username |
-| `HELM_REPOSITORY_PASSWORD` | none | HTTPS Helm repository password |
-| `DISPATCH_HOOK_*` | none | Variables passed to hooks by explicit prefix |
-
-### Relay
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `DISPATCH_RELAY_ADDR` | `127.0.0.1:8090` | Relay listen address |
-| `DISPATCH_RELAY_PUBLIC_URL` | none | Public origin used to create webhook endpoints |
-| `DISPATCH_RELAY_TOKEN` | none | Controller access token with at least 24 characters |
-| `DISPATCH_RELAY_TLS_MODE` | none | Set to `auto` for automatic TLS |
-| `DISPATCH_RELAY_ACME_CACHE` | `/data/acme` | Certificate cache for automatic TLS |
-| `DATABASE_URL` | `relay.db` | Relay SQLite path or PostgreSQL URL |
-
-## Kubernetes and OpenShift credentials
-
-See [Kubernetes and K3s targets](docs/kubernetes-targets.md) for registration checks, namespace limits and validation status.
-
-Kubernetes targets accept pasted, uploaded, or controller-mounted kubeconfig files. Stored kubeconfigs and CA bundles are write-only through the API. Dispatch creates a mode `0600` temporary file for each operation and removes it afterward.
-
-OpenShift setup accepts a non-interactive `oc login` command or username and password. Dispatch parses the login data and calls the OpenShift API. It does not execute `oc`. Setup creates a `dispatch-controller` service account in `dispatch-system`, grants `cluster-admin`, and stores only the managed service-account kubeconfig.
-
-The managed OpenShift credential has cluster-wide privileges. Protect Dispatch storage and owner accounts as cluster-administrator credentials.
-
-## Interface settings
-
-Open Settings and turn on **New interface** to use grouped navigation, application and parallel deployment tables, paginated run history, and Analytics. The setting starts off and is saved for each account in the current browser. Turn it off to return to the current interface.
-
-The new pages use existing APIs and permissions. New resource pages load only after opting in. Application and parallel deployment lists show the current inventory; Runs pages through retained deployment history. Workflow runs remain available in application details.
-
-Owners can enable recent resource workflows under **Settings → Experimental UI**. These controller-wide switches start off and cover machines, snapshots, workload backups, automation credentials, project assignments, and request receipts. They control UI access while existing jobs and APIs remain available. See the [feature audit and remaining validation](docs/ui-feature-flags.md).
+OpenShift setup creates a managed service account with `cluster-admin`. Protect the controller's storage and owner accounts as cluster-administrator credentials. See [Kubernetes and K3s targets](docs/kubernetes-targets.md) and the [security policy](SECURITY.md).
 
 ## Development
 
-Use Go 1.27.2 or newer, Node.js 22, Corepack, and Docker for executor tests.
+Use the Go version in `go.mod`, Node.js 22 and Corepack. Native builds need a C/C++ toolchain for DuckDB; see [analytics](docs/analytics.md). Docker is needed for executor integration tests.
 
 ```sh
 make web
-go test ./...
 go run ./cmd/dispatch
 ```
 
-Use `make check` for the race detector, `go vet`, TypeScript checks, and frontend tests. Use `make dev` to build the web application and start Dispatch with demo records.
+The local controller simulates deployments by default. `make dev` builds the UI and starts it with demo records. `make check` runs Go tests with the race detector, `go vet`, TypeScript checks and frontend tests.
+
+To view UI changes with live production data, run the [UI preview proxy](docs/ui-preview.md). It requires a separate access key, keeps development and production sessions separate and blocks production changes.
+
+See [contributing](CONTRIBUTING.md) for setup, migrations and review guidance.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Repository configuration](docs/application-config.md)
-- [Deployment workspace](docs/deployment-workspace.md)
-- [Release previews and rollback](docs/release-tools.md)
-- [Observations and notifications](docs/observations.md)
-- [Controller operations](docs/operations.md)
-- [On-demand servers](docs/on-demand-servers.md)
-- [Target agent installation](docs/target-bootstrap.md)
-- [Machine snapshots and isolated clones](docs/machine-snapshots.md)
-- [Temporary environments](docs/temporary-environments.md)
-- [Preview lifecycle](docs/preview-lifecycle.md)
-- [Repository recovery](docs/repository-recovery.md)
-- [Storage ownership and deletion](docs/storage.md)
-- [Deployment health policies](docs/deployment-health.md)
-- [Managed application routes](docs/application-routing.md)
-- [Edge credentials](docs/edge-credentials.md)
-- [DevOps CLI and MCP tools](docs/automation-client.md)
-- [API reference](docs/openapi.yaml)
-- [Provider API](docs/provider-api.md)
-- [Runtime contract](docs/runtime-contract.md)
-- [Enrolled remote Docker runtime](docs/remote-runtime.md)
-- [Private routes](docs/private-networks.md)
-- [Roadmap](docs/roadmap.md)
+| Topic | Guides |
+| --- | --- |
+| Installation and configuration | [Install and upgrade](docs/installation.md), [controller settings](docs/configuration.md), [hosted tenants](docs/hosted-tenants.md), [DNS providers](docs/dns-providers.md) |
+| Applications | [Repository configuration](docs/application-config.md), [deployment workspace](docs/deployment-workspace.md), [release previews and rollback](docs/release-tools.md), [sync and drift checks](docs/application-drift.md), [health policies](docs/deployment-health.md) |
+| Pull request deployments | [Commands and reporting](docs/preview-commands.md), [lifecycle and cleanup](docs/preview-lifecycle.md) |
+| Services and recovery | [Application bindings](docs/services.md), [PostgreSQL backups](docs/workload-backups.md), [Neon preview databases](docs/neon-preview-databases.md), [repository recovery](docs/repository-recovery.md), [storage ownership](docs/storage.md) |
+| Servers | [On-demand servers](docs/on-demand-servers.md), [target installation](docs/target-bootstrap.md), [machine snapshots](docs/machine-snapshots.md), [temporary environments](docs/temporary-environments.md) |
+| Networking | [Application routes](docs/application-routing.md), [private routes](docs/private-networks.md), [remote Docker runtime](docs/remote-runtime.md), [edge credentials](docs/edge-credentials.md) |
+| Automation and operations | [CLI and MCP tools](docs/automation-client.md), [controller operations](docs/operations.md), [observations and notifications](docs/observations.md), [analytics](docs/analytics.md) |
+| Internals | [Architecture](docs/architecture.md), [HTTP API](docs/openapi.yaml), [provider API](docs/provider-api.md), [runtime contract](docs/runtime-contract.md), [roadmap](docs/roadmap.md) |
 
-Database migrations live in two SQL files under `internal/store/migrations`, one
-for SQLite and one for PostgreSQL. Version markers keep each upgrade separate.
-
-See [contributing](CONTRIBUTING.md) for development and review guidance, and [security](SECURITY.md) for the trust model and vulnerability reporting.
-
-Dispatch uses Apache License 2.0. Keep private provider code and credentials outside this repository.
-
-Historical reporting uses embedded DuckDB with asynchronous Parquet exports. See
-[analytics](docs/analytics.md) for storage, recovery, and native build requirements.
-
-Application [sync and drift checks](docs/application-drift.md) compare saved Helm deployments with Kubernetes/OpenShift resources and support explicit reapply.
-
-Owned PostgreSQL services support [encrypted workload backups and isolated restore verification](docs/workload-backups.md).
-
-Neon preview databases use project-scoped provider connections and retained owned-service runs. See [configuration, migrations and recovery](docs/neon-preview-databases.md).
+Dispatch uses the [Apache 2.0 license](LICENSE). Keep private provider code and credentials outside this repository.
