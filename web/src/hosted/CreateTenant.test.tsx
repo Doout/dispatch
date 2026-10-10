@@ -66,7 +66,7 @@ it.each([
     const input = screen.getByLabelText("Tenant name");
     fireEvent.change(input, { target: { value: name } });
     fireEvent.submit(input.closest("form")!);
-    expect(await screen.findByRole("alert")).not.toBeNull();
+    expect((await screen.findAllByRole("alert")).length).toBeGreaterThan(0);
     expect(input.getAttribute("aria-invalid")).toBe("true");
     expect(document.activeElement).toBe(input);
     expect(fetcher).not.toHaveBeenCalled();
@@ -127,3 +127,45 @@ it("keeps the owner email and lets the admin choose another name after an API co
   await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
+
+it("keeps empty fields quiet and shows the address only after entering a valid name", async () => {
+  const user = userEvent.setup();
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  show([]);
+  const name = screen.getByLabelText("Tenant name");
+  expect((name as HTMLInputElement).value).toBe("");
+  expect(screen.queryByRole("status")).toBeNull();
+  await user.tab();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(name.getAttribute("aria-invalid")).toBe("false");
+  await user.click(name);
+  await user.type(name, "example-team");
+  expect(screen.getByRole("status").textContent).toBe(
+    "example-team.dispatch.example.test",
+  );
+  await user.clear(name);
+  await user.tab();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it.each(["", "not-an-email"])(
+  "blocks owner email %j and focuses it after submission",
+  async (email) => {
+    const user = userEvent.setup();
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    show([]);
+    await user.type(screen.getByLabelText("Tenant name"), "example-team");
+    const owner = screen.getByLabelText("Owner email");
+    if (email) await user.type(owner, email);
+    await user.click(screen.getByRole("button", { name: "Create tenant" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      email ? "Enter a valid email address." : "Enter an owner email.",
+    );
+    expect(document.activeElement).toBe(owner);
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);

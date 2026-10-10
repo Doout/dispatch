@@ -43,6 +43,30 @@ export function TenantDirectory({ origin }: { origin: string }) {
         .includes(filter.toLowerCase()) &&
       (!stateFilter || tenant.state === stateFilter),
   );
+  const openCreate = () => {
+    setCreated(null);
+    setCreating(true);
+  };
+  if (creating)
+    return (
+      <CreateTenant
+        origin={origin}
+        tenants={tenants}
+        onCreated={async (tenant) => {
+          setCreated(tenant);
+          setFilter(`${tenant.slug}.${hostname}`);
+          setStateFilter("");
+          setLimit(50);
+          setTenants((items) => [
+            tenant,
+            ...items.filter((item) => item.id !== tenant.id),
+          ]);
+          setCreating(false);
+          await load();
+        }}
+        onCancel={() => setCreating(false)}
+      />
+    );
   return (
     <>
       <header className="hosted-page-heading">
@@ -59,35 +83,18 @@ export function TenantDirectory({ origin }: { origin: string }) {
             <ArrowsClockwise size={16} aria-hidden="true" />
             Refresh
           </button>
-          <button
-            ref={createButton}
-            className="primary-button"
-            disabled={creating}
-            onClick={() => {
-              setCreated(null);
-              setCreating(true);
-            }}
-          >
-            <Plus size={16} aria-hidden="true" />
-            Create tenant
-          </button>
+          {(tenants.length > 0 || loading || error) && (
+            <button
+              ref={createButton}
+              className="primary-button"
+              onClick={openCreate}
+            >
+              <Plus size={16} aria-hidden="true" />
+              Create tenant
+            </button>
+          )}
         </div>
       </header>
-      {creating && (
-        <CreateTenant
-          origin={origin}
-          tenants={tenants}
-          onCreated={async (tenant) => {
-            setCreated(tenant);
-            setFilter(`${tenant.slug}.${hostname}`);
-            setStateFilter("");
-            setLimit(50);
-            setCreating(false);
-            await load();
-          }}
-          onCancel={() => setCreating(false)}
-        />
-      )}
       {created && (
         <p className="form-success" role="status">
           Created {created.slug}.{hostname}.
@@ -125,42 +132,44 @@ export function TenantDirectory({ origin }: { origin: string }) {
           </div>
         </dl>
       )}
-      <div className="hosted-list-toolbar">
-        <label className="hosted-search">
-          <span>Find a tenant</span>
-          <span className="hosted-search-field">
-            <MagnifyingGlass size={18} aria-hidden="true" />
-            <input
-              type="search"
-              value={filter}
+      {tenants.length > 0 && (
+        <div className="hosted-list-toolbar">
+          <label className="hosted-search">
+            <span>Find a tenant</span>
+            <span className="hosted-search-field">
+              <MagnifyingGlass size={18} aria-hidden="true" />
+              <input
+                type="search"
+                value={filter}
+                onChange={(event) => {
+                  setFilter(event.target.value);
+                  setLimit(50);
+                }}
+                placeholder="Tenant name or address"
+              />
+            </span>
+          </label>
+          <label className="hosted-filter">
+            Status
+            <select
+              value={stateFilter}
               onChange={(event) => {
-                setFilter(event.target.value);
+                setStateFilter(event.target.value);
                 setLimit(50);
               }}
-              placeholder="Tenant name or address"
-            />
-          </span>
-        </label>
-        <label className="hosted-filter">
-          Status
-          <select
-            value={stateFilter}
-            onChange={(event) => {
-              setStateFilter(event.target.value);
-              setLimit(50);
-            }}
-          >
-            <option value="">All statuses</option>
-            {[...new Set(tenants.map((tenant) => tenant.state))]
-              .sort()
-              .map((state) => (
-                <option key={state} value={state}>
-                  {state}
-                </option>
-              ))}
-          </select>
-        </label>
-      </div>
+            >
+              <option value="">All statuses</option>
+              {[...new Set(tenants.map((tenant) => tenant.state))]
+                .sort()
+                .map((state) => (
+                  <option key={state} value={state}>
+                    {state}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
+      )}
       {loading && (
         <p className="hosted-loading" role="status">
           Loading tenants...
@@ -222,7 +231,16 @@ export function TenantDirectory({ origin }: { origin: string }) {
               >
                 Clear filters
               </button>
-            ) : undefined
+            ) : (
+              <button
+                ref={createButton}
+                className="primary-button"
+                onClick={openCreate}
+              >
+                <Plus size={16} aria-hidden="true" />
+                Create tenant
+              </button>
+            )
           }
         >
           {tenants.length === 0

@@ -455,6 +455,29 @@
 .hosted-tenant-create {
   max-width: 640px;
 }
+.hosted-tenant-create .hosted-page-heading {
+  margin-bottom: 0;
+}
+.hosted-tenant-create .hosted-create-form {
+  margin: 24px 0 0;
+}
+.hosted-back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 4px 0;
+  min-height: 32px;
+  border: 0;
+  background: none;
+  color: var(--hosted-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.hosted-back-button:hover:not(:disabled) {
+  color: var(--hosted-ink);
+}
 .hosted-tenant-name-field {
   display: grid;
   gap: 7px;
@@ -466,6 +489,8 @@
 }
 .hosted-field-error {
   color: var(--hosted-red);
+  font-size: 12px;
+  font-weight: 400;
 }
 .hosted-tenant-address {
   grid-column: 1 / -1;
@@ -485,10 +510,6 @@
   overflow-wrap: anywhere;
   font-size: 14px;
   font-weight: 600;
-}
-.hosted-tenant-address output[data-placeholder="true"] {
-  color: var(--hosted-muted);
-  font-weight: 400;
 }
 .hosted-inline-label {
   display: flex;

@@ -238,6 +238,12 @@ it("previews the tenant address and submits the existing creation fields", async
   render(<PlatformApp configuration={configuration} />);
   await screen.findByRole("heading", { name: "Tenant directory" });
   await user.click(screen.getByRole("button", { name: "Create tenant" }));
+  expect(screen.getByRole("heading", { name: "Create tenant" })).not.toBeNull();
+  expect(
+    screen.queryByRole("heading", { name: "Tenant directory" }),
+  ).toBeNull();
+  expect(screen.queryByRole("heading", { name: "No tenants yet" })).toBeNull();
+  expect(screen.queryByRole("searchbox")).toBeNull();
   await user.type(screen.getByLabelText("Tenant name"), "AgentOps");
   await user.type(screen.getByLabelText("Owner email"), "owner@example.test");
   expect(screen.getByText("agentops.dispatch.example.test")).not.toBeNull();
@@ -263,9 +269,7 @@ it("previews the tenant address and submits the existing creation fields", async
     slug: "agentops",
     ownerEmail: "owner@example.test",
   });
-  await screen.findByText(
-    "Created agentops.dispatch.example.test.",
-  );
+  await screen.findByText("Created agentops.dispatch.example.test.");
   expect(screen.queryByLabelText("Tenant name")).toBeNull();
   await screen.findByText("agentops.dispatch.example.test");
   expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe(
@@ -290,10 +294,14 @@ it("focuses the tenant name and returns to the directory when creation is cancel
   render(<PlatformApp configuration={configuration} />);
   await screen.findByRole("heading", { name: "Tenant directory" });
   const trigger = screen.getByRole("button", { name: "Create tenant" });
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(screen.queryByLabelText("Status")).toBeNull();
   await user.click(trigger);
   expect(document.activeElement).toBe(screen.getByLabelText("Tenant name"));
   await user.keyboard("{Escape}");
   expect(screen.queryByLabelText("Tenant name")).toBeNull();
-  expect(document.activeElement).toBe(trigger);
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Create tenant" }),
+  );
   expect(fetcher.mock.calls).toHaveLength(3);
 });
