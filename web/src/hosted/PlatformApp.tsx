@@ -409,7 +409,9 @@ export function PlatformApp({
           </>
         )}
         {activeView === "catalog" && account.platformAdmin && (
-          <TenantDirectory origin={configuration.origin} />
+          <TenantDirectory
+            origin={configuration.dataOrigin ?? configuration.origin}
+          />
         )}
         {activeView === "account" && (
           <AccountSettings

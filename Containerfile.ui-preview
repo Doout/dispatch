@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+FROM node:22.14-alpine AS web
+WORKDIR /src/web
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+RUN --mount=type=cache,target=/pnpm/store npm install --global pnpm@11.18.0 && pnpm install --frozen-lockfile --store-dir /pnpm/store
+COPY web/ ./
+RUN pnpm build
+
+FROM golang:1.27.2-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY cmd/dispatch-ui-preview ./cmd/dispatch-ui-preview
+COPY internal/uipreview ./internal/uipreview
+COPY internal/ui/ui.go ./internal/ui/ui.go
+COPY --from=web /src/internal/ui/dist ./internal/ui/dist
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dispatch-ui-preview ./cmd/dispatch-ui-preview
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/dispatch-ui-preview /usr/local/bin/dispatch-ui-preview
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/dispatch-ui-preview"]

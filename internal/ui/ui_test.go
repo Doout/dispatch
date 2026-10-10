@@ -29,6 +29,9 @@ func TestHandlerServesApplicationRoutes(t *testing.T) {
 			if !strings.Contains(response.Body.String(), `id="root"`) {
 				t.Fatal("application route did not return the web entrypoint")
 			}
+			if strings.Contains(response.Body.String(), `id="dispatch-ui-preview"`) || response.Header().Get("Cache-Control") != "no-cache" {
+				t.Fatal("regular installations must not receive preview metadata or cache policy")
+			}
 		})
 	}
 }

@@ -293,6 +293,7 @@ it("focuses the tenant name and returns to the directory when creation is cancel
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
   await screen.findByRole("heading", { name: "Tenant directory" });
+  await screen.findByRole("heading", { name: "No tenants yet" });
   const trigger = screen.getByRole("button", { name: "Create tenant" });
   expect(screen.queryByRole("searchbox")).toBeNull();
   expect(screen.queryByLabelText("Status")).toBeNull();
