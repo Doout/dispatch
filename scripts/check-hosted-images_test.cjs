@@ -4,6 +4,7 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
 const verify = require('./hosted-image-source.cjs');
+const checkImage = require('./check-hosted-image.cjs');
 
 const sha = 'a'.repeat(40);
 function fixture() {
@@ -88,8 +89,78 @@ test('workflow builds the checked revision and advances main only after rechecki
   assert.match(workflow, /platforms: linux\/amd64,linux\/arm64/);
   assert.match(workflow, /if: steps\.existing\.outputs\.digest == ''/);
   assert.match(workflow, /if: steps\.current\.outputs\.eligible == 'true'/);
+  assert.match(workflow, /run: node scripts\/check-hosted-image\.cjs/);
   assert.equal(workflow.match(/require\('\.\/scripts\/hosted-image-source\.cjs'\)/g).length, 2);
   assert.ok(workflow.indexOf('Check both architectures') < workflow.indexOf('Recheck main before updating its tag'));
   assert.ok(workflow.indexOf('Recheck main before updating its tag') < workflow.indexOf('name: Update the main image'));
   assert.doesNotMatch(workflow, /download-artifact|workflow_dispatch|pull_request_target|\bssh\b/);
+});
+
+function imageFixture() {
+  const config = { image: 'ghcr.io/doout/dispatch-platform', digest: `sha256:${'a'.repeat(64)}`, sha };
+  const manifest = { manifests: [
+    { digest: `sha256:${'b'.repeat(64)}`, platform: { os: 'linux', architecture: 'amd64' } },
+    { digest: `sha256:${'c'.repeat(64)}`, platform: { os: 'linux', architecture: 'arm64' } },
+    { digest: `sha256:${'d'.repeat(64)}`, platform: { os: 'unknown', architecture: 'unknown' } },
+  ] };
+  const calls = [];
+  const docker = args => {
+    calls.push(args);
+    if (args[0] === 'buildx') return JSON.stringify(manifest);
+    return `Dispatch platform main-${sha}\n`;
+  };
+  return { config, manifest, calls, docker };
+}
+
+test('checks each architecture by its child digest with runtime restrictions', () => {
+  const f = imageFixture();
+  f.manifest.manifests.push({
+    digest: `sha256:${'e'.repeat(64)}`, platform: { os: 'linux', architecture: 'amd64' },
+    annotations: { 'vnd.docker.reference.type': 'attestation-manifest' },
+  });
+  checkImage(f.config, f.docker);
+  assert.deepEqual(f.calls[0], ['buildx', 'imagetools', 'inspect', '--raw', `${f.config.image}@${f.config.digest}`]);
+  assert.equal(f.calls.length, 3);
+  for (const [index, architecture] of ['amd64', 'arm64'].entries()) {
+    assert.deepEqual(f.calls[index + 1], ['run', '--rm', '--platform', `linux/${architecture}`,
+      '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+      `${f.config.image}@${f.manifest.manifests[index].digest}`, 'version']);
+  }
+});
+
+for (const [name, modify] of Object.entries({
+  'missing arm64': f => { f.manifest.manifests.splice(1, 1); },
+  'wrong operating system': f => { f.manifest.manifests[1].platform.os = 'windows'; },
+  'duplicate amd64': f => { f.manifest.manifests.push(f.manifest.manifests[0]); },
+  'invalid child digest': f => { f.manifest.manifests[1].digest = 'latest'; },
+  'single platform manifest': f => { delete f.manifest.manifests; },
+})) {
+  test(`does not execute images with ${name}`, () => {
+    const f = imageFixture();
+    modify(f);
+    assert.throws(() => checkImage(f.config, f.docker));
+    assert.equal(f.calls.length, 1);
+  });
+}
+
+for (const [index, architecture] of ['amd64', 'arm64'].entries()) {
+  test(`rejects an unexpected ${architecture} image version and stops checking`, () => {
+    const f = imageFixture();
+    const docker = args => {
+      const version = f.docker(args);
+      return args.includes(`linux/${architecture}`) ? 'Dispatch platform development\n' : version;
+    };
+    assert.throws(() => checkImage(f.config, docker), /unexpected version/);
+    assert.equal(f.calls.length, index + 2);
+  });
+}
+
+test('Docker pull and runtime failures fail the check', () => {
+  const f = imageFixture();
+  const failure = new Error('Docker failed');
+  assert.throws(() => checkImage(f.config, () => { throw failure; }), error => error === failure);
+  assert.throws(() => checkImage(f.config, args => {
+    if (args[0] === 'buildx') return f.docker(args);
+    throw failure;
+  }), error => error === failure);
 });
