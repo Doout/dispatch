@@ -440,8 +440,8 @@
   margin-top: 24px;
 }
 .hosted-create-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  max-width: 720px;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: none;
 }
 .hosted-form-wide {
   grid-column: 1 / -1;
@@ -453,28 +453,13 @@
   overflow-wrap: anywhere;
 }
 .hosted-tenant-create {
-  border-left: 3px solid var(--hosted-blue);
+  max-width: 640px;
 }
 .hosted-tenant-name-field {
   display: grid;
   gap: 7px;
   min-width: 0;
   grid-column: 1 / -1;
-}
-.hosted-domain-input {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-}
-.hosted-domain-input input {
-  flex: 1 1 180px;
-  width: auto;
-}
-.hosted-domain-input > span {
-  color: var(--hosted-muted);
-  font-size: 13px;
-  overflow-wrap: anywhere;
 }
 .hosted-form input[aria-invalid="true"] {
   border-color: var(--hosted-red);
@@ -500,6 +485,10 @@
   overflow-wrap: anywhere;
   font-size: 14px;
   font-weight: 600;
+}
+.hosted-tenant-address output[data-placeholder="true"] {
+  color: var(--hosted-muted);
+  font-weight: 400;
 }
 .hosted-inline-label {
   display: flex;

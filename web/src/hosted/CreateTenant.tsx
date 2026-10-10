@@ -95,9 +95,6 @@ export function CreateTenant({
       aria-labelledby="create-tenant-title"
     >
       <h2 id="create-tenant-title">Create tenant</h2>
-      <p className="hosted-panel-description">
-        The tenant name becomes its subdomain. Assign an owner to manage it.
-      </p>
       <form
         className="hosted-form hosted-create-form"
         onSubmit={(event) => void submit(event)}
@@ -110,25 +107,22 @@ export function CreateTenant({
       >
         <div className="hosted-tenant-name-field">
           <label htmlFor="tenant-name">Tenant name</label>
-          <div className="hosted-domain-input">
-            <input
-              id="tenant-name"
-              ref={nameInput}
-              value={name}
-              onChange={(event) => setName(event.target.value.toLowerCase())}
-              onBlur={() => setNameTouched(true)}
-              onInvalid={() => setNameTouched(true)}
-              required
-              disabled={busy}
-              placeholder="agentops"
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              aria-invalid={Boolean(nameError)}
-              aria-describedby={`tenant-name-help${nameError ? " tenant-name-error" : ""}`}
-            />
-            <span aria-hidden="true">.{hostname}</span>
-          </div>
+          <input
+            id="tenant-name"
+            ref={nameInput}
+            value={name}
+            onChange={(event) => setName(event.target.value.toLowerCase())}
+            onBlur={() => setNameTouched(true)}
+            onInvalid={() => setNameTouched(true)}
+            required
+            disabled={busy}
+            placeholder="example"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            aria-invalid={Boolean(nameError)}
+            aria-describedby={`tenant-name-help${nameError ? " tenant-name-error" : ""}`}
+          />
           <small id="tenant-name-help" className="hosted-field-hint">
             1 to 63 characters. Start with a letter; use letters, numbers and
             hyphens.
@@ -145,10 +139,13 @@ export function CreateTenant({
         </div>
         <div className="hosted-tenant-address">
           <span>Tenant address</span>
-          <output htmlFor="tenant-name">
+          <output
+            htmlFor="tenant-name"
+            data-placeholder={Boolean(validationError)}
+          >
             {name && !validationError
               ? `${name}.${hostname}`
-              : `your-tenant.${hostname}`}
+              : `example.${hostname}`}
           </output>
         </div>
         <label className="hosted-form-wide">
@@ -164,8 +161,7 @@ export function CreateTenant({
             aria-describedby="tenant-owner-help"
           />
           <small id="tenant-owner-help" className="hosted-field-hint">
-            The owner manages deployments and members. Access is limited to
-            tenant members, including the owner.
+            The owner manages this tenant and its members.
           </small>
         </label>
         {error && (
