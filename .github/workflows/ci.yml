@@ -65,6 +65,36 @@ jobs:
               --require-test TestTemporaryEnvironmentDockerRestartExpiryIntegration \
               --require-test TestPackagedMockProviderCLIAndMCPAcceptanceIntegration \
               --require-test TestWorkloadBackupSeparateDaemonsSourceLossIntegration
+  installation-portability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the controller for a disposable installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f Containerfile --target runtime -t dispatch-installation-runtime:test .
+          mkdir -p "$RUNNER_TEMP/dispatch-portability"
+          go build -o "$RUNNER_TEMP/dispatch-portability/dispatch" ./cmd/dispatch
+          cat > "$RUNNER_TEMP/dispatch-portability/Containerfile" <<'EOF'
+          FROM dispatch-installation-runtime:test
+          COPY dispatch /usr/local/bin/dispatch
+          EOF
+          docker build -f "$RUNNER_TEMP/dispatch-portability/Containerfile" \
+            -t dispatch-installation:test "$RUNNER_TEMP/dispatch-portability"
+      - name: Verify a complete export and import between Docker installations
+        env:
+          DISPATCH_INSTALLATION_DOCKER_IMAGE: dispatch-installation:test
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 -timeout 10m -json ./internal/installation \
+            -run '^TestPortableDockerInstallation$' \
+            | python3 scripts/check-test-results.py --require-test TestPortableDockerInstallation
   hosted-workers:
     runs-on: ubuntu-latest
     timeout-minutes: 25

@@ -25,22 +25,23 @@ const DefaultImage = "ghcr.io/doout/dispatch:stable"
 const managedLabel = "io.dispatch.installation"
 
 type Config struct {
-	Schema       int       `json:"schema"`
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Image        string    `json:"image"`
-	ImageID      string    `json:"imageId"`
-	Bind         string    `json:"bind"`
-	Port         int       `json:"port"`
-	Volume       string    `json:"volume"`
-	Socket       string    `json:"socket"`
-	DockerGID    uint32    `json:"dockerGid"`
-	PublicURL    string    `json:"publicUrl,omitempty"`
-	ProxyNetwork string    `json:"proxyNetwork,omitempty"`
-	Hostname     string    `json:"hostname,omitempty"`
-	TLSResolver  string    `json:"tlsResolver,omitempty"`
-	InstalledAt  time.Time `json:"installedAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ImportArchive string    `json:"importArchive,omitempty"`
+	Schema        int       `json:"schema"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Image         string    `json:"image"`
+	ImageID       string    `json:"imageId"`
+	Bind          string    `json:"bind"`
+	Port          int       `json:"port"`
+	Volume        string    `json:"volume"`
+	Socket        string    `json:"socket"`
+	DockerGID     uint32    `json:"dockerGid"`
+	PublicURL     string    `json:"publicUrl,omitempty"`
+	ProxyNetwork  string    `json:"proxyNetwork,omitempty"`
+	Hostname      string    `json:"hostname,omitempty"`
+	TLSResolver   string    `json:"tlsResolver,omitempty"`
+	InstalledAt   time.Time `json:"installedAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 type transaction struct {
 	Previous Config `json:"previous"`
@@ -354,13 +355,17 @@ func (m *Manager) start(ctx context.Context, c Config) error {
 	return m.waitHealthy(ctx, c)
 }
 func (m *Manager) Install(ctx context.Context, c Config, envFile string, pull bool) error {
+	return m.install(ctx, c, envFile, pull, "")
+}
+
+func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bool, seed string) error {
 	if err := validate(c); err != nil {
 		return err
 	}
 	if _, err := os.Stat(m.path("installation.json")); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("installation already exists; use dispatch upgrade or dispatch recover")
 	}
-	for _, name := range []string{"compose.json", "dispatch.env", "upgrade.json"} {
+	for _, name := range []string{"compose.json", "dispatch.env", "upgrade.json", "export.json"} {
 		if _, err := os.Lstat(m.path(name)); !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("refusing to overwrite %s", m.path(name))
 		}
@@ -419,16 +424,24 @@ func (m *Manager) Install(ctx context.Context, c Config, envFile string, pull bo
 	if err = m.writeCompose(c); err != nil {
 		return err
 	}
+	c.ImportArchive = seed
 	if err = saveJSON(m.path("installation.json"), c); err != nil {
 		return err
 	}
 	if err = m.initializeVolume(ctx, c); err != nil {
 		return fmt.Errorf("installation retained; run dispatch recover --dir %s: %w", m.Dir, err)
 	}
+	if err = m.finishImport(ctx, c); err != nil {
+		return fmt.Errorf("import retained; run dispatch recover --dir %s: %w", m.Dir, err)
+	}
 	if err = m.start(ctx, c); err != nil {
 		return fmt.Errorf("installation retained for repair; run dispatch recover --dir %s: %w", m.Dir, err)
 	}
-	fmt.Fprintf(m.Out, "Dispatch is ready at http://%s. Complete owner setup in the browser.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
+	if seed == "" {
+		fmt.Fprintf(m.Out, "Dispatch is ready at http://%s. Complete owner setup in the browser.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
+	} else {
+		fmt.Fprintf(m.Out, "Dispatch imported at http://%s. Sign in with your existing account.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
+	}
 	return nil
 }
 func (m *Manager) checkManaged(ctx context.Context, c Config) error {
@@ -460,6 +473,9 @@ func (m *Manager) checkManaged(ctx context.Context, c Config) error {
 	return nil
 }
 func (m *Manager) Upgrade(ctx context.Context, image string, pull, check bool) error {
+	if err := m.noPendingTransfer(); err != nil {
+		return err
+	}
 	c, err := m.Load()
 	if err != nil {
 		return err
@@ -569,6 +585,20 @@ func (m *Manager) Recover(ctx context.Context) error {
 	if err := m.preflight(ctx, installed.Socket); err != nil {
 		return err
 	}
+	if _, e := os.Stat(m.path("export.json")); e == nil {
+		if err = m.cleanupTransfer(ctx, installed, "export"); err != nil {
+			return err
+		}
+		if err = m.checkManaged(ctx, installed); err != nil {
+			return err
+		}
+		if err = m.start(ctx, installed); err != nil {
+			return err
+		}
+		return os.Remove(m.path("export.json"))
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
 	data, err := os.ReadFile(m.path("upgrade.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		c, err := m.Load()
@@ -576,6 +606,9 @@ func (m *Manager) Recover(ctx context.Context) error {
 			return err
 		}
 		if err = m.initializeVolume(ctx, c); err != nil {
+			return err
+		}
+		if err = m.finishImport(ctx, c); err != nil {
 			return err
 		}
 		return m.start(ctx, c)
@@ -628,6 +661,9 @@ func (m *Manager) initializeVolume(ctx context.Context, c Config) error {
 	}
 	if err := m.verifyVolume(ctx, c); err != nil {
 		return err
+	}
+	if c.ImportArchive != "" {
+		return nil
 	}
 	_, err := m.Run(ctx, "docker", "run", "--rm", "--network", "none", "--user", "0", "--entrypoint", "sh", "--volume", c.Volume+":/data", c.ImageID, "-c", `set -eu
 umask 077

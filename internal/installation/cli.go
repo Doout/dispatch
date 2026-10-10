@@ -17,6 +17,8 @@ const help = `Usage: dispatch <command> [options]
 
   serve                  Run the controller (also the default with no arguments)
   install                Install a Docker controller
+  export                 Save a portable self-hosted installation archive
+  import                 Create an installation from an export archive
   upgrade                Pull and apply a controller upgrade
   status                 Show the managed installation and its health
   recover                Recover an interrupted install or upgrade
@@ -66,9 +68,15 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 	var envFile *string
 	var interval *time.Duration
 	var registryConfig *string
+	var archive *string
 	switch command {
-	case "install":
-		image = fs.String("image", DefaultImage, "controller image to install and follow for upgrades")
+	case "install", "import":
+		defaultImage := DefaultImage
+		if command == "import" {
+			defaultImage = ""
+			archive = fs.String("input", "", "export archive to import")
+		}
+		image = fs.String("image", defaultImage, "controller image to install and follow for upgrades")
 		pull = fs.Bool("pull", true, "pull the image before installing (false uses a local image)")
 		fs.StringVar(&c.Name, "name", "dispatch", "Compose project name")
 		fs.StringVar(&c.Bind, "bind", "127.0.0.1", "host IP address to listen on")
@@ -79,7 +87,11 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 		fs.StringVar(&c.ProxyNetwork, "proxy-network", "", "existing Traefik Docker network (optional)")
 		fs.StringVar(&c.Hostname, "hostname", "", "hostname for the Traefik route")
 		fs.StringVar(&c.TLSResolver, "tls-resolver", "", "Traefik certificate resolver (optional)")
-		envFile = fs.String("env-file", "", "file of literal KEY=value controller settings to copy")
+		if command == "install" {
+			envFile = fs.String("env-file", "", "file of literal KEY=value controller settings to copy")
+		}
+	case "export":
+		archive = fs.String("output", "", "archive destination; must not already exist")
 	case "upgrade":
 		image = fs.String("image", "", "change the image reference followed by this installation")
 		pull = fs.Bool("pull", true, "pull before upgrading (false uses a local image)")
@@ -124,10 +136,15 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 	}
 	return true, m.Locked(func() error {
 		switch command {
-		case "install":
+		case "export":
+			return m.Export(ctx, *archive)
+		case "install", "import":
 			c.Image = *image
 			if c.Volume == "" {
 				c.Volume = c.Name + "-data"
+			}
+			if command == "import" {
+				return m.Import(ctx, *archive, c, *pull)
 			}
 			return m.Install(ctx, c, *envFile, *pull)
 		case "upgrade":

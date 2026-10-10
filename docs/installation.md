@@ -53,6 +53,45 @@ The proxy network and certificate resolver must already exist. Without proxy fla
 
 The generated `compose.json` is managed by the CLI. It refuses upgrades if that file was manually changed. To apply an environment-file edit, run `dispatch recover` when there is no interrupted upgrade; this reconciles and starts the existing pinned image.
 
+## Move a self-hosted installation
+
+Export the managed installation on the old server:
+
+```sh
+sudo dispatch export --output /root/dispatch-export.tar.gz
+```
+
+Copy the archive to the new server, install the CLI and Docker, then import it:
+
+```sh
+sudo dispatch import --input /root/dispatch-export.tar.gz
+```
+
+Sign in with your existing account. The archive includes the SQLite database, vault key, literal environment file and everything stored in the controller data volume, including analytics, repository caches and local backup files. Import verifies database integrity and checks that the vault key can decrypt saved credentials before creating Docker resources.
+
+Export stops the controller while copying its data, then restarts it before checking and packaging the archive. Wait for active builds and deployments to finish before exporting. For a permanent move, stop the old controller before starting the imported copy so both installations cannot schedule the same work. Redirect DNS and webhooks to the new server after it is ready. Update OAuth callback registrations if the hostname changes.
+
+Import creates a new installation identity and data volume. It never adopts or overwrites an existing installation, Compose project or volume. To test on the same host, choose a separate directory, name and port:
+
+```sh
+sudo dispatch import \
+  --input /root/dispatch-export.tar.gz \
+  --dir /opt/dispatch-copy \
+  --name dispatch-copy \
+  --port 8081 \
+  --public-url https://dispatch-new.example.com
+```
+
+The usual install options also set the Docker socket, bind address and Traefik route. Host settings come from these options rather than the old server. The archived environment file is restored as-is, so check any server-specific addresses in it. Agents may need their controller URL updated. Re-enable automatic upgrades separately if you want them on the new server.
+
+When the source image has a registry digest, import uses that exact image. For a local image, copy or rebuild it on the destination and use `--image IMAGE --pull=false`. Use `dispatch upgrade --image ghcr.io/doout/dispatch:stable` afterward to follow stable releases. Moving between CPU architectures requires an image published for both architectures; architecture-specific caches may need rebuilding.
+
+If an export or import is interrupted, run `dispatch recover --dir DIRECTORY`. An unfinished import retains its staged data and blocks upgrades until recovery completes. A failed health check also leaves the installation available for recovery.
+
+The archive contains the vault key and configuration secrets. It has mode `0600` and is not encrypted. Import only archives you trust. Transfer them over a trusted connection and protect them like database credentials. The archive format currently accepts up to 100 GiB of data and one million entries. Unsafe paths, links outside the data volume, device files, duplicate entries, incompatible manifests and checksum mismatches are rejected.
+
+This flow supports installations created by `dispatch install`. External PostgreSQL databases, custom Compose stacks and hosted tenant conversion require a separate migration. Docker images, application containers and application volumes outside the controller data volume are not copied. Keep deployment targets and external secret stores available, or reconnect them before running deployments on the new server.
+
 ## Upgrade
 
 ```sh

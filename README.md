@@ -37,6 +37,17 @@ sudo dispatch upgrade
 
 Upgrades preserve configuration and back up controller data before replacing the container. If the replacement fails its health check, Dispatch restores the previous image and data. Upgrades interrupt the controller, so schedule them outside active deployments.
 
+To move a managed installation, export it on the old server, copy the archive and import it on the new server:
+
+```sh
+# Old server
+sudo dispatch export --output /root/dispatch-export.tar.gz
+# New server
+sudo dispatch import --input /root/dispatch-export.tar.gz
+```
+
+The archive preserves accounts, encrypted credentials and controller data. See the [installation guide](docs/installation.md#move-a-self-hosted-installation) for cutover and recovery instructions.
+
 Automatic updates are optional and run in a separate Docker container:
 
 ```sh
