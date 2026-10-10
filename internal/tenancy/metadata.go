@@ -160,6 +160,13 @@ func (c *Catalog) SaveZoneRecord(ctx context.Context, r ZoneRecord) (ZoneRecord,
 		if r.Generation != 0 {
 			return ZoneRecord{}, ErrConflict
 		}
+		pending, pendingErr := scanDNSChange(tx.QueryRowContext(ctx, c.q(`SELECT `+dnsChangeColumns+` FROM tenant_dns_changes WHERE id=?`), r.ID))
+		if pendingErr != nil && !errors.Is(pendingErr, ErrNotFound) {
+			return ZoneRecord{}, pendingErr
+		}
+		if pendingErr == nil && pending.Delete && (pending.Record.OwnerID != r.OwnerID || pending.Record.TenantID != r.TenantID || pending.Record.Name != r.Name || pending.Record.Type != r.Type) {
+			return ZoneRecord{}, ErrDenied
+		}
 	} else if err != nil {
 		return ZoneRecord{}, err
 	} else {
@@ -181,6 +188,9 @@ func (c *Catalog) SaveZoneRecord(ctx context.Context, r ZoneRecord) (ZoneRecord,
 		return ZoneRecord{}, err
 	}
 	if _, err = tx.ExecContext(ctx, c.q(`UPDATE tenant_zone_generation SET generation=? WHERE id=1`), generation); err != nil {
+		return ZoneRecord{}, err
+	}
+	if err = c.enqueueDNSChange(ctx, tx, DNSChange{Record: r, Generation: r.Generation}); err != nil {
 		return ZoneRecord{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -212,6 +222,9 @@ func (c *Catalog) DeleteZoneRecord(ctx context.Context, id, owner string, expect
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, c.q(`UPDATE tenant_zone_generation SET generation=? WHERE id=1`), generation+1); err != nil {
+		return err
+	}
+	if err = c.enqueueDNSChange(ctx, tx, DNSChange{Record: r, Generation: uint64(generation + 1), Delete: true}); err != nil {
 		return err
 	}
 	return tx.Commit()

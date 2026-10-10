@@ -23,6 +23,7 @@ type hostedFixture struct {
 	server  *Server
 	catalog *tenancy.Catalog
 	opens   atomic.Int32
+	dns     *testDNSProvider
 }
 
 func newHostedFixture(t *testing.T) *hostedFixture {
@@ -47,8 +48,8 @@ func newHostedFixture(t *testing.T) *hostedFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { factory.Close() })
-	f := &hostedFixture{catalog: catalog}
-	cfg := Config{RootDomain: "dispatch.example.test", DataDirectory: root, ConsoleAddresses: []string{"192.0.2.10"}, WorkloadGateway: "192.0.2.11", Nameservers: []string{"ns1.example.net", "ns2.example.net"}, DNSReadToken: strings.Repeat("d", 40)}
+	f := &hostedFixture{catalog: catalog, dns: newTestDNSProvider()}
+	cfg := Config{RootDomain: "dispatch.example.test", DataDirectory: root, ConsoleAddresses: []string{"192.0.2.10"}, WorkloadGateway: "192.0.2.11", DNSProvider: f.dns}
 	f.server, err = New(ctx, cfg, catalog, func(ctx context.Context, tenant tenancy.Tenant, auth *api.HostedAuth) (*TenantRuntime, error) {
 		runtime, err := factory.Open(ctx, tenant.ID)
 		if err != nil {
@@ -227,14 +228,11 @@ func TestHostedHostOriginAndDNSBoundaries(t *testing.T) {
 	admin := f.session(t, "platform", tenancy.AudiencePlatform)
 	for _, bearer := range []string{admin, token} {
 		w = f.request(t, f.server.Config.RootDomain, http.MethodGet, "/api/v1/internal/dns/snapshot", bearer, nil)
-		if w.Code != 401 && w.Code != 403 {
-			t.Fatal("user token read full DNS feed", w.Code)
+		if w.Code != 404 {
+			t.Fatal("removed DNS snapshot feed is still available", w.Code)
 		}
 	}
-	w = f.request(t, f.server.Config.RootDomain, http.MethodGet, "/api/v1/internal/dns/snapshot", f.server.Config.DNSReadToken, nil)
-	if w.Code != 200 {
-		t.Fatal("DNS service token rejected", w.Code, w.Body.String())
-	}
+
 }
 
 func TestHostedPKCEExchangeAndMembershipRevocation(t *testing.T) {

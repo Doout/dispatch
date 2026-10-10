@@ -261,7 +261,6 @@ func (s *Server) platformRoutes() http.Handler {
 	r.Post("/api/v1/tenants/{id}/members", s.addMember)
 	r.Put("/api/v1/tenants/{id}/members/{userId}", s.setMember)
 	r.Delete("/api/v1/tenants/{id}/members/{userId}", s.deleteMember)
-	r.Handle("/api/v1/internal/dns/snapshot", s.dnsSnapshotHandler())
 	// Unknown API paths never fall through to the SPA or to a tenant controller.
 	r.HandleFunc("/api/*", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	r.Handle("/*", ui.Handler())

@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Dispatch hosted API
   version: 0.1.0
-  description: Hosted identity, metadata-only platform administration, tenant membership and delegated
+  description: Hosted identity, metadata-only platform administration, tenant membership and provider-managed
     DNS. Browser mutations require an exact Origin when cookies are present. No CORS access is granted
     to sibling workload hosts. Tenant operational endpoints are documented separately in openapi.yaml.
 servers:
@@ -493,8 +493,9 @@ paths:
   /hosted/dns:
     get:
       operationId: listTenantDNS
-      description: Tenant console only. Owner/admin only. Lists this tenant's public records, excluding
-        ACME challenges.
+      description: Tenant console only. Owner/admin only. Lists this tenant's desired DNS records and
+        publication state, excluding ACME challenges. A synced record has been accepted by the provider; recursive caches may still
+        contain an older answer.
       responses:
         '200':
           description: Success.
@@ -511,10 +512,17 @@ paths:
       operationId: writeTenantDNS
       description: Tenant console only. Owner/admin only. Names must be one label below the tenant console
         hostname. Console, wildcard, ACME and other tenant names are reserved. New records use generation
-        0; updates require the existing generation.
+        0; updates require the existing generation. Changes are saved before provider publication.
+        Pending changes are retried after provider failures and controller restarts.
       responses:
         '200':
-          description: Success.
+          description: Saved and published to the DNS provider.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DNSRecord'
+        '202':
+          description: Saved; publication is pending and will be retried.
           content:
             application/json:
               schema:
@@ -533,7 +541,22 @@ paths:
       description: Deletes only a user-managed record with the exact expected generation.
       responses:
         '204':
-          description: Success.
+          description: Removed from the catalog and DNS provider.
+        '202':
+          description: Removed from desired records; provider deletion is pending and will be retried.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: *id001
+                  syncState:
+                    type: string
+                    enum:
+                    - pending
+                required:
+                - id
+                - syncState
         default:
           $ref: '#/components/responses/Problem'
       requestBody:
@@ -578,23 +601,6 @@ paths:
         default:
           $ref: '#/components/responses/Problem'
       security: *id003
-  /internal/dns/snapshot:
-    get:
-      operationId: readAuthoritativeZone
-      description: Root host only. Dedicated DNS replication bearer token, at least 32 characters. Platform
-        and tenant sessions are not accepted. Contains public DNS records and challenge TXT values, never
-        certificate keys.
-      responses:
-        '200':
-          description: Success.
-          content:
-            application/json:
-              schema:
-                type: object
-        default:
-          $ref: '#/components/responses/Problem'
-      security:
-      - dnsReplicaToken: []
 components:
   securitySchemes:
     platformSession:
@@ -609,10 +615,6 @@ components:
       type: http
       scheme: bearer
       description: An audience-bound user session, not a legacy installation admin token.
-    dnsReplicaToken:
-      type: http
-      scheme: bearer
-      description: Dedicated read-only DNS replica credential.
   responses:
     Problem:
       description: Request rejected or service unavailable.
@@ -764,6 +766,20 @@ components:
         generation:
           type: integer
           minimum: 0
+        syncState:
+          type: string
+          description: Provider publication state. Synced does not guarantee recursive cache refresh.
+          enum:
+          - pending
+          - synced
+      required:
+      - id
+      - name
+      - type
+      - values
+      - ttl
+      - generation
+      - syncState
     DNSWrite:
       type: object
       properties:

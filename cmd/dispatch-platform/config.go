@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/doout/dispatch/internal/dnsprovider"
 	"github.com/doout/dispatch/internal/hosted"
 )
 
@@ -80,17 +81,7 @@ func readConfiguration() (configuration, error) {
 	c.Hosted.TrustedProxyCIDRs = list(os.Getenv("DISPATCH_HOSTED_TRUSTED_PROXIES"))
 	c.Hosted.ConsoleAddresses = list(os.Getenv("DISPATCH_HOSTED_CONSOLE_ADDRESSES"))
 	c.Hosted.WorkloadGateway = strings.TrimSpace(os.Getenv("DISPATCH_HOSTED_WORKLOAD_GATEWAY"))
-	c.Hosted.Nameservers = list(os.Getenv("DISPATCH_HOSTED_NAMESERVERS"))
-	c.Hosted.NameserverAddresses = map[string][]string{}
-	for _, entry := range list(os.Getenv("DISPATCH_HOSTED_NAMESERVER_ADDRESSES")) {
-		name, address, ok := strings.Cut(entry, "=")
-		if !ok || name == "" || address == "" {
-			return c, errors.New("nameserver addresses must use name=IP entries")
-		}
-		name = strings.ToLower(strings.TrimSuffix(name, "."))
-		c.Hosted.NameserverAddresses[name] = append(c.Hosted.NameserverAddresses[name], address)
-	}
-	if c.Hosted.DNSReadToken, err = secret("DISPATCH_HOSTED_DNS_TOKEN"); err != nil {
+	if c.Hosted.DNSProvider, err = configuredDNSProvider(c.Hosted.RootDomain); err != nil {
 		return c, err
 	}
 	if c.PostgresAdminURL, err = secret("DISPATCH_HOSTED_POSTGRES_ADMIN_URL"); err != nil {
@@ -145,6 +136,21 @@ func readConfiguration() (configuration, error) {
 		return c, errors.New("TLS mode must be certificate, acme, or proxy")
 	}
 	return c, c.Hosted.Validate()
+}
+
+func configuredDNSProvider(rootDomain string) (dnsprovider.Provider, error) {
+	switch strings.TrimSpace(os.Getenv("DISPATCH_HOSTED_DNS_PROVIDER")) {
+	case "cloudflare":
+		token, err := secret("DISPATCH_HOSTED_CLOUDFLARE_API_TOKEN")
+		if err != nil {
+			return nil, err
+		}
+		return dnsprovider.NewCloudflare(dnsprovider.CloudflareConfig{
+			APIToken: token, ZoneID: strings.TrimSpace(os.Getenv("DISPATCH_HOSTED_CLOUDFLARE_ZONE_ID")), RootDomain: rootDomain,
+		})
+	default:
+		return nil, errors.New("set DISPATCH_HOSTED_DNS_PROVIDER to a supported provider: cloudflare")
+	}
 }
 
 func list(raw string) []string {

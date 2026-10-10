@@ -96,6 +96,14 @@ type ZoneRecord struct {
 	Generation uint64   `json:"generation"`
 }
 
+// DNSChange is the latest publication needed for a record. A deletion keeps the
+// removed record and its original version; Generation orders the deletion itself.
+type DNSChange struct {
+	Record     ZoneRecord
+	Generation uint64
+	Delete     bool
+}
+
 type Domain struct {
 	ID        string    `json:"id"`
 	TenantID  string    `json:"tenantId"`

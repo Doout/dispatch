@@ -9,20 +9,20 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/doout/dispatch/internal/dnsprovider"
 )
 
 type Config struct {
-	RootDomain          string
-	TrustedProxyCIDRs   []string
-	DataDirectory       string
-	ConsoleAddresses    []string
-	WorkloadGateway     string
-	Nameservers         []string
-	NameserverAddresses map[string][]string
-	DNSReadToken        string
-	SessionDuration     time.Duration
-	SMTP                SMTPConfig
-	Certificates        CertificateConfig
+	RootDomain        string
+	TrustedProxyCIDRs []string
+	DataDirectory     string
+	ConsoleAddresses  []string
+	WorkloadGateway   string
+	DNSProvider       dnsprovider.Provider
+	SessionDuration   time.Duration
+	SMTP              SMTPConfig
+	Certificates      CertificateConfig
 }
 
 func (c *Config) Validate() error {
@@ -41,29 +41,8 @@ func (c *Config) Validate() error {
 	if len(c.ConsoleAddresses) == 0 {
 		return errors.New("at least one console address is required")
 	}
-	if len(c.Nameservers) < 2 {
-		return errors.New("configure at least two authoritative nameserver names")
-	}
-	seen := map[string]bool{}
-	for i, ns := range c.Nameservers {
-		ns = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(ns), "."))
-		if !validHostname(ns) || seen[ns] || ns == c.RootDomain {
-			return errors.New("nameserver names must be distinct DNS names")
-		}
-		c.Nameservers[i], seen[ns] = ns, true
-		if ns == c.RootDomain || strings.HasSuffix(ns, "."+c.RootDomain) {
-			if len(c.NameserverAddresses[ns]) == 0 {
-				return errors.New("nameservers inside the managed zone require glue addresses")
-			}
-		}
-		for _, address := range c.NameserverAddresses[ns] {
-			if net.ParseIP(address) == nil {
-				return errors.New("nameserver glue must contain IP addresses")
-			}
-		}
-	}
-	if len(c.DNSReadToken) < 32 {
-		return errors.New("DNS snapshot token must contain at least 32 characters")
+	if c.DNSProvider == nil {
+		return errors.New("a DNS provider is required")
 	}
 	if c.WorkloadGateway != "" && net.ParseIP(c.WorkloadGateway) == nil && !validHostname(c.WorkloadGateway) {
 		return errors.New("workload gateway must be an IP address or DNS name")
@@ -107,15 +86,6 @@ func validHostname(host string) bool {
 
 func (c Config) Origin() string                  { return "https://" + c.RootDomain }
 func (c Config) TenantOrigin(slug string) string { return "https://" + slug + "." + c.RootDomain }
-
-func (c Config) nameserverTenantSlug(nameserver string) (string, bool) {
-	prefix, found := strings.CutSuffix(nameserver, "."+c.RootDomain)
-	if !found {
-		return "", false
-	}
-	labels := strings.Split(prefix, ".")
-	return labels[len(labels)-1], true
-}
 
 func canonicalHost(raw string) (string, bool) {
 	if strings.ContainsAny(raw, " /\\\t\r\n@%") {
