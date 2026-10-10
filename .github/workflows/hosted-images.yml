@@ -96,14 +96,7 @@ jobs:
       - name: Check both architectures
         env:
           IMAGE_DIGEST: ${{ steps.existing.outputs.digest || steps.build.outputs.digest }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          for architecture in amd64 arm64; do
-            version=$(docker run --rm --platform "linux/$architecture" --network none --read-only --cap-drop ALL --security-opt no-new-privileges "$PLATFORM_IMAGE@$IMAGE_DIGEST" version)
-            test "$version" = "Dispatch platform main-$SOURCE_SHA"
-          done
+        run: node scripts/check-hosted-image.cjs
       - name: Recheck main before updating its tag
         id: current
         uses: actions/github-script@v7
