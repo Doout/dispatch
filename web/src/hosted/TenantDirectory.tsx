@@ -1,18 +1,27 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowsClockwise, MagnifyingGlass, Plus } from "@phosphor-icons/react";
 import { hostedRequest, type Tenant } from "./client";
 import { HostedEmpty, TenantStatus } from "./HostedChrome";
 import { UsagePanel } from "./UsagePanel";
+import { CreateTenant } from "./CreateTenant";
 
 export function TenantDirectory({ origin }: { origin: string }) {
   const [tenants, setTenants] = useState<Tenant[]>([]),
     [selected, setSelected] = useState<Tenant | null>(null),
+    [created, setCreated] = useState<Tenant | null>(null),
     [creating, setCreating] = useState(false),
     [filter, setFilter] = useState(""),
     [stateFilter, setStateFilter] = useState(""),
     [limit, setLimit] = useState(50),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true);
+  const hostname = new URL(origin).host;
+  const createButton = useRef<HTMLButtonElement>(null);
+  const formWasOpen = useRef(false);
+  useEffect(() => {
+    if (!creating && formWasOpen.current) createButton.current?.focus();
+    formWasOpen.current = creating;
+  }, [creating]);
   const load = useCallback(async () => {
     setError("");
     setLoading(true);
@@ -29,7 +38,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
   }, [load]);
   const visible = tenants.filter(
     (tenant) =>
-      `${tenant.name} ${tenant.slug}`
+      `${tenant.name} ${tenant.slug}.${hostname}`
         .toLowerCase()
         .includes(filter.toLowerCase()) &&
       (!stateFilter || tenant.state === stateFilter),
@@ -39,7 +48,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
       <header className="hosted-page-heading">
         <div>
           <h1>Tenant directory</h1>
-          <p>View tenant names, status and recorded usage.</p>
+          <p>Find tenants by address and view their usage.</p>
         </div>
         <div className="hosted-row-actions">
           <button
@@ -51,9 +60,13 @@ export function TenantDirectory({ origin }: { origin: string }) {
             Refresh
           </button>
           <button
+            ref={createButton}
             className="primary-button"
             disabled={creating}
-            onClick={() => setCreating(true)}
+            onClick={() => {
+              setCreated(null);
+              setCreating(true);
+            }}
           >
             <Plus size={16} aria-hidden="true" />
             Create tenant
@@ -63,12 +76,22 @@ export function TenantDirectory({ origin }: { origin: string }) {
       {creating && (
         <CreateTenant
           origin={origin}
-          onCreated={async () => {
+          tenants={tenants}
+          onCreated={async (tenant) => {
+            setCreated(tenant);
+            setFilter(`${tenant.slug}.${hostname}`);
+            setStateFilter("");
+            setLimit(50);
             setCreating(false);
             await load();
           }}
           onCancel={() => setCreating(false)}
         />
+      )}
+      {created && (
+        <p className="form-success" role="status">
+          Created {created.slug}.{hostname}.
+        </p>
       )}
       {error && (
         <p className="form-error" role="alert">
@@ -114,7 +137,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
                 setFilter(event.target.value);
                 setLimit(50);
               }}
-              placeholder="Name or subdomain"
+              placeholder="Tenant name or address"
             />
           </span>
         </label>
@@ -149,7 +172,6 @@ export function TenantDirectory({ origin }: { origin: string }) {
             <thead>
               <tr>
                 <th>Tenant</th>
-                <th>Subdomain</th>
                 <th>Status</th>
                 <th>Created</th>
                 <th>
@@ -161,10 +183,10 @@ export function TenantDirectory({ origin }: { origin: string }) {
               {visible.slice(0, limit).map((tenant) => (
                 <tr key={tenant.id}>
                   <td>
-                    <strong>{tenant.name}</strong>
-                  </td>
-                  <td>
-                    <code>{tenant.slug}</code>
+                    <strong>{tenant.slug}</strong>
+                    <small>
+                      {tenant.slug}.{hostname}
+                    </small>
                   </td>
                   <td>
                     <TenantStatus state={tenant.state} />
@@ -205,7 +227,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
         >
           {tenants.length === 0
             ? "Create a tenant and assign an owner."
-            : "Try a different name, subdomain or status."}
+            : "Try a different tenant name, address or status."}
         </HostedEmpty>
       )}
       {visible.length > limit && (
@@ -225,107 +247,5 @@ export function TenantDirectory({ origin }: { origin: string }) {
         <UsagePanel tenant={selected} onClose={() => setSelected(null)} />
       )}
     </>
-  );
-}
-
-function CreateTenant({
-  origin,
-  onCreated,
-  onCancel,
-}: {
-  origin: string;
-  onCreated: () => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(""),
-    [slug, setSlug] = useState(""),
-    [ownerEmail, setOwnerEmail] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await hostedRequest("/platform/tenants", "POST", {
-        name,
-        slug,
-        ownerEmail,
-      });
-      await onCreated();
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className="hosted-panel">
-      <h2>Create tenant</h2>
-      <p className="hosted-panel-description">
-        Choose a name, subdomain and initial owner.
-      </p>
-      <form
-        className="hosted-form hosted-create-form"
-        onSubmit={(event) => void submit(event)}
-      >
-        <label>
-          Name
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            required
-            maxLength={120}
-          />
-        </label>
-        <label>
-          <span id="tenant-subdomain-label">Subdomain</span>
-          <input
-            value={slug}
-            onChange={(event) => setSlug(event.target.value.toLowerCase())}
-            required
-            pattern="[a-z]([a-z0-9-]{0,61}[a-z0-9])?"
-            maxLength={63}
-            autoCapitalize="none"
-            spellCheck={false}
-            aria-describedby="tenant-address"
-            aria-labelledby="tenant-subdomain-label"
-          />
-          <small id="tenant-address" className="hosted-field-hint">
-            {slug || "your-tenant"}.{new URL(origin).host}
-          </small>
-        </label>
-        <label className="hosted-form-wide">
-          Owner email
-          <input
-            type="email"
-            value={ownerEmail}
-            onChange={(event) => setOwnerEmail(event.target.value)}
-            required
-          />
-        </label>
-        <p className="hosted-form-wide">
-          The owner manages this tenant and its members.
-        </p>
-        {error && (
-          <p role="alert" className="form-error hosted-form-wide">
-            {error}
-          </p>
-        )}
-        <div className="hosted-row-actions hosted-form-wide">
-          <button className="primary-button" disabled={busy}>
-            {busy ? "Creating..." : "Create tenant"}
-          </button>
-          <button
-            type="button"
-            className="quiet-button"
-            onClick={onCancel}
-            disabled={busy}
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    </section>
   );
 }

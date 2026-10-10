@@ -130,7 +130,7 @@ it("limits directory rows, filters by status and resets filters without extra AP
   });
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
-  await screen.findByText("AgentOps 0");
+  await screen.findByText("agentops-0.dispatch.example.test");
   expect(screen.getAllByRole("row")).toHaveLength(51);
   await user.click(screen.getByRole("button", { name: "Show more" }));
   expect(screen.getAllByRole("row")).toHaveLength(58);
@@ -145,6 +145,11 @@ it("limits directory rows, filters by status and resets filters without extra AP
   ).not.toBeNull();
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(screen.getAllByRole("row")).toHaveLength(51);
+  await user.type(
+    screen.getByRole("searchbox", { name: "Find a tenant" }),
+    "agentops-56.dispatch.example.test",
+  );
+  expect(screen.getAllByRole("row")).toHaveLength(2);
   expect(
     fetcher.mock.calls.filter((call) => call[0] === "/api/v1/platform/tenants"),
   ).toHaveLength(1);
@@ -215,23 +220,25 @@ it("shows a membership error without claiming the account has no tenants", async
 it("previews the tenant address and submits the existing creation fields", async () => {
   window.history.replaceState({}, "", "/?view=catalog");
   const user = userEvent.setup();
+  let created = false;
   const fetcher = vi.fn(async (path: string, options: RequestInit) => {
     if (path === "/api/v1/account") return json(account);
     if (path === "/api/v1/account/tenants")
       return json({ memberships: [], invitations: [] });
-    if (path === "/api/v1/platform/tenants")
-      return options.method === "POST" ? json(tenant, 202) : json([]);
+    if (path === "/api/v1/platform/tenants") {
+      if (options.method === "POST") {
+        created = true;
+        return json(tenant, 202);
+      }
+      return json(created ? [tenant] : []);
+    }
     throw new Error(`Unexpected request: ${path}`);
   });
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
   await screen.findByRole("heading", { name: "Tenant directory" });
   await user.click(screen.getByRole("button", { name: "Create tenant" }));
-  await user.type(screen.getByLabelText("Name", { exact: true }), "AgentOps");
-  await user.type(
-    screen.getByLabelText("Subdomain", { exact: true }),
-    "AgentOps",
-  );
+  await user.type(screen.getByLabelText("Tenant name"), "AgentOps");
   await user.type(screen.getByLabelText("Owner email"), "owner@example.test");
   expect(screen.getByText("agentops.dispatch.example.test")).not.toBeNull();
   await user.click(
@@ -252,8 +259,41 @@ it("previews the tenant address and submits the existing creation fields", async
       path === "/api/v1/platform/tenants" && options.method === "POST",
   )!;
   expect(JSON.parse(String(creation[1].body))).toEqual({
-    name: "AgentOps",
+    name: "agentops",
     slug: "agentops",
     ownerEmail: "owner@example.test",
   });
+  await screen.findByText(
+    "Created agentops.dispatch.example.test.",
+  );
+  expect(screen.queryByLabelText("Tenant name")).toBeNull();
+  await screen.findByText("agentops.dispatch.example.test");
+  expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe(
+    "agentops.dispatch.example.test",
+  );
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Create tenant" }),
+  );
+});
+
+it("focuses the tenant name and returns to the directory when creation is cancelled", async () => {
+  window.history.replaceState({}, "", "/?view=catalog");
+  const user = userEvent.setup();
+  const fetcher = vi.fn(async (path: string) => {
+    if (path === "/api/v1/account") return json(account);
+    if (path === "/api/v1/account/tenants")
+      return json({ memberships: [], invitations: [] });
+    if (path === "/api/v1/platform/tenants") return json([]);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<PlatformApp configuration={configuration} />);
+  await screen.findByRole("heading", { name: "Tenant directory" });
+  const trigger = screen.getByRole("button", { name: "Create tenant" });
+  await user.click(trigger);
+  expect(document.activeElement).toBe(screen.getByLabelText("Tenant name"));
+  await user.keyboard("{Escape}");
+  expect(screen.queryByLabelText("Tenant name")).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+  expect(fetcher.mock.calls).toHaveLength(3);
 });

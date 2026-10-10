@@ -452,6 +452,55 @@
   font-weight: 400;
   overflow-wrap: anywhere;
 }
+.hosted-tenant-create {
+  border-left: 3px solid var(--hosted-blue);
+}
+.hosted-tenant-name-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+.hosted-domain-input {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.hosted-domain-input input {
+  flex: 1 1 180px;
+  width: auto;
+}
+.hosted-domain-input > span {
+  color: var(--hosted-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.hosted-form input[aria-invalid="true"] {
+  border-color: var(--hosted-red);
+}
+.hosted-field-error {
+  color: var(--hosted-red);
+}
+.hosted-tenant-address {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 14px 16px;
+  background: var(--hosted-bg);
+  border-radius: 7px;
+}
+.hosted-tenant-address > span {
+  display: block;
+  color: var(--hosted-muted);
+  font-size: 11px;
+}
+.hosted-tenant-address output {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 600;
+}
 .hosted-inline-label {
   display: flex;
   gap: 14px;
@@ -646,6 +695,7 @@
   background: var(--hosted-red-soft);
   border-color: var(--hosted-rule-strong);
 }
+.hosted-shell .form-success,
 .hosted-auth-page .form-success {
   color: var(--hosted-green);
   background: var(--hosted-green-soft);
