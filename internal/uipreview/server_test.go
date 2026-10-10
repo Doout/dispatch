@@ -107,6 +107,10 @@ func TestProductionWritesNeverReachBackend(t *testing.T) {
 		{"DELETE", "/api/v1/tenants/tenant/members/user"}, {"PATCH", "/api/v1/projects/project"},
 		{"POST", "/api/v1/deployments/deployment/run"}, {"POST", "/api/v1/account/%6cogin"},
 		{"POST", "/api/v1/account/login/../platform/tenants"}, {"OPTIONS", "/api/v1/account"},
+		{"GET", "/api/v1/github-apps/manifest/callback"}, {"GET", "/api/v1/auth/providers/manifest/callback"},
+		{"GET", "/api/v1/auth/callback"}, {"GET", "/api/v1/laneway-applications/setup"}, {"GET", "/api/v1/laneway-networks/callback"},
+		{"GET", "/api/v1/edge/nodes/node/jobs/next"}, {"GET", "/api/v1/edge/nodes/node/runtime/jobs/next"},
+		{"HEAD", "/api/v1/edge/nodes/node/jobs/next"}, {"GET", "/api/v1/edge/nodes/node/jobs/%6eext"},
 	} {
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, previewRequest(item.method, item.path, `{}`, true))

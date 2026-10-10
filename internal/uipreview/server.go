@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -204,6 +205,15 @@ func readAllowed(r *http.Request, platform bool) bool {
 		return false
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		// These GET routes change credentials or lease work. They are not reads.
+		cleaned := path.Clean(r.URL.Path)
+		switch cleaned {
+		case "/api/v1/auth/callback", "/api/v1/auth/providers/manifest/callback", "/api/v1/github-apps/manifest/callback", "/api/v1/laneway-applications/setup", "/api/v1/laneway-networks/callback":
+			return false
+		}
+		if strings.HasPrefix(cleaned, "/api/v1/edge/nodes/") && strings.HasSuffix(cleaned, "/jobs/next") {
+			return false
+		}
 		return true
 	}
 	if r.Method != http.MethodPost || r.URL.RawPath != "" {

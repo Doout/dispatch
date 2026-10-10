@@ -2,7 +2,7 @@
 
 The UI preview proxy serves the frontend from your development checkout. Its **Data source** selector switches API requests between a development backend and a production backend. Development is the default.
 
-Production mode uses your production login and permissions. The proxy blocks application changes, including tenant creation, invitations, password changes and deployment actions. Login, logout and tenant sign-in handoffs still work. GET and HEAD requests, including live log streams, pass through. Production sessions have separate cookies, so switching back restores your development session.
+Production mode uses your production login and permissions. The proxy blocks application changes, including tenant creation, invitations, password changes and deployment actions. It also blocks connection setup callbacks and worker job leases, which use GET requests to change state. Login, logout and tenant sign-in handoffs still work. Data reads and live log streams pass through. Production sessions have separate cookies, so switching back restores your development session.
 
 The proxy has no database connection, migrations, controllers or workers. It does not copy production data or store a production password. Production API responses and the preview HTML are never cached. Regular Dispatch installations do not show the selector.
 
