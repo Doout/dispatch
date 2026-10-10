@@ -242,6 +242,14 @@ func (f *Factory) postgresDatabase(ctx context.Context, tenant, root string) (st
 		return "", errors.New("lock tenant database provisioning failed")
 	}
 	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, name)
+	var version int
+	var superuser bool
+	if err = conn.QueryRowContext(ctx, `SELECT current_setting('server_version_num')::integer, rolsuper FROM pg_roles WHERE rolname=current_user`).Scan(&version, &superuser); err != nil {
+		return "", errors.New("inspect database provisioner failed")
+	}
+	if version < 160000 {
+		return "", errors.New("hosted database provisioning requires PostgreSQL 16 or later")
+	}
 	var exists bool
 	if err = conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)`, name).Scan(&exists); err != nil {
 		return "", errors.New("inspect tenant database role failed")
@@ -258,6 +266,14 @@ func (f *Factory) postgresDatabase(ctx context.Context, tenant, root string) (st
 	if err != nil || !safe {
 		return "", errors.New("tenant database role has unexpected privileges")
 	}
+	if !superuser {
+		// PostgreSQL 16 gives a CREATEROLE creator ADMIN but not SET permission.
+		// Grant only the provisioner permission to assume this tenant owner. The
+		// tenant remains a member of no other roles and inherits no authority.
+		if _, err = conn.ExecContext(ctx, `GRANT "`+name+`" TO CURRENT_USER WITH INHERIT FALSE, SET TRUE`); err != nil {
+			return "", errors.New("authorize tenant database owner failed")
+		}
+	}
 	var owner string
 	err = conn.QueryRowContext(ctx, `SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=$1`, name).Scan(&owner)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -269,8 +285,18 @@ func (f *Factory) postgresDatabase(ctx context.Context, tenant, root string) (st
 	} else if owner != name {
 		return "", errors.New("tenant database has unexpected owner")
 	}
-	if _, err = conn.ExecContext(ctx, `REVOKE ALL ON DATABASE "`+name+`" FROM PUBLIC`); err != nil {
+	// A NOINHERIT provisioner must explicitly assume the owner to revoke PUBLIC
+	// access. Use this same dedicated connection and restore its role afterward.
+	if _, err = conn.ExecContext(ctx, `SET ROLE "`+name+`"`); err != nil {
+		return "", errors.New("assume tenant database owner failed")
+	}
+	_, restrictErr := conn.ExecContext(ctx, `REVOKE ALL ON DATABASE "`+name+`" FROM PUBLIC`)
+	_, resetErr := conn.ExecContext(ctx, `RESET ROLE`)
+	if restrictErr != nil {
 		return "", errors.New("restrict tenant database failed")
+	}
+	if resetErr != nil {
+		return "", errors.New("restore database provisioner role failed")
 	}
 	u, err := url.Parse(f.config.PostgresAdminURL)
 	if err != nil {

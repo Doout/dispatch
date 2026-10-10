@@ -9,9 +9,14 @@ receives its own store, including background tasks and log streams. A missed
 query filter cannot return rows from another tenant's database.
 
 In development, the factory creates separate SQLite files under a private tenant
-directory. Hosted PostgreSQL provisioning creates a database and login role for
-each tenant. The login cannot create roles or databases, inherit another role,
-bypass row security, replicate, or act as a superuser. Public access to each
+directory. Hosted PostgreSQL provisioning requires PostgreSQL 16 or later and
+creates a database and login role for each tenant. The dedicated provisioner
+needs `LOGIN CREATEDB CREATEROLE NOINHERIT`, with no superuser, replication or
+row-security bypass privileges. It grants itself permission to assume each
+tenant owner while creating the database and revoking public access. Tenant
+roles do not receive membership in the provisioner or any other role. Tenant
+logins cannot create roles or databases, bypass row security, replicate, or act
+as a superuser. Public access to each
 tenant database is revoked. Runtime services receive the tenant connection, never
 the database provisioner's connection. Generated database credentials stay in a
 private local file and are excluded from JSON.
