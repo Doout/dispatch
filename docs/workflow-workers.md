@@ -140,7 +140,8 @@ Worker management uses outbound HTTPS to the tenant's control plane.
 
 The [systemd service](../examples/worker/dispatch-worker.service) uses a dedicated
 `dispatch-worker` account with access to the local Docker daemon. Install Docker
-with its Buildx and Compose plugins, install the worker binary at
+with its Buildx and Compose plugins, plus Git, OpenSSH client and CA certificates
+on the host for typed runtime operations. Install the worker binary at
 `/usr/local/bin/dispatch-worker`, and build or load the matching worker image.
 Keep that image locally and select its immutable ID with
 `docker image inspect --format '{{.Id}}' IMAGE`.
