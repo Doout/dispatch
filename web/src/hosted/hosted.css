@@ -1077,6 +1077,9 @@
   }
 }
 @media (max-width: 420px) {
+  .hosted-hero h1 {
+    font-size: clamp(32px, 10vw, 38px);
+  }
   .hosted-header .quiet-button {
     padding: 0 10px;
   }

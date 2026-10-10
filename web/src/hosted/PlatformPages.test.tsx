@@ -43,7 +43,9 @@ it("shows the public landing page without fetching tenant data", async () => {
   );
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
-  await screen.findByRole("heading", { name: "Your code. Ready to deploy." });
+  await screen.findByRole("heading", {
+    name: "Deploy from Git. Follow each run.",
+  });
   expect(
     screen.getByRole("link", { name: "Open console" }).getAttribute("href"),
   ).toBe("/?view=login");

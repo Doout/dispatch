@@ -74,10 +74,10 @@ export function AccountForm({
         </h1>
         <p className="hosted-auth-description">
           {mode === "login"
-            ? "Sign in to access your tenants."
+            ? "Use your Dispatch account to open a tenant."
             : mode === "register"
               ? "We'll email you a link to finish setting up your account."
-              : "Choose your name and password to get started."}
+              : "Set a name and password for your account."}
         </p>
         <form className="hosted-form" onSubmit={(event) => void submit(event)}>
           {mode !== "verify" && (

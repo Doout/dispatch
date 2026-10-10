@@ -253,7 +253,7 @@ export function PlatformApp({
             <header className="hosted-page-heading">
               <div>
                 <h1>My tenants</h1>
-                <p>Open a tenant or manage its members.</p>
+                <p>Tenants you belong to and your role in each.</p>
               </div>
               <button className="quiet-button" onClick={() => void load()}>
                 <ArrowsClockwise size={16} aria-hidden="true" />

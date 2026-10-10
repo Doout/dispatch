@@ -34,12 +34,12 @@ export function LandingPage() {
           <div className="hosted-hero-copy">
             <p className="hosted-eyebrow">Deployment control</p>
             <h1 id="landing-title">
-              Your code. <br />
-              Ready to deploy.
+              Deploy from Git. <br />
+              Follow each run.
             </h1>
             <p className="hosted-hero-description">
-              Build images, run parallel deployments, and follow every run from
-              one console.
+              Build Docker images and deploy to Docker, Kubernetes or OpenShift.
+              Inspect job output and deployment logs as they arrive.
             </p>
             <div className="hosted-hero-actions">
               <a className="primary-button" href={signInAddress}>
@@ -54,13 +54,13 @@ export function LandingPage() {
             className="hosted-workflow"
             aria-label="A deployment workflow"
           >
-            <figcaption>From repository to deployment</figcaption>
+            <figcaption>How a deployment runs</figcaption>
             <ol>
               {[
                 {
                   icon: GitBranch,
                   title: "Connect your repository",
-                  body: "Use your branches and pull requests.",
+                  body: "Select a branch or pull request revision.",
                 },
                 {
                   icon: Cube,
@@ -70,7 +70,7 @@ export function LandingPage() {
                 {
                   icon: RocketLaunch,
                   title: "Deploy to your targets",
-                  body: "Promote releases or deploy in parallel.",
+                  body: "Deploy the built image to a target.",
                 },
                 {
                   icon: TerminalWindow,
@@ -97,16 +97,19 @@ export function LandingPage() {
           aria-labelledby="features-title"
         >
           <header>
-            <h2 id="features-title">Keep the whole run in view.</h2>
-            <p>Configuration, builds and deployments belong together.</p>
+            <h2 id="features-title">Builds, deployments and logs</h2>
+            <p>
+              Each run saves its source commits, configuration and job outputs.
+            </p>
           </header>
           <div className="hosted-feature-layout">
             <article className="hosted-feature-primary">
               <GitPullRequest size={28} aria-hidden="true" />
-              <h3>Give every change its own deployment.</h3>
+              <h3>Parallel deployments for pull requests</h3>
               <p>
-                Run parallel deployments for pull requests. Check the result,
-                follow the logs, and clean up when the work is done.
+                Deploy a pull request without replacing the main application.
+                Link changes across repositories and remove the deployment when
+                all linked pull requests close.
               </p>
               <div
                 className="hosted-feature-flow"
@@ -123,20 +126,20 @@ export function LandingPage() {
               <article>
                 <TerminalWindow size={24} aria-hidden="true" />
                 <div>
-                  <h3>Find the failure while it happens.</h3>
+                  <h3>Live logs and run history</h3>
                   <p>
-                    Watch build and deployment logs live, then return to any
-                    saved run.
+                    Read build and deployment output while a run is active. Open
+                    a saved run to inspect its logs and failure details.
                   </p>
                 </div>
               </article>
               <article>
                 <HardDrives size={24} aria-hidden="true" />
                 <div>
-                  <h3>Use the infrastructure you have.</h3>
+                  <h3>Deployment targets and Docker builders</h3>
                   <p>
-                    Connect deployment targets, Docker builders and event relays
-                    to the same workflow.
+                    Register targets for deployments and builders for image
+                    jobs. Event relays receive webhooks for private controllers.
                   </p>
                 </div>
               </article>
@@ -151,8 +154,9 @@ export function LandingPage() {
           <div>
             <h2 id="self-host-title">Run Dispatch on your own server.</h2>
             <p>
-              Start with Docker. Connect your repositories and deployment
-              targets, then manage releases through the UI or API.
+              Install the controller with Docker. Connect a repository and a
+              deployment target, then run deployments through the UI, CLI or
+              API.
             </p>
           </div>
           <a

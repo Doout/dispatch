@@ -39,7 +39,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
       <header className="hosted-page-heading">
         <div>
           <h1>Tenant directory</h1>
-          <p>Tenant details and usage across the platform.</p>
+          <p>View tenant names, status and recorded usage.</p>
         </div>
         <div className="hosted-row-actions">
           <button
@@ -204,7 +204,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
           }
         >
           {tenants.length === 0
-            ? "Create a tenant and assign its owner to get started."
+            ? "Create a tenant and assign an owner."
             : "Try a different name, subdomain or status."}
         </HostedEmpty>
       )}
