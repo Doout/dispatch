@@ -13,6 +13,12 @@ exact tested commit using `Containerfile.hosted`.
 Each publication records the commit, image tag and digest in its Actions summary.
 The image's `version` command reports `main-<full-commit-sha>`.
 
+Published images open at sign-in. The public landing page is disabled while its
+design is still in development. The Vite development server and the UI preview
+image keep it enabled. To include it in a custom hosted image, build with
+`--build-arg VITE_HOSTED_LANDING_PAGE=true`. This is a build setting, so changing
+the running container's environment does not enable the page.
+
 The workflow checks that the commit is still the head of `main` before building
 and before updating the `main` tag. An older build finishing later cannot replace
 a newer published build. Pull request runs cannot publish images. Publication

@@ -148,6 +148,8 @@ export function PlatformApp({
     );
   const query = new URLSearchParams(window.location.search);
   if (
+    (import.meta.env.DEV ||
+      import.meta.env.VITE_HOSTED_LANDING_PAGE === "true") &&
     !account &&
     !error &&
     !query.get("view") &&

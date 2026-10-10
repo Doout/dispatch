@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PlatformApp } from "./PlatformApp";
 import type { HostedPlatform } from "./client";
 
@@ -30,14 +30,20 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { "Content-Type": "application/json" },
   });
+beforeEach(() => {
+  vi.stubEnv("DEV", false);
+  vi.stubEnv("VITE_HOSTED_LANDING_PAGE", "false");
+});
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   window.history.replaceState({}, "", "/");
 });
 
 it("shows the public landing page without fetching tenant data", async () => {
+  vi.stubEnv("VITE_HOSTED_LANDING_PAGE", "true");
   const fetcher = vi.fn(async (_path: string) =>
     json({ detail: "Sign in" }, 401),
   );
@@ -57,6 +63,28 @@ it("shows the public landing page without fetching tenant data", async () => {
   expect(screen.queryByLabelText("Password")).toBeNull();
   expect(fetcher.mock.calls).toHaveLength(1);
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/account");
+});
+
+it("opens sign-in at the root when the landing page is disabled", async () => {
+  const fetcher = vi.fn(async () => json({ detail: "Sign in" }, 401));
+  vi.stubGlobal("fetch", fetcher);
+  render(<PlatformApp configuration={configuration} />);
+  await screen.findByRole("heading", { name: "Sign in to Dispatch" });
+  expect(screen.queryByRole("link", { name: "Open console" })).toBeNull();
+  expect(screen.getByLabelText("Password")).not.toBeNull();
+  expect(fetcher.mock.calls).toHaveLength(1);
+});
+
+it("keeps the landing page available in the Vite development server", async () => {
+  vi.stubEnv("DEV", true);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({ detail: "Sign in" }, 401)),
+  );
+  render(<PlatformApp configuration={configuration} />);
+  await screen.findByRole("heading", {
+    name: "Deploy from Git. Follow each run.",
+  });
 });
 
 it("keeps sign-in and logout usable when registration is disabled", async () => {

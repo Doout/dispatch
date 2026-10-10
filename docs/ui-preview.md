@@ -2,6 +2,10 @@
 
 The UI preview proxy serves the frontend from your development checkout. Its **Data source** selector switches API requests between a development backend and a production backend. Development is the default.
 
+The preview image includes the public landing page while the production image
+opens at sign-in. To hide it in a preview build too, use
+`--build-arg VITE_HOSTED_LANDING_PAGE=false`.
+
 Production mode requires a separate preview access key before your production login. The proxy reads this key from a private file and issues a signed, HttpOnly cookie valid for one hour. A user login or a source cookie alone cannot enable production access. Access expiry also closes active log streams.
 
 Production mode uses your production permissions. The proxy blocks application changes, including tenant creation, invitations, password changes and deployment actions. It also blocks connection setup callbacks and worker job leases, which use GET requests to change state. Login, logout and tenant sign-in handoffs still work. Data reads and live log streams pass through. Production sessions have separate cookies, so switching back restores your development session.
