@@ -35,6 +35,11 @@
   overflow: auto;
   scrollbar-gutter: stable;
 }
+.hosted-shell {
+  --hosted-page-width: 1320px;
+  --hosted-page-gutter: clamp(20px, 4vw, 56px);
+  --hosted-panel-padding: 28px;
+}
 .hosted-shell :is(button, a, input, select):focus-visible,
 .hosted-public :is(button, a):focus-visible,
 .hosted-auth-page :is(button, a, input):focus-visible {
@@ -76,7 +81,11 @@
 .hosted-header {
   display: flex;
   min-height: 72px;
-  padding: 12px clamp(20px, 4vw, 56px);
+  padding: 12px
+    max(
+      var(--hosted-page-gutter),
+      calc((100% - var(--hosted-page-width)) / 2 + var(--hosted-page-gutter))
+    );
   align-items: center;
   justify-content: space-between;
   gap: 24px;
@@ -133,7 +142,11 @@
 .hosted-nav {
   display: flex;
   gap: 28px;
-  padding: 0 clamp(20px, 4vw, 56px);
+  padding: 0
+    max(
+      var(--hosted-page-gutter),
+      calc((100% - var(--hosted-page-width)) / 2 + var(--hosted-page-gutter))
+    );
   background: var(--hosted-paper);
   border-bottom: 1px solid var(--hosted-rule);
 }
@@ -160,8 +173,9 @@
   border-bottom-color: currentColor;
 }
 .hosted-content {
-  max-width: 1320px;
-  padding: 40px clamp(20px, 4vw, 56px) 64px;
+  width: 100%;
+  max-width: var(--hosted-page-width);
+  padding: 40px var(--hosted-page-gutter) 64px;
   margin: 0 auto;
 }
 .hosted-content h1 {
@@ -203,8 +217,10 @@
   padding-top: 4px;
 }
 .hosted-panel {
+  width: 100%;
+  min-width: 0;
   margin: 28px 0;
-  padding: 28px;
+  padding: var(--hosted-panel-padding, 28px);
   border: 1px solid var(--hosted-rule);
   border-radius: 12px;
   background: var(--hosted-paper);
@@ -213,6 +229,12 @@
   display: grid;
   gap: 20px;
   max-width: 520px;
+}
+.hosted-content .hosted-form {
+  max-width: none;
+}
+.hosted-content .hosted-form > button {
+  justify-self: start;
 }
 .hosted-panel > .hosted-form {
   margin-top: 24px;
@@ -453,7 +475,8 @@
   overflow-wrap: anywhere;
 }
 .hosted-tenant-create {
-  max-width: 640px;
+  width: 100%;
+  min-width: 0;
 }
 .hosted-tenant-create .hosted-page-heading {
   margin-bottom: 0;
@@ -581,7 +604,7 @@
 }
 .hosted-account-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   align-items: start;
 }
@@ -1040,8 +1063,12 @@
   }
 }
 @media (max-width: 760px) {
+  .hosted-shell {
+    --hosted-page-gutter: 20px;
+    --hosted-panel-padding: 20px;
+  }
   .hosted-header {
-    padding: 14px 20px;
+    padding-block: 14px;
   }
   .hosted-header-account {
     gap: 12px;
@@ -1052,17 +1079,13 @@
   }
   .hosted-nav {
     gap: 22px;
-    padding: 0 20px;
     overflow-x: auto;
   }
   .hosted-content {
-    padding: 28px 20px 48px;
+    padding-block: 28px 48px;
   }
   .hosted-content h1 {
     font-size: 26px;
-  }
-  .hosted-panel {
-    padding: 20px;
   }
   .hosted-table {
     min-width: 560px;
@@ -1072,7 +1095,6 @@
     flex-wrap: wrap;
     gap: 16px;
   }
-  .hosted-account-layout,
   .hosted-create-form {
     grid-template-columns: minmax(0, 1fr);
   }
