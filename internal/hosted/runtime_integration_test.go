@@ -16,6 +16,7 @@ import (
 
 	"github.com/doout/dispatch/internal/api"
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/dnsprovider"
 	"github.com/doout/dispatch/internal/hosted"
 	"github.com/doout/dispatch/internal/hostedruntime"
 	"github.com/doout/dispatch/internal/tenancy"
@@ -49,7 +50,7 @@ func TestOperationalTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { factory.Close() })
-	cfg := hosted.Config{RootDomain: "dispatch.example.test", DataDirectory: root, ConsoleAddresses: []string{"192.0.2.10"}, WorkloadGateway: "192.0.2.11", Nameservers: []string{"ns1.example.net", "ns2.example.net"}, DNSReadToken: strings.Repeat("d", 40)}
+	cfg := hosted.Config{RootDomain: "dispatch.example.test", DataDirectory: root, ConsoleAddresses: []string{"192.0.2.10"}, WorkloadGateway: "192.0.2.11", DNSProvider: runtimeDNSProvider{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	server, err := hosted.New(ctx, cfg, catalog, func(ctx context.Context, tenant tenancy.Tenant, auth *api.HostedAuth) (*hosted.TenantRuntime, error) {
 		runtime, err := factory.Open(ctx, tenant.ID)
@@ -171,4 +172,15 @@ func TestOperationalTenantIsolation(t *testing.T) {
 	if bytes.Equal(keys[0], keys[1]) {
 		t.Fatal("tenant vault keys are shared")
 	}
+}
+
+// These tests exercise the operational API without reaching a DNS service.
+type runtimeDNSProvider struct{}
+
+func (runtimeDNSProvider) Target() string { return "test:runtime" }
+
+func (runtimeDNSProvider) Ensure(context.Context, dnsprovider.Record) error { return nil }
+func (runtimeDNSProvider) Delete(context.Context, dnsprovider.Record) error { return nil }
+func (runtimeDNSProvider) Nameservers(context.Context) ([]string, error) {
+	return []string{"ns1.example.net"}, nil
 }

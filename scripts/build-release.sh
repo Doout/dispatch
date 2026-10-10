@@ -13,7 +13,6 @@ for arch in amd64 arm64; do
   esac
   CGO_ENABLED=1 CC="$compiler" CXX="$cpp_compiler" GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/doout/dispatch/internal/installation.Version=$version" -o "$output/$arch/dispatch" ./cmd/dispatch
   CGO_ENABLED=1 CC="$compiler" CXX="$cpp_compiler" GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/doout/dispatch/internal/installation.Version=$version" -o "$output/$arch/dispatch-platform" ./cmd/dispatch-platform
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatch-dns" ./cmd/dispatch-dns
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatch-worker" ./cmd/dispatch-worker
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatch-hook" ./cmd/dispatch-hook
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/edge/linux-$arch" ./cmd/dispatch-agent
@@ -22,6 +21,6 @@ for arch in amd64 arm64; do
 done
 for arch in amd64 arm64; do
   tar -czf "$output/dispatch-linux-$arch.tar.gz" -C "$output/$arch" dispatch dispatchctl -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
-  tar -czf "$output/dispatch-platform-linux-$arch.tar.gz" -C "$output/$arch" dispatch-platform dispatch-dns dispatch-worker -C "$(cd "$output" && pwd)" edge -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
+  tar -czf "$output/dispatch-platform-linux-$arch.tar.gz" -C "$output/$arch" dispatch-platform dispatch-worker -C "$(cd "$output" && pwd)" edge -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
 done
 (cd "$output" && sha256sum dispatch-linux-*.tar.gz dispatch-platform-linux-*.tar.gz > SHA256SUMS)

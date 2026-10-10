@@ -30,9 +30,9 @@ func configFixture(t *testing.T) {
 	t.Setenv("DISPATCH_HOSTED_ALLOW_SQLITE", "true")
 	t.Setenv("DISPATCH_HOSTED_ROOT_DOMAIN", "dispatch.example.test")
 	t.Setenv("DISPATCH_HOSTED_CONSOLE_ADDRESSES", "192.0.2.1")
-	t.Setenv("DISPATCH_HOSTED_NAMESERVERS", "ns1.dispatch.example.test,ns2.dispatch.example.test")
-	t.Setenv("DISPATCH_HOSTED_NAMESERVER_ADDRESSES", "ns1.dispatch.example.test=192.0.2.2,ns2.dispatch.example.test=192.0.2.3")
-	t.Setenv("DISPATCH_HOSTED_DNS_TOKEN_FILE", privateTestFile(t, "dns-token", "0123456789012345678901234567890123456789"))
+	t.Setenv("DISPATCH_HOSTED_DNS_PROVIDER", "cloudflare")
+	t.Setenv("DISPATCH_HOSTED_CLOUDFLARE_ZONE_ID", "0123456789abcdef0123456789abcdef")
+	t.Setenv("DISPATCH_HOSTED_CLOUDFLARE_API_TOKEN_FILE", privateTestFile(t, "cloudflare-token", "private-test-cloudflare-token"))
 	t.Setenv("DISPATCH_HOSTED_TLS_MODE", "proxy")
 }
 func TestHostedConfigurationRequiresExplicitPrivateInfrastructure(t *testing.T) {
@@ -42,10 +42,11 @@ func TestHostedConfigurationRequiresExplicitPrivateInfrastructure(t *testing.T) 
 	}
 	for _, tc := range []struct{ name, value string }{
 		{"DISPATCH_HOSTED_ADDR", "0.0.0.0:8081"},
-		{"DISPATCH_HOSTED_NAMESERVER_ADDRESSES", "ns1.dispatch.example.test=192.0.2.2"},
+		{"DISPATCH_HOSTED_CLOUDFLARE_ZONE_ID", ""},
 		{"DISPATCH_HOSTED_ALLOW_SQLITE", "false"},
 		{"DISPATCH_HOSTED_DATA_DIR", "relative"},
-		{"DISPATCH_HOSTED_NAMESERVERS", "ns1.dispatch.example.test"},
+		{"DISPATCH_HOSTED_DNS_PROVIDER", "unknown"},
+		{"DISPATCH_HOSTED_CLOUDFLARE_API_TOKEN_FILE", ""},
 		{"DISPATCH_HOSTED_TRUSTED_PROXIES", "*"},
 		{"DISPATCH_HOSTED_TLS_MODE", "acme"},
 	} {

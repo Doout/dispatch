@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/doout/dispatch/internal/authoritativedns"
+	"github.com/doout/dispatch/internal/certificates"
 	"github.com/doout/dispatch/internal/tenancy"
 )
 
@@ -25,12 +25,12 @@ type CertificateConfig struct {
 
 type certificateCache struct {
 	sync.RWMutex
-	items map[string]authoritativedns.CertificateResult
+	items map[string]certificates.CertificateResult
 }
 
 type catalogSolver struct{ server *Server }
 
-func (c catalogSolver) authorize(ctx context.Context, ch authoritativedns.Challenge) (string, error) {
+func (c catalogSolver) authorize(ctx context.Context, ch certificates.Challenge) (string, error) {
 	if ch.ID == "" || ch.Generation == 0 || ch.Value == "" || len(ch.Value) > 255 || strings.ContainsAny(ch.Value, "\x00\r\n") {
 		return "", tenancy.ErrInvalid
 	}
@@ -51,7 +51,7 @@ func (c catalogSolver) authorize(ctx context.Context, ch authoritativedns.Challe
 	return tenant.ID, nil
 }
 
-func (c catalogSolver) Present(ctx context.Context, ch authoritativedns.Challenge) error {
+func (c catalogSolver) Present(ctx context.Context, ch certificates.Challenge) error {
 	tenant, err := c.authorize(ctx, ch)
 	if err != nil {
 		return err
@@ -73,34 +73,37 @@ func (c catalogSolver) Present(ctx context.Context, ch authoritativedns.Challeng
 		if !reflect.DeepEqual(existing, desired) {
 			return tenancy.ErrDenied
 		}
-		return nil
+		return c.server.syncDNSRecord(ctx, desired.ID)
 	}
-	_, err = c.server.Catalog.SaveZoneRecord(ctx, desired)
-	return err
+	if _, err = c.server.Catalog.SaveZoneRecord(ctx, desired); err != nil {
+		return err
+	}
+	return c.server.syncDNSRecord(ctx, desired.ID)
 }
 
-func challengeID(ch authoritativedns.Challenge) string {
+func challengeID(ch certificates.Challenge) string {
 	return recordID(ch.OwnerID, ch.ID, strconv.FormatUint(ch.Generation, 10))
 }
 
-func (c catalogSolver) Wait(ctx context.Context, ch authoritativedns.Challenge) error {
+func (c catalogSolver) Wait(ctx context.Context, ch certificates.Challenge) error {
 	if _, err := c.authorize(ctx, ch); err != nil {
 		return err
 	}
-	addresses := []string{}
-	for _, ns := range c.server.Config.Nameservers {
-		if ips := c.server.Config.NameserverAddresses[ns]; len(ips) > 0 {
-			for _, ip := range ips {
-				addresses = append(addresses, net.JoinHostPort(ip, "53"))
-			}
-		} else {
-			addresses = append(addresses, net.JoinHostPort(ns, "53"))
-		}
+	if c.server.Config.DNSProvider == nil {
+		return errors.New("DNS provider is not configured")
 	}
-	return authoritativedns.WaitForTXT(ctx, addresses, ch)
+	nameservers, err := c.server.Config.DNSProvider.Nameservers(ctx)
+	if err != nil {
+		return err
+	}
+	addresses := make([]string, 0, len(nameservers))
+	for _, nameserver := range nameservers {
+		addresses = append(addresses, net.JoinHostPort(nameserver, "53"))
+	}
+	return certificates.WaitForTXT(ctx, addresses, ch)
 }
 
-func (c catalogSolver) Cleanup(ctx context.Context, ch authoritativedns.Challenge) error {
+func (c catalogSolver) Cleanup(ctx context.Context, ch certificates.Challenge) error {
 	if _, err := c.authorize(ctx, ch); err != nil {
 		return err
 	}
@@ -117,9 +120,12 @@ func (c catalogSolver) Cleanup(ctx context.Context, ch authoritativedns.Challeng
 		if record.OwnerID != "acme:"+ch.OwnerID || record.Name != strings.TrimSuffix(strings.ToLower(ch.Name), ".") || !reflect.DeepEqual(record.Values, []string{ch.Value}) {
 			return tenancy.ErrDenied
 		}
-		return c.server.Catalog.DeleteZoneRecord(ctx, record.ID, record.OwnerID, record.Generation)
+		if err := c.server.Catalog.DeleteZoneRecord(ctx, record.ID, record.OwnerID, record.Generation); err != nil {
+			return err
+		}
+		break
 	}
-	return nil
+	return c.server.syncDNSRecord(ctx, challengeID(ch))
 }
 
 func (s *Server) reconcileCertificate(ctx context.Context, tenant *tenancy.Tenant) error {
@@ -132,8 +138,8 @@ func (s *Server) reconcileCertificate(ctx context.Context, tenant *tenancy.Tenan
 		owner, host = tenant.ID, tenant.Slug+"."+s.Config.RootDomain
 		domains = []string{"*." + host}
 	}
-	r := authoritativedns.Reconciler{DirectoryURL: s.Config.Certificates.DirectoryURL, Email: s.Config.Certificates.Email, TermsAccepted: s.Config.Certificates.TermsAccepted, StoreDirectory: filepath.Join(s.Config.DataDirectory, "certificates"), Solver: catalogSolver{s}}
-	request := authoritativedns.CertificateRequest{ID: host, OwnerID: owner, Generation: 1, Domains: domains}
+	r := certificates.Reconciler{DirectoryURL: s.Config.Certificates.DirectoryURL, Email: s.Config.Certificates.Email, TermsAccepted: s.Config.Certificates.TermsAccepted, StoreDirectory: filepath.Join(s.Config.DataDirectory, "certificates"), Solver: catalogSolver{s}}
+	request := certificates.CertificateRequest{ID: host, OwnerID: owner, Generation: 1, Domains: domains}
 	if cached, err := r.Cached(request); err == nil {
 		s.cacheCertificate(owner, cached)
 	}
@@ -145,11 +151,11 @@ func (s *Server) reconcileCertificate(ctx context.Context, tenant *tenancy.Tenan
 	return nil
 }
 
-func (s *Server) cacheCertificate(owner string, result authoritativedns.CertificateResult) {
+func (s *Server) cacheCertificate(owner string, result certificates.CertificateResult) {
 	s.certificates.Lock()
 	defer s.certificates.Unlock()
 	if s.certificates.items == nil {
-		s.certificates.items = map[string]authoritativedns.CertificateResult{}
+		s.certificates.items = map[string]certificates.CertificateResult{}
 	}
 	s.certificates.items[owner] = result
 }

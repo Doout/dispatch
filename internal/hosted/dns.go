@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/doout/dispatch/internal/authoritativedns"
 	"github.com/doout/dispatch/internal/tenancy"
 )
 
@@ -21,22 +19,6 @@ const platformOwner = "platform"
 func recordID(owner, name, kind string) string {
 	sum := sha256.Sum256([]byte(owner + ":" + name + ":" + kind))
 	return hex.EncodeToString(sum[:])
-}
-
-func (s *Server) dnsSnapshot(ctx context.Context) (authoritativedns.Snapshot, error) {
-	generation, records, err := s.Catalog.ZoneRecords(ctx)
-	if err != nil {
-		return authoritativedns.Snapshot{}, err
-	}
-	snapshot := authoritativedns.Snapshot{Zone: s.Config.RootDomain, Generation: generation, Nameservers: s.Config.Nameservers, TTL: 300}
-	for _, record := range records {
-		snapshot.Records = append(snapshot.Records, authoritativedns.Record{ID: record.ID, OwnerID: record.OwnerID, Name: record.Name, Type: record.Type, Values: record.Values, TTL: record.TTL, Generation: record.Generation})
-	}
-	return snapshot, nil
-}
-
-func (s *Server) dnsSnapshotHandler() http.Handler {
-	return authoritativedns.SnapshotHandler(s.Config.DNSReadToken, s.dnsSnapshot)
 }
 
 // putRecord is used only by controller reconciliation. User writes supply an
@@ -85,7 +67,7 @@ func (s *Server) addressRecords(ctx context.Context, owner, tenant, host string,
 		}
 	}
 	// Remove conflicting old types first, so changing a CNAME to an IP address
-	// or back can converge. Every intermediate snapshot remains a valid zone.
+	// or back can converge. Publication preserves this order for each name.
 	_, records, err := s.Catalog.ZoneRecords(ctx)
 	if err != nil {
 		return err
@@ -106,57 +88,25 @@ func (s *Server) addressRecords(ctx context.Context, owner, tenant, host string,
 }
 
 func (s *Server) prepareZone(ctx context.Context) error {
-	// Nameserver glue belongs to the platform. Reserve its entire tenant
-	// subtree, including when a restart changes the nameserver configuration.
-	for _, ns := range s.Config.Nameservers {
-		slug, managed := s.Config.nameserverTenantSlug(ns)
-		if !managed {
-			continue
-		}
-		if _, err := s.Catalog.TenantBySlug(ctx, slug); err == nil {
-			return errors.New("nameservers cannot use an existing tenant's domain")
-		} else if !errors.Is(err, tenancy.ErrNotFound) {
-			return err
-		}
-	}
-	encoded, err := json.Marshal(struct {
-		Zone        string
-		Nameservers []string
-	}{s.Config.RootDomain, s.Config.Nameservers})
-	if err != nil {
+	// This private catalog marker binds the installation to its original root.
+	// The DNS provider never receives it. The root console record is configured
+	// once by the operator; Dispatch owns tenant records only.
+	digest := sha256.Sum256([]byte(s.Config.RootDomain))
+	if err := s.putRecord(ctx, tenancy.ZoneRecord{ID: "platform-zone-config", OwnerID: platformOwner, TenantID: platformOwner, Name: "_dispatch." + s.Config.RootDomain, Type: "TXT", Values: []string{hex.EncodeToString(digest[:])}, TTL: 300}); err != nil {
 		return err
 	}
-	digest := sha256.Sum256(encoded)
-	if err = s.putRecord(ctx, tenancy.ZoneRecord{ID: "platform-zone-config", OwnerID: platformOwner, TenantID: platformOwner, Name: "_dispatch." + s.Config.RootDomain, Type: "TXT", Values: []string{hex.EncodeToString(digest[:])}, TTL: 300}); err != nil {
-		return err
-	}
-
-	if err := s.addressRecords(ctx, platformOwner, platformOwner, s.Config.RootDomain, s.Config.ConsoleAddresses); err != nil {
-		return err
-	}
-	for _, ns := range s.Config.Nameservers {
-		if ns == s.Config.RootDomain || strings.HasSuffix(ns, "."+s.Config.RootDomain) {
-			if err := s.addressRecords(ctx, platformOwner, platformOwner, ns, s.Config.NameserverAddresses[ns]); err != nil {
-				return err
-			}
+	if err := s.Catalog.BindDNSProvider(ctx, s.Config.DNSProvider.Target()); err != nil {
+		if errors.Is(err, tenancy.ErrConflict) {
+			return errors.New("DNS provider target differs from the catalog; changing provider or zone requires a migration")
 		}
+		return err
 	}
 	_, records, err := s.Catalog.ZoneRecords(ctx)
 	if err != nil {
 		return err
 	}
 	for _, record := range records {
-		if record.OwnerID != platformOwner || record.Name == s.Config.RootDomain || record.Type != "A" && record.Type != "AAAA" {
-			continue
-		}
-		retained := false
-		for _, ns := range s.Config.Nameservers {
-			if record.Name == ns {
-				retained = true
-				break
-			}
-		}
-		if !retained {
+		if record.OwnerID == platformOwner && record.ID != "platform-zone-config" {
 			if err := s.Catalog.DeleteZoneRecord(ctx, record.ID, platformOwner, record.Generation); err != nil {
 				return err
 			}
@@ -167,22 +117,25 @@ func (s *Server) prepareZone(ctx context.Context) error {
 
 func (s *Server) prepareTenantDNS(ctx context.Context, tenant tenancy.Tenant) error {
 	host := tenant.Slug + "." + s.Config.RootDomain
-	if err := s.Catalog.SaveDomain(ctx, tenancy.Domain{ID: "console:" + tenant.ID, TenantID: tenant.ID, Hostname: host, Kind: "console", State: tenancy.StateActive}); err != nil {
-		return err
-	}
 	if err := s.addressRecords(ctx, "console:"+tenant.ID, tenant.ID, host, s.Config.ConsoleAddresses); err != nil {
 		return err
 	}
-	if s.Config.WorkloadGateway == "" {
-		if err := s.addressRecords(ctx, "workloads:"+tenant.ID, tenant.ID, "*."+host, nil); err != nil {
-			return err
-		}
-		return s.Catalog.SaveDomain(ctx, tenancy.Domain{ID: "workloads:" + tenant.ID, TenantID: tenant.ID, Hostname: "*." + host, Kind: "workloads", State: tenancy.StateDisabled})
+	var gateways []string
+	workloadState := tenancy.StateDisabled
+	if s.Config.WorkloadGateway != "" {
+		gateways = []string{s.Config.WorkloadGateway}
+		workloadState = tenancy.StateActive
 	}
-	if err := s.Catalog.SaveDomain(ctx, tenancy.Domain{ID: "workloads:" + tenant.ID, TenantID: tenant.ID, Hostname: "*." + host, Kind: "workloads", State: tenancy.StateActive}); err != nil {
+	if err := s.addressRecords(ctx, "workloads:"+tenant.ID, tenant.ID, "*."+host, gateways); err != nil {
 		return err
 	}
-	return s.addressRecords(ctx, "workloads:"+tenant.ID, tenant.ID, "*."+host, []string{s.Config.WorkloadGateway})
+	if err := s.syncTenantDNS(ctx, tenant.ID); err != nil {
+		return err
+	}
+	if err := s.Catalog.SaveDomain(ctx, tenancy.Domain{ID: "console:" + tenant.ID, TenantID: tenant.ID, Hostname: host, Kind: "console", State: tenancy.StateActive}); err != nil {
+		return err
+	}
+	return s.Catalog.SaveDomain(ctx, tenancy.Domain{ID: "workloads:" + tenant.ID, TenantID: tenant.ID, Hostname: "*." + host, Kind: "workloads", State: workloadState})
 }
 
 func (s *Server) tenantOwner(r *http.Request, tenant tenancy.Tenant) bool {
@@ -199,16 +152,27 @@ func (s *Server) tenantDNS(w http.ResponseWriter, r *http.Request, tenant tenanc
 		problem(w, http.StatusForbidden, "Tenant administrator access required.")
 		return
 	}
+	if r.Method != http.MethodGet {
+		s.dnsMu.Lock()
+		defer s.dnsMu.Unlock()
+	}
 	_, records, err := s.Catalog.ZoneRecords(r.Context())
 	if err != nil {
 		catalogError(w, err)
 		return
 	}
 	if r.Method == http.MethodGet {
-		items := []tenancy.ZoneRecord{}
+		items := []dnsRecordResponse{}
 		for _, record := range records {
 			if record.TenantID == tenant.ID && !strings.HasPrefix(record.OwnerID, "acme:") {
-				items = append(items, record)
+				state := "synced"
+				if _, err := s.Catalog.DNSChange(r.Context(), record.ID); err == nil {
+					state = "pending"
+				} else if !errors.Is(err, tenancy.ErrNotFound) {
+					catalogError(w, err)
+					return
+				}
+				items = append(items, dnsRecordResponse{ZoneRecord: record, SyncState: state})
 			}
 		}
 		respond(w, http.StatusOK, items)
@@ -251,6 +215,10 @@ func (s *Server) tenantDNS(w http.ResponseWriter, r *http.Request, tenant tenanc
 			catalogError(w, err)
 			return
 		}
+		if err := s.syncDNSRecord(r.Context(), id); err != nil {
+			respond(w, http.StatusAccepted, map[string]string{"id": id, "syncState": "pending"})
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -269,7 +237,16 @@ func (s *Server) tenantDNS(w http.ResponseWriter, r *http.Request, tenant tenanc
 		catalogError(w, err)
 		return
 	}
-	respond(w, http.StatusOK, record)
+	if err := s.syncDNSRecord(r.Context(), id); err != nil {
+		respond(w, http.StatusAccepted, dnsRecordResponse{ZoneRecord: record, SyncState: "pending"})
+		return
+	}
+	respond(w, http.StatusOK, dnsRecordResponse{ZoneRecord: record, SyncState: "synced"})
+}
+
+type dnsRecordResponse struct {
+	tenancy.ZoneRecord
+	SyncState string `json:"syncState"`
 }
 
 func validateRecord(kind string, values []string, ttl uint32) error {

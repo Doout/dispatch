@@ -50,12 +50,6 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 		catalogError(w, err)
 		return
 	}
-	for _, ns := range s.Config.Nameservers {
-		if slug, managed := s.Config.nameserverTenantSlug(ns); managed && input.Slug == slug {
-			problem(w, http.StatusConflict, "That name is reserved.")
-			return
-		}
-	}
 	tenant, err := s.Catalog.CreateTenant(r.Context(), create)
 	if err != nil {
 		catalogError(w, err)

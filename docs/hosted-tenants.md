@@ -26,8 +26,7 @@ flowchart LR
   P --> D[Tenant B database and vault]
   WA[Tenant A workers] --> P
   WB[Tenant B workers] --> P
-  N1[Authoritative NS 1] -->|Read-only zone feed| P
-  N2[Authoritative NS 2] -->|Read-only zone feed| P
+  P -->|DNS API| CF[Cloudflare]
   I[Workload ingress] --> WA
 ```
 
@@ -62,87 +61,105 @@ state are checked on requests and live-stream refreshes. A platform cookie does
 not authorize a tenant API. Existing tenant automation tokens continue to work
 against that tenant's operational API.
 
-Delegate `dispatch.cicd.onl` to the configured nameservers. The controller creates
-console records and, when a workload ingress is configured, a wildcard beneath
-each tenant. For example:
+Use an existing Cloudflare zone that contains the root domain. Create the root
+console record once in Cloudflare and point it at the control-plane ingress.
+Dispatch creates the exact tenant console record and, when a workload ingress is
+configured, a wildcard beneath that tenant.
 
-| Name | Destination |
-| --- | --- |
-| `dispatch.cicd.onl` | Control-plane ingress |
-| `agentops.dispatch.cicd.onl` | Control-plane ingress |
-| `*.agentops.dispatch.cicd.onl` | Workload ingress |
+| Name | Destination | Managed by |
+| --- | --- | --- |
+| `dispatch.cicd.onl` | Control-plane ingress | Operator |
+| `agentops.dispatch.cicd.onl` | Control-plane ingress | Dispatch |
+| `*.agentops.dispatch.cicd.onl` | Workload ingress | Dispatch |
 
 A wildcard DNS answer supplies the ingress address. The ingress still needs the
-application's matching host rule and TLS certificate. Existing target routing
-owns workload traffic. The control-plane HTTP listener never proxies workload
-requests. Tenant administrators can add explicit A, AAAA, CNAME, or TXT records
-for one-label workload names through `/api/v1/hosted/dns`; they cannot replace
-console, wildcard, ACME, or another tenant's records.
+application's host rule and TLS certificate. Existing target routing handles
+workload traffic. Tenant administrators can add A, AAAA, CNAME or TXT records
+for one-label workload names through `/api/v1/hosted/dns`. Console, wildcard,
+ACME and other tenants' records are reserved.
 
-Read [authoritative DNS](authoritative-dns.md) before delegation. It covers two
-nameservers, UDP and TCP port 53, parent glue, snapshot replication, and DNS-01.
-
-An in-zone nameserver reserves the tenant subdomain that contains it. For example,
-`ns1.infrastructure.dispatch.cicd.onl` reserves `infrastructure`; a tenant cannot
-take that name. Nameserver configuration also cannot move into an existing
-tenant's subdomain.
-The zone is unsigned. Do not publish a parent DS record for this version.
+DNS changes are saved before publication. A provider failure returns `202` with
+`syncState: pending`; background reconciliation retries the saved change. A
+successful write returns `200` with `syncState: synced`. Provider acceptance does
+not mean every recursive resolver has refreshed its cache. See
+[DNS providers](dns-providers.md) for Cloudflare credentials, ownership and TLS.
 
 ## Preparing a new installation
 
 These commands are for the new installation host. They are not an upgrade or a
 migration procedure for an existing Dispatch data directory.
 
-Build `Containerfile.hosted`, `Containerfile.worker`, and `Containerfile.dns`, or
-run `scripts/build-release.sh <version>` to produce the platform binary archive.
-The hosted controller image contains no Docker CLI or socket mount.
+Build the hosted controller image from the repository root:
+
+```sh
+docker build -f Containerfile.hosted -t dispatch-platform:local .
+```
+
+Tenant workers run in their own containers or on separate hosts. The hosted
+controller image contains no Docker CLI or socket mount.
 
 Create a private data directory and credential files readable only by the service
 account. Use a dedicated PostgreSQL catalog database. The tenant database
-provisioner needs permission to create databases and restricted login roles;
-these credentials stay outside tenant runtime connections.
+provisioner must create databases owned by restricted login roles and revoke
+public access to them. These credentials stay outside tenant runtime connections.
 
-```sh
-export DISPATCH_HOSTED_DATA_DIR=/var/lib/dispatch-platform
-export DISPATCH_HOSTED_ROOT_DOMAIN=dispatch.cicd.onl
-export DISPATCH_HOSTED_CATALOG_URL_FILE=/run/secrets/dispatch-catalog-url
-export DISPATCH_HOSTED_POSTGRES_ADMIN_URL_FILE=/run/secrets/dispatch-provisioner-url
-export DISPATCH_HOSTED_CONSOLE_ADDRESSES=192.0.2.10
-export DISPATCH_HOSTED_WORKLOAD_GATEWAY=192.0.2.20
-export DISPATCH_HOSTED_NAMESERVERS=ns1.dispatch.cicd.onl,ns2.dispatch.cicd.onl
-export DISPATCH_HOSTED_NAMESERVER_ADDRESSES=ns1.dispatch.cicd.onl=192.0.2.53,ns2.dispatch.cicd.onl=198.51.100.53
-export DISPATCH_HOSTED_DNS_TOKEN_FILE=/run/secrets/dispatch-dns-token
-export DISPATCH_HOSTED_ADDR=0.0.0.0:8443
-export DISPATCH_HOSTED_TLS_MODE=certificate
-export DISPATCH_HOSTED_TLS_CERT_FILE=/run/secrets/dispatch-console-chain.pem
-export DISPATCH_HOSTED_TLS_KEY_FILE=/run/secrets/dispatch-console-key.pem
+Save these values in `hosted.env` for the controller container:
+
+```dotenv
+DISPATCH_HOSTED_DATA_DIR=/var/lib/dispatch-platform
+DISPATCH_HOSTED_ROOT_DOMAIN=dispatch.cicd.onl
+DISPATCH_HOSTED_CATALOG_URL_FILE=/run/secrets/dispatch-catalog-url
+DISPATCH_HOSTED_POSTGRES_ADMIN_URL_FILE=/run/secrets/dispatch-provisioner-url
+DISPATCH_HOSTED_CONSOLE_ADDRESSES=192.0.2.10
+DISPATCH_HOSTED_WORKLOAD_GATEWAY=192.0.2.20
+DISPATCH_HOSTED_DNS_PROVIDER=cloudflare
+DISPATCH_HOSTED_CLOUDFLARE_ZONE_ID=replace-with-zone-id
+DISPATCH_HOSTED_CLOUDFLARE_API_TOKEN_FILE=/run/secrets/cloudflare-api-token
+DISPATCH_HOSTED_ADDR=0.0.0.0:8443
+DISPATCH_HOSTED_TLS_MODE=certificate
+DISPATCH_HOSTED_TLS_CERT_FILE=/run/secrets/dispatch-console-chain.pem
+DISPATCH_HOSTED_TLS_KEY_FILE=/run/secrets/dispatch-console-key.pem
 ```
 
 The addresses above are documentation addresses. Replace them before use.
 Credential files use mode `0600`, and the data directory uses `0700`. The catalog
 URL and provisioner URL are PostgreSQL connection strings with TLS settings for
-your database. The DNS token contains at least 32 random characters. Nameservers
-inside the delegated zone require matching parent glue addresses.
+your database. The Cloudflare token needs Zone DNS Edit and Zone Read for only
+the configured zone. Bind-mount the credential directory read-only at
+`/run/secrets`. The image runs as UID and GID `65532`; that account must own the
+private data directory and be able to read the credential files.
 
 Before starting the controller, bootstrap the first platform account:
 
 ```sh
-dispatch-platform bootstrap-user \
+docker run --rm --env-file hosted.env \
+  --mount type=bind,src=/srv/dispatch-platform,dst=/var/lib/dispatch-platform \
+  --mount type=bind,src=/srv/dispatch-platform-secrets,dst=/run/secrets,readonly \
+  dispatch-platform:local bootstrap-user \
   --email admin@example.com --name 'Platform administrator' \
   --password-file /run/secrets/dispatch-initial-password
 ```
 
 The password must contain 12 to 72 bytes. Bootstrap only works on an empty identity
 catalog. It cannot elevate an existing user or create another administrator after
-accounts exist. Start the service with `dispatch-platform serve` after bootstrap.
-
-Configure SMTP to let invited tenant owners and other users register:
+accounts exist. Start the controller after bootstrap:
 
 ```sh
-export DISPATCH_HOSTED_SMTP_ADDRESS=smtp.example.com:587
-export DISPATCH_HOSTED_SMTP_FROM=dispatch@example.com
-export DISPATCH_HOSTED_SMTP_USERNAME=dispatch
-export DISPATCH_HOSTED_SMTP_PASSWORD_FILE=/run/secrets/dispatch-smtp-password
+docker run -d --name dispatch-platform --restart unless-stopped \
+  --env-file hosted.env --publish 443:8443 \
+  --mount type=bind,src=/srv/dispatch-platform,dst=/var/lib/dispatch-platform \
+  --mount type=bind,src=/srv/dispatch-platform-secrets,dst=/run/secrets,readonly \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  dispatch-platform:local serve
+```
+
+Add SMTP settings to `hosted.env` to let invited owners and other users register:
+
+```dotenv
+DISPATCH_HOSTED_SMTP_ADDRESS=smtp.example.com:587
+DISPATCH_HOSTED_SMTP_FROM=dispatch@example.com
+DISPATCH_HOSTED_SMTP_USERNAME=dispatch
+DISPATCH_HOSTED_SMTP_PASSWORD_FILE=/run/secrets/dispatch-smtp-password
 ```
 
 SMTP requires STARTTLS with certificate verification. Registration sends a
@@ -158,42 +175,41 @@ files under the new data directory. Production hosted mode expects PostgreSQL.
 
 ## TLS bootstrap and renewal
 
-Use `DISPATCH_HOSTED_TLS_MODE=certificate` with an existing certificate while
-starting DNS replicas. The replicas need working HTTPS to fetch their zone.
-Delegation alone cannot bootstrap that HTTPS connection. Supply a trusted
-bootstrap certificate and establish both nameservers before switching to ACME
-issuance. Do not disable certificate verification to get through bootstrap.
+Use `DISPATCH_HOSTED_TLS_MODE=certificate` with a trusted console certificate
+while testing DNS-01 issuance. Keep its certificate and key paths configured.
+Add these settings to `hosted.env` and recreate the container:
 
-For Dispatch-managed renewal, configure an explicit ACME directory and contact:
-
-```sh
-export DISPATCH_HOSTED_TLS_MODE=acme
-export DISPATCH_HOSTED_ACME_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory
-export DISPATCH_HOSTED_ACME_EMAIL=operations@example.com
-export DISPATCH_HOSTED_ACME_ACCEPT_TERMS=true
+```dotenv
+DISPATCH_HOSTED_ACME_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory
+DISPATCH_HOSTED_ACME_EMAIL=operations@example.com
+DISPATCH_HOSTED_ACME_ACCEPT_TERMS=true
 ```
 
-Use staging until DNS-01 and certificate installation work. Select the production
-directory only during the deployment/configuration task. ACME mode can retain
-the configured bootstrap certificate for the root host until its first managed
-certificate is ready. Renewal runs every five minutes, independently of builds
-and deployments. Existing certificates remain available during renewal failures
-until they expire.
+Issuance runs independently of the TLS serving mode. Keep certificate or proxy
+mode during staging tests, because staging certificates are not publicly trusted.
+After DNS-01 works, switch to the production directory and verify issuance. Then
+use `DISPATCH_HOSTED_TLS_MODE=acme` if Dispatch should serve and renew the console
+certificate itself. Without a bootstrap certificate, ACME serving becomes
+available after the first successful issuance.
 
-The controller obtains one certificate for the root and tenant consoles, and a
-separate wildcard certificate for each tenant's workload namespace. DNS replicas
-receive TXT records, never certificate private keys. An authenticated tenant
-owner or admin can retrieve only that tenant's workload bundle at
-`GET /api/v1/hosted/certificate`. The response includes `certificatePem`,
-`privateKeyPem`, `notAfter`, and `renewAfter`. Configure the workload ingress to
-install and refresh its tenant bundle; it must not receive the platform key.
-Certificate installation at an external ingress remains part of deployment setup.
+Renewal runs every five minutes, independently of builds and deployments. Existing
+certificates remain available through renewal failures until they expire. The
+controller publishes each DNS-01 TXT value through Cloudflare, checks the zone's
+authoritative nameservers, then removes only that challenge's record.
 
-Alternatively, terminate HTTPS in a proxy on the same machine with
-`DISPATCH_HOSTED_TLS_MODE=proxy` and a loopback listener. Set
-`DISPATCH_HOSTED_TRUSTED_PROXIES=127.0.0.1/32,::1/128` only for proxies that replace
-or correctly append `X-Forwarded-For`. Host and Origin checks still use the public
-configured domain. Proxy mode is rejected on public listener addresses.
+The root and tenant consoles share a certificate for `dispatch.cicd.onl` and
+`*.dispatch.cicd.onl`. Workload hosts need a separate wildcard certificate for
+each tenant, such as `*.agentops.dispatch.cicd.onl`. An authenticated tenant owner
+or admin can retrieve its workload bundle at `GET /api/v1/hosted/certificate`.
+The response includes `certificatePem`, `privateKeyPem`, `notAfter` and
+`renewAfter`. Configure the workload ingress to install and refresh that bundle.
+Cloudflare receives DNS records; certificate private keys stay with Dispatch
+and the ingress that installs them.
+
+A proxy container can terminate HTTPS instead. `DISPATCH_HOSTED_TLS_MODE=proxy`
+requires a loopback listener, so the proxy must share the controller's network
+namespace. Set trusted proxy CIDRs only for a proxy that replaces or correctly
+appends `X-Forwarded-For`. The public Host and Origin checks still apply.
 
 ## Tenant creation and usage
 
@@ -202,7 +218,9 @@ Creation returns `202` and a pending tenant. The controller retries provisioning
 from durable state after failures or restarts. It creates the isolated database,
 vault and directories, publishes DNS, then marks the tenant active. A failed
 attempt records a fixed provisioning phase, not raw database errors or tenant
-content. Tenant slugs and the root domain are immutable in this version.
+content. Tenant slugs and the root domain are immutable in this version. The catalog
+also binds the DNS provider and zone ID. Token rotation for that zone is allowed;
+changing the provider or zone requires a deliberate migration.
 
 Usage collection refreshes daily buckets once a minute. It exports current
 project, application, and active membership counts, completed nonreused job
@@ -221,8 +239,9 @@ separate API that checks the acting account's tenant owner role. See
 
 Before accepting users on a new installation:
 
-1. Verify both authoritative servers over UDP and TCP from outside their networks,
-   including negative answers and a tenant wildcard.
+1. Verify the operator-created root record resolves to the ingress. Create a
+   test tenant and verify its console and wildcard records in Cloudflare and
+   through public DNS. Check pending updates recover after a provider failure.
 2. Create two test tenants with different owners. Confirm platform-only access
    cannot enter either tenant, and tenant sessions and worker credentials cannot
    cross between them.
@@ -236,8 +255,8 @@ Before accepting users on a new installation:
 
 Existing single-installation data is not imported automatically. An offline,
 reviewed import and production provider/ingress configuration belong to the next
-deployment task. No current server configuration, delegation, data, or images are
-changed by building this branch.
+deployment task. Local provider fixtures cover ownership and retries. Live
+Cloudflare publication still needs validation with an operator-supplied token.
 
 ## Hosted execution limits
 
@@ -265,8 +284,8 @@ connection uses that exact IP, avoiding a second lookup that could change it.
 
 Apply network egress policy to the control-plane host or container as well.
 Git's SSH and HTTPS clients are external programs and do not use Go's HTTP
-transport. Permit the configured database, SMTP service, authoritative DNS
-servers, and required public Git/API endpoints. Deny tenant-controlled access to
-cloud metadata and unrelated internal services. Private Git/secret/provider
+transport. Permit the configured database, SMTP service, Cloudflare API,
+authoritative DNS queries for DNS-01, and required public Git/API endpoints.
+Deny tenant-controlled access to cloud metadata and unrelated internal services. Private Git/secret/provider
 access should use the tenant's enrolled connection. Do not place credentials or
 mounts for workload execution on the control-plane process.

@@ -8,8 +8,8 @@ import (
 	"github.com/doout/dispatch/internal/tenancy"
 )
 
-// Prepare writes only the hosted catalog and newly allocated tenant stores.
-// The legacy deployment database is never opened by this server.
+// Prepare binds installation settings in the hosted catalog. DNS publication
+// runs in background reconciliation, so provider outages do not prevent startup.
 func (s *Server) Prepare(ctx context.Context) error {
 	s.dnsMu.Lock()
 	defer s.dnsMu.Unlock()
@@ -17,11 +17,13 @@ func (s *Server) Prepare(ctx context.Context) error {
 }
 
 func (s *Server) ReconcileTenants(ctx context.Context) error {
+	s.dnsMu.Lock()
+	joined := s.syncTenantDNS(ctx, platformOwner)
+	s.dnsMu.Unlock()
 	tenants, err := s.Catalog.ListTenants(ctx)
 	if err != nil {
 		return err
 	}
-	var joined error
 	for _, tenant := range tenants {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -34,7 +36,11 @@ func (s *Server) ReconcileTenants(ctx context.Context) error {
 			// tenant content from a backend error.
 			if tenant.State != tenancy.StateActive {
 				_ = s.Catalog.SetTenantState(ctx, tenant.ID, "failed")
-				_ = s.Catalog.SaveProvisioningJob(ctx, tenancy.ProvisioningJob{TenantID: tenant.ID, State: "failed", Phase: "preparing tenant"})
+				phase := "preparing tenant"
+				if job, err := s.Catalog.ProvisioningJob(ctx, tenant.ID); err == nil && job.Phase == "configuring DNS" {
+					phase = job.Phase
+				}
+				_ = s.Catalog.SaveProvisioningJob(ctx, tenancy.ProvisioningJob{TenantID: tenant.ID, State: "failed", Phase: phase})
 			}
 			s.Logger.Error("tenant preparation failed", "tenant", tenant.ID)
 			joined = errors.Join(joined, err)
@@ -54,6 +60,11 @@ func (s *Server) provisionTenant(ctx context.Context, tenant tenancy.Tenant) err
 	}
 	if _, err := s.runtime(tenant); err != nil {
 		return err
+	}
+	if tenant.State != tenancy.StateActive {
+		if err := s.Catalog.SaveProvisioningJob(ctx, tenancy.ProvisioningJob{TenantID: tenant.ID, State: "running", Phase: "configuring DNS"}); err != nil {
+			return err
+		}
 	}
 	s.dnsMu.Lock()
 	err := s.prepareTenantDNS(ctx, tenant)

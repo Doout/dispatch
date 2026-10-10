@@ -59,6 +59,13 @@ Open <http://127.0.0.1:8080>. If the environment does not define an administrato
 
 Compose enables the Docker executor and mounts the host Docker socket. Set `DOCKER_GID` to the group that owns `/var/run/docker.sock`.
 
+## Hosted tenants
+
+For a multi-tenant installation, run the separate hosted controller with isolated
+tenant databases and enrolled workers. Cloudflare publishes tenant DNS records.
+See [hosted setup](docs/hosted-tenants.md) and [DNS providers](docs/dns-providers.md)
+for container configuration and token permissions.
+
 ## Applications
 
 An application can use an HTTPS or SSH repository, or a Compose document saved in Dispatch. Private repositories can use a GitHub App, token, or SSH key.

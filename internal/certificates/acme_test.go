@@ -1,4 +1,4 @@
-package authoritativedns
+package certificates
 
 import (
 	"bytes"
@@ -10,73 +10,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 	"golang.org/x/crypto/acme"
 )
-
-// This fixture publishes through the real immutable zone and queries both
-// transports before the fake CA accepts a challenge. It never calls a public CA.
-type fixtureSolver struct {
-	server             *Server
-	address            string
-	snapshot           Snapshot
-	presented, cleaned int
-	failWait           bool
-}
-
-func (s *fixtureSolver) Present(_ context.Context, c Challenge) error {
-	s.presented++
-	s.snapshot.Generation++
-	s.snapshot.Records = append(s.snapshot.Records, Record{ID: c.ID, OwnerID: c.OwnerID, Generation: c.Generation, Name: c.Name, Type: "TXT", Values: []string{c.Value}})
-	return s.server.Apply(s.snapshot)
-}
-func (s *fixtureSolver) Wait(ctx context.Context, c Challenge) error {
-	if s.failWait {
-		return errors.New("replica not ready")
-	}
-	for _, network := range []string{"udp", "tcp"} {
-		m := new(dns.Msg)
-		m.SetQuestion(c.Name, dns.TypeTXT)
-		response, _, err := (&dns.Client{Net: network}).ExchangeContext(ctx, m, s.address)
-		if err != nil {
-			return err
-		}
-		found := false
-		for _, rr := range response.Answer {
-			if txt, ok := rr.(*dns.TXT); ok && strings.Join(txt.Txt, "") == c.Value {
-				found = true
-			}
-		}
-		if !found {
-			return errors.New("TXT not published")
-		}
-	}
-	return nil
-}
-func (s *fixtureSolver) Cleanup(_ context.Context, c Challenge) error {
-	s.cleaned++
-	records := []Record{}
-	for _, r := range s.snapshot.Records {
-		if r.ID == c.ID {
-			if r.OwnerID != c.OwnerID || r.Generation != c.Generation || len(r.Values) != 1 || r.Values[0] != c.Value {
-				return errors.New("challenge ownership mismatch")
-			}
-			continue
-		}
-		records = append(records, r)
-	}
-	s.snapshot.Generation++
-	s.snapshot.Records = records
-	return s.server.Apply(s.snapshot)
-}
 
 type fixtureCA struct {
 	domains          []string
@@ -134,15 +76,7 @@ func (c *fixtureCA) CreateOrderCert(_ context.Context, _ string, raw []byte, _ b
 
 func TestACMEDNSIssuanceRenewalAndCleanup(t *testing.T) {
 	stateDirectory := t.TempDir()
-	server, err := NewServer(filepath.Join(t.TempDir(), "zone.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot := fixtureSnapshot()
-	if err = server.Apply(snapshot); err != nil {
-		t.Fatal(err)
-	}
-	solver := &fixtureSolver{server: server, address: serveFixture(t, server), snapshot: snapshot}
+	solver := newFixtureSolver(t)
 	ca := &fixtureCA{now: time.Now().UTC()}
 	reconciler := Reconciler{DirectoryURL: "https://ca.example.test/directory", TermsAccepted: true, StoreDirectory: stateDirectory, Solver: solver, Now: func() time.Time { return ca.now }, Factory: func(key crypto.Signer) ACMEClient { ca.key = key; return ca }}
 	request := CertificateRequest{ID: "tenant-console-and-workloads", OwnerID: "team", Generation: 1, Domains: []string{"team.dispatch.example.test", "*.team.dispatch.example.test"}}
@@ -193,18 +127,11 @@ func TestACMEDNSIssuanceRenewalAndCleanup(t *testing.T) {
 func TestACMEWaitFailureAndForeignAuthorization(t *testing.T) {
 	for _, malicious := range []bool{false, true} {
 		t.Run(map[bool]string{false: "propagation", true: "foreign-authorization"}[malicious], func(t *testing.T) {
-			server, err := NewServer(filepath.Join(t.TempDir(), "zone.json"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			snapshot := fixtureSnapshot()
-			if err = server.Apply(snapshot); err != nil {
-				t.Fatal(err)
-			}
-			solver := &fixtureSolver{server: server, snapshot: snapshot, failWait: true}
+			solver := newFixtureSolver(t)
+			solver.failWait = true
 			ca := &fixtureCA{now: time.Now(), malicious: malicious}
 			r := Reconciler{DirectoryURL: "https://ca.example.test/directory", TermsAccepted: true, StoreDirectory: t.TempDir(), Solver: solver, Factory: func(crypto.Signer) ACMEClient { return ca }}
-			_, err = r.Ensure(context.Background(), CertificateRequest{ID: "certificate", OwnerID: "team", Generation: 1, Domains: []string{"*.team.dispatch.example.test"}})
+			_, err := r.Ensure(context.Background(), CertificateRequest{ID: "certificate", OwnerID: "team", Generation: 1, Domains: []string{"*.team.dispatch.example.test"}})
 			if err == nil || ca.accepted != 0 {
 				t.Fatal("CA validation started before verified DNS")
 			}
@@ -219,15 +146,7 @@ func TestACMEWaitFailureAndForeignAuthorization(t *testing.T) {
 }
 
 func TestACMEDirectorySwitchDoesNotReuseAnotherIssuersCertificate(t *testing.T) {
-	server, err := NewServer(filepath.Join(t.TempDir(), "zone.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot := fixtureSnapshot()
-	if err = server.Apply(snapshot); err != nil {
-		t.Fatal(err)
-	}
-	solver := &fixtureSolver{server: server, address: serveFixture(t, server), snapshot: snapshot}
+	solver := newFixtureSolver(t)
 	staging := &fixtureCA{now: time.Now().UTC()}
 	production := &fixtureCA{now: staging.now}
 	r := Reconciler{DirectoryURL: "https://staging-ca.example.test/directory", TermsAccepted: true, StoreDirectory: t.TempDir(), Solver: solver, Now: func() time.Time { return staging.now }, Factory: func(crypto.Signer) ACMEClient { return staging }}
@@ -289,5 +208,49 @@ func TestACMEDirectorySwitchDoesNotReuseAnotherIssuersCertificate(t *testing.T) 
 	}
 	if _, err = r.Ensure(t.Context(), request); err != nil || production.orders != 3 {
 		t.Fatal("certificate without issuer identity was not reissued", err)
+	}
+}
+
+func TestACMECleanupRetriesPersistedChallengesAfterRestart(t *testing.T) {
+	solver := newFixtureSolver(t)
+	solver.failCleanup = true
+	ca := &fixtureCA{now: time.Now().UTC()}
+	directory := t.TempDir()
+	request := CertificateRequest{ID: "workloads", OwnerID: "team", Generation: 1, Domains: []string{"*.team.dispatch.example.test"}}
+	reconciler := Reconciler{DirectoryURL: "https://ca.example.test/directory", TermsAccepted: true, StoreDirectory: directory, Solver: solver, Factory: func(crypto.Signer) ACMEClient { return ca }}
+	if _, err := reconciler.Ensure(t.Context(), request); err == nil {
+		t.Fatal("failed DNS cleanup was hidden")
+	}
+	path := filepath.Join(directory, digest(request.OwnerID+":"+request.ID)+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending certificateState
+	if err := json.Unmarshal(raw, &pending); err != nil || len(pending.Challenges) != 2 {
+		t.Fatal("failed cleanup was not retained on disk", err)
+	}
+	solver.failCleanup = false
+	// A new reconciler must clean the saved challenges before using the certificate.
+	reopened := Reconciler{DirectoryURL: reconciler.DirectoryURL, TermsAccepted: true, StoreDirectory: directory, Solver: solver, Factory: func(crypto.Signer) ACMEClient { t.Fatal("restart ordered another certificate"); return ca }}
+	certificate, err := reopened.Ensure(t.Context(), request)
+	if err != nil || certificate.NotAfter.Before(ca.now) {
+		t.Fatal("restart did not recover the issued certificate", err)
+	}
+	if ca.orders != 1 {
+		t.Fatal("restart created another order")
+	}
+	for _, network := range []string{"udp", "tcp"} {
+		if got := query(t, solver.address, network, "_acme-challenge.team.dispatch.example.test", dns.TypeTXT); len(got.Answer) != 2 {
+			t.Fatal("cleanup changed unrelated TXT values", network)
+		}
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending = certificateState{}
+	if err := json.Unmarshal(raw, &pending); err != nil || len(pending.Challenges) != 0 {
+		t.Fatal("successful cleanup was not saved", err)
 	}
 }

@@ -1,4 +1,4 @@
-package authoritativedns
+package certificates
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-// WaitForTXT checks the authoritative replicas directly. Each address includes
+// WaitForTXT checks the authoritative nameservers directly. Each address includes
 // a port, usually 53. It does not accept a recursive resolver's cached answer.
 func WaitForTXT(ctx context.Context, addresses []string, challenge Challenge) error {
 	if len(addresses) == 0 || challenge.Name == "" || challenge.Value == "" {

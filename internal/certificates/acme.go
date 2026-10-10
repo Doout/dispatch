@@ -1,4 +1,5 @@
-package authoritativedns
+// Package certificates manages ACME DNS-01 issuance and durable certificate state.
+package certificates
 
 import (
 	"context"
@@ -35,8 +36,8 @@ type Challenge struct {
 }
 
 // ChallengeSolver must store each challenge separately, authorize its owner,
-// and remove only that exact ID/value/generation. Wait confirms all advertised
-// authoritative replicas serve the value before the CA is asked to validate it.
+// and remove only that exact ID/value/generation. Wait confirms every
+// authoritative nameserver serves the value before the CA validates it.
 type ChallengeSolver interface {
 	Present(context.Context, Challenge) error
 	Wait(context.Context, Challenge) error

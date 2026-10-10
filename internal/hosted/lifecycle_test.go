@@ -85,9 +85,12 @@ func TestHostedProvisioningRetriesAndRehydratesDNS(t *testing.T) {
 	if err = restarted.ReconcileTenants(ctx); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := restarted.dnsSnapshot(ctx)
-	if err != nil || snapshot.Generation != generation {
-		t.Fatal("restart failed to rehydrate DNS", snapshot.Generation, err)
+	after, _, err := restarted.Catalog.ZoneRecords(ctx)
+	if err != nil || after != generation {
+		t.Fatal("restart changed desired DNS", after, err)
+	}
+	if pending, err := restarted.Catalog.PendingDNSChanges(ctx, 100); err != nil || len(pending) != 0 {
+		t.Fatal("restart lost DNS publication state", pending, err)
 	}
 }
 

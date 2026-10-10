@@ -21,11 +21,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doout/dispatch/internal/authoritativedns"
+	"github.com/doout/dispatch/internal/certificates"
 	"github.com/doout/dispatch/internal/tenancy"
 )
 
-func hostedCertificateFixture(t *testing.T, domains ...string) authoritativedns.CertificateResult {
+func hostedCertificateFixture(t *testing.T, domains ...string) certificates.CertificateResult {
 	t.Helper()
 	sort.Strings(domains)
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -42,7 +42,7 @@ func hostedCertificateFixture(t *testing.T, domains ...string) authoritativedns.
 	if err != nil {
 		t.Fatal(err)
 	}
-	return authoritativedns.CertificateResult{CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), PrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), NotAfter: cert.NotAfter, RenewAfter: cert.NotBefore.Add(cert.NotAfter.Sub(cert.NotBefore) * 2 / 3)}
+	return certificates.CertificateResult{CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), PrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), NotAfter: cert.NotAfter, RenewAfter: cert.NotBefore.Add(cert.NotAfter.Sub(cert.NotBefore) * 2 / 3)}
 }
 
 func tlsFixtureHandshake(t *testing.T, server *Server, host string) (*x509.Certificate, error) {
@@ -112,7 +112,7 @@ func TestHostedTenantCertificateEndpointProtectsPrivateKeys(t *testing.T) {
 	f.server.cacheCertificate(a.ID, alpha)
 	f.server.cacheCertificate(b.ID, bravo)
 	host, path := "alpha."+root, "/api/v1/hosted/certificate"
-	for _, token := range []string{f.session(t, "platform", tenancy.AudiencePlatform), f.session(t, "owner-b", tenancy.TenantAudience(b.ID)), f.session(t, "member", tenancy.TenantAudience(a.ID)), f.server.Config.DNSReadToken, "worker-token", ""} {
+	for _, token := range []string{f.session(t, "platform", tenancy.AudiencePlatform), f.session(t, "owner-b", tenancy.TenantAudience(b.ID)), f.session(t, "member", tenancy.TenantAudience(a.ID)), "old-dns-token", "worker-token", ""} {
 		w := f.request(t, host, http.MethodGet, path, token, nil)
 		if w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "PRIVATE KEY") {
 			t.Fatal("certificate key disclosed to a nonowner", w.Code)
@@ -145,12 +145,12 @@ func TestHostedCertificateRestartLoadsValidBundleBeforeRenewal(t *testing.T) {
 	f := newHostedFixture(t)
 	root := f.server.Config.RootDomain
 	result := hostedCertificateFixture(t, root, "*."+root)
-	request := authoritativedns.CertificateRequest{ID: root, OwnerID: platformOwner, Generation: 1, Domains: []string{"*." + root, root}}
+	request := certificates.CertificateRequest{ID: root, OwnerID: platformOwner, Generation: 1, Domains: []string{"*." + root, root}}
 	state := struct {
-		DirectoryURL   string                              `json:"directoryUrl"`
-		Request        authoritativedns.CertificateRequest `json:"request"`
-		CertificatePEM []byte                              `json:"certificatePem"`
-		PrivateKeyPEM  []byte                              `json:"privateKeyPem"`
+		DirectoryURL   string                          `json:"directoryUrl"`
+		Request        certificates.CertificateRequest `json:"request"`
+		CertificatePEM []byte                          `json:"certificatePem"`
+		PrivateKeyPEM  []byte                          `json:"privateKeyPem"`
 	}{"https://ca.example.test/directory", request, result.CertificatePEM, result.PrivateKeyPEM}
 	raw, err := json.Marshal(state)
 	if err != nil {
@@ -175,7 +175,7 @@ func TestHostedCertificateRestartLoadsValidBundleBeforeRenewal(t *testing.T) {
 	if cert, err := tlsFixtureHandshake(t, f.server, root); err != nil || cert.VerifyHostname(root) != nil {
 		t.Fatal("renewal failure hid a valid saved certificate", err)
 	}
-	loader := authoritativedns.Reconciler{DirectoryURL: f.server.Config.Certificates.DirectoryURL, StoreDirectory: directory, Now: func() time.Time { return result.NotAfter.Add(time.Minute) }}
+	loader := certificates.Reconciler{DirectoryURL: f.server.Config.Certificates.DirectoryURL, StoreDirectory: directory, Now: func() time.Time { return result.NotAfter.Add(time.Minute) }}
 	if _, err := loader.Cached(request); err == nil {
 		t.Fatal("expired saved certificate accepted")
 	}
