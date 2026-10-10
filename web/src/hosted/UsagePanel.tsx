@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { hostedRequest, type Tenant, type Usage } from "./client";
+import { TenantStatus } from "./HostedChrome";
 
 const metrics = [
   { key: "projects", label: "Projects" },
@@ -26,6 +27,15 @@ export function UsagePanel({
   tenant: Tenant;
   onClose: () => void;
 }) {
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const trigger = document.activeElement;
+    panel.current?.focus();
+    return () => {
+      if (trigger instanceof HTMLElement && trigger.isConnected)
+        trigger.focus();
+    };
+  }, [tenant.id]);
   const [usage, setUsage] = useState<Usage[] | null>(null),
     [error, setError] = useState(""),
     [days, setDays] = useState(30),
@@ -49,12 +59,17 @@ export function UsagePanel({
   }, [tenant.id, days, attempt]);
   const latest = usage?.at(-1);
   return (
-    <section className="hosted-panel" aria-label={`${tenant.name} usage`}>
+    <section
+      ref={panel}
+      tabIndex={-1}
+      className="hosted-panel"
+      aria-label={`${tenant.name} usage`}
+    >
       <header className="hosted-panel-header">
         <div>
           <h2>{tenant.name}</h2>
           <p>
-            {tenant.slug} · {tenant.state}
+            {tenant.slug} <TenantStatus state={tenant.state} />
           </p>
         </div>
         <button className="quiet-button" onClick={onClose}>
@@ -109,7 +124,7 @@ export function UsagePanel({
             return (
               <div key={metric.key}>
                 <dt>{metric.label}</dt>
-                <dd>
+                <dd data-measured={value !== undefined}>
                   {value === undefined
                     ? "Not measured"
                     : formatMetric(metric.key, value)}

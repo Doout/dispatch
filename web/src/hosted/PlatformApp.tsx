@@ -1,11 +1,21 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
-import { Mark } from "../components/PageStates";
+  ArrowRight,
+  ArrowUpRight,
+  ArrowsClockwise,
+  Buildings,
+  MagnifyingGlass,
+  SignOut,
+  UserCircle,
+  UsersThree,
+} from "@phosphor-icons/react";
+import {
+  HostedBrand,
+  HostedEmpty,
+  TenantStatus,
+  accountInitials,
+} from "./HostedChrome";
+import { LandingPage, signInAddress } from "./LandingPage";
 import {
   HostedError,
   hostedRequest,
@@ -16,7 +26,9 @@ import {
   type Tenant,
 } from "./client";
 import { TenantMembers } from "./TenantMembers";
-import { UsagePanel } from "./UsagePanel";
+import { AccountForm } from "./AccountForm";
+import { AccountSettings } from "./AccountSettings";
+import { TenantDirectory } from "./TenantDirectory";
 
 type View = "mine" | "catalog" | "account";
 
@@ -28,11 +40,14 @@ export function PlatformApp({
   const [account, setAccount] = useState<Account | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
-  const [view, setView] = useState<View>(() =>
-    new URLSearchParams(window.location.search).get("view") === "account"
-      ? "account"
-      : "mine",
-  );
+  const [view, setView] = useState<View>(() => {
+    const requested = new URLSearchParams(window.location.search).get("view");
+    return requested === "account" || requested === "catalog"
+      ? requested
+      : "mine";
+  });
+  const [membershipFilter, setMembershipFilter] = useState("");
+  const [membershipLimit, setMembershipLimit] = useState(50);
   const [memberships, setMemberships] = useState<Membership[]>([]),
     [invitations, setInvitations] = useState<Tenant[]>([]);
   const [selectedMembers, setSelectedMembers] = useState("");
@@ -106,6 +121,8 @@ export function PlatformApp({
       setAccount(null);
       setMemberships([]);
       setInvitations([]);
+      setSelectedMembers("");
+      window.history.replaceState(window.history.state, "", signInAddress);
     } catch (cause) {
       setError((cause as Error).message);
     }
@@ -113,7 +130,7 @@ export function PlatformApp({
   if (loading)
     return (
       <main className="hosted-auth" aria-busy="true">
-        <Mark />
+        <HostedBrand />
         <p role="status">Loading your account...</p>
       </main>
     );
@@ -129,6 +146,15 @@ export function PlatformApp({
         }}
       />
     );
+  const query = new URLSearchParams(window.location.search);
+  if (
+    !account &&
+    !error &&
+    !query.get("view") &&
+    !handoff.tenantId &&
+    !handoff.codeChallenge
+  )
+    return <LandingPage />;
   if (!account)
     return (
       <AccountForm
@@ -141,43 +167,79 @@ export function PlatformApp({
   const selected = memberships.find(
     (membership) => membership.tenant.id === selectedMembers,
   );
+  const activeView =
+    view === "catalog" && !account.platformAdmin ? "mine" : view;
+  const navigate = (next: View) => {
+    setView(next);
+    setSelectedMembers("");
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", next);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  };
+  const visibleMemberships = memberships.filter(({ tenant }) =>
+    `${tenant.name} ${tenant.slug}`
+      .toLowerCase()
+      .includes(membershipFilter.toLowerCase()),
+  );
   return (
     <div className="hosted-shell">
+      <a className="skip-link" href="#hosted-content">
+        Skip to content
+      </a>
       <header className="hosted-header">
-        <a className="hosted-brand" href="/">
-          <Mark />
-          <strong>Dispatch</strong>
-        </a>
-        <div>
-          <span>{account.name}</span>
+        <HostedBrand detail="Control plane" />
+        <div className="hosted-header-account">
+          <button
+            className="hosted-account-trigger"
+            aria-label={`${accountInitials(account.name)} ${account.name}, account settings`}
+            onClick={() => navigate("account")}
+          >
+            <span className="hosted-avatar" aria-hidden="true">
+              {accountInitials(account.name)}
+            </span>
+            <span>
+              <strong>{account.name}</strong>
+              <small>
+                {account.platformAdmin ? "Platform admin" : "Member"}
+              </small>
+            </span>
+          </button>
           <button className="quiet-button" onClick={() => void logout()}>
+            <SignOut size={16} aria-hidden="true" />
             Log out
           </button>
         </div>
       </header>
       <nav className="hosted-nav" aria-label="Account navigation">
         <button
-          className={view === "mine" ? "active" : ""}
-          onClick={() => setView("mine")}
+          aria-current={activeView === "mine" ? "page" : undefined}
+          onClick={() => navigate("mine")}
         >
+          <Buildings size={18} aria-hidden="true" />
           My tenants
         </button>
         {account.platformAdmin && (
           <button
-            className={view === "catalog" ? "active" : ""}
-            onClick={() => setView("catalog")}
+            aria-current={activeView === "catalog" ? "page" : undefined}
+            onClick={() => navigate("catalog")}
           >
+            <UsersThree size={18} aria-hidden="true" />
             Tenant directory
           </button>
         )}
         <button
-          className={view === "account" ? "active" : ""}
-          onClick={() => setView("account")}
+          aria-current={activeView === "account" ? "page" : undefined}
+          onClick={() => navigate("account")}
         >
+          <UserCircle size={18} aria-hidden="true" />
           Account
         </button>
       </nav>
-      <main className="hosted-content">
+      <main className="hosted-content" id="hosted-content" tabIndex={-1}>
         {error && (
           <p className="form-error" role="alert">
             {error}{" "}
@@ -186,11 +248,15 @@ export function PlatformApp({
             </button>
           </p>
         )}
-        {view === "mine" && (
+        {activeView === "mine" && (
           <>
             <header className="hosted-page-heading">
-              <h1>My tenants</h1>
+              <div>
+                <h1>My tenants</h1>
+                <p>Open a tenant or manage its members.</p>
+              </div>
               <button className="quiet-button" onClick={() => void load()}>
+                <ArrowsClockwise size={16} aria-hidden="true" />
                 Refresh
               </button>
             </header>
@@ -209,59 +275,128 @@ export function PlatformApp({
                 ))}
               </section>
             )}
-            <div className="hosted-table-wrap">
-              <table className="hosted-table">
-                <thead>
-                  <tr>
-                    <th>Tenant</th>
-                    <th>Your role</th>
-                    <th>Status</th>
-                    <th>
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {memberships.map((membership) => (
-                    <tr key={membership.tenant.id}>
-                      <td>
-                        <strong>{membership.tenant.name}</strong>
-                        <small>{membership.tenant.slug}</small>
-                      </td>
-                      <td>{membership.role}</td>
-                      <td>{membership.tenant.state}</td>
-                      <td>
-                        <div className="hosted-row-actions">
-                          {["owner", "admin"].includes(membership.role) && (
-                            <button
-                              className="quiet-button"
-                              onClick={() =>
-                                setSelectedMembers(membership.tenant.id)
-                              }
-                            >
-                              Members
-                            </button>
-                          )}
-                          {membership.tenant.state === "active" && (
-                            <a
-                              className="quiet-button"
-                              href={tenantDestination(
-                                membership.url,
-                                configuration.origin,
-                              )}
-                            >
-                              Open tenant
-                            </a>
-                          )}
-                        </div>
-                      </td>
+            {(memberships.length > 5 || membershipFilter) && (
+              <label className="hosted-search">
+                <span>Find a tenant</span>
+                <span className="hosted-search-field">
+                  <MagnifyingGlass size={18} aria-hidden="true" />
+                  <input
+                    type="search"
+                    placeholder="Name or subdomain"
+                    value={membershipFilter}
+                    onChange={(event) => {
+                      setMembershipFilter(event.target.value);
+                      setMembershipLimit(50);
+                    }}
+                  />
+                </span>
+              </label>
+            )}
+            {memberships.length > 0 && (
+              <div className="hosted-table-wrap">
+                <table className="hosted-table">
+                  <thead>
+                    <tr>
+                      <th>Tenant</th>
+                      <th>Your role</th>
+                      <th>Status</th>
+                      <th>
+                        <span className="sr-only">Actions</span>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {memberships.length === 0 && (
-              <p>You are not a member of a tenant yet.</p>
+                  </thead>
+                  <tbody>
+                    {visibleMemberships
+                      .slice(0, membershipLimit)
+                      .map((membership) => (
+                        <tr key={membership.tenant.id}>
+                          <td>
+                            <strong>{membership.tenant.name}</strong>
+                            <small>{membership.tenant.slug}</small>
+                          </td>
+                          <td>{membership.role}</td>
+                          <td>
+                            <TenantStatus state={membership.tenant.state} />
+                          </td>
+                          <td>
+                            <div className="hosted-row-actions">
+                              {["owner", "admin"].includes(membership.role) && (
+                                <button
+                                  className="quiet-button"
+                                  onClick={() =>
+                                    setSelectedMembers(membership.tenant.id)
+                                  }
+                                >
+                                  Members
+                                </button>
+                              )}
+                              {membership.tenant.state === "active" && (
+                                <a
+                                  className="quiet-button"
+                                  href={tenantDestination(
+                                    membership.url,
+                                    configuration.origin,
+                                  )}
+                                >
+                                  Open tenant
+                                  <ArrowUpRight size={15} aria-hidden="true" />
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {visibleMemberships.length > membershipLimit && (
+              <div className="hosted-table-footer">
+                <p>
+                  Showing {membershipLimit} of {visibleMemberships.length}{" "}
+                  tenants
+                </p>
+                <button
+                  className="quiet-button"
+                  onClick={() => setMembershipLimit((value) => value + 50)}
+                >
+                  Show more
+                </button>
+              </div>
+            )}
+            {memberships.length > 0 && visibleMemberships.length === 0 && (
+              <HostedEmpty
+                title="No matching tenants"
+                action={
+                  <button
+                    className="quiet-button"
+                    onClick={() => setMembershipFilter("")}
+                  >
+                    Clear search
+                  </button>
+                }
+              >
+                Try a different name or subdomain.
+              </HostedEmpty>
+            )}
+            {memberships.length === 0 && !error && (
+              <HostedEmpty
+                title="No tenants yet"
+                action={
+                  account.platformAdmin ? (
+                    <button
+                      className="quiet-button"
+                      onClick={() => navigate("catalog")}
+                    >
+                      Browse tenant directory{" "}
+                      <ArrowRight size={16} aria-hidden="true" />
+                    </button>
+                  ) : undefined
+                }
+              >
+                You are not a member of a tenant yet.
+                {!account.platformAdmin && " Ask a tenant owner to invite you."}
+              </HostedEmpty>
             )}
             {selected && (
               <TenantMembers
@@ -273,8 +408,10 @@ export function PlatformApp({
             )}
           </>
         )}
-        {view === "catalog" && account.platformAdmin && <TenantDirectory />}
-        {view === "account" && (
+        {activeView === "catalog" && account.platformAdmin && (
+          <TenantDirectory origin={configuration.origin} />
+        )}
+        {activeView === "account" && (
           <AccountSettings
             account={account}
             onPasswordChanged={() => {
@@ -285,160 +422,6 @@ export function PlatformApp({
         )}
       </main>
     </div>
-  );
-}
-
-function AccountForm({
-  configuration,
-  mode: initialMode,
-  verification,
-  onDone,
-  initialError = "",
-}: {
-  configuration: HostedPlatform;
-  mode: "login" | "verify";
-  verification?: string;
-  onDone: () => void;
-  initialError?: string;
-}) {
-  const [mode, setMode] = useState<"login" | "register" | "verify">(
-      initialMode,
-    ),
-    [email, setEmail] = useState(""),
-    [name, setName] = useState(""),
-    [password, setPassword] = useState(""),
-    [confirmation, setConfirmation] = useState(""),
-    [error, setError] = useState(initialError),
-    [notice, setNotice] = useState(""),
-    [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setError("");
-    setNotice("");
-    if (mode === "verify" && password !== confirmation) {
-      setError("Passwords do not match.");
-      return;
-    }
-    setBusy(true);
-    try {
-      if (mode === "login") {
-        await hostedRequest("/account/login", "POST", { email, password });
-        onDone();
-      } else if (mode === "register") {
-        await hostedRequest("/account/register", "POST", { email, name });
-        setNotice("Check your email to finish creating your account.");
-      } else {
-        await hostedRequest("/account/verify-email", "POST", {
-          token: verification,
-          name,
-          password,
-        });
-        onDone();
-      }
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <main className="hosted-auth">
-      <Mark />
-      <h1>
-        {mode === "login"
-          ? "Sign in to Dispatch"
-          : mode === "register"
-            ? "Create your account"
-            : "Finish creating your account"}
-      </h1>
-      <form className="hosted-form" onSubmit={(event) => void submit(event)}>
-        {mode !== "verify" && (
-          <label>
-            Email
-            <input
-              type="email"
-              autoComplete="username"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-          </label>
-        )}
-        {mode !== "login" && (
-          <label>
-            Name
-            <input
-              autoComplete="name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              required
-              maxLength={120}
-            />
-          </label>
-        )}
-        {mode !== "register" && (
-          <label>
-            {mode === "verify" ? "Choose a password" : "Password"}
-            <input
-              type="password"
-              autoComplete={
-                mode === "login" ? "current-password" : "new-password"
-              }
-              value={password}
-              minLength={mode === "verify" ? 12 : undefined}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </label>
-        )}
-        {mode === "verify" && (
-          <label>
-            Confirm password
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={confirmation}
-              minLength={12}
-              onChange={(event) => setConfirmation(event.target.value)}
-              required
-            />
-          </label>
-        )}
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        {notice && (
-          <p className="form-success" role="status">
-            {notice}
-          </p>
-        )}
-        <button className="primary-button" disabled={busy}>
-          {busy
-            ? "Please wait..."
-            : mode === "login"
-              ? "Sign in"
-              : mode === "register"
-                ? "Send verification email"
-                : "Create account"}
-        </button>
-        {configuration.registrationEnabled && mode !== "verify" && (
-          <button
-            type="button"
-            className="quiet-button"
-            onClick={() => {
-              setMode(mode === "login" ? "register" : "login");
-              setError("");
-              setNotice("");
-              setPassword("");
-            }}
-          >
-            {mode === "login" ? "Create an account" : "Back to sign in"}
-          </button>
-        )}
-      </form>
-    </main>
   );
 }
 
@@ -485,299 +468,5 @@ function Invitation({
         </p>
       )}
     </div>
-  );
-}
-
-function TenantDirectory() {
-  const [tenants, setTenants] = useState<Tenant[]>([]),
-    [selected, setSelected] = useState<Tenant | null>(null),
-    [creating, setCreating] = useState(false),
-    [filter, setFilter] = useState(""),
-    [limit, setLimit] = useState(50),
-    [error, setError] = useState(""),
-    [loading, setLoading] = useState(true);
-  const load = useCallback(async () => {
-    setError("");
-    try {
-      setTenants(await hostedRequest<Tenant[]>("/platform/tenants"));
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const visible = tenants.filter((tenant) =>
-    `${tenant.name} ${tenant.slug}`
-      .toLowerCase()
-      .includes(filter.toLowerCase()),
-  );
-  return (
-    <>
-      <header className="hosted-page-heading">
-        <h1>Tenant directory</h1>
-        <div className="hosted-row-actions">
-          <button className="quiet-button" onClick={() => void load()}>
-            Refresh
-          </button>
-          <button className="primary-button" onClick={() => setCreating(true)}>
-            Create tenant
-          </button>
-        </div>
-      </header>
-      {creating && (
-        <CreateTenant
-          onCreated={async () => {
-            setCreating(false);
-            await load();
-          }}
-          onCancel={() => setCreating(false)}
-        />
-      )}
-      {error && (
-        <p className="form-error" role="alert">
-          {error}{" "}
-          <button className="quiet-button" onClick={() => void load()}>
-            Retry
-          </button>
-        </p>
-      )}
-      <label className="hosted-search">
-        Find a tenant
-        <input
-          type="search"
-          value={filter}
-          onChange={(event) => {
-            setFilter(event.target.value);
-            setLimit(50);
-          }}
-          placeholder="Name or subdomain"
-        />
-      </label>
-      {loading && <p role="status">Loading tenants...</p>}
-      <div className="hosted-table-wrap">
-        <table className="hosted-table">
-          <thead>
-            <tr>
-              <th>Tenant</th>
-              <th>Subdomain</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>
-                <span className="sr-only">Usage</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.slice(0, limit).map((tenant) => (
-              <tr key={tenant.id}>
-                <td>{tenant.name}</td>
-                <td>{tenant.slug}</td>
-                <td>{tenant.state}</td>
-                <td>{new Date(tenant.createdAt).toLocaleDateString()}</td>
-                <td>
-                  <button
-                    className="quiet-button"
-                    onClick={() => setSelected(tenant)}
-                  >
-                    View usage
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {!loading && visible.length === 0 && <p>No tenants found.</p>}
-      {visible.length > limit && (
-        <button
-          className="quiet-button"
-          onClick={() => setLimit((value) => value + 50)}
-        >
-          Show more
-        </button>
-      )}
-      {selected && (
-        <UsagePanel tenant={selected} onClose={() => setSelected(null)} />
-      )}
-    </>
-  );
-}
-
-function CreateTenant({
-  onCreated,
-  onCancel,
-}: {
-  onCreated: () => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(""),
-    [slug, setSlug] = useState(""),
-    [ownerEmail, setOwnerEmail] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await hostedRequest("/platform/tenants", "POST", {
-        name,
-        slug,
-        ownerEmail,
-      });
-      await onCreated();
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className="hosted-panel">
-      <h2>Create tenant</h2>
-      <form className="hosted-form" onSubmit={(event) => void submit(event)}>
-        <label>
-          Name
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            required
-            maxLength={120}
-          />
-        </label>
-        <label>
-          Subdomain
-          <input
-            value={slug}
-            onChange={(event) => setSlug(event.target.value.toLowerCase())}
-            required
-            pattern="[a-z]([a-z0-9-]{0,61}[a-z0-9])?"
-            maxLength={63}
-            autoCapitalize="none"
-            spellCheck={false}
-          />
-        </label>
-        <label>
-          Owner email
-          <input
-            type="email"
-            value={ownerEmail}
-            onChange={(event) => setOwnerEmail(event.target.value)}
-            required
-          />
-        </label>
-        <p>
-          The owner manages this tenant and its members.
-        </p>
-        {error && (
-          <p role="alert" className="form-error">
-            {error}
-          </p>
-        )}
-        <div className="hosted-row-actions">
-          <button className="primary-button" disabled={busy}>
-            {busy ? "Creating..." : "Create tenant"}
-          </button>
-          <button
-            type="button"
-            className="quiet-button"
-            onClick={onCancel}
-            disabled={busy}
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
-function AccountSettings({
-  account,
-  onPasswordChanged,
-}: {
-  account: Account;
-  onPasswordChanged: () => void;
-}) {
-  const [oldPassword, setOldPassword] = useState(""),
-    [newPassword, setNewPassword] = useState(""),
-    [confirmation, setConfirmation] = useState(""),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (newPassword !== confirmation) {
-      setError("Passwords do not match.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await hostedRequest("/account/password", "PUT", {
-        oldPassword,
-        newPassword,
-      });
-      onPasswordChanged();
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <>
-      <h1>Account</h1>
-      <p>
-        {account.name} · {account.email}
-      </p>
-      <section className="hosted-panel">
-        <h2>Change password</h2>
-        <form className="hosted-form" onSubmit={(event) => void submit(event)}>
-          <label>
-            Current password
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={oldPassword}
-              onChange={(event) => setOldPassword(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            New password
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={newPassword}
-              onChange={(event) => setNewPassword(event.target.value)}
-              required
-              minLength={12}
-            />
-          </label>
-          <label>
-            Confirm new password
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={confirmation}
-              onChange={(event) => setConfirmation(event.target.value)}
-              required
-              minLength={12}
-            />
-          </label>
-          {error && (
-            <p role="alert" className="form-error">
-              {error}
-            </p>
-          )}
-          <button className="primary-button" disabled={busy}>
-            {busy ? "Saving..." : "Change password"}
-          </button>
-        </form>
-      </section>
-    </>
   );
 }
