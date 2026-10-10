@@ -156,6 +156,8 @@ jobs:
         run: python3 scripts/test-api-shard_test.py
       - name: Check required CI status dependencies
         run: python3 scripts/check-ci-gate_test.py
+      - name: Check hosted image publication guards
+        run: node scripts/check-hosted-images_test.cjs
       - name: Run the full race suite for all other discovered Go packages
         run: python3 scripts/test-api-shard.py --other-packages
       - run: sh scripts/install_test.sh

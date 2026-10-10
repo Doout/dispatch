@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+DISPATCH_CATALOG_PASSWORD=$(cat /run/secrets/catalog-password)
+DISPATCH_PROVISIONER_PASSWORD=$(cat /run/secrets/provisioner-password)
+export DISPATCH_CATALOG_PASSWORD DISPATCH_PROVISIONER_PASSWORD
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'SQL'
+\getenv catalog_password DISPATCH_CATALOG_PASSWORD
+\getenv provisioner_password DISPATCH_PROVISIONER_PASSWORD
+CREATE ROLE dispatch_catalog LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD :'catalog_password';
+CREATE ROLE dispatch_provisioner LOGIN NOSUPERUSER CREATEDB CREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD :'provisioner_password';
+CREATE DATABASE dispatch_catalog OWNER dispatch_catalog;
+REVOKE ALL ON DATABASE dispatch_catalog FROM PUBLIC;
+REVOKE ALL ON DATABASE dispatch_maintenance FROM PUBLIC;
+REVOKE ALL ON DATABASE postgres FROM PUBLIC;
+REVOKE ALL ON DATABASE template1 FROM PUBLIC;
+GRANT CONNECT ON DATABASE dispatch_maintenance TO dispatch_provisioner;
+\connect dispatch_catalog
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+ALTER SCHEMA public OWNER TO dispatch_catalog;
+SQL

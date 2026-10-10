@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,8 +42,14 @@ func run(ctx context.Context, args []string, out io.Writer, logger *slog.Logger)
 	if len(args) > 0 && args[0] == "bootstrap-user" {
 		return bootstrap(ctx, args[1:], out)
 	}
+	if len(args) > 0 && args[0] == "create-user" {
+		return createUser(ctx, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "recover-admin" {
+		return recoverAdmin(ctx, args[1:], out)
+	}
 	if len(args) > 0 && args[0] != "serve" {
-		return errors.New("usage: dispatch-platform [serve|bootstrap-user|version]")
+		return errors.New("usage: dispatch-platform [serve|bootstrap-user|create-user|recover-admin|version]")
 	}
 	config, err := readConfiguration()
 	if err != nil {
@@ -94,25 +99,11 @@ func run(ctx context.Context, args []string, out io.Writer, logger *slog.Logger)
 	loopsDone := make(chan struct{})
 	go func() { defer close(loopsDone); server.Run(ctx) }()
 	defer func() { cancel(); <-loopsDone }()
-	httpServer := &http.Server{Addr: config.Address, Handler: server, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
-	switch config.TLSMode {
-	case "acme":
-		var fallback *tls.Certificate
-		if config.CertificateFile != "" {
-			certificate, loadErr := tls.LoadX509KeyPair(config.CertificateFile, config.KeyFile)
-			if loadErr != nil {
-				return errors.New("cannot load bootstrap TLS certificate")
-			}
-			fallback = &certificate
-		}
-		httpServer.TLSConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			certificate, err := server.GetCertificate(hello)
-			if err != nil && fallback != nil && hello.ServerName == config.Hosted.RootDomain {
-				return fallback, nil
-			}
-			return certificate, err
-		}
+	tlsConfig, err := consoleTLSConfig(config, server.GetCertificate)
+	if err != nil {
+		return err
 	}
+	httpServer := &http.Server{Addr: config.Address, Handler: server, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10, TLSConfig: tlsConfig}
 	failures := make(chan error, 1)
 	go func() {
 		if config.TLSMode == "proxy" {
