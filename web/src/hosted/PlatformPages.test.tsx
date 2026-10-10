@@ -237,6 +237,7 @@ it("previews the tenant address and submits the existing creation fields", async
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
   await screen.findByRole("heading", { name: "Tenant directory" });
+  await screen.findByRole("heading", { name: "No tenants yet" });
   await user.click(screen.getByRole("button", { name: "Create tenant" }));
   expect(screen.getByRole("heading", { name: "Create tenant" })).not.toBeNull();
   expect(

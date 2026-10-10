@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,10 +15,16 @@ import (
 )
 
 func main() {
+	key, err := os.ReadFile(os.Getenv("DISPATCH_UI_PREVIEW_ACCESS_KEY_FILE"))
+	if err != nil {
+		slog.Error("UI preview access key file is missing or unreadable")
+		os.Exit(1)
+	}
 	handler, err := uipreview.New(uipreview.Config{
 		Origin:      os.Getenv("DISPATCH_UI_PREVIEW_ORIGIN"),
 		Development: os.Getenv("DISPATCH_UI_PREVIEW_DEVELOPMENT"),
 		Production:  os.Getenv("DISPATCH_UI_PREVIEW_PRODUCTION"),
+		AccessKey:   strings.TrimSpace(string(key)),
 	})
 	if err != nil {
 		slog.Error("UI preview configuration is invalid", "error", err)

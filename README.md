@@ -118,7 +118,7 @@ go run ./cmd/dispatch
 
 The local controller simulates deployments by default. `make dev` builds the UI and starts it with demo records. `make check` runs Go tests with the race detector, `go vet`, TypeScript checks and frontend tests.
 
-To view UI changes with live production data, run the [UI preview proxy](docs/ui-preview.md). It keeps development and production sessions separate and blocks production changes.
+To view UI changes with live production data, run the [UI preview proxy](docs/ui-preview.md). It requires a separate access key, keeps development and production sessions separate and blocks production changes.
 
 See [contributing](CONTRIBUTING.md) for setup, migrations and review guidance.
 

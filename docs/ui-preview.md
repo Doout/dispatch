@@ -2,11 +2,21 @@
 
 The UI preview proxy serves the frontend from your development checkout. Its **Data source** selector switches API requests between a development backend and a production backend. Development is the default.
 
-Production mode uses your production login and permissions. The proxy blocks application changes, including tenant creation, invitations, password changes and deployment actions. It also blocks connection setup callbacks and worker job leases, which use GET requests to change state. Login, logout and tenant sign-in handoffs still work. Data reads and live log streams pass through. Production sessions have separate cookies, so switching back restores your development session.
+Production mode requires a separate preview access key before your production login. The proxy reads this key from a private file and issues a signed, HttpOnly cookie valid for one hour. A user login or a source cookie alone cannot enable production access. Access expiry also closes active log streams.
+
+Production mode uses your production permissions. The proxy blocks application changes, including tenant creation, invitations, password changes and deployment actions. It also blocks connection setup callbacks and worker job leases, which use GET requests to change state. Login, logout and tenant sign-in handoffs still work. Data reads and live log streams pass through. Production sessions have separate cookies, so switching back restores your development session.
 
 The proxy has no database connection, migrations, controllers or workers. It does not copy production data or store a production password. Production API responses and the preview HTML are never cached. Regular Dispatch installations do not show the selector.
 
 ## Run in Docker
+
+Generate a separate key for this preview installation and give the container user read access. Keep the file outside the repository.
+
+```sh
+openssl rand -hex 32 > ui-preview-access-key
+sudo chown 65532:65532 ui-preview-access-key
+sudo chmod 600 ui-preview-access-key
+```
 
 Build an image when the frontend changes:
 
@@ -33,6 +43,9 @@ services:
       DISPATCH_UI_PREVIEW_ORIGIN: https://dispatch.local.cicd.onl
       DISPATCH_UI_PREVIEW_DEVELOPMENT: http://127.0.0.1:8081
       DISPATCH_UI_PREVIEW_PRODUCTION: https://dispatch.cicd.onl
+      DISPATCH_UI_PREVIEW_ACCESS_KEY_FILE: /run/secrets/ui-preview-access-key
+    volumes:
+      - ./ui-preview-access-key:/run/secrets/ui-preview-access-key:ro
     logging:
       options:
         max-size: 10m
@@ -49,7 +62,19 @@ docker compose up -d --no-deps ui-preview
 
 Change the development gateway's upstream from `http://127.0.0.1:8081` to `http://127.0.0.1:8082`, validate its configuration and reload it. Keep the gateway's buffering disabled for live logs. A gateway reload preserves the network namespace used by the backend.
 
-Open the dev URL and select **Production**. Sign in with your production account. The UI uses the production API while retaining the frontend built into the preview image. API changes must remain compatible with the production backend.
+Open the dev URL and select **Production**. Enter the preview access key, then sign in with your production account. The UI uses the production API while retaining the frontend built into the preview image. API changes must remain compatible with the production backend.
+
+## Lock and rotate access
+
+The **Lock** button clears the browser's unlock cookie and returns to Development. Switching sources alone keeps the unlock until it expires. The key is never sent to the production backend, embedded in HTML or saved in browser storage.
+
+To revoke all outstanding unlock cookies, replace the private key file and recreate only the proxy:
+
+```sh
+docker compose up -d --no-deps --force-recreate ui-preview
+```
+
+A missing, unreadable or short key prevents startup. The proxy has no keyless mode. It validates the signed unlock on every production request; changing the source cookie cannot bypass it.
 
 ## Tenant navigation
 

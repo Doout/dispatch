@@ -4,6 +4,8 @@ package uipreview
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -30,6 +32,7 @@ type Config struct {
 	Origin      string
 	Development string
 	Production  string
+	AccessKey   string
 }
 
 type Server struct {
@@ -38,9 +41,14 @@ type Server struct {
 	production  *url.URL
 	assets      http.Handler
 	transport   http.RoundTripper
+	accessKey   [32]byte
+	now         func() time.Time
 }
 
 func New(config Config) (*Server, error) {
+	if len(config.AccessKey) < 32 || len(config.AccessKey) > 512 {
+		return nil, errors.New("a preview access key of 32 to 512 bytes is required")
+	}
 	origin, err := parseOrigin(config.Origin, false)
 	if err != nil {
 		return nil, errors.New("preview origin must be an HTTPS origin")
@@ -55,7 +63,7 @@ func New(config Config) (*Server, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 30 * time.Second
-	server := &Server{origin: origin, development: development, production: production, transport: transport}
+	server := &Server{origin: origin, development: development, production: production, transport: transport, accessKey: sha256.Sum256([]byte(config.AccessKey)), now: time.Now}
 	server.assets = ui.HandlerWithHeadMarkup(server.headMarkup)
 	return server, nil
 }
@@ -101,9 +109,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.switchSource(w, r)
 		return
 	}
+	if r.URL.Path == accessPath {
+		s.access(w, r)
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/readyz" && r.URL.Path != "/healthz" {
 		s.assets.ServeHTTP(w, r)
 		return
+	}
+	if production {
+		expires, allowed := s.productionAccess(r)
+		if !allowed {
+			problem(w, http.StatusForbidden, "Enter the preview access key to use production data.")
+			return
+		}
+		ctx, cancel := context.WithDeadline(r.Context(), expires)
+		defer cancel()
+		r = r.Clone(ctx)
 	}
 	if production && !readAllowed(r, slug == "") {
 		problem(w, http.StatusForbidden, "Production data is read only here. Switch to Development to make changes.")
@@ -145,7 +167,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					cookie.Name = string(name)
-				} else if cookie.Name == sourceCookie || strings.HasPrefix(cookie.Name, productionCookiePrefix) {
+				} else if cookie.Name == sourceCookie || cookie.Name == accessCookie || strings.HasPrefix(cookie.Name, productionCookiePrefix) {
 					continue
 				}
 				p.Out.AddCookie(cookie)
@@ -245,6 +267,10 @@ func (s *Server) switchSource(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Choose Development or Production.")
 		return
 	}
+	if _, allowed := s.productionAccess(r); input.Source == "production" && !allowed {
+		problem(w, http.StatusForbidden, "Enter the preview access key to use production data.")
+		return
+	}
 	http.SetCookie(w, &http.Cookie{Name: sourceCookie, Value: input.Source, Domain: s.origin.Hostname(), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 86400 * 30})
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
@@ -322,7 +348,8 @@ func (s *Server) headMarkup(r *http.Request) []byte {
 		source = "production"
 		upstream = s.production.String()
 	}
-	metadata, _ := json.Marshal(map[string]any{"source": source, "upstream": upstream, "readOnly": source == "production"})
+	_, allowed := s.productionAccess(r)
+	metadata, _ := json.Marshal(map[string]any{"source": source, "upstream": upstream, "readOnly": source == "production", "productionAccess": allowed})
 	script := append([]byte(`<script id="dispatch-ui-preview" type="application/json">`), metadata...)
 	return append(script, []byte("</script>")...)
 }

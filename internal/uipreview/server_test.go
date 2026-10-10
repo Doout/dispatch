@@ -13,6 +13,17 @@ import (
 	"time"
 )
 
+const testAccessKey = "test-preview-key-with-at-least-32-bytes"
+
+func serveAuthorized(s *Server, w http.ResponseWriter, r *http.Request) {
+	cookie, err := s.newAccessCookie()
+	if err != nil {
+		panic(err)
+	}
+	r.AddCookie(cookie)
+	s.ServeHTTP(w, r)
+}
+
 func previewRequest(method, path, body string, production bool) *http.Request {
 	r := httptest.NewRequest(method, "https://dev.example.test"+path, strings.NewReader(body))
 	r.Header.Set("Origin", "https://dev.example.test")
@@ -33,7 +44,7 @@ func fixture(t *testing.T, handler http.Handler) (*Server, *httptest.Server, *at
 	production := httptest.NewTLSServer(handler)
 	t.Cleanup(development.Close)
 	t.Cleanup(production.Close)
-	s, err := New(Config{Origin: "https://dev.example.test", Development: development.URL, Production: production.URL})
+	s, err := New(Config{Origin: "https://dev.example.test", Development: development.URL, Production: production.URL, AccessKey: testAccessKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +78,7 @@ func TestSourcesAndSessionIsolation(t *testing.T) {
 	r := previewRequest("GET", "/api/v1/account", "", false)
 	r.AddCookie(&http.Cookie{Name: "__Host-dispatch-platform", Value: "development-session"})
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
+	serveAuthorized(s, w, r)
 	if w.Code != 200 || devCalls.Load() != 1 || calls.Load() != 0 {
 		t.Fatal("default must use development")
 	}
@@ -78,7 +89,7 @@ func TestSourcesAndSessionIsolation(t *testing.T) {
 	r.Header.Set("X-Forwarded-Host", "attacker.example")
 	r.Header.Set("Forwarded", "host=attacker.example")
 	w = httptest.NewRecorder()
-	s.ServeHTTP(w, r)
+	serveAuthorized(s, w, r)
 	cookies := w.Result().Cookies()
 	if w.Code != 200 || len(cookies) != 1 || !strings.HasPrefix(cookies[0].Name, productionCookiePrefix) || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].Domain != "" {
 		t.Fatal("production cookie was not isolated")
@@ -87,7 +98,7 @@ func TestSourcesAndSessionIsolation(t *testing.T) {
 	r.AddCookie(cookies[0])
 	r.AddCookie(&http.Cookie{Name: "__Host-dispatch-platform", Value: "development-session"})
 	w = httptest.NewRecorder()
-	s.ServeHTTP(w, r)
+	serveAuthorized(s, w, r)
 	if w.Code != 200 || calls.Load() != 2 {
 		t.Fatalf("production read failed: %d", w.Code)
 	}
@@ -113,7 +124,7 @@ func TestProductionWritesNeverReachBackend(t *testing.T) {
 		{"HEAD", "/api/v1/edge/nodes/node/jobs/next"}, {"GET", "/api/v1/edge/nodes/node/jobs/%6eext"},
 	} {
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, previewRequest(item.method, item.path, `{}`, true))
+		serveAuthorized(s, w, previewRequest(item.method, item.path, `{}`, true))
 		if w.Code != http.StatusForbidden {
 			t.Errorf("%s %s: %d", item.method, item.path, w.Code)
 		}
@@ -121,7 +132,7 @@ func TestProductionWritesNeverReachBackend(t *testing.T) {
 	r := previewRequest("GET", "/api/v1/agents/connect", "", true)
 	r.Header.Set("Upgrade", "websocket")
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
+	serveAuthorized(s, w, r)
 	if w.Code != 403 || calls.Load() != 0 {
 		t.Fatal("write or interactive connection reached production")
 	}
@@ -132,7 +143,7 @@ func TestSourceSwitchAndOriginBoundaries(t *testing.T) {
 	s, _, _ := fixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	for _, source := range []string{"production", "development"} {
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, previewRequest("POST", sourcePath, `{"source":"`+source+`"}`, false))
+		serveAuthorized(s, w, previewRequest("POST", sourcePath, `{"source":"`+source+`"}`, false))
 		cookies := w.Result().Cookies()
 		if w.Code != 204 || len(cookies) != 1 || cookies[0].Value != source || cookies[0].Domain != "dev.example.test" || !cookies[0].HttpOnly || !cookies[0].Secure {
 			t.Fatal("invalid data source switch")
@@ -140,7 +151,7 @@ func TestSourceSwitchAndOriginBoundaries(t *testing.T) {
 	}
 	for _, body := range []string{`{"source":"https://arbitrary.example"}`, `{"source":"production","upstream":"https://arbitrary.example"}`, `{"source":"production"}{}`} {
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, previewRequest("POST", sourcePath, body, false))
+		serveAuthorized(s, w, previewRequest("POST", sourcePath, body, false))
 		if w.Code != 400 || len(w.Result().Cookies()) != 0 {
 			t.Fatal("source must be fixed configuration")
 		}
@@ -149,7 +160,7 @@ func TestSourceSwitchAndOriginBoundaries(t *testing.T) {
 		r := previewRequest("POST", sourcePath, `{"source":"production"}`, false)
 		r.Header.Set("Origin", origin)
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, r)
+		serveAuthorized(s, w, r)
 		if w.Code != 403 {
 			t.Fatal("source switch accepted a foreign or absent origin")
 		}
@@ -157,14 +168,14 @@ func TestSourceSwitchAndOriginBoundaries(t *testing.T) {
 	r := previewRequest("POST", "/api/v1/account/login", `{}`, true)
 	r.Header.Set("Origin", "https://attacker.example")
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
+	serveAuthorized(s, w, r)
 	if w.Code != 403 || calls.Load() != 0 {
 		t.Fatal("foreign origin reached production")
 	}
 	r = previewRequest("GET", "/api/v1/account", "", true)
 	r.Host = "unrelated.example"
 	w = httptest.NewRecorder()
-	s.ServeHTTP(w, r)
+	serveAuthorized(s, w, r)
 	if w.Code != 404 || calls.Load() != 0 {
 		t.Fatal("unrelated host reached production")
 	}
@@ -190,7 +201,7 @@ func TestProductionNavigationRewritesOnlyKnownFields(t *testing.T) {
 			method = "POST"
 		}
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, previewRequest(method, path, `{}`, true))
+		serveAuthorized(s, w, previewRequest(method, path, `{}`, true))
 		if w.Code != 200 {
 			t.Fatal(w.Code)
 		}
@@ -235,7 +246,7 @@ func TestTenantHostAndCookieMapping(t *testing.T) {
 	r.Header.Set("Origin", "https://team.dev.example.test")
 	r.AddCookie(&http.Cookie{Name: productionCookiePrefix + base64.RawURLEncoding.EncodeToString([]byte("__Host-dispatch-tenant")), Value: "tenant-session"})
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
+	serveAuthorized(s, w, r)
 	if w.Code != 303 || w.Header().Get("Location") != "https://dev.example.test/?tenant=id&challenge=pkce" {
 		t.Fatal("tenant sign-in redirect left preview")
 	}
@@ -249,7 +260,7 @@ func TestHTMLUsesDevelopmentAssetsAndPreviewMetadata(t *testing.T) {
 	s, _, _ := fixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("UI request reached backend") }))
 	for _, production := range []bool{false, true} {
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, previewRequest("GET", "/?view=catalog", "", production))
+		serveAuthorized(s, w, previewRequest("GET", "/?view=catalog", "", production))
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `id="dispatch-ui-preview"`) || !strings.Contains(w.Body.String(), `id="root"`) || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal("UI did not contain development assets and source metadata")
 		}
@@ -274,6 +285,8 @@ func TestLogStreamsFlushBeforeUpstreamCloses(t *testing.T) {
 	r, _ := http.NewRequest("GET", proxy.URL+"/api/v1/workflow/revisions/run/logs/watch", nil)
 	r.Host = "dev.example.test"
 	r.AddCookie(&http.Cookie{Name: sourceCookie, Value: "production"})
+	cookie, _ := s.newAccessCookie()
+	r.AddCookie(cookie)
 	response, err := client.Do(r)
 	if err != nil {
 		t.Fatal(err)
@@ -290,12 +303,12 @@ func TestLogStreamsFlushBeforeUpstreamCloses(t *testing.T) {
 
 func TestConfigRejectsUnsafeOrigins(t *testing.T) {
 	for _, origin := range []string{"http://dev.example.test", "https://user:password@dev.example.test", "https://dev.example.test/path"} {
-		if _, err := New(Config{Origin: origin, Development: "http://127.0.0.1:8081", Production: "https://prod.example.test"}); err == nil {
+		if _, err := New(Config{Origin: origin, Development: "http://127.0.0.1:8081", Production: "https://prod.example.test", AccessKey: testAccessKey}); err == nil {
 			t.Fatal("accepted invalid preview origin")
 		}
 	}
 	for _, upstream := range []string{"http://prod.example.test", "https://user:password@prod.example.test", "https://prod.example.test?token=secret"} {
-		if _, err := New(Config{Origin: "https://dev.example.test", Development: "http://127.0.0.1:8081", Production: upstream}); err == nil {
+		if _, err := New(Config{Origin: "https://dev.example.test", Development: "http://127.0.0.1:8081", Production: upstream, AccessKey: testAccessKey}); err == nil {
 			t.Fatal("accepted invalid production origin")
 		}
 	}
