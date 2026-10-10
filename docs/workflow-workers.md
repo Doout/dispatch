@@ -71,6 +71,10 @@ DISPATCH_WORKER_TEST_IMAGE=sha256:<local-image-id> go test ./internal/workflowru
 These tests create and remove their own execution containers. They do not enroll
 against a deployed controller or modify its data.
 
+To also build and run a test image through the host's Docker daemon, add
+`DISPATCH_WORKER_TEST_DOCKER=true`. Use a dedicated test host. The test removes
+its application container and image when it finishes.
+
 Select managed execution on a source-free workflow job:
 
 ```yaml
@@ -127,3 +131,61 @@ Hosted Helm rollback, release previews and live resource diagnostics also await
 worker implementations. Docker retained rollback remains available through the
 typed runtime. Deployment logs and workflow logs remain available while work
 runs and after it completes.
+
+## Customer server setup
+
+The customer server runs Docker and `dispatch-worker`. It does not need a
+Dispatch console, tenant database, authoritative DNS service or public domain.
+Worker management uses outbound HTTPS to the tenant's control plane.
+
+The [systemd service](../examples/worker/dispatch-worker.service) uses a dedicated
+`dispatch-worker` account with access to the local Docker daemon. Install Docker
+with its Buildx and Compose plugins, plus Git, OpenSSH client and CA certificates
+on the host for typed runtime operations. Install the worker binary at
+`/usr/local/bin/dispatch-worker`, and build or load the matching worker image.
+Keep that image locally and select its immutable ID with
+`docker image inspect --format '{{.Id}}' IMAGE`.
+
+Prepare the service on a systemd host:
+
+```sh
+sudo useradd --system --user-group --home-dir /var/lib/dispatch-worker \
+  --shell /usr/sbin/nologin dispatch-worker
+sudo usermod --append --groups docker dispatch-worker
+sudo install -d -m 0700 /etc/dispatch-worker
+sudo install -d -m 0700 -o dispatch-worker -g dispatch-worker \
+  /var/lib/dispatch-worker /var/lib/dispatch-worker/tmp
+sudo install -m 0600 examples/worker/worker.env.example /etc/dispatch-worker/worker.env
+sudo install -m 0600 examples/worker/controller.env.example /etc/dispatch-worker/controller.env.example
+sudo install -m 0644 examples/worker/dispatch-worker.service /etc/systemd/system/dispatch-worker.service
+sudo systemctl daemon-reload
+```
+
+Set `DISPATCH_WORKER_IMAGE` in `/etc/dispatch-worker/worker.env` to the local
+image ID. Leave the service disabled while the new control plane is being
+prepared. Without `/etc/dispatch-worker/controller.env`, systemd skips startup.
+
+Once the tenant and node registration exist, create that file from
+`controller.env.example` with mode `0600`. Replace all three values with the
+tenant HTTPS origin, node ID and enrollment token, then run:
+
+```sh
+sudo systemctl enable --now dispatch-worker
+sudo journalctl -u dispatch-worker -f
+```
+
+Confirm that the control plane reports the worker online and can run a job.
+Then remove `DISPATCH_EDGE_TOKEN` from `controller.env` and restart the service.
+A running process or an `identity.json` file alone does not prove enrollment
+succeeded. Keep `/var/lib/dispatch-worker` across upgrades and restarts. Its
+identity and receipts prevent repeated execution after a lost connection.
+
+The service puts temporary files under its persistent state directory so Docker
+can access host paths used by runtime operations. Docker builds and containers
+started through the daemon have their own resource usage; the execution
+container's limits do not cap the whole host.
+
+Public application traffic still requires reachable ingress at the deployment
+target. The worker connection does not tunnel HTTP, WebSockets or other preview
+traffic. Customers without inbound access will need an outbound application
+tunnel through the managed gateway; that transport is not implemented yet.
