@@ -40,11 +40,17 @@ func run(ctx context.Context, args []string, out io.Writer, logger *slog.Logger)
 		_, err := fmt.Fprintln(out, "Dispatch platform", installation.Version)
 		return err
 	}
+	if len(args) > 0 && args[0] == "create-user" {
+		return createUser(ctx, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "recover-admin" {
+		return recoverAdmin(ctx, args[1:], out)
+	}
 	if len(args) > 0 && args[0] == "bootstrap-user" {
 		return bootstrap(ctx, args[1:], out)
 	}
 	if len(args) > 0 && args[0] != "serve" {
-		return errors.New("usage: dispatch-platform [serve|bootstrap-user|version]")
+		return errors.New("usage: dispatch-platform [serve|bootstrap-user|create-user|recover-admin|version]")
 	}
 	config, err := readConfiguration()
 	if err != nil {

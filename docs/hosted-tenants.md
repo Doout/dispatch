@@ -136,6 +136,46 @@ The password must contain 12 to 72 bytes. Bootstrap only works on an empty ident
 catalog. It cannot elevate an existing user or create another administrator after
 accounts exist. Start the service with `dispatch-platform serve` after bootstrap.
 
+### Accounts without email delivery
+
+For a private installation without email delivery, an operator can create a
+verified account from the controller host. Verify the person's identity first
+and share the initial password through a private channel. Stop the hosted
+controller, then run this with the same data directory and catalog configuration:
+
+```sh
+dispatch-platform create-user \
+  --email owner@example.com --name 'Tenant owner' \
+  --password-file /run/secrets/dispatch-owner-password
+```
+
+The password file must be a private regular file with mode `0600`. The initial
+platform administrator must already exist. This command refuses existing email
+addresses and grants no platform role or tenant membership. Restart the
+controller, then create a tenant in the tenant directory using this account's
+email as its owner. The account can sign in immediately without a verification
+email. Its owner can change the password under Account.
+
+### Recovering the platform administrator
+
+If an administrator loses their password, stop the hosted controller and use the
+same data directory and catalog configuration:
+
+```sh
+dispatch-platform recover-admin \
+  --email admin@example.com \
+  --password-file /run/secrets/dispatch-new-password
+```
+
+This command requires a private password file and an existing active, verified
+platform administrator. It cannot create or promote an account, re-enable a
+disabled account, or change tenant membership. All existing account sessions and
+sign-in handoffs become invalid. Remove the password file and restart the
+controller after the command succeeds. Both commands refuse to run while another
+controller holds the data directory or catalog lock.
+
+### Email registration
+
 Configure SMTP to let invited tenant owners and other users register:
 
 ```sh
