@@ -1,0 +1,34 @@
+[Unit]
+Description=Dispatch execution worker
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+ConditionFileNotEmpty=/etc/dispatch-worker/controller.env
+
+[Service]
+Type=simple
+User=dispatch-worker
+Group=dispatch-worker
+SupplementaryGroups=docker
+StateDirectory=dispatch-worker
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/dispatch-worker
+Environment=HOME=/var/lib/dispatch-worker
+Environment=TMPDIR=/var/lib/dispatch-worker/tmp
+EnvironmentFile=/etc/dispatch-worker/worker.env
+EnvironmentFile=/etc/dispatch-worker/controller.env
+ExecStartPre=/usr/bin/mkdir -p /var/lib/dispatch-worker/tmp
+ExecStart=/usr/local/bin/dispatch-worker
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

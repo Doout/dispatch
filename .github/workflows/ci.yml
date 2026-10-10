@@ -75,15 +75,17 @@ jobs:
           go-version-file: go.mod
       - name: Build isolated worker image
         run: docker build -f Containerfile.worker -t dispatch-worker:test .
-      - name: Verify sandbox execution and cancellation
+      - name: Verify worker execution and Docker builds
         shell: bash
         run: |
           set -o pipefail
           export DISPATCH_WORKER_TEST_IMAGE=$(docker image inspect --format '{{.Id}}' dispatch-worker:test)
+          export DISPATCH_WORKER_TEST_DOCKER=true
           go test -race -count=1 -timeout 10m -json ./internal/workflowrunner -run 'TestDisposable.*Integration' \
             | python3 scripts/check-test-results.py \
               --require-test TestDisposableManagedWorkerIntegration \
-              --require-test TestDisposableWorkerCancellationIntegration
+              --require-test TestDisposableWorkerCancellationIntegration \
+              --require-test TestDisposableTenantDockerWorkerIntegration
   api-race:
     runs-on: ubuntu-latest
     timeout-minutes: 45
