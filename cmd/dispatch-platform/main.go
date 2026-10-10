@@ -89,7 +89,7 @@ func run(ctx context.Context, args []string, out io.Writer, logger *slog.Logger)
 	}
 	defer server.Close()
 	if err = server.Prepare(ctx); err != nil {
-		return errors.New("cannot prepare authoritative DNS zone")
+		return errors.New("cannot prepare hosted DNS configuration")
 	}
 	loopsDone := make(chan struct{})
 	go func() { defer close(loopsDone); server.Run(ctx) }()
