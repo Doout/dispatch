@@ -9,9 +9,15 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/dispatch-dns ./cmd/dispatch-dns
 
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/dispatch-dns /usr/local/bin/dispatch-dns
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 COPY LICENSE /usr/share/licenses/dispatch/LICENSE
 USER 65532:65532
 EXPOSE 5353/udp 5353/tcp
 ENTRYPOINT ["/usr/local/bin/dispatch-dns"]
+
+FROM runtime AS release
+ARG TARGETARCH
+COPY release/${TARGETARCH}/dispatch-dns /usr/local/bin/dispatch-dns
+
+FROM runtime AS dns
+COPY --from=build /out/dispatch-dns /usr/local/bin/dispatch-dns

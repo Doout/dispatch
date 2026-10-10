@@ -1,0 +1,33 @@
+[Unit]
+Description=Dispatch workflow worker
+Requires=docker.service
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=dispatch-worker
+Group=dispatch-worker
+SupplementaryGroups=docker
+EnvironmentFile=/etc/dispatch-worker/worker.env
+ExecStart=/opt/dispatch/current/dispatch-worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+UMask=0077
+StateDirectory=dispatch-worker
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/dispatch-worker
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/dispatch-worker
+
+[Install]
+WantedBy=multi-user.target

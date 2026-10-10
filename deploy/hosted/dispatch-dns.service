@@ -1,0 +1,32 @@
+[Unit]
+Description=Dispatch authoritative DNS
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=dispatch-dns
+Group=dispatch-dns
+EnvironmentFile=/etc/dispatch-dns/dns.env
+ExecStart=/opt/dispatch/current/dispatch-dns
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+StateDirectory=dispatch-dns
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/dispatch-dns
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ReadWritePaths=/var/lib/dispatch-dns
+
+[Install]
+WantedBy=multi-user.target

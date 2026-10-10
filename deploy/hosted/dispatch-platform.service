@@ -1,0 +1,32 @@
+[Unit]
+Description=Dispatch hosted controller
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=dispatch-platform
+Group=dispatch-platform
+EnvironmentFile=/etc/dispatch-platform/platform.env
+ExecStart=/opt/dispatch/current/dispatch-platform serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+StateDirectory=dispatch-platform
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/dispatch-platform
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/dispatch-platform
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target
