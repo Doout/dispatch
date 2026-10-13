@@ -93,7 +93,8 @@ def verify(summaries, count):
         api.require(item["count"] == count and item["discovered"] == roots, "Go discovery sets differ")
         expected = expected_roots(roots, item["names"])
         api.require(Counter(tuple(root) for root in item["executed"]) == expected, "Missing Go execution evidence")
-        api.require(set(item["packageSeconds"]) == set(roots), "Missing successful package evidence")
+        api.require(set(item["packageSeconds"]) == {package for package, name in expected},
+                    "Missing successful package evidence")
         assigned.update(expected)
     api.require(assigned == expected_roots(roots, {name for names in roots.values() for name in names}),
                 "Go shards must cover every discovered root exactly once")
@@ -115,9 +116,14 @@ def run_shard(index, count, output):
     timings = json.loads(BASELINE.read_text())["packageSeconds"]
     names = partition(roots, count, timings)[index]
     expected = expected_roots(roots, names)
-    print(f"Go shard {index + 1}/{count}: {len(expected)} roots in {len(packages)} packages", flush=True)
+    selected = {package for package, name in expected}
+    # Discovery already compiles packages without selected roots. Avoid linking
+    # them again, and start the longest suites first to reduce the final tail.
+    selected = sorted(selected, key=lambda package: (
+        -timings.get(package, 10) * sum(p == package for p, name in expected) / len(roots[package]), package))
+    print(f"Go shard {index + 1}/{count}: {len(expected)} roots in {len(selected)} packages", flush=True)
     command = ["go", "test", "-race", "-p", "2", "-count=1", "-timeout", "8m", "-json",
-               "-run", api.selection_pattern(names), *packages]
+               "-run", api.selection_pattern(names), *selected]
     with (output / f"results-{index}.jsonl").open("w") as log:
         process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE)
         for line in process.stdout:
@@ -126,7 +132,7 @@ def run_shard(index, count, output):
             if event.get("Action") == "output":
                 print(event.get("Output", ""), end="", flush=True)
         api.require(process.wait() == 0, "Go shard test command failed")
-    elapsed = check_results(api.json_objects((output / f"results-{index}.jsonl").read_text()), expected, packages)
+    elapsed = check_results(api.json_objects((output / f"results-{index}.jsonl").read_text()), expected, selected)
     summary = {"shard": index, "count": count, "discovered": roots, "names": names,
                "executed": sorted(expected), "packageSeconds": elapsed}
     (output / f"summary-{index}.json").write_text(json.dumps(summary, indent=2) + "\n")

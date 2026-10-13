@@ -20,7 +20,7 @@ class CoverageTest(unittest.TestCase):
         self.assignments = shards.partition(self.roots, 2, {'first': 30, 'second': 10})
         self.summaries = [{'shard': index, 'count': 2, 'discovered': self.roots, 'names': names,
                            'executed': sorted(shards.expected_roots(self.roots, names)),
-                           'packageSeconds': dict.fromkeys(self.roots, 1)}
+                           'packageSeconds': dict.fromkeys({package for package, name in shards.expected_roots(self.roots, names)}, 1)}
                           for index, names in enumerate(self.assignments)]
 
     def test_shared_root_names_have_one_shard_and_future_roots_enter_coverage(self):
