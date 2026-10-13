@@ -133,3 +133,22 @@ it("saves only explicit mappings and clears the enrollment token after connectio
     userMappings: [{ subject: "cp-account", userID: "local-user" }],
   });
 });
+
+
+it("keeps edits when collapsed and pauses background connection checks", async () => {
+  vi.useFakeTimers();
+  const request = vi.spyOn(client, "request").mockResolvedValue({ ...empty, configured: true });
+  vi.spyOn(client.api, "access").mockResolvedValue({ users: [] } as unknown as Awaited<ReturnType<typeof client.api.access>>);
+  render(<InstanceConnectionSettings />);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Manage connection" })); });
+  fireEvent.change(screen.getByLabelText("Instance address"), { target: { value: "https://edited.example.test" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Hide connection" })); });
+  expect(screen.queryByRole("textbox", { name: "Instance address" })).toBeNull();
+  await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+  expect(request).toHaveBeenCalledTimes(1);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Manage connection" })); });
+  expect((screen.getByLabelText("Instance address") as HTMLInputElement).value).toBe("https://edited.example.test");
+  expect(request).toHaveBeenCalledTimes(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(request).toHaveBeenCalledTimes(2);
+});

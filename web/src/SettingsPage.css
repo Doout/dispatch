@@ -514,35 +514,14 @@
 .settings-page-integrated .settings-feature-row {
   padding: 24px 0;
 }
-.settings-page-integrated .instance-connection-status {
-  padding: 18px 0;
-  background: transparent;
-}
-.settings-page-integrated .instance-connection-section {
-  grid-template-columns: minmax(180px, 280px) minmax(0, 760px);
-  padding: 28px 0;
-}
-.settings-page-integrated
-  .instance-connection-body
-  fieldset
-  > .instance-connection-actions {
-  padding: 20px 0;
-}
-.settings-page-integrated .settings-feedback,
-.settings-page-integrated .instance-connection-body > .settings-feedback {
+.settings-page-integrated .settings-feedback {
   margin-left: 0;
   margin-right: 0;
 }
-.settings-page-integrated .instance-connection-body > p:not(.settings-feedback),
-.settings-page-integrated .instance-connection-confirm {
-  padding: 24px 0;
+
+.connections-page > .instance-connection-settings {
+  margin-bottom: 24px;
 }
-.settings-page-integrated .instance-connection-body form > .settings-error {
-  padding-left: 0;
-  padding-right: 0;
-}
-@media (max-width: 700px) {
-  .settings-page-integrated .instance-connection-section {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.instance-connection-settings[data-expanded="false"] > header {
+  border-bottom: 0;
 }

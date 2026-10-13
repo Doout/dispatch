@@ -184,22 +184,14 @@ it("rechecks a flag after a concurrent owner reverses it during saving", async (
  expect(request.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "PUT", "GET"]);
 });
 
-it("loads connection settings on demand and keeps unsaved edits when changing tabs", async () => {
- const connection = { configured: false, connected: false, controlPlaneURL: "", directURL: "", remoteAccess: false, userMappings: [] };
- const request = vi.spyOn(client, "request").mockImplementation(async <T,>(path: string) => (path === "/api/v1/instance-connection" ? connection : { operationsEnabled: false }) as T);
- vi.spyOn(client.api, "access").mockResolvedValue({ users: [] } as unknown as Awaited<ReturnType<typeof client.api.access>>);
+it("keeps connection setup out of interface and feature settings", async () => {
+ const request = vi.spyOn(client, "request").mockResolvedValue({ operationsEnabled: false });
  const user = userEvent.setup();
  render(<SettingsPage overview={owner} interfaceSettings={{ enabled: true, onChange: vi.fn() }} />);
- expect(screen.getByRole("tab", { name: "Interface" }).getAttribute("aria-selected")).toBe("true");
- expect(request.mock.calls.some(([path]) => path === "/api/v1/instance-connection")).toBe(false);
- await user.click(screen.getByRole("tab", { name: "Doodship connection" }));
- await screen.findByLabelText("Connection token");
- await user.type(screen.getByLabelText("Instance address"), "https://private.example.test");
+ expect(screen.queryByRole("tab", { name: "Doodship connection" })).toBeNull();
  await user.click(screen.getByRole("tab", { name: "Features" }));
- expect(screen.queryByRole("textbox", { name: "Instance address" })).toBeNull();
- await user.click(screen.getByRole("tab", { name: "Doodship connection" }));
- expect((screen.getByLabelText("Instance address") as HTMLInputElement).value).toBe("https://private.example.test");
- expect(request.mock.calls.filter(([path]) => path === "/api/v1/instance-connection")).toHaveLength(1);
+ expect(screen.getByRole("switch", { name: "Operations" })).toBeTruthy();
+ expect(request.mock.calls.every(([path]) => path === "/api/v1/settings")).toBe(true);
 });
 
 it("supports keyboard navigation across settings tabs", async () => {

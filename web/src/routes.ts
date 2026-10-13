@@ -10,7 +10,7 @@ export function isNewInterfaceRoute(route: AppRoute) {
   return route.view === "workloads" || route.view === "infrastructure" || route.view === "recovery" || route.view === "automation";
 }
 export type ApplicationSection = "applications" | "templates" | "helm" | "groups";
-export type SettingsSection = "interface" | "connection" | "features";
+export type SettingsSection = "interface" | "features";
 export type EventSection = "rules" | "activity";
 export type DeploymentSection = "summary" | "topology" | "values" | "manifests" | "history";
 export type AnalyticsFilters = { days?: 7 | 30 | 90; projectId?: string; kind?: "deployment" | "workflow" | "job"; section?: "overview" | "data" };
@@ -69,7 +69,8 @@ export function readRoute(location: Pick<Location, "pathname" | "search"> = wind
     if (segments[1] && !isApplicationSectionPath(segments[1])) return { view: "applications", applicationID: segments[1] };
     return { view: "applications", applicationSection: applicationSectionFromPath(segments[1]) };
   }
-  if (first === "settings") return { view: "settings", ...(["connection", "features"].includes(segments[1]) ? { settingsSection: segments[1] as SettingsSection } : {}) };
+  if (first === "settings" && segments[1] === "connection") return { view: "connections" };
+  if (first === "settings") return { view: "settings", ...(segments[1] === "features" ? { settingsSection: segments[1] as SettingsSection } : {}) };
   if (first === "events") return { view: "events", eventSection: segments[1] === "activity" ? "activity" : "rules" };
   if (first === "servers") return { view: "servers", serverID: segments[1] || undefined };
   if (segments[0] === "variables") return { view: "secrets" };

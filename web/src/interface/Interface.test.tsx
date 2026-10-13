@@ -197,7 +197,7 @@ it("applies a controller feature disable from the overview stream without reload
   expect(client.request).not.toHaveBeenCalled();
 });
 
-it("uses the shell's Settings links without nesting another settings page", async () => {
+it("uses one Settings bar and manages Doodship from Connections", async () => {
   const user = userEvent.setup();
   path("/settings");
   vi.mocked(client.api.overview).mockResolvedValue(overview("settings-owner", true));
@@ -210,26 +210,25 @@ it("uses the shell's Settings links without nesting another settings page", asyn
   const navigation = within(await screen.findByRole("navigation", { name: "Settings pages" }));
   expect(screen.queryByRole("tablist", { name: "Settings sections" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Settings" })).toBeNull();
-  expect(navigation.getByRole("link", { name: "Interface" }).getAttribute("aria-current")).toBe("page");
-  expect(vi.mocked(client.request).mock.calls.some(([url]) => url === "/api/v1/instance-connection")).toBe(false);
-
-  await user.click(navigation.getByRole("link", { name: "Doodship connection" }));
-  expect(window.location.pathname).toBe("/settings/connection");
-  expect(navigation.getByRole("link", { name: "Doodship connection" }).getAttribute("aria-current")).toBe("page");
-  expect(navigation.getByRole("link", { name: "Interface" }).getAttribute("aria-current")).toBeNull();
-  expect(screen.getAllByRole("heading", { name: "Doodship connection" })).toHaveLength(1);
-  await user.type(await screen.findByLabelText("Instance address"), "https://private.example.test");
+  expect(navigation.queryByRole("link", { name: "Doodship connection" })).toBeNull();
   await user.click(navigation.getByRole("link", { name: "Features" }));
   expect(window.location.pathname).toBe("/settings/features");
   expect(screen.getByRole("switch", { name: "Operations" })).toBeTruthy();
+  await user.click(navigation.getByRole("link", { name: "Connections" }));
+  expect(window.location.pathname).toBe("/connections");
+  expect(navigation.getByRole("link", { name: "Connections" }).getAttribute("aria-current")).toBe("page");
+  expect(screen.getByRole("heading", { name: "Doodship" })).toBeTruthy();
+  expect(vi.mocked(client.request).mock.calls.some(([url]) => url === "/api/v1/instance-connection")).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Manage connection" }));
+  await user.type(await screen.findByLabelText("Instance address"), "https://private.example.test");
+  await user.click(screen.getByRole("button", { name: "Hide connection" }));
   expect(screen.queryByRole("textbox", { name: "Instance address" })).toBeNull();
-  act(() => { path("/settings/connection"); window.dispatchEvent(new PopStateEvent("popstate")); });
+  await user.click(screen.getByRole("button", { name: "Manage connection" }));
   expect((screen.getByLabelText("Instance address") as HTMLInputElement).value).toBe("https://private.example.test");
   expect(vi.mocked(client.request).mock.calls.filter(([url]) => url === "/api/v1/instance-connection")).toHaveLength(1);
-  expect(screen.queryByRole("tablist", { name: "Settings sections" })).toBeNull();
 });
 
-it.each(["connection", "features"])("keeps owner-only Settings section %s unavailable to members", async section => {
+it.each(["features"])("keeps owner-only Settings section %s unavailable to members", async section => {
   path(`/settings/${section}`);
   localStorage.setItem(interfacePreferenceKey("interface-member"), "new");
   render(<DispatchApp />);
