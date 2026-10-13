@@ -122,7 +122,7 @@ def run_shard(index, count, output):
     selected = sorted(selected, key=lambda package: (
         -timings.get(package, 10) * sum(p == package for p, name in expected) / len(roots[package]), package))
     print(f"Go shard {index + 1}/{count}: {len(expected)} roots in {len(selected)} packages", flush=True)
-    command = ["go", "test", "-race", "-p", "2", "-count=1", "-timeout", "8m", "-json",
+    command = ["go", "test", "-race", "-p", "4", "-count=1", "-timeout", "8m", "-json",
                "-run", api.selection_pattern(names), *selected]
     with (output / f"results-{index}.jsonl").open("w") as log:
         process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE)
