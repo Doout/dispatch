@@ -58,7 +58,7 @@ describe("history retention", () => {
     const remove = screen.getByRole("button", { name: "Remove eligible history" });
     expect((remove as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("checkbox")); fireEvent.click(remove);
-    await screen.findByText("Removed 100 old log lines and 3 failed or cancelled runs. 12 runs stayed protected.");
+    await screen.findByText("Removed 100 old log lines and 3 expired run summaries. 12 runs stayed protected. Expired 0 saved input snapshots and cleared 0 build logs.");
     expect(request).toHaveBeenCalledWith("/api/v1/projects/p/retention/apply", { method: "POST", body: JSON.stringify({ confirm: "p", expectedPolicy: policy }) });
     expect(request.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
     expect(onChanged).toHaveBeenCalledTimes(1);
@@ -91,7 +91,7 @@ describe("history retention", () => {
     const view = render(<RetentionControls overview={overview} projectId="p" />);
     fireEvent.click(await screen.findByRole("button", { name: "Preview cleanup" }));
     view.rerender(<RetentionControls overview={overview} projectId="q" />);
-    await screen.findByText("Commerce · Cleanup runs only when you apply it.");
+    await screen.findByText("Commerce · Automatic cleanup runs hourly.");
     resolve(preview);
     await waitFor(() => expect(screen.queryByText("Eligible for removal")).toBeNull());
     expect(request.mock.calls.some(([path]) => path.endsWith("/apply"))).toBe(false);

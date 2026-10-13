@@ -231,6 +231,8 @@ func (s DeploymentState) Terminal() bool {
 }
 
 type Deployment struct {
+	InputsExpiredAt     *time.Time         `json:"inputsExpiredAt,omitempty"`
+	RetentionPinned     bool               `json:"retentionPinned,omitempty"`
 	Health              DeploymentHealth   `json:"health"`
 	RuntimeReviewDigest string             `json:"-"`
 	RollbackCurrentID   string             `json:"-"`

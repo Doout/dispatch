@@ -172,6 +172,7 @@ func run(logger *slog.Logger) error {
 	go controller.RunPreviewExpirer(shutdownCtx)
 	go controller.RunTemporaryEnvironments(shutdownCtx)
 	go controller.RunWorkloadBackupVerification(shutdownCtx)
+	go controller.RunHistoryRetention(shutdownCtx)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: controller,
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,

@@ -133,6 +133,10 @@ func (a *API) getDeploymentTopology(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	if item.InputsExpiredAt != nil {
+		problem(w, http.StatusConflict, "Saved inputs expired", "Saved deployment inputs expired under the retention policy. Select a retained version for resource inspection.")
+		return
+	}
 	result := deploymentTopologyResponse{Target: item.Server.Name, Runtime: string(item.Server.Runtime), Chart: item.App.HelmChart}
 	result.Namespace = item.App.HelmNamespace
 	if result.Namespace == "" && item.Server.Kubernetes != nil {
@@ -213,6 +217,10 @@ func (a *API) getDeploymentManifests(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
+	if item.InputsExpiredAt != nil {
+		problem(w, http.StatusConflict, "Saved inputs expired", "Saved deployment inputs expired under the retention policy. Select a retained version for resource inspection.")
+		return
+	}
 
 	namespace, release := deploymentRuntimeNames(item)
 	result := deploymentManifestsResponse{
@@ -255,6 +263,10 @@ func (a *API) getDeploymentResource(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		a.internal(w, err)
+		return
+	}
+	if item.InputsExpiredAt != nil {
+		problem(w, http.StatusConflict, "Saved inputs expired", "Saved deployment inputs expired under the retention policy. Select a retained version for resource inspection.")
 		return
 	}
 	if item.Server.Kubernetes == nil {

@@ -3,12 +3,12 @@ import { Archive, ArrowClockwise, CheckCircle, ShieldCheck, Trash, WarningCircle
 import { request, type Overview } from "../api";
 import "./Maintenance.css";
 
-export type RetentionPolicy = { projectId: string; logDays: number; runDays: number; keepRuns: number; imageDays?: number; stoppedRevisionDays?: number; keepRollbackRevisions?: number };
+export type RetentionPolicy = { projectId: string; snapshotDays?: number; pauseAutomatic?: boolean; logDays: number; runDays: number; keepRuns: number; imageDays?: number; stoppedRevisionDays?: number; keepRollbackRevisions?: number };
 export type RuntimeRetentionItem = { key: string; kind: "revision" | "image"; serverId: string; appId: string; deploymentId?: string; name: string; identity: string; createdAt: string; protected: string[] };
 export type RuntimeRetentionReview = { id: string; projectId: string; digest: string; supersededBy?: string; policy: RetentionPolicy; state: "planned" | "running" | "partial" | "succeeded" | "blocked"; createdAt: string; expiresAt: string; items: RuntimeRetentionItem[]; results: { key: string; state: "removed" | "absent" | "protected" | "failed" | "pending"; message: string }[] };
 type RuntimeResponse = { applied: boolean; runtime: RuntimeRetentionReview };
 const failure = (value: unknown) => value instanceof Error ? value.message : String(value);
-export const sameRetentionPolicy = (left: RetentionPolicy, right: RetentionPolicy) => left.projectId === right.projectId && left.logDays === right.logDays && left.runDays === right.runDays && left.keepRuns === right.keepRuns && (left.imageDays || 0) === (right.imageDays || 0) && (left.stoppedRevisionDays || 0) === (right.stoppedRevisionDays || 0) && (left.keepRollbackRevisions || 5) === (right.keepRollbackRevisions || 5);
+export const sameRetentionPolicy = (left: RetentionPolicy, right: RetentionPolicy) => left.projectId === right.projectId && left.logDays === right.logDays && left.runDays === right.runDays && (left.snapshotDays || 0) === (right.snapshotDays || 0) && Boolean(left.pauseAutomatic) === Boolean(right.pauseAutomatic) && left.keepRuns === right.keepRuns && (left.imageDays || 0) === (right.imageDays || 0) && (left.stoppedRevisionDays || 0) === (right.stoppedRevisionDays || 0) && (left.keepRollbackRevisions || 5) === (right.keepRollbackRevisions || 5);
 const draftFor = (policy: RetentionPolicy) => ({ imageDays: String(policy.imageDays || 0), stoppedRevisionDays: String(policy.stoppedRevisionDays || 0), keepRollbackRevisions: String(policy.keepRollbackRevisions || 5) });
 const retentionAge = (days?: number) => days ? `${days} days` : "Keep indefinitely";
 

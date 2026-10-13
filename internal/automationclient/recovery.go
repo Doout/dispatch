@@ -159,13 +159,13 @@ func completeRetentionPolicy(raw json.RawMessage, project string, p *core.Retent
 	if json.Unmarshal(raw, &input) != nil {
 		return false
 	}
-	for _, field := range []string{"projectId", "logDays", "runDays", "keepRuns", "imageDays", "stoppedRevisionDays", "keepRollbackRevisions"} {
+	for _, field := range []string{"projectId", "snapshotDays", "pauseAutomatic", "logDays", "runDays", "keepRuns", "imageDays", "stoppedRevisionDays", "keepRollbackRevisions"} {
 		value, ok := input.Policy[field]
 		if !ok || string(value) == "null" {
 			return false
 		}
 	}
-	return p.LogDays >= 1 && p.LogDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000 && p.ImageDays >= 0 && p.ImageDays <= 36500 && p.StoppedRevisionDays >= 0 && p.StoppedRevisionDays <= 36500 && (p.KeepRollbackRevisions == 0 || p.KeepRollbackRevisions >= 2 && p.KeepRollbackRevisions <= 10000)
+	return p.SnapshotDays >= 0 && p.SnapshotDays <= 36500 && p.LogDays >= 1 && p.LogDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000 && p.ImageDays >= 0 && p.ImageDays <= 36500 && p.StoppedRevisionDays >= 0 && p.StoppedRevisionDays <= 36500 && (p.KeepRollbackRevisions == 0 || p.KeepRollbackRevisions >= 2 && p.KeepRollbackRevisions <= 10000)
 }
 
 func recoveryContinuation(op Operation, args Arguments, out Result) Result {

@@ -1826,3 +1826,7 @@ CREATE INDEX deployment_usage_finished ON deployments(finished_at) WHERE state I
 -- dispatch:migration 104_overview_history_indexes
 CREATE INDEX workflow_revisions_created_at ON workflow_revisions(created_at DESC);
 CREATE INDEX workflow_stage_runs_state ON workflow_stage_runs(state,revision_id);
+
+-- dispatch:migration 105_history_retention
+ALTER TABLE deployments ADD COLUMN inputs_expired_at TEXT;
+ALTER TABLE deployments ADD COLUMN retention_pinned BOOLEAN NOT NULL DEFAULT FALSE;

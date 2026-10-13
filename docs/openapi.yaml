@@ -1878,6 +1878,36 @@ paths:
           $ref: '#/components/responses/Problem'
         '409':
           $ref: '#/components/responses/Problem'
+  /deployments/{id}/retention-pin:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema: { type: string }
+    put:
+      operationId: setDeploymentRetentionPin
+      description: Requires project.manage. Pin or unpin retained deployment inputs. Expired inputs cannot be recovered by pinning.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pinned]
+              properties:
+                pinned: { type: boolean }
+      responses:
+        '200':
+          description: Updated pin state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pinned: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /deployments/{id}/release:
     parameters:
     - name: id
@@ -6717,6 +6747,14 @@ components:
       - runDays
       - keepRuns
       properties:
+        snapshotDays:
+          type: integer
+          minimum: 0
+          maximum: 36500
+          description: Saved input retention in days. Zero uses 30 days.
+        pauseAutomatic:
+          type: boolean
+          description: Pause hourly history cleanup. Manual cleanup remains available.
         projectId:
           type: string
         logDays:
@@ -6750,6 +6788,18 @@ components:
     RetentionResult:
       type: object
       properties:
+        snapshots:
+          type: integer
+          description: Saved input snapshots expired in this batch.
+        snapshotBytes:
+          type: integer
+          description: Logical bytes removed from saved input snapshots, before database compaction.
+        workflowLogs:
+          type: integer
+          description: Completed build job logs cleared in this batch.
+        more:
+          type: boolean
+          description: Further cleanup batches remain eligible.
         runtime:
           $ref: '#/components/schemas/RuntimeRetentionReview'
         logs:
@@ -7574,6 +7624,8 @@ components:
       type: object
       required: [id, appId, commitSha, specDigest, state, message, createdAt]
       properties:
+        inputsExpiredAt: { type: string, format: date-time, description: Saved inputs expired under the history retention policy. }
+        retentionPinned: { type: boolean, description: Saved inputs are pinned against history cleanup. }
         id: { type: string }
         appId: { type: string }
         commitSha: { type: string }

@@ -40,6 +40,8 @@ type IdentityTeamMapping struct {
 	TeamID        string `json:"teamId"`
 }
 type RetentionPolicy struct {
+	SnapshotDays          int    `json:"snapshotDays"`
+	PauseAutomatic        bool   `json:"pauseAutomatic"`
 	ImageDays             int    `json:"imageDays"`
 	StoppedRevisionDays   int    `json:"stoppedRevisionDays"`
 	KeepRollbackRevisions int    `json:"keepRollbackRevisions"`
@@ -49,12 +51,28 @@ type RetentionPolicy struct {
 	KeepRuns              int    `json:"keepRuns"`
 }
 type RetentionResult struct {
+	Snapshots     int64                   `json:"snapshots"`
+	SnapshotBytes int64                   `json:"snapshotBytes"`
+	WorkflowLogs  int64                   `json:"workflowLogs"`
+	More          bool                    `json:"more"`
 	Runtime       *RuntimeRetentionReview `json:"runtime,omitempty"`
 	Logs          int64                   `json:"logs"`
 	Runs          int64                   `json:"runs"`
 	ProtectedRuns int64                   `json:"protectedRuns"`
 	Applied       bool                    `json:"applied"`
 }
+
+func DefaultRetentionPolicy(projectID string) RetentionPolicy {
+	return RetentionPolicy{ProjectID: projectID, LogDays: 14, SnapshotDays: 30, RunDays: 90, KeepRuns: 20, KeepRollbackRevisions: 20}
+}
+
+func (p RetentionPolicy) SnapshotRetentionDays() int {
+	if p.SnapshotDays == 0 {
+		return 30
+	}
+	return p.SnapshotDays
+}
+
 type BackupRecord struct {
 	ID         string     `json:"id"`
 	Engine     string     `json:"engine"`

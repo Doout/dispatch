@@ -163,7 +163,7 @@ func (s *SQLStore) SaveRetentionPolicy(ctx context.Context, p core.RetentionPoli
 }
 func (s *SQLStore) GetRetentionPolicy(ctx context.Context, id string) (core.RetentionPolicy, error) {
 	var b string
-	p := core.RetentionPolicy{ProjectID: id, LogDays: 30, RunDays: 90, KeepRuns: 20}
+	p := core.DefaultRetentionPolicy(id)
 	err := s.db.QueryRowContext(ctx, s.q(`SELECT payload FROM retention_policies WHERE project_id=?`), id).Scan(&b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, nil
@@ -171,7 +171,9 @@ func (s *SQLStore) GetRetentionPolicy(ctx context.Context, id string) (core.Rete
 	if err != nil {
 		return p, err
 	}
-	return p, json.Unmarshal([]byte(b), &p)
+	p = core.RetentionPolicy{}
+	err = json.Unmarshal([]byte(b), &p)
+	return p, err
 }
 func (s *SQLStore) SaveBackupRecord(ctx context.Context, b core.BackupRecord) error {
 	raw, err := json.Marshal(b)
@@ -226,121 +228,25 @@ func (s *SQLStore) CheckSQLite(ctx context.Context) error {
 	return s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&count)
 }
 
-// Retention never removes a successful release, a baseline, an active run, or a run linked to a workflow/preview.
-// Retained runtime release history can still refer to that run's binding credentials.
-var ErrRetentionPolicyChanged = errors.New("retention policy changed after review")
-
-func (s *SQLStore) ApplyRetention(ctx context.Context, p core.RetentionPolicy, apply bool, now time.Time) (core.RetentionResult, error) {
-	return s.applyRetention(ctx, p, apply, now, false)
-}
-func (s *SQLStore) ApplyRetentionReviewed(ctx context.Context, p core.RetentionPolicy, apply bool, now time.Time) (core.RetentionResult, error) {
-	return s.applyRetention(ctx, p, apply, now, true)
-}
-func (s *SQLStore) lockRetentionProject(ctx context.Context, tx *changeTx, project string) error {
-	query := `SELECT id FROM projects WHERE id=?`
-	if s.postgres {
-		query += ` FOR UPDATE`
-	}
-	var id string
-	err := tx.QueryRowContext(ctx, s.q(query), project).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	return err
-}
-func (s *SQLStore) applyRetention(ctx context.Context, p core.RetentionPolicy, apply bool, now time.Time, reviewed bool) (core.RetentionResult, error) {
-	out := core.RetentionResult{Applied: apply}
-	if p.LogDays < 1 || p.RunDays < 1 || p.KeepRuns < 1 {
-		return out, errors.New("retention limits must be positive")
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
+// Omit already pruned records so history pagination cannot hide older archives
+// from controller backup retention.
+func (s *SQLStore) ListBackupRecordsForRetention(ctx context.Context) ([]core.BackupRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM controller_backups WHERE payload LIKE '%"state":"verified"%' ORDER BY id DESC`)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
-	defer tx.Rollback()
-	if reviewed {
-		if err = s.lockRetentionProject(ctx, tx, p.ProjectID); err != nil {
-			return out, err
-		}
-		saved := core.RetentionPolicy{ProjectID: p.ProjectID, LogDays: 30, RunDays: 90, KeepRuns: 20}
-		var payload string
-		err = tx.QueryRowContext(ctx, s.q(`SELECT payload FROM retention_policies WHERE project_id=?`), p.ProjectID).Scan(&payload)
-		if err == nil {
-			if err = json.Unmarshal([]byte(payload), &saved); err != nil {
-				return out, err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return out, err
-		}
-		if saved != p {
-			return out, ErrRetentionPolicyChanged
-		}
-	}
-
-	rows, err := tx.QueryContext(ctx, s.q(`SELECT d.id,d.app_id,d.state,d.created_at,
- CASE WHEN EXISTS(SELECT 1 FROM temporary_environments e WHERE e.deployment_id=d.id) OR EXISTS(SELECT 1 FROM workflow_stage_runs w WHERE w.deployment_ids LIKE '%' || d.id || '%') OR EXISTS(SELECT 1 FROM preview_group_run_components p WHERE p.deployment_id=d.id) OR EXISTS(SELECT 1 FROM runtime_artifact_retirements rr WHERE rr.deployment_id=d.id) OR EXISTS(SELECT 1 FROM runtime_jobs j WHERE j.deployment_id=d.id AND j.operation IN ('deploy','rollback')) OR EXISTS(SELECT 1 FROM deployment_runtime_artifacts ra WHERE ra.deployment_id=d.id) OR EXISTS(SELECT 1 FROM deployment_drift_baselines b WHERE b.deployment_id=d.id) THEN 1 ELSE 0 END
- FROM deployments d JOIN apps a ON a.id=d.app_id WHERE a.project_id=? ORDER BY d.created_at DESC,d.id DESC`), p.ProjectID)
-	if err != nil {
-		return out, err
-	}
-	type run struct {
-		id, app, state string
-		at             time.Time
-		linked         int
-	}
-	runs := []run{}
+	defer rows.Close()
+	records := []core.BackupRecord{}
 	for rows.Next() {
-		var r run
-		var at string
-		if err = rows.Scan(&r.id, &r.app, &r.state, &at, &r.linked); err != nil {
-			rows.Close()
-			return out, err
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
 		}
-		r.at = parseTime(at)
-		runs = append(runs, r)
+		var record core.BackupRecord
+		if err = json.Unmarshal([]byte(raw), &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
 	}
-	if err = rows.Close(); err != nil {
-		return out, err
-	}
-	counts := map[string]int{}
-	live := map[string]bool{}
-	for _, r := range runs {
-		counts[r.app]++
-		terminal := core.DeploymentState(r.state).Terminal()
-		keep := !terminal || counts[r.app] <= p.KeepRuns || r.state == string(core.DeploymentSucceeded) || r.linked == 1
-		latestSuccess := r.state == string(core.DeploymentSucceeded) && !live[r.app]
-		if r.state == string(core.DeploymentSucceeded) {
-			live[r.app] = true
-		}
-		if keep {
-			out.ProtectedRuns++
-		}
-		if terminal && !latestSuccess {
-			var n int64
-			if err = tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM deployment_logs WHERE deployment_id=? AND created_at<?`), r.id, stamp(now.AddDate(0, 0, -p.LogDays))).Scan(&n); err != nil {
-				return out, err
-			}
-			out.Logs += n
-			if apply {
-				if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM deployment_logs WHERE deployment_id=? AND created_at<?`), r.id, stamp(now.AddDate(0, 0, -p.LogDays))); err != nil {
-					return out, err
-				}
-			}
-		}
-		if !keep && r.at.Before(now.AddDate(0, 0, -p.RunDays)) {
-			out.Runs++
-			if apply {
-				if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM deployment_logs WHERE deployment_id=?`), r.id); err != nil {
-					return out, err
-				}
-				if _, err = tx.ExecContext(ctx, s.q(`DELETE FROM deployments WHERE id=? AND state IN ('failed','cancelled')`), r.id); err != nil {
-					return out, err
-				}
-			}
-		}
-	}
-	if apply {
-		err = tx.Commit()
-	}
-	return out, err
+	return records, rows.Err()
 }

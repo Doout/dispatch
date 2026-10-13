@@ -214,7 +214,7 @@ func testOperationsDashboard(t *testing.T, dsn string) {
 		t.Fatal("backup summary used truncated records or project scope")
 	}
 	// The reviewed default policy is checked under the same lock as policy updates.
-	policy := core.RetentionPolicy{ProjectID: project, LogDays: 30, RunDays: 90, KeepRuns: 20}
+	policy := core.DefaultRetentionPolicy(project)
 	_, err = s.ApplyRetentionReviewed(ctx, policy, false, now)
 	must(err)
 	changed := policy

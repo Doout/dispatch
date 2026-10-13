@@ -1142,13 +1142,13 @@ func (s *SQLStore) UpdateDeploymentOutputs(ctx context.Context, id string, outpu
 }
 
 func (s *SQLStore) UpdateDeploymentSnapshot(ctx context.Context, id string, snapshot core.DeploymentSnapshot) error {
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE deployments SET spec_snapshot=? WHERE id=?`), jsonText(snapshot), id)
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE deployments SET spec_snapshot=? WHERE id=? AND inputs_expired_at IS NULL`), jsonText(snapshot), id)
 	return changed(result, err)
 }
 
 func (s *SQLStore) GetDeployment(ctx context.Context, id string) (core.Deployment, error) {
 	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
-        started_at,finished_at,lease_until,outputs,spec_snapshot,health FROM deployments WHERE id=?`), id)
+        started_at,finished_at,lease_until,outputs,spec_snapshot,health,inputs_expired_at,retention_pinned FROM deployments WHERE id=?`), id)
 	item, err := scanDeployment(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, ErrNotFound
@@ -1177,7 +1177,7 @@ func (s *SQLStore) listDeployments(ctx context.Context, limit int, includeSnapsh
 		snapshot = "spec_snapshot"
 	}
 	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
- started_at,finished_at,lease_until,outputs,`+snapshot+`,health FROM deployments ORDER BY created_at DESC LIMIT ?`), limit)
+ started_at,finished_at,lease_until,outputs,`+snapshot+`,health,inputs_expired_at,retention_pinned FROM deployments ORDER BY created_at DESC LIMIT ?`), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1220,7 +1220,7 @@ func (s *SQLStore) listDeployments(ctx context.Context, limit int, includeSnapsh
 
 func (s *SQLStore) ActiveDeploymentForApp(ctx context.Context, appID string) (*core.Deployment, error) {
 	row := s.db.QueryRowContext(ctx, s.q(`SELECT id,app_id,commit_sha,spec_digest,state,message,created_at,
-        started_at,finished_at,lease_until,outputs,spec_snapshot,health FROM deployments WHERE app_id=? AND state NOT IN ('succeeded','failed','cancelled')
+        started_at,finished_at,lease_until,outputs,spec_snapshot,health,inputs_expired_at,retention_pinned FROM deployments WHERE app_id=? AND state NOT IN ('succeeded','failed','cancelled')
         ORDER BY created_at DESC LIMIT 1`), appID)
 	item, err := scanDeployment(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1248,15 +1248,16 @@ func (s *SQLStore) hydrateDeployment(ctx context.Context, item core.Deployment) 
 func scanDeployment(row scanner) (core.Deployment, error) {
 	var item core.Deployment
 	var state, created string
-	var started, finished, lease sql.NullString
+	var started, finished, lease, expired sql.NullString
 	var outputs, snapshot, health string
 	err := row.Scan(&item.ID, &item.AppID, &item.CommitSHA, &item.SpecDigest, &state, &item.Message,
-		&created, &started, &finished, &lease, &outputs, &snapshot, &health)
+		&created, &started, &finished, &lease, &outputs, &snapshot, &health, &expired, &item.RetentionPinned)
 	item.State = core.DeploymentState(state)
 	item.CreatedAt = parseTime(created)
 	item.StartedAt = parseNullTime(started)
 	item.FinishedAt = parseNullTime(finished)
 	item.LeaseUntil = parseNullTime(lease)
+	item.InputsExpiredAt = parseNullTime(expired)
 	_ = json.Unmarshal([]byte(outputs), &item.Outputs)
 	_ = json.Unmarshal([]byte(snapshot), &item.Snapshot)
 	_ = json.Unmarshal([]byte(health), &item.Health)

@@ -27,7 +27,7 @@
 .maintenance-details > summary > span { flex: 1; }
 .maintenance-details[open] > summary > svg:last-child { transform: rotate(180deg); }
 .maintenance-details p { max-width: 900px; margin: 5px 0 10px 20px; font-size: 11px; line-height: 1.6; }
-.retention-policy-summary, .retention-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0; }
+.retention-policy-summary, .retention-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 16px; margin: 0; }
 .retention-policy-summary > div { min-width: 0; padding: 2px 0 14px; }
 .retention-policy-summary dt, .retention-counts dt { color: var(--muted); font-size: 11px; }
 .retention-policy-summary dd { margin: 7px 0 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -36,7 +36,7 @@
 .retention-preview-action > span { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .retention-preview-action > span > svg { flex-shrink: 0; color: var(--green); }
 .retention-policy-editor { padding: 0; }
-.retention-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 14px; }
+.retention-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 14px; }
 .retention-fields label { display: grid; min-width: 0; gap: 7px; color: var(--muted); font-size: 11px; }
 .retention-fields label > div { display: flex; align-items: center; gap: 7px; }
 .retention-fields input { min-width: 0; width: 88px; min-height: 34px; padding: 6px 8px; color: var(--ink); background: var(--paper); border: 1px solid var(--rule-strong); border-radius: 6px; font-size: 12px; }
@@ -127,3 +127,5 @@
 .runtime-receipt-form label { display: grid; flex: 1; min-width: 0; gap: 6px; font-size: 11px; }
 .runtime-receipt-form input { width: 100%; min-width: 0; padding: 8px; color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 5px; }
 @media (max-width: 460px) { .runtime-receipt-form { flex-wrap: wrap; } .runtime-receipt-form label { flex-basis: 100%; } .runtime-retention .retention-policy-summary dd { font-size: 13px; } }
+
+.retention-automatic { display: flex; align-items: center; gap: 8px; margin: 14px 0; }

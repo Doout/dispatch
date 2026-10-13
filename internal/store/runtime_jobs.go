@@ -41,6 +41,9 @@ func (s *SQLStore) CreateRuntimeJob(ctx context.Context, j core.RuntimeJob) erro
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.checkRuntimeReferences(ctx, tx, []string{j.DeploymentID}); err != nil {
+		return err
+	}
 	if err = s.checkPreviewRuntime(ctx, tx, &j); err != nil {
 		return err
 	}

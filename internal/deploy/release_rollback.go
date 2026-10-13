@@ -268,6 +268,10 @@ func (s *Service) PreviewRollback(ctx context.Context, id string) (RollbackPrevi
 		return RollbackPreview{}, err
 	}
 	out := RollbackPreview{DeploymentID: id, Bindings: d.Snapshot.ServiceBindings, Resources: []ReleaseResource{}, Message: "Rollback does not undo database migrations or external side effects. Deployment and chart hooks will not run."}
+	if d.InputsExpiredAt != nil {
+		out.Message = "Saved deployment inputs expired under the retention policy."
+		return out, nil
+	}
 	err = s.WithIdleApplication(ctx, d.AppID, func() error {
 		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
