@@ -3,6 +3,7 @@ import { ChartBar, ClockCounterClockwise, FolderSimple, GearSix, HardDrives, Lig
 import type { Overview } from "../api";
 import { type AppRoute, routePath, shouldHandleNavigation } from "../routes";
 import { Mark } from "../components/PageStates";
+import { useHostedTenant } from "../hosted/context";
 import { canManageAnyProject } from "../permissions";
 import { isUIFeatureEnabled, resourceUIFeature } from "../featureFlags";
 
@@ -19,7 +20,7 @@ export function navigationGroup(route: AppRoute): Group {
 
 export const groupTitles: Record<Group, string> = { workloads: "Workloads", analytics: "Analytics", infrastructure: "Infrastructure", recovery: "Recovery", automation: "Automation", projects: "Projects", operations: "Operations", settings: "Settings" };
 
-function allEntries(route: AppRoute, overview: Overview): Entry[] {
+function allEntries(route: AppRoute, overview: Overview, hosted = false): Entry[] {
   const group = navigationGroup(route);
   const owner = overview.identity?.systemRole === "owner";
   if (group === "workloads") return [
@@ -53,7 +54,9 @@ function allEntries(route: AppRoute, overview: Overview): Entry[] {
     { label: "Activity", route: { view: "events", eventSection: "activity" }, active: route.view === "events" && route.eventSection === "activity" },
   ];
   if (group === "settings") return [
-    { label: "Interface", route: { view: "settings" }, active: route.view === "settings" },
+    { label: "Interface", route: { view: "settings" }, active: route.view === "settings" && (!route.settingsSection || route.settingsSection === "interface") },
+    ...(owner && !hosted ? [{ label: "Doodship connection", route: { view: "settings", settingsSection: "connection" } as AppRoute, active: route.view === "settings" && route.settingsSection === "connection" }] : []),
+    ...(owner ? [{ label: "Features", route: { view: "settings", settingsSection: "features" } as AppRoute, active: route.view === "settings" && route.settingsSection === "features" }] : []),
     ...(owner ? [
       { label: "Connections", route: { view: "connections" } as AppRoute, active: route.view === "connections" },
       { label: "Variables", route: { view: "secrets" } as AppRoute, active: route.view === "secrets" },
@@ -63,8 +66,8 @@ function allEntries(route: AppRoute, overview: Overview): Entry[] {
   return [];
 }
 
-function entries(route: AppRoute, overview: Overview): Entry[] {
-  return allEntries(route, overview).filter(entry => {
+function entries(route: AppRoute, overview: Overview, hosted = false): Entry[] {
+  return allEntries(route, overview, hosted).filter(entry => {
     if (entry.route.resourceSection === "controller-backups") return overview.controllerSettings?.operationsEnabled === true;
     const feature = entry.route.resourceSection ? resourceUIFeature[entry.route.resourceSection] : undefined;
     return !feature || isUIFeatureEnabled(overview, feature);
@@ -112,7 +115,8 @@ export function InterfaceNav({ route, overview, open, onClose, onNavigate }: { r
 }
 
 export function InterfaceTabs({ route, overview, onNavigate }: { route: AppRoute; overview: Overview; onNavigate: (route: AppRoute) => void }) {
-  const tabs = entries(route, overview);
+  const hosted = useHostedTenant();
+  const tabs = entries(route, overview, Boolean(hosted));
   if (!tabs.length) return null;
   return <nav className="interface-tabs" aria-label={`${groupTitles[navigationGroup(route)]} pages`}>{tabs.map(entry => <RouteLink key={entry.label} entry={entry} onNavigate={onNavigate} />)}</nav>;
 }

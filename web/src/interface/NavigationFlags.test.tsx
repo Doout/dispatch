@@ -3,6 +3,8 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Overview, UIFeatureKey } from "../api";
 import { InterfaceNav, InterfaceTabs } from "./Navigation";
+import { HostedTenantContext } from "../hosted/context";
+import type { HostedTenant } from "../hosted/client";
 
 const overview = {
   identity: { id: "owner", systemRole: "owner", permissions: [] },
@@ -70,4 +72,15 @@ it("retains owner and project access checks when features are enabled", () => {
   const primary = within(screen.getByRole("complementary", { name: "Primary navigation" }));
   expect(primary.getByRole("link", { name: "Automation" }).getAttribute("href")).toBe("/automation/receipts");
   expect(primary.queryByRole("link", { name: "Recovery" })).toBeNull();
+});
+
+
+it("keeps the installation connection out of hosted Settings navigation", () => {
+  render(<HostedTenantContext.Provider value={{ mode: "tenant" } as HostedTenant}>
+    <InterfaceTabs overview={overview} route={{ view: "settings" }} onNavigate={navigate} />
+  </HostedTenantContext.Provider>);
+  const settings = within(screen.getByRole("navigation", { name: "Settings pages" }));
+  expect(settings.getByRole("link", { name: "Interface" })).toBeTruthy();
+  expect(settings.getByRole("link", { name: "Features" })).toBeTruthy();
+  expect(settings.queryByRole("link", { name: "Doodship connection" })).toBeNull();
 });
