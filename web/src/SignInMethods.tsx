@@ -47,7 +47,7 @@ export function SignInMethods({
         <GithubLogo size={24} />
         <div>
           <strong>No external sign-in methods</strong>
-          <span>Local owner access remains available.</span>
+          <span>Add a GitHub sign-in method.</span>
         </div>
         <button className="quiet-button" onClick={() => setEditor(null)}>
           <Plus size={15} />

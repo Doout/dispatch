@@ -77,7 +77,7 @@ func routeDocument(route core.ApplicationRoute) ([]byte, error) {
 		servers = append(servers, map[string]string{"url": route.Destination})
 	}
 	router := map[string]any{"middlewares": []string{name}, "rule": "Host(`" + route.Hostname + "`)", "entryPoints": []string{route.EntryPoint}, "service": name}
-	if route.RequireTLS {
+	if route.RequireTLS && !route.GatewayTLS {
 		router["tls"] = map[string]any{"certResolver": route.TLSResolver}
 	}
 	config := map[string]any{"http": map[string]any{"middlewares": map[string]any{name: map[string]any{"headers": map[string]any{"customResponseHeaders": map[string]string{"X-Dispatch-Deployment": route.DeploymentID}}}}, "routers": map[string]any{name: router}, "services": map[string]any{name: map[string]any{"loadBalancer": map[string]any{"passHostHeader": true, "servers": servers}}}}}
@@ -196,7 +196,7 @@ func (p *FilePublisher) Prepare(ctx context.Context, plan core.ApplicationRoute)
 			if !sameOwner(current, plan) {
 				return fmt.Errorf("%w: remove the previous owned route before changing hostname or target", ErrConflict)
 			}
-			if current.DeploymentID != "" && (current.EntryPoint != plan.EntryPoint || current.RequireTLS != plan.RequireTLS || current.TLSResolver != plan.TLSResolver) {
+			if current.DeploymentID != "" && (current.EntryPoint != plan.EntryPoint || current.RequireTLS != plan.RequireTLS || current.TLSResolver != plan.TLSResolver || current.GatewayTLS != plan.GatewayTLS) {
 				return fmt.Errorf("%w: clean up the owned route before changing its listener or TLS policy", ErrConflict)
 			}
 			if current.RequestedDeploymentID == plan.RequestedDeploymentID {

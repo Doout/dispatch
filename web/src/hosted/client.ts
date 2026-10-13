@@ -11,12 +11,20 @@ export type Account = {
   email: string;
   emailVerified: boolean;
   platformAdmin: boolean;
+  workosLinked?: boolean;
   state: string;
 };
 export type Membership = {
   tenant: Tenant;
   role: "owner" | "admin" | "member";
   url: string;
+  connection?: InstanceConnectionStatus;
+};
+export type InstanceConnectionStatus = {
+  state: "not_connected" | "offline" | "connected";
+  remoteAccess: boolean;
+  instanceUrl: string;
+  backendMode: "connected" | "embedded";
 };
 export type TenantMember = {
   tenantId: string;
@@ -29,13 +37,20 @@ export type HostedPlatform = {
   mode: "platform";
   origin: string;
   registrationEnabled: boolean;
+  reservedTenantNames?: string[];
+  authkitEnabled?: boolean;
+  waitlistEnabled?: boolean;
+  workosLoginMethods?: string[];
+  passwordLoginEnabled?: boolean;
   dataOrigin?: string;
+  backendMode?: "connected" | "embedded";
 };
 export type HostedTenant = {
   mode: "tenant";
   origin: string;
   loginUrl: string;
   tenant: Tenant;
+  connection?: InstanceConnectionStatus;
 };
 export type HostedConfiguration = HostedPlatform | HostedTenant;
 export type Usage = {
@@ -86,12 +101,12 @@ export async function detectHosted(): Promise<HostedConfiguration | null> {
     headers: { Accept: "application/json" },
   });
   if (response.status === 404) return null;
-  if (!response.ok) throw new Error("Unable to reach Dispatch. Try again.");
+  if (!response.ok) throw new Error("Unable to reach Doodship. Try again.");
   if (!response.headers.get("Content-Type")?.includes("application/json"))
     return null;
   const value = (await response.json()) as HostedConfiguration;
   if (value.mode !== "platform" && value.mode !== "tenant")
-    throw new Error("Dispatch returned an invalid sign-in configuration.");
+    throw new Error("Doodship returned an invalid sign-in configuration.");
   return value;
 }
 
@@ -111,6 +126,54 @@ export function tenantDestination(
     !target.hostname.endsWith(`.${platform.hostname}`) ||
     target.hostname.slice(0, -platform.hostname.length - 1).includes(".")
   )
-    throw new Error("Dispatch returned an invalid tenant address.");
+    throw new Error("Doodship returned an invalid instance address.");
   return target.href;
+}
+
+// A direct address is an owner-approved navigation target. Never attach a
+// managed sign-in code, token, or user identity to it.
+export function directInstanceDestination(value: string): string {
+  const target = new URL(value);
+  if (
+    !["https:", "http:"].includes(target.protocol) ||
+    target.username ||
+    target.password ||
+    target.hash ||
+    target.search
+  )
+    throw new Error("The instance address is invalid.");
+  return target.href;
+}
+
+export async function startManagedLogin(
+  link = false,
+  waitlist = false,
+  provider = "",
+  email = "",
+  invitationToken = "",
+) {
+  const query = new URLSearchParams(window.location.search);
+  const result = await hostedRequest<{ authorizationUrl: string }>(
+    "/account/workos/start",
+    "POST",
+    waitlist
+      ? { waitlist: true }
+      : link
+        ? { link: true }
+        : {
+            ...(provider ? { provider, email } : {}),
+            tenantId: query.get("tenant") ?? "",
+            codeChallenge: query.get("challenge") ?? "",
+            ...(invitationToken || query.get("invitation_token")
+              ? {
+                  invitationToken:
+                    invitationToken || query.get("invitation_token"),
+                }
+              : {}),
+          },
+  );
+  const destination = new URL(result.authorizationUrl);
+  if (destination.protocol !== "https:")
+    throw new Error("Invalid sign-in address.");
+  window.location.assign(destination.href);
 }

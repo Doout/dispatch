@@ -20,8 +20,10 @@ var (
 )
 
 type Service struct {
-	Retention RuntimeRetentionBackend
-	Storage   *StorageManager
+	ReserveHostname func(context.Context, core.ApplicationRoute) error
+	ReleaseHostname func(context.Context, string, string) error
+	Retention       RuntimeRetentionBackend
+	Storage         *StorageManager
 	// CheckExecution verifies preview provenance before accepting or dispatching work.
 	CheckExecution func(context.Context, core.App, string) error
 	// OnFinished queues follow-up observations after the terminal state is saved.
@@ -243,6 +245,11 @@ func (s *Service) CleanupReviewed(ctx context.Context, appID string, review func
 		}
 		if routes, ok := s.store.(store.ApplicationRouteStore); ok {
 			if err := routes.DeleteApplicationRoute(ctx, app.ID, server.ID); err != nil {
+				return err
+			}
+		}
+		if s.ReleaseHostname != nil {
+			if err := s.ReleaseHostname(ctx, app.ID, server.ID); err != nil {
 				return err
 			}
 		}

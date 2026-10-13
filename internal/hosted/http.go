@@ -48,6 +48,8 @@ func catalogError(w http.ResponseWriter, err error) {
 		problem(w, http.StatusForbidden, "Access denied.")
 	case errors.Is(err, tenancy.ErrNotFound):
 		problem(w, http.StatusNotFound, "Not found.")
+	case errors.Is(err, tenancy.ErrWorkloadHostLimit):
+		problem(w, http.StatusConflict, "This instance has reached its active address limit. Remove unused application routes before publishing another.")
 	case errors.Is(err, tenancy.ErrConflict), errors.Is(err, tenancy.ErrLastOwner):
 		problem(w, http.StatusConflict, "The request conflicts with the current state.")
 	case errors.Is(err, tenancy.ErrInvalid):

@@ -162,3 +162,21 @@ func TestStagingIssuanceKeepsTrustedConsoleTLS(t *testing.T) {
 		t.Fatal("production ACME serving rejected", err)
 	}
 }
+
+func TestWorkOSConfigurationLoadsPrivateKeyAndRejectsPartialSetup(t *testing.T) {
+	configFixture(t)
+	t.Setenv("DISPATCH_WORKOS_CLIENT_ID", "client_test")
+	if _, err := readConfiguration(); err == nil {
+		t.Fatal("client ID without key accepted")
+	}
+	t.Setenv("DISPATCH_WORKOS_API_KEY_FILE", privateTestFile(t, "workos-key", "test-api-key"))
+	cfg, err := readConfiguration()
+	if err != nil || cfg.Hosted.WorkOS.ClientID != "client_test" || cfg.Hosted.WorkOS.APIKey != "test-api-key" || cfg.Hosted.WorkOS.AllowPasswordLogin {
+		t.Fatalf("WorkOS settings invalid: %v", err)
+	}
+	t.Setenv("DISPATCH_WORKOS_ALLOW_PASSWORD_LOGIN", "true")
+	cfg, err = readConfiguration()
+	if err != nil || !cfg.Hosted.WorkOS.AllowPasswordLogin {
+		t.Fatalf("migration option: %v", err)
+	}
+}

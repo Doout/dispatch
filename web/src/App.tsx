@@ -424,7 +424,7 @@ export default function DispatchApp() {
             </button>
             <div className="mobile-brand">
               <Mark />
-              <strong>Dispatch</strong>
+              <strong>Doodship</strong>
             </div>
           </div>
           <div className="workspace-location">{!newInterface && <><span>Workspace</span><span aria-hidden="true">/</span></>}<strong>{newInterface ? groupTitles[navigationGroup(route)] : pageTitles[view]}</strong></div>
@@ -810,7 +810,7 @@ export default function DispatchApp() {
       )}
       {viewingAccountProfile && (
         <AccountProfileDialog
-          readOnly={Boolean(overview?.impersonator) || Boolean(hosted)}
+          readOnly={Boolean(overview?.impersonator)}
           notice={accountLinkNotice}
           initialError={accountLinkError}
           onChangePassword={() => {

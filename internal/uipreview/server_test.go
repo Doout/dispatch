@@ -15,6 +15,48 @@ import (
 
 const testAccessKey = "test-preview-key-with-at-least-32-bytes"
 
+func TestProductionPreviewManagedLoginPreservesBodyAndBlocksAccountChanges(t *testing.T) {
+	seen := ""
+	s, _, _ := fixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		seen = string(raw)
+		if r.URL.Path != "/api/v1/account/workos/authenticate" {
+			t.Error("wrong route")
+		}
+		if r.Header.Get("Origin") == "https://dev.example.test" {
+			t.Error("origin not rewritten")
+		}
+		http.SetCookie(w, &http.Cookie{Name: "__Host-dispatch-managed-login", Value: "browser", Path: "/", Secure: true, HttpOnly: true})
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"step":"email-code","state":"local-state"}`)
+	}))
+	body := `{"method":"email-code","email":"member@example.test","tenantId":"","codeChallenge":""}`
+	w := httptest.NewRecorder()
+	serveAuthorized(s, w, previewRequest("POST", "/api/v1/account/workos/authenticate", body, true))
+	if w.Code != 200 || seen != body {
+		t.Fatal("login body was not preserved", w.Code)
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || !strings.HasPrefix(cookies[0].Name, productionCookiePrefix) {
+		t.Fatal("continuation cookie was not isolated")
+	}
+	for _, body := range []string{`{"method":"email-code","email":"member@example.test","link":true}`, `{"method":"email-code","email":"member@example.test","invitationToken":"invite"}`, `{"state":"migration","previousPassword":"local-proof"}`, `{"method":"email-code",invalid}`} {
+		seen = ""
+		w = httptest.NewRecorder()
+		serveAuthorized(s, w, previewRequest("POST", "/api/v1/account/workos/authenticate", body, true))
+		if w.Code != 403 || seen != "" {
+			t.Fatal("preview changed an account", w.Code)
+		}
+	}
+	for _, path := range []string{"/api/v1/account/workos/waitlist", "/api/v1/account/workos/password-reset", "/api/v1/account/workos/password-reset/confirm", "/api/v1/account/workos/start"} {
+		w = httptest.NewRecorder()
+		serveAuthorized(s, w, previewRequest("POST", path, `{}`, true))
+		if w.Code != 403 {
+			t.Fatal("preview allowed mutation", path, w.Code)
+		}
+	}
+}
+
 func serveAuthorized(s *Server, w http.ResponseWriter, r *http.Request) {
 	cookie, err := s.newAccessCookie()
 	if err != nil {

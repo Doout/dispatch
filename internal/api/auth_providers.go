@@ -34,6 +34,7 @@ type authProviderManifestRequest struct {
 }
 
 type authProviderManifestState struct {
+	ActorID   string
 	Provider  core.AuthProvider
 	ExpiresAt time.Time
 }
@@ -171,7 +172,7 @@ func (a *API) startAuthProviderManifest(w http.ResponseWriter, r *http.Request) 
 	appName := "Dispatch-login-" + hex.EncodeToString(random[:4])
 	item.ID = ulid.Make().String()
 	item.ClientID = ""
-	origin := externalOrigin(r)
+	origin := a.publicOrigin(r)
 	callbackURL := origin + "/api/v1/auth/providers/manifest/callback"
 	action := item.BaseURL + "/settings/apps/new?state=" + url.QueryEscape(state)
 	if input.OwnerType == "organization" {
@@ -194,7 +195,7 @@ func (a *API) startAuthProviderManifest(w http.ResponseWriter, r *http.Request) 
 			delete(a.authManifestStates, pendingState)
 		}
 	}
-	a.authManifestStates[state] = authProviderManifestState{Provider: item, ExpiresAt: now.Add(time.Hour)}
+	a.authManifestStates[state] = authProviderManifestState{Provider: item, ExpiresAt: now.Add(time.Hour), ActorID: currentIdentity(r.Context()).ID}
 	a.manifestMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"action": action, "manifest": manifest})
 }
@@ -213,6 +214,13 @@ func (a *API) completeAuthProviderManifest(w http.ResponseWriter, r *http.Reques
 	if !ok || state == "" || code == "" || time.Now().UTC().After(pending.ExpiresAt) {
 		redirect("error", "The GitHub setup expired. Start again from Access.")
 		return
+	}
+	if a.auth.Hosted != nil {
+		actor, err := a.auth.Hosted.Authenticate(r)
+		if err != nil || actor.ID != pending.ActorID || actor.SystemRole != core.UserRoleOwner {
+			redirect("error", "Sign in as the tenant owner to finish setup.")
+			return
+		}
 	}
 	conversion, err := a.eventConfig.GitHubApps.ConvertManifest(r.Context(), pending.Provider.APIURL, code)
 	if err != nil {

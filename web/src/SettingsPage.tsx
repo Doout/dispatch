@@ -4,15 +4,19 @@ import { request, type ControllerSettings, type Overview } from "./api";
 import "./SettingsPage.css";
 import { InterfaceSettings, type InterfaceSettingsProps } from "./interface/InterfaceSettings";
 import { uiFeatures, type UIFeatureKey } from "./featureFlags";
+import { InstanceConnectionSettings } from "./InstanceConnectionSettings";
+import { useHostedTenant } from "./hosted/context";
 
 type Props = { overview: Overview; onChanged?: () => void | Promise<void>; interfaceSettings?: InterfaceSettingsProps };
 
 export function SettingsPage({ overview, onChanged, interfaceSettings }: Props) {
   const owner = overview.identity?.systemRole === "owner";
+  const hosted = useHostedTenant();
   const observed = JSON.stringify(overview.controllerSettings);
   return <div className="page-layout settings-page">
     <header className="page-header settings-header"><div><h1>Settings</h1></div></header>
     {interfaceSettings && <InterfaceSettings {...interfaceSettings} />}
+    {owner && !hosted && <InstanceConnectionSettings key={overview.identity?.id} />}
     {owner ? <FeatureSettings key={overview.identity?.id} observed={observed} onChanged={onChanged} /> : <section className="settings-access" role="status"><ShieldCheck size={22} /><h2>Owner access required</h2><p>A controller owner can view and change these settings.</p></section>}
   </div>;
 }

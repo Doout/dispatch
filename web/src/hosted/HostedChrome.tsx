@@ -4,20 +4,31 @@ import { Mark } from "../components/PageStates";
 
 export function HostedBrand({ detail }: { detail?: string }) {
   return (
-    <a className="hosted-brand" href="/" aria-label="Dispatch home">
+    <a className="hosted-brand" href="/" aria-label="Doodship home">
       <span className="hosted-brand-mark">
         <Mark />
       </span>
-      <strong>Dispatch</strong>
+      <strong>Doodship</strong>
       {detail && <span className="hosted-brand-detail">{detail}</span>}
     </a>
+  );
+}
+
+export function instanceStatus(state: string) {
+  return (
+    {
+      pending: "Setting up",
+      provisioning: "Setting up",
+      failed: "Setup failed",
+      active: "Active",
+    }[state] ?? state
   );
 }
 
 export function TenantStatus({ state }: { state: string }) {
   return (
     <span className="hosted-status" data-state={state}>
-      {state}
+      {instanceStatus(state)}
     </span>
   );
 }

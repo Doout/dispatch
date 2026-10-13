@@ -16,12 +16,14 @@ import (
 	"github.com/doout/dispatch/internal/api"
 	"github.com/doout/dispatch/internal/bootstrap"
 	"github.com/doout/dispatch/internal/config"
+	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/drift"
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/installation"
+	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/provision"
 	"github.com/doout/dispatch/internal/remoteruntime"
 	"github.com/doout/dispatch/internal/routing"
@@ -113,6 +115,24 @@ func run(logger *slog.Logger) error {
 	}
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	connectionFile := os.Getenv("DISPATCH_INSTANCE_CONNECTION_FILE")
+	if connectionFile == "" {
+		connectionFile = filepath.Join(filepath.Dir(cfg.MasterKeyFile), "instance-connection.json")
+	}
+	instanceConnection, err := instanceconnection.Open(instanceconnection.Config{File: connectionFile, LookupUser: data.GetUser, LookupApp: data.GetApp, ListRoutes: data.ListApplicationRoutes, LookupRoute: data.GetApplicationRoute, LookupRouteByHostname: data.GetApplicationRouteByHostname, Usage: data.TenantUsage})
+	if err != nil {
+		// A broken optional connection must not stop native logins or local jobs.
+		logger.Warn("control plane connection is unavailable", "error", err)
+		instanceConnection = nil
+	} else {
+		defer instanceConnection.Stop()
+	}
+	deployments.ReserveHostname = func(ctx context.Context, route core.ApplicationRoute) error {
+		if route.GatewayTLS && instanceConnection != nil && instanceConnection.RoutingScope() != nil {
+			return instanceConnection.RegisterRoute(ctx, route)
+		}
+		return nil
+	}
 	go runtimeBroker.RunExpiration(shutdownCtx, logger)
 	bootstraps := bootstrap.Configured(data, vault, cfg.PublicURL)
 	go bootstraps.Run(shutdownCtx, logger)
@@ -129,10 +149,13 @@ func run(logger *slog.Logger) error {
 	}
 	controller := api.New(data, deployments, cfg.Demo, api.AuthConfig{
 		AdminToken: cfg.AdminToken, Username: cfg.AdminUsername, Password: cfg.AdminPassword, PublicURL: cfg.PublicURL, TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
-	}, logger, api.EventConfig{Bootstrap: bootstraps, WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
+	}, logger, api.EventConfig{InstanceConnection: instanceConnection, Bootstrap: bootstraps, WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
 		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps, SecretResolver: secretResolver,
 		WorkloadBackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "workload-backups"), BackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "backups"), MasterKeyFile: cfg.MasterKeyFile, DatabaseURL: cfg.DatabaseURL,
 		Edge: edgeBroker, RepositoryCache: cfg.RepositoryCache, Analytics: history})
+	if instanceConnection != nil {
+		instanceConnection.Start(shutdownCtx, controller)
+	}
 	if err := controller.RecoverWorkflowWork(ctx); err != nil {
 		return err
 	}

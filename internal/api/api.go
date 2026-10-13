@@ -18,6 +18,7 @@ import (
 	"github.com/doout/dispatch/internal/events"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/groups"
+	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/observe"
 	"github.com/doout/dispatch/internal/openshift"
 	"github.com/doout/dispatch/internal/secretvalue"
@@ -35,6 +36,7 @@ type AuthConfig struct {
 }
 
 type EventConfig struct {
+	InstanceConnection      *instanceconnection.Manager
 	WorkloadBackupDirectory string
 	Bootstrap               *bootstrap.Manager
 	BackupDirectory         string

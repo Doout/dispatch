@@ -42,7 +42,13 @@ func (s *Service) reserveRoute(ctx context.Context, d core.Deployment, app core.
 		return errors.New("application route storage is unavailable")
 	}
 	_, err = data.ReserveApplicationRoute(ctx, *plan)
-	return err
+	if err != nil {
+		return err
+	}
+	if s.ReserveHostname != nil {
+		return s.ReserveHostname(ctx, *plan)
+	}
+	return nil
 }
 func (s *Service) routeContext(ctx context.Context) context.Context {
 	data, ok := s.store.(store.ApplicationRouteStore)

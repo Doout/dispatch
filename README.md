@@ -72,11 +72,11 @@ docker compose up -d --build
 
 The Compose file binds the controller to `127.0.0.1:8080`, mounts the host Docker socket and joins the external `web` network for Traefik. If `.env` has no administrator credentials, the first visit opens owner setup. Set `DISPATCH_HOST` and `DISPATCH_PUBLIC_URL` when using a public hostname.
 
-### Hosted tenants
+### Doodship control plane
 
-Multi-tenant installations use the separate `dispatch-platform` controller, tenant databases and enrolled workers. Cloudflare publishes tenant DNS records through the DNS provider interface.
+The separate `dispatch-platform` controller handles accounts, instance membership and public ingress. Connect an existing self-hosted installation through Settings. Its outbound WebSocket carries webhooks, approved user requests and published application traffic without an inbound firewall port. Databases, logs and execution stay on the customer's server. Remote user access is off until a local owner enables it and links users.
 
-See [hosted setup](docs/hosted-tenants.md) for the Docker stack, initial accounts and tenant configuration, and [DNS providers](docs/dns-providers.md) for provider credentials.
+See [instance connections](docs/tenant-servers.md) for setup, disconnect behavior and upgrade compatibility, [hosted setup](docs/hosted-tenants.md) for the Docker control plane, and [DNS providers](docs/dns-providers.md) for provider credentials.
 
 ## Configure a deployment
 

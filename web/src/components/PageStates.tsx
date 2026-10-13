@@ -91,20 +91,16 @@ export function PageLoading() {
 
 export function Mark() {
   return (
-    <svg viewBox="0 0 36 36" aria-hidden="true">
-      <path
-        d="M5 8.5 18 2l13 6.5v18L18 34 5 26.5Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <path
-        d="m5 8.5 13 7 13-7M18 15.5V34"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <path d="m10 11 8-4 8 4-8 4Z" fill="currentColor" />
-    </svg>
+    <img
+      className="brand-icon"
+      src="/brand/doodship-icon-32.png"
+      srcSet="/brand/doodship-icon-32.png 32w, /brand/doodship-icon-64.png 64w, /brand/doodship-icon-128.png 128w"
+      sizes="36px"
+      width={32}
+      height={32}
+      alt=""
+      aria-hidden="true"
+      decoding="async"
+    />
   );
 }

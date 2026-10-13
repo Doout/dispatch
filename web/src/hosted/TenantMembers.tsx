@@ -23,16 +23,25 @@ export function TenantMembers({
     [role, setRole] = useState("member"),
     [busy, setBusy] = useState(false),
     [remove, setRemove] = useState<TenantMember | null>(null);
+  const [requests, setRequests] = useState<
+    Array<Pick<Account, "id" | "name" | "email">>
+  >([]);
   const path = `/tenants/${encodeURIComponent(membership.tenant.id)}/members`;
   const canManage = membership.role === "owner";
   const load = useCallback(async () => {
     setError("");
     try {
       setMembers(await hostedRequest<TenantMember[]>(path));
+      if (canManage)
+        setRequests(
+          await hostedRequest<Array<Pick<Account, "id" | "name" | "email">>>(
+            path.replace(/members$/, "join-requests"),
+          ),
+        );
     } catch (cause) {
       setError((cause as Error).message);
     }
-  }, [path]);
+  }, [path, canManage]);
   useEffect(() => {
     setMembers(null);
     void load();
@@ -78,7 +87,7 @@ export function TenantMembers({
           <p>
             {canManage
               ? "Owners can add members and change their roles."
-              : "Only tenant owners can change membership."}
+              : "Only instance owners can change membership."}
           </p>
         </div>
         <button className="quiet-button" onClick={onClose}>
@@ -178,11 +187,41 @@ export function TenantMembers({
           </table>
         </div>
       )}
+      {canManage && requests.length > 0 && (
+        <section>
+          <h3>Access requests</h3>
+          <p>
+            These users want to join this instance. Approve them to grant member
+            access.
+          </p>
+          {requests.map((request) => (
+            <div className="hosted-row-actions" key={request.id}>
+              <span>
+                {request.name} · {request.email}
+              </span>
+              <button
+                className="quiet-button"
+                disabled={busy}
+                onClick={() =>
+                  void mutate(() =>
+                    hostedRequest(path, "POST", {
+                      email: request.email,
+                      role: "member",
+                    }),
+                  )
+                }
+              >
+                Approve {request.name}
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
       {remove && (
         <div className="hosted-confirm" role="alert">
           <p>
             Remove {remove.user.name} from {membership.tenant.name}? Their
-            tenant access will end immediately.
+            instance access will end immediately.
           </p>
           <div className="hosted-row-actions">
             <button
@@ -223,7 +262,7 @@ export function TenantMembers({
               required
             />
           </label>
-          <p>This person must have a verified Dispatch account.</p>
+          <p>This person must have a verified Doodship account.</p>
           <label>
             Role
             <select

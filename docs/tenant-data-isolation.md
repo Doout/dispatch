@@ -1,4 +1,53 @@
-# Tenant data isolation
+# Instance data isolation
+
+The default `connected` control plane stores account identities, instance
+metadata, memberships, sessions, invitations, installation grant hashes,
+connection generations, hostname ownership and daily aggregate usage. It does
+not open a customer's operational database or receive its database URL or vault
+key.
+
+Each customer installation owns its PostgreSQL or configured operational store,
+DuckDB analytics, encrypted credentials, queues, logs, artifacts and scheduling.
+Its workers run builds and deployments. The installation connects outbound to the
+control plane over an authenticated WebSocket. See
+[Connect a self-hosted instance](tenant-servers.md).
+
+The control plane checks membership and session state before forwarding user
+requests. The customer installation maps the stable Doodship account ID to a
+local user approved by its owner and checks that user's current permissions.
+Matching email addresses or claimed platform roles do not grant local access.
+Remote requests cannot create independent local login credentials or change the
+connection's user mappings.
+
+Platform administration exposes metadata and aggregate reports only. Reading an
+instance's operational data requires instance membership and a local access
+mapping. The gateway processes approved responses in transit, so keeping data on
+customer disks does not hide that traffic from a control-plane infrastructure
+operator. Gateway logs must not record secrets, request bodies or operational
+response content.
+
+Disconnect closes remote requests and streams and revokes instance sessions.
+Local accounts and workloads remain available. An unreachable backend is not
+replaced by a central operational runtime. Usage reports contain no workload
+names, repository names or logs and are retained for 90 days for connected
+instances. They are customer-reported totals rather than verified billing data.
+
+Back up customer databases, vault material, artifacts and the private connection
+file on the customer installation. Back up the platform catalog and ingress TLS
+state separately. Export/import does not automatically change an instance's
+storage mode or move its data into or out of the control plane.
+
+## Legacy embedded isolation
+
+Set `DISPATCH_HOSTED_BACKEND_MODE=embedded` explicitly to retain the older central
+backend arrangement. Existing embedded instances keep their recorded mode and
+operational data. The default connected mode does not migrate or delete them and
+does not start their central runtimes.
+
+The database isolation, provisioner permissions and account procedures below
+apply to the embedded arrangement. The application-level account and membership
+rules also apply to connected instances, but their local access requires the
+additional owner-approved user mapping.
 
 Hosted Dispatch uses a central catalog for account identities, tenant metadata,
 memberships, sessions, invitations, usage totals, DNS records and provisioning

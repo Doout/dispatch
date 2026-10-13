@@ -193,6 +193,9 @@ func (c *Catalog) ExchangeHandoff(ctx context.Context, in HandoffExchange) (stri
 	if err != nil {
 		return "", err
 	}
+	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO tenancy_login_origins(token_hash,provider,subject,session_id,expires_at) SELECT ?,provider,subject,session_id,? FROM tenancy_login_origins WHERE token_hash=?`), hashToken(token), millis(c.now().Add(in.SessionDuration)), hashToken(in.Code)); err != nil {
+		return "", err
+	}
 	if err = tx.Commit(); err != nil {
 		return "", err
 	}
@@ -205,10 +208,13 @@ func (c *Catalog) PruneCredentials(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"tenancy_sessions", "tenant_handoffs", "tenancy_email_verifications"} {
+	for _, table := range []string{"tenancy_sessions", "tenant_handoffs", "tenancy_email_verifications", "tenancy_login_attempts", "tenancy_login_origins", "instance_enrollments"} {
 		if _, err = tx.ExecContext(ctx, c.q(`DELETE FROM `+table+` WHERE expires_at<=?`), millis(c.now())); err != nil {
 			return err
 		}
+	}
+	if _, err = tx.ExecContext(ctx, c.q(`DELETE FROM tenant_usage WHERE period_end<? AND tenant_id IN (SELECT tenant_id FROM instance_connections WHERE mode='connected')`), millis(c.now().Add(-90*24*time.Hour))); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

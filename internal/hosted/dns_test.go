@@ -13,12 +13,12 @@ import (
 
 func TestCatalogSolverChallengeOwnership(t *testing.T) {
 	f := newHostedFixture(t)
-	a := f.tenant(t, "alpha", "owner-a")
+	f.tenant(t, "alpha", "owner-a")
 	b := f.tenant(t, "bravo", "owner-b")
 	ctx := context.Background()
 	solver := catalogSolver{f.server}
-	challenge := certificates.Challenge{ID: "order-a", OwnerID: a.ID, Generation: 1, Name: "_acme-challenge.alpha." + f.server.Config.RootDomain, Value: "proof-a"}
-	for _, name := range []string{"_acme-challenge.bravo." + f.server.Config.RootDomain, "_acme-challenge." + f.server.Config.RootDomain, "_acme-challenge.foreign.test"} {
+	challenge := certificates.Challenge{ID: "order-a", OwnerID: platformOwner, Generation: 1, Name: "_acme-challenge." + f.server.Config.RootDomain, Value: "proof-a"}
+	for _, name := range []string{"_acme-challenge.bravo." + f.server.Config.RootDomain, "_acme-challenge.alpha." + f.server.Config.RootDomain, "_acme-challenge.foreign.test"} {
 		wrong := challenge
 		wrong.Name = name
 		if err := solver.Present(ctx, wrong); !errors.Is(err, tenancy.ErrDenied) {
@@ -90,43 +90,40 @@ func TestCatalogSolverChallengeOwnership(t *testing.T) {
 	}
 }
 
-func TestHostedDNSReconcilesGatewayChangesAndRemoval(t *testing.T) {
+func TestWildcardMigrationPreservesCustomRecords(t *testing.T) {
 	f := newHostedFixture(t)
 	tenant := f.tenant(t, "alpha", "owner-a")
-	ctx := context.Background()
+	ctx := t.Context()
 	host := tenant.Slug + "." + f.server.Config.RootDomain
-	user := tenancy.ZoneRecord{ID: "custom", OwnerID: "records:" + tenant.ID, TenantID: tenant.ID, Name: "custom." + host, Type: "A", Values: []string{"192.0.2.42"}, TTL: 300}
-	if _, err := f.catalog.SaveZoneRecord(ctx, user); err != nil {
-		t.Fatal(err)
+	records := []tenancy.ZoneRecord{
+		{ID: "old-console", OwnerID: "console:" + tenant.ID, TenantID: tenant.ID, Name: host, Type: "A", Values: []string{"192.0.2.10"}, TTL: 300},
+		{ID: "old-wildcard", OwnerID: "workloads:" + tenant.ID, TenantID: tenant.ID, Name: "*." + host, Type: "CNAME", Values: []string{"gateway.example.net"}, TTL: 300},
+		{ID: "custom", OwnerID: "records:" + tenant.ID, TenantID: tenant.ID, Name: "custom." + host, Type: "A", Values: []string{"192.0.2.42"}, TTL: 300},
 	}
-	for _, gateway := range []string{"gateway.example.net", "192.0.2.11", "2001:db8::11", "new-gateway.example.net", ""} {
-		f.server.Config.WorkloadGateway = gateway
-		if err := f.server.prepareTenantDNS(ctx, tenant); err != nil {
-			t.Fatalf("gateway %q: %v", gateway, err)
-		}
-		_, records, err := f.catalog.ZoneRecords(ctx)
-		if err != nil {
+	for _, record := range records {
+		if _, err := f.catalog.SaveZoneRecord(ctx, record); err != nil {
 			t.Fatal(err)
 		}
-		count, custom := 0, false
-		for _, record := range records {
-			if record.Name == "*."+host {
-				count++
-				if len(record.Values) != 1 || record.Values[0] != gateway {
-					t.Fatal("obsolete wildcard address remains")
-				}
-			}
-			if record.ID == user.ID {
-				custom = true
-			}
-		}
-		if !custom || gateway == "" && count != 0 || gateway != "" && count != 1 {
-			t.Fatal("gateway reconciliation removed the wrong records")
-		}
+	}
+	if err := f.catalog.SaveDomain(ctx, tenancy.Domain{ID: "workloads:" + tenant.ID, TenantID: tenant.ID, Hostname: "*." + host, Kind: "workloads", State: tenancy.StateActive}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.prepareTenantDNS(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	_, remaining, err := f.catalog.ZoneRecords(ctx)
+	if err != nil || len(remaining) != 1 || remaining[0].ID != "custom" {
+		t.Fatal(remaining, err)
 	}
 	domain, err := f.catalog.DomainByHostname(ctx, "*."+host)
 	if err != nil || domain.State != tenancy.StateDisabled {
-		t.Fatal("removed gateway remained active", domain, err)
+		t.Fatal(domain, err)
+	}
+	for _, id := range []string{"old-console", "old-wildcard"} {
+		change, err := f.catalog.DNSChange(ctx, id)
+		if err != nil || !change.Delete {
+			t.Fatal(id, change, err)
+		}
 	}
 }
 

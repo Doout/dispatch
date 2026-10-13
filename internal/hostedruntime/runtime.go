@@ -47,6 +47,28 @@ func New(ctx context.Context, runtime *tenancy.Runtime, tenant tenancy.Tenant, a
 		return nil, err
 	}
 	data := runtime.Store
+	// Persist platform-owned scope with target routing so previews, rollbacks and
+	// worker requests all plan the same hostname. Standalone targets are untouched.
+	if auth.RoutingScope != nil {
+		servers, err := data.ListServers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, server := range servers {
+			if server.Routing == nil {
+				continue
+			}
+			scope := *auth.RoutingScope
+			server.Routing.Hosted = &scope
+			server.Routing.BaseDomain = scope.RootDomain
+			server.Routing.RequireTLS = true
+			server.Routing.TLSResolver = ""
+			if err := data.UpdateServer(ctx, server); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	github := githubapp.New(data, vault)
 	github.Client = publichttp.Client()
 	secrets := secretvalue.New(data, vault)
@@ -61,6 +83,9 @@ func New(ctx context.Context, runtime *tenancy.Runtime, tenant tenancy.Tenant, a
 	execution := tenantExecutor{hosted: hostedExecutor, remote: remote}
 	sourceAuth := deploy.SourceAuthExecutor{Next: execution, Secrets: data, Vault: vault, Resolver: secrets, GitHubApps: github}
 	deployments := deploy.NewService(data, sourceAuth)
+	deployments.ReserveHostname = auth.ReserveHostname
+	deployments.ReleaseHostname = auth.ReleaseHostname
+
 	storageBackend := deploy.HostedStorageBackend{Store: data, Runner: workerBroker, Docker: deploy.RemoteStorageBackend{Broker: runtimeBroker}}
 	deployments.Storage.Backend = storageBackend
 	deployments.Retention = deploy.RemoteRetentionBackend{Broker: runtimeBroker}

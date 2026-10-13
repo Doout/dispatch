@@ -2,7 +2,6 @@ package hosted
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -54,39 +53,34 @@ func (p *testDNSProvider) Nameservers(context.Context) ([]string, error) {
 	return []string{"ns1.example.net", "ns2.example.net"}, nil
 }
 
-func TestTenantDNSPublicationRetriesAfterRestart(t *testing.T) {
+func TestTenantCreationDoesNotPublishDNS(t *testing.T) {
 	f := newHostedFixture(t)
 	ctx := t.Context()
-	tenants := make([]tenancy.Tenant, 0, 2)
+	f.dns.failDelete = true
+	f.dns.failName = "blocked." + f.server.Config.RootDomain
 	for _, slug := range []string{"blocked", "ready"} {
-		tenant, err := f.catalog.CreateTenant(ctx, tenancy.CreateTenantInput{Slug: slug, Name: slug, CreatorID: "platform", InitialOwnerID: "owner-a"})
-		if err != nil {
+		if _, err := f.catalog.CreateTenant(ctx, tenancy.CreateTenantInput{Slug: slug, Name: slug, CreatorID: "platform", InitialOwnerID: "owner-a"}); err != nil {
 			t.Fatal(err)
 		}
-		tenants = append(tenants, tenant)
 	}
-	f.dns.failName = "blocked." + f.server.Config.RootDomain
-	if err := f.server.ReconcileTenants(ctx); err == nil {
-		t.Fatal("failed DNS publication was ignored")
+	if err := f.server.ReconcileTenants(ctx); err != nil {
+		t.Fatal(err)
 	}
-	for i, want := range []string{"failed", tenancy.StateActive} {
-		tenant, err := f.catalog.Tenant(ctx, tenants[i].ID)
-		if err != nil || tenant.State != want {
-			t.Fatal(tenant, err)
+	tenants, err := f.catalog.ListTenants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tenant := range tenants {
+		if tenant.State != tenancy.StateActive {
+			t.Fatal(tenant)
+		}
+		if _, err := f.catalog.DomainByHostname(ctx, tenant.Slug+"."+f.server.Config.RootDomain); err != nil {
+			t.Fatal(err)
 		}
 	}
-	job, err := f.catalog.ProvisioningJob(ctx, tenants[0].ID)
-	if err != nil || job.Phase != "configuring DNS" {
-		t.Fatal(job, err)
+	if f.dns.writes != 0 {
+		t.Fatal("tenant creation called the DNS provider", f.dns.writes)
 	}
-	if _, err := f.catalog.DomainByHostname(ctx, f.dns.failName); !errors.Is(err, tenancy.ErrNotFound) {
-		t.Fatal("unpublished console became ready", err)
-	}
-	pending, err := f.catalog.PendingTenantDNSChanges(ctx, tenants[0].ID, 100)
-	if err != nil || len(pending) != 1 {
-		t.Fatal("failed record not queued", pending, err)
-	}
-	f.dns.failName = ""
 	restarted, err := New(ctx, f.server.Config, f.catalog, f.server.OpenRuntime, f.server.Logger)
 	if err != nil {
 		t.Fatal(err)
@@ -95,121 +89,73 @@ func TestTenantDNSPublicationRetriesAfterRestart(t *testing.T) {
 	if err := restarted.ReconcileTenants(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, tenant := range tenants {
-		current, err := f.catalog.Tenant(ctx, tenant.ID)
-		if err != nil || current.State != tenancy.StateActive {
-			t.Fatal(current, err)
-		}
-	}
-	if len(f.dns.records) != 4 {
-		t.Fatal("restart did not publish both tenants", f.dns.records)
-	}
-	writes := f.dns.writes
-	if err := restarted.ReconcileTenants(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if writes != f.dns.writes {
-		t.Fatal("unchanged records were republished")
+	if f.dns.writes != 0 {
+		t.Fatal("restart published tenant DNS")
 	}
 }
 
-func TestTenantDNSAPIRetriesWritesAndDeletes(t *testing.T) {
+func TestTenantDNSAPIIsUnavailable(t *testing.T) {
 	f := newHostedFixture(t)
 	tenant := f.tenant(t, "alpha", "owner-a")
 	host := tenant.Slug + "." + f.server.Config.RootDomain
 	token := f.session(t, "owner-a", tenancy.TenantAudience(tenant.ID))
 	input := map[string]any{"name": "preview." + host, "type": "A", "values": []string{"192.0.2.22"}, "ttl": 300}
-	f.dns.failName = "preview." + host
-	w := f.request(t, host, http.MethodPut, "/api/v1/hosted/dns", token, input)
-	var record dnsRecordResponse
-	if w.Code != http.StatusAccepted || json.Unmarshal(w.Body.Bytes(), &record) != nil || record.SyncState != "pending" {
-		t.Fatal(w.Code, w.Body.String())
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		w := f.request(t, host, method, "/api/v1/hosted/dns", token, input)
+		if w.Code != 404 {
+			t.Fatal(method, w.Code, w.Body.String())
+		}
 	}
-	w = f.request(t, host, http.MethodGet, "/api/v1/hosted/dns", token, nil)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"syncState":"pending"`) {
-		t.Fatal(w.Code, w.Body.String())
+	if f.dns.writes != 0 {
+		t.Fatal("disabled API changed DNS")
 	}
-	f.dns.failName = ""
-	if err := f.server.ReconcileTenants(t.Context()); err != nil {
+}
+
+func TestLegacyTenantDNSDeletionRetriesAfterRestart(t *testing.T) {
+	f := newHostedFixture(t)
+	tenant := f.tenant(t, "alpha", "owner-a")
+	ctx := t.Context()
+	record, err := f.catalog.SaveZoneRecord(ctx, tenancy.ZoneRecord{ID: "old-console", OwnerID: "console:" + tenant.ID, TenantID: tenant.ID, Name: "alpha." + f.server.Config.RootDomain, Type: "A", Values: []string{"192.0.2.10"}, TTL: 300})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := f.dns.records[record.ID]; !ok {
-		t.Fatal("record was not published")
+	if err := f.server.syncDNSRecord(ctx, record.ID); err != nil {
+		t.Fatal(err)
 	}
-	w = f.request(t, host, http.MethodGet, "/api/v1/hosted/dns", token, nil)
-	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"syncState":"pending"`) {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	input["generation"] = record.Generation
 	f.dns.failDelete = true
-	w = f.request(t, host, http.MethodDelete, "/api/v1/hosted/dns", token, input)
-	if w.Code != http.StatusAccepted {
-		t.Fatal(w.Code, w.Body.String())
+	if err := f.server.ReconcileTenants(ctx); err == nil {
+		t.Fatal("cleanup failure was ignored")
 	}
-	change, err := f.catalog.DNSChange(t.Context(), record.ID)
+	current, err := f.catalog.Tenant(ctx, tenant.ID)
+	if err != nil || current.State != tenancy.StateActive {
+		t.Fatal(current, err)
+	}
+	change, err := f.catalog.DNSChange(ctx, record.ID)
 	if err != nil || !change.Delete {
-		t.Fatal("failed deletion was not saved", change, err)
+		t.Fatal(change, err)
 	}
-	restarted, err := New(t.Context(), f.server.Config, f.catalog, f.server.OpenRuntime, f.server.Logger)
+	f.dns.failDelete = false
+	restarted, err := New(ctx, f.server.Config, f.catalog, f.server.OpenRuntime, f.server.Logger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
-	f.dns.failDelete = false
-	if err := restarted.ReconcileTenants(t.Context()); err != nil {
+	if err := restarted.ReconcileTenants(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := f.dns.records[record.ID]; ok {
-		t.Fatal("deleted record remains at provider")
+	if len(f.dns.records) != 0 {
+		t.Fatal("legacy record remains", f.dns.records)
 	}
-	if _, err := f.catalog.DNSChange(t.Context(), record.ID); !errors.Is(err, tenancy.ErrNotFound) {
-		t.Fatal("delete not acknowledged", err)
-	}
-}
-
-func TestGatewayPublicationWaitsForConflictingDelete(t *testing.T) {
-	f := newHostedFixture(t)
-	tenant := f.tenant(t, "alpha", "owner-a")
-	ctx := t.Context()
-	f.server.Config.WorkloadGateway = "gateway.example.net"
-	if err := f.server.prepareTenantDNS(ctx, tenant); err != nil {
+	if _, err := f.catalog.DNSChange(ctx, record.ID); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatal(err)
-	}
-	f.server.Config.WorkloadGateway = "192.0.2.11"
-	f.dns.failDelete = true
-	if err := f.server.prepareTenantDNS(ctx, tenant); err == nil {
-		t.Fatal("failed CNAME removal was ignored")
-	}
-	wildcard := "*." + tenant.Slug + "." + f.server.Config.RootDomain
-	for _, record := range f.dns.records {
-		if record.Name == wildcard && record.Type != "CNAME" {
-			t.Fatal("conflicting record was published", record)
-		}
-	}
-	f.dns.failDelete = false
-	if err := f.server.prepareTenantDNS(ctx, tenant); err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, record := range f.dns.records {
-		if record.Name == wildcard {
-			if record.Type != "A" {
-				t.Fatal("old CNAME remains", record)
-			}
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("replacement A record not published")
 	}
 }
 
 func TestCertificateDNSRetriesFailedPresentAndCleanup(t *testing.T) {
 	f := newHostedFixture(t)
-	tenant := f.tenant(t, "alpha", "owner-a")
 	ctx := t.Context()
 	solver := catalogSolver{f.server}
-	challenge := certificates.Challenge{ID: "order", OwnerID: tenant.ID, Generation: 1, Name: "_acme-challenge.alpha." + f.server.Config.RootDomain, Value: "proof"}
+	challenge := certificates.Challenge{ID: "order", OwnerID: platformOwner, Generation: 1, Name: "_acme-challenge." + f.server.Config.RootDomain, Value: "proof"}
 	f.dns.failName = challenge.Name
 	if err := solver.Present(ctx, challenge); err == nil {
 		t.Fatal("failed present reported success")

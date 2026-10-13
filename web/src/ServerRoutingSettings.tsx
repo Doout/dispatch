@@ -1,13 +1,16 @@
 import { X } from "@phosphor-icons/react";
 import { useState, type FormEvent } from "react";
 import { api, type Server } from "./api";
+import { useHostedTenant } from "./hosted/context";
 import { useDialogFocus } from "./useDialogFocus";
 
 export function ServerRoutingSettings({ server, onClose, onChanged }: { server: Server; onClose: () => void; onChanged: () => Promise<void> }) {
   const ref = useDialogFocus(onClose);
+ const hosted = useHostedTenant();
+ const managedDomain = hosted ? new URL(hosted.loginUrl).hostname : "";
   const [enabled, setEnabled] = useState(Boolean(server.routing));
-  const [domain, setDomain] = useState(server.routing?.baseDomain ?? "");
-  const [entryPoint, setEntryPoint] = useState(server.routing?.entryPoint ?? "websecure");
+  const [domain, setDomain] = useState(managedDomain || server.routing?.baseDomain || "");
+  const [entryPoint, setEntryPoint] = useState(server.routing?.entryPoint ?? (hosted ? "web" : "websecure"));
   const [resolver, setResolver] = useState(server.routing?.tlsResolver ?? "letsencrypt");
   const [requiredTLS, setRequiredTLS] = useState(server.routing?.requireTls ?? true);
   const [composeService, setComposeService] = useState(server.routing?.composeService ?? "");
@@ -25,10 +28,10 @@ export function ServerRoutingSettings({ server, onClose, onChanged }: { server: 
       <p>Use a dedicated Traefik file provider on this target. Configure its routing directory and loopback connectivity before enabling public routes.</p>
       <label className="routing-checkbox"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} />Enable managed application routes</label>
       {enabled && <div className="form-grid">
-        <label>Managed domain<input required value={domain} onChange={event => setDomain(event.target.value)} placeholder="apps.example.com" /><small>Blank application hostnames get a stable name below this domain. Point wildcard DNS at the target proxy.</small></label>
+        <label>Managed domain<input required readOnly={Boolean(hosted)} value={domain} onChange={event => setDomain(event.target.value)} placeholder="apps.example.com" /><small>{hosted ? "Application addresses are assigned automatically. HTTPS is handled by the control-plane ingress." : "Blank application hostnames get a stable name below this domain. Point wildcard DNS at the target proxy."}</small></label>
         <label>Traefik entry point<input required value={entryPoint} onChange={event => setEntryPoint(event.target.value)} placeholder="websecure" /></label>
-        <label className="routing-checkbox"><input type="checkbox" checked={requiredTLS} onChange={event => setRequiredTLS(event.target.checked)} />Require verified HTTPS before reporting live</label>
-        {requiredTLS && <label>Certificate resolver<input required value={resolver} onChange={event => setResolver(event.target.value)} placeholder="letsencrypt" /></label>}
+        {!hosted && <label className="routing-checkbox"><input type="checkbox" checked={requiredTLS} onChange={event => setRequiredTLS(event.target.checked)} />Require verified HTTPS before reporting live</label>}
+        {!hosted && requiredTLS && <label>Certificate resolver<input required value={resolver} onChange={event => setResolver(event.target.value)} placeholder="letsencrypt" /></label>}
         <label>Default Compose ingress service<input value={composeService} onChange={event => setComposeService(event.target.value)} placeholder="Optional for a single-service app" /><small>A Compose definition can select its service with x-dispatch-ingress-service.</small></label>
       </div>}
       {error && <p className="form-error" role="alert">{error}</p>}

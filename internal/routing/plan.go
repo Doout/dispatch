@@ -38,8 +38,14 @@ func ValidateConfig(config *core.RoutingConfig) error {
 		return fmt.Errorf("routing base domain: %w", err)
 	}
 	config.BaseDomain = domain
+	if config.Hosted != nil {
+		root, err := NormalizeHostname(config.Hosted.RootDomain)
+		if err != nil || root != domain || config.Hosted.TenantID == "" || !label.MatchString(config.Hosted.TenantSlug) {
+			return errors.New("hosted routing scope does not match the installation domain")
+		}
+	}
 	if config.EntryPoint == "" {
-		if config.RequireTLS {
+		if config.RequireTLS && config.Hosted == nil {
 			config.EntryPoint = "websecure"
 		} else {
 			config.EntryPoint = "web"
@@ -48,7 +54,7 @@ func ValidateConfig(config *core.RoutingConfig) error {
 	if !configName.MatchString(config.EntryPoint) || config.TLSResolver != "" && !configName.MatchString(config.TLSResolver) {
 		return errors.New("routing entry point and certificate resolver must be simple names")
 	}
-	if config.RequireTLS && config.TLSResolver == "" {
+	if config.RequireTLS && config.TLSResolver == "" && config.Hosted == nil {
 		return errors.New("required HTTPS routing needs a configured certificate resolver")
 	}
 	if config.ComposeService != "" && !configName.MatchString(config.ComposeService) {
@@ -79,6 +85,16 @@ func Plan(d core.Deployment, app core.App, server core.Server) (*core.Applicatio
 		sum := sha256.Sum256([]byte(app.ProjectID + ":" + app.ID))
 		hostname = "app-" + hex.EncodeToString(sum[:8]) + "." + config.BaseDomain
 	}
+	if config.Hosted != nil {
+		var err error
+		hostname, err = HostedHostname(*config.Hosted, app)
+		if err != nil {
+			return nil, err
+		}
+		if app.Domain != "" && app.Domain != hostname {
+			return nil, errors.New("custom hostnames are not available on hosted installations; leave the domain empty to use the generated address")
+		}
+	}
 	hostname, err := NormalizeHostname(hostname)
 	if err != nil {
 		return nil, err
@@ -90,5 +106,5 @@ func Plan(d core.Deployment, app core.App, server core.Server) (*core.Applicatio
 	if config.RequireTLS {
 		cert = core.RouteCertificate{State: "pending", Message: "Certificate issuance has not been verified."}
 	}
-	return &core.ApplicationRoute{AppID: app.ID, ProjectID: app.ProjectID, ServerID: server.ID, Hostname: hostname, EntryPoint: config.EntryPoint, TLSResolver: config.TLSResolver, RequireTLS: config.RequireTLS, RequestedDeploymentID: d.ID, State: "reserved", DNS: "pending", Certificate: cert, Message: "Hostname reserved; candidate is not public.", UpdatedAt: time.Now().UTC()}, nil
+	return &core.ApplicationRoute{GatewayTLS: config.Hosted != nil, AppID: app.ID, ProjectID: app.ProjectID, ServerID: server.ID, Hostname: hostname, EntryPoint: config.EntryPoint, TLSResolver: config.TLSResolver, RequireTLS: config.RequireTLS, RequestedDeploymentID: d.ID, State: "reserved", DNS: "pending", Certificate: cert, Message: "Hostname reserved; candidate is not public.", UpdatedAt: time.Now().UTC()}, nil
 }

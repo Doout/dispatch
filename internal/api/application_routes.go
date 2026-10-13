@@ -62,6 +62,30 @@ func (a *API) updateServerRouting(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+	if input.Routing != nil {
+		if input.Routing.Hosted != nil {
+			problem(w, 422, "Routing configuration invalid", "Instance routing ownership is assigned by the control plane.")
+			return
+		}
+		var managedScope *core.HostedRoutingScope
+		if a.auth.Hosted != nil {
+			managedScope = a.auth.Hosted.RoutingScope
+		} else if a.eventConfig.InstanceConnection != nil {
+			// Connecting an installation does not replace its existing local DNS.
+			// The owner selects managed ingress by choosing the control-plane domain.
+			domain, _ := routing.NormalizeHostname(input.Routing.BaseDomain)
+			if scope := a.eventConfig.InstanceConnection.RoutingScope(); scope != nil && domain == scope.RootDomain {
+				managedScope = scope
+			}
+		}
+		if managedScope != nil {
+			scope := *managedScope
+			input.Routing.Hosted = &scope
+			input.Routing.BaseDomain = scope.RootDomain
+			input.Routing.RequireTLS = true
+			input.Routing.TLSResolver = ""
+		}
+	}
 	if err = routing.ValidateConfig(input.Routing); err != nil {
 		problem(w, 422, "Routing configuration invalid", err.Error())
 		return

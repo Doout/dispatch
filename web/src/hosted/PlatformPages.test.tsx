@@ -42,7 +42,7 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-it("shows the public landing page without fetching tenant data", async () => {
+it("shows the public landing page without fetching instance data", async () => {
   vi.stubEnv("VITE_HOSTED_LANDING_PAGE", "true");
   const fetcher = vi.fn(async (_path: string) =>
     json({ detail: "Sign in" }, 401),
@@ -69,7 +69,7 @@ it("opens sign-in at the root when the landing page is disabled", async () => {
   const fetcher = vi.fn(async () => json({ detail: "Sign in" }, 401));
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
-  await screen.findByRole("heading", { name: "Sign in to Dispatch" });
+  await screen.findByRole("heading", { name: "Sign in to Doodship" });
   expect(screen.queryByRole("link", { name: "Open console" })).toBeNull();
   expect(screen.getByLabelText("Password")).not.toBeNull();
   expect(fetcher.mock.calls).toHaveLength(1);
@@ -112,27 +112,27 @@ it("keeps sign-in and logout usable when registration is disabled", async () => 
   });
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
-  await screen.findByRole("heading", { name: "Sign in to Dispatch" });
+  await screen.findByRole("heading", { name: "Sign in to Doodship" });
   expect(
     screen.queryByRole("button", { name: "Create an account" }),
   ).toBeNull();
   await user.type(screen.getByLabelText("Email"), account.email);
   await user.type(screen.getByLabelText("Password"), "account-password");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
-  await screen.findByRole("heading", { name: "My tenants" });
+  await screen.findByRole("heading", { name: "My instances" });
   await user.click(screen.getByRole("button", { name: "Log out" }));
-  await screen.findByRole("heading", { name: "Sign in to Dispatch" });
+  await screen.findByRole("heading", { name: "Sign in to Doodship" });
   expect(window.location.search).toBe("?view=login");
 });
 
-it("opens sign-in directly for a tenant handoff instead of the landing page", async () => {
+it("opens sign-in directly for an instance handoff instead of the landing page", async () => {
   window.history.replaceState({}, "", "/?tenant=agentops&challenge=challenge");
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => json({ detail: "Sign in" }, 401)),
   );
   render(<PlatformApp configuration={configuration} />);
-  await screen.findByRole("heading", { name: "Sign in to Dispatch" });
+  await screen.findByRole("heading", { name: "Sign in to Doodship" });
   expect(screen.queryByRole("link", { name: "Open console" })).toBeNull();
   expect(new URLSearchParams(window.location.search).get("challenge")).toBe(
     "challenge",
@@ -165,16 +165,16 @@ it("limits directory rows, filters by status and resets filters without extra AP
   await user.selectOptions(screen.getByLabelText("Status"), "pending");
   expect(screen.getAllByRole("row")).toHaveLength(29);
   await user.type(
-    screen.getByRole("searchbox", { name: "Find a tenant" }),
+    screen.getByRole("searchbox", { name: "Find an instance" }),
     "agentops-56",
   );
   expect(
-    screen.getByRole("heading", { name: "No matching tenants" }),
+    screen.getByRole("heading", { name: "No matching instances" }),
   ).not.toBeNull();
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(screen.getAllByRole("row")).toHaveLength(51);
   await user.type(
-    screen.getByRole("searchbox", { name: "Find a tenant" }),
+    screen.getByRole("searchbox", { name: "Find an instance" }),
     "agentops-56.dispatch.example.test",
   );
   expect(screen.getAllByRole("row")).toHaveLength(2);
@@ -194,15 +194,15 @@ it("keeps a non-admin out of the directory even with its view in the URL", async
   });
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
-  await screen.findByRole("heading", { name: "My tenants" });
-  expect(screen.queryByRole("button", { name: "Tenant directory" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Create tenant" })).toBeNull();
+  await screen.findByRole("heading", { name: "My instances" });
+  expect(screen.queryByRole("button", { name: "Instance directory" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Create instance" })).not.toBeNull();
   expect(
     fetcher.mock.calls.some((call) => call[0].includes("/platform/")),
   ).toBe(false);
 });
 
-it("does not turn a directory error into an empty tenant list", async () => {
+it("does not turn a directory error into an empty instance list", async () => {
   window.history.replaceState({}, "", "/?view=catalog");
   const user = userEvent.setup();
   let attempts = 0;
@@ -221,31 +221,31 @@ it("does not turn a directory error into an empty tenant list", async () => {
   );
   render(<PlatformApp configuration={configuration} />);
   await screen.findByRole("alert");
-  expect(screen.queryByRole("heading", { name: "No tenants yet" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "No instances yet" })).toBeNull();
   expect(screen.queryByRole("definition")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByRole("heading", { name: "No tenants yet" });
+  await screen.findByRole("heading", { name: "No instances yet" });
   expect(attempts).toBe(2);
 });
 
-it("shows a membership error without claiming the account has no tenants", async () => {
+it("shows a membership error without claiming the account has no instances", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string) => {
       if (path === "/api/v1/account") return json(account);
       if (path === "/api/v1/account/tenants")
-        return json({ detail: "Tenant list unavailable" }, 503);
+        return json({ detail: "Instance list unavailable" }, 503);
       throw new Error(`Unexpected request: ${path}`);
     }),
   );
   render(<PlatformApp configuration={configuration} />);
   expect((await screen.findByRole("alert")).textContent).toContain(
-    "Tenant list unavailable",
+    "Instance list unavailable",
   );
-  expect(screen.queryByRole("heading", { name: "No tenants yet" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "No instances yet" })).toBeNull();
 });
 
-it("previews the tenant address and submits the existing creation fields", async () => {
+it("previews the instance address and submits the existing creation fields", async () => {
   window.history.replaceState({}, "", "/?view=catalog");
   const user = userEvent.setup();
   let created = false;
@@ -264,21 +264,21 @@ it("previews the tenant address and submits the existing creation fields", async
   });
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
-  await screen.findByRole("heading", { name: "Tenant directory" });
-  await screen.findByRole("heading", { name: "No tenants yet" });
-  await user.click(screen.getByRole("button", { name: "Create tenant" }));
-  expect(screen.getByRole("heading", { name: "Create tenant" })).not.toBeNull();
+  await screen.findByRole("heading", { name: "Instance directory" });
+  await screen.findByRole("heading", { name: "No instances yet" });
+  await user.click(screen.getByRole("button", { name: "Create instance" }));
+  expect(screen.getByRole("heading", { name: "Create instance" })).not.toBeNull();
   expect(
-    screen.queryByRole("heading", { name: "Tenant directory" }),
+    screen.queryByRole("heading", { name: "Instance directory" }),
   ).toBeNull();
-  expect(screen.queryByRole("heading", { name: "No tenants yet" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "No instances yet" })).toBeNull();
   expect(screen.queryByRole("searchbox")).toBeNull();
-  await user.type(screen.getByLabelText("Tenant name"), "AgentOps");
+  await user.type(screen.getByLabelText("Instance name"), "AgentOps");
   await user.type(screen.getByLabelText("Owner email"), "owner@example.test");
   expect(screen.getByText("agentops.dispatch.example.test")).not.toBeNull();
   await user.click(
     screen
-      .getAllByRole("button", { name: "Create tenant" })
+      .getAllByRole("button", { name: "Create instance" })
       .find((button) => !button.hasAttribute("disabled"))!,
   );
   await waitFor(() =>
@@ -299,17 +299,17 @@ it("previews the tenant address and submits the existing creation fields", async
     ownerEmail: "owner@example.test",
   });
   await screen.findByText("Created agentops.dispatch.example.test.");
-  expect(screen.queryByLabelText("Tenant name")).toBeNull();
+  expect(screen.queryByLabelText("Instance name")).toBeNull();
   await screen.findByText("agentops.dispatch.example.test");
   expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe(
     "agentops.dispatch.example.test",
   );
   expect(document.activeElement).toBe(
-    screen.getByRole("button", { name: "Create tenant" }),
+    screen.getByRole("button", { name: "Create instance" }),
   );
 });
 
-it("focuses the tenant name and returns to the directory when creation is cancelled", async () => {
+it("focuses the instance name and returns to the directory when creation is cancelled", async () => {
   window.history.replaceState({}, "", "/?view=catalog");
   const user = userEvent.setup();
   const fetcher = vi.fn(async (path: string) => {
@@ -321,17 +321,17 @@ it("focuses the tenant name and returns to the directory when creation is cancel
   });
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={configuration} />);
-  await screen.findByRole("heading", { name: "Tenant directory" });
-  await screen.findByRole("heading", { name: "No tenants yet" });
-  const trigger = screen.getByRole("button", { name: "Create tenant" });
+  await screen.findByRole("heading", { name: "Instance directory" });
+  await screen.findByRole("heading", { name: "No instances yet" });
+  const trigger = screen.getByRole("button", { name: "Create instance" });
   expect(screen.queryByRole("searchbox")).toBeNull();
   expect(screen.queryByLabelText("Status")).toBeNull();
   await user.click(trigger);
-  expect(document.activeElement).toBe(screen.getByLabelText("Tenant name"));
+  expect(document.activeElement).toBe(screen.getByLabelText("Instance name"));
   await user.keyboard("{Escape}");
-  expect(screen.queryByLabelText("Tenant name")).toBeNull();
+  expect(screen.queryByLabelText("Instance name")).toBeNull();
   expect(document.activeElement).toBe(
-    screen.getByRole("button", { name: "Create tenant" }),
+    screen.getByRole("button", { name: "Create instance" }),
   );
   expect(fetcher.mock.calls).toHaveLength(3);
 });

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 	"golang.org/x/crypto/bcrypt"
@@ -19,6 +20,24 @@ import (
 
 func (a *API) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if instanceconnection.IsRemote(r) {
+			if a.eventConfig.InstanceConnection == nil {
+				unauthorized(w, false)
+				return
+			}
+			actor, valid := a.eventConfig.InstanceConnection.Identity(r)
+			if !valid {
+				unauthorized(w, false)
+				return
+			}
+			if actor.SystemRole == core.UserRoleOwner {
+				actor.Permissions = controllerPermissions()
+			}
+			// Identity comes from the owner-approved local mapping. Transport
+			// requests cannot use impersonation or reusable browser credentials.
+			next.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), actor)))
+			return
+		}
 		if identity, valid := a.bearerIdentity(r); valid {
 			ctx, ok := a.authorizedContext(w, r, identity)
 			if !ok {
@@ -65,6 +84,10 @@ const impersonateUserHeader = "Impersonate-User"
 func (a *API) authorizedContext(w http.ResponseWriter, r *http.Request, actor core.Identity) (context.Context, bool) {
 	ctx := withIdentity(r.Context(), actor)
 	targetID := strings.TrimSpace(r.Header.Get(impersonateUserHeader))
+	if instanceconnection.IsRemote(r) && targetID != "" {
+		problem(w, http.StatusForbidden, "Impersonation denied", "Remote access uses your linked local account.")
+		return nil, false
+	}
 	if a.auth.Hosted != nil && targetID != "" {
 		problem(w, http.StatusForbidden, "Impersonation denied", "Tenant access requires your own membership.")
 		return nil, false
@@ -98,6 +121,16 @@ func (a *API) authorizedContext(w http.ResponseWriter, r *http.Request, actor co
 }
 
 func (a *API) bearerIdentity(r *http.Request) (core.Identity, bool) {
+	if instanceconnection.IsRemote(r) {
+		if a.eventConfig.InstanceConnection == nil {
+			return core.Identity{}, false
+		}
+		identity, valid := a.eventConfig.InstanceConnection.Identity(r)
+		if valid && identity.SystemRole == core.UserRoleOwner {
+			identity.Permissions = controllerPermissions()
+		}
+		return identity, valid
+	}
 	provided, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if a.auth.Hosted != nil && (!ok || !strings.HasPrefix(provided, "dsa_")) {
 		if a.auth.Hosted.Authenticate == nil {

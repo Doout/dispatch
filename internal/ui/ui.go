@@ -31,7 +31,9 @@ func HandlerWithHeadMarkup(head func(*http.Request) []byte) http.Handler {
 			requested = "index.html"
 		}
 		if ext := path.Ext(requested); ext != "" {
-			if kind := mime.TypeByExtension(ext); kind != "" {
+			if ext == ".webmanifest" {
+				w.Header().Set("Content-Type", "application/manifest+json")
+			} else if kind := mime.TypeByExtension(ext); kind != "" {
 				w.Header().Set("Content-Type", kind)
 			}
 		}

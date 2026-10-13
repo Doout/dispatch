@@ -11,6 +11,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/runtimecontract"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workflow"
@@ -171,7 +172,25 @@ func (a *API) deploymentEvents(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(400 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		logs, err := a.store.ListDeploymentLogs(r.Context(), chi.URLParam(r, "id"), lastID)
+		ctx := r.Context()
+		if instanceconnection.IsRemote(r) {
+			actor, valid := a.bearerIdentity(r)
+			if !valid {
+				fmt.Fprint(w, "event: auth-error\ndata: 401\n\n")
+				flusher.Flush()
+				return
+			}
+			ctx = withIdentity(ctx, actor)
+		}
+		auth := &watchAuthResponse{header: make(http.Header)}
+		allowed := false
+		a.deploymentPermission(core.PermissionProjectView)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { allowed = true })).ServeHTTP(auth, r.WithContext(ctx))
+		if !allowed {
+			fmt.Fprint(w, "event: auth-error\ndata: 403\n\n")
+			flusher.Flush()
+			return
+		}
+		logs, err := a.store.ListDeploymentLogs(ctx, chi.URLParam(r, "id"), lastID)
 		if err != nil {
 			return
 		}
@@ -180,9 +199,13 @@ func (a *API) deploymentEvents(w http.ResponseWriter, r *http.Request) {
 			payload, _ := json.Marshal(entry)
 			fmt.Fprintf(w, "id: %d\nevent: log\ndata: %s\n\n", entry.ID, payload)
 		}
-		deployment, err := a.store.GetDeployment(r.Context(), chi.URLParam(r, "id"))
+		deployment, err := a.store.GetDeployment(ctx, chi.URLParam(r, "id"))
 		if err != nil {
 			return
+		}
+		if currentIdentity(ctx).SystemRole != core.UserRoleOwner && deployment.App != nil {
+			redacted := redactAppCredentials(*deployment.App)
+			deployment.App = &redacted
 		}
 		payload, _ := json.Marshal(deployment)
 		fmt.Fprintf(w, "event: state\ndata: %s\n\n", payload)

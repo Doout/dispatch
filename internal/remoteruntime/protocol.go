@@ -45,9 +45,10 @@ type Request struct {
 // Inputs exists only inside the encrypted job and the authenticated agent
 // request. App's public JSON representation deliberately omits these fields.
 type Inputs struct {
-	ComposeContent   string                       `json:"composeContent,omitempty"`
-	SourceCredential string                       `json:"sourceCredential,omitempty"`
-	Services         []core.ServiceRuntimeBinding `json:"services,omitempty"`
+	RoutingProvenance *core.HelmProvenance         `json:"routingProvenance,omitempty"`
+	ComposeContent    string                       `json:"composeContent,omitempty"`
+	SourceCredential  string                       `json:"sourceCredential,omitempty"`
+	Services          []core.ServiceRuntimeBinding `json:"services,omitempty"`
 }
 
 type LeasedJob struct {
@@ -100,6 +101,10 @@ type Completion struct {
 
 func NewRequest(op runtimecontract.Operation, d core.Deployment, app core.App, server core.Server) Request {
 	inputs := Inputs{ComposeContent: app.ComposeContent, SourceCredential: app.SourceCredential, Services: app.ServiceRuntime}
+	if server.Routing != nil && server.Routing.Hosted != nil && app.Generated && len(app.HelmProvenance.PullRequests) > 0 {
+		provenance := app.HelmProvenance
+		inputs.RoutingProvenance = &provenance
+	}
 	// Hooks run at the controller's checked execution boundary, never as a
 	// second agent command path. Deployment subrecords cannot carry credentials.
 	app.PreDeployHook, app.PostDeployHook, app.HookEnvironment = "", "", nil
@@ -169,6 +174,9 @@ func (r Request) Validate() error {
 
 func (r Request) App() core.App {
 	app := r.Application
+	if r.Inputs.RoutingProvenance != nil {
+		app.HelmProvenance = *r.Inputs.RoutingProvenance
+	}
 	app.ComposeContent, app.SourceCredential, app.ServiceRuntime = r.Inputs.ComposeContent, r.Inputs.SourceCredential, r.Inputs.Services
 	return app
 }

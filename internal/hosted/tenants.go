@@ -40,7 +40,11 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Slug = strings.ToLower(strings.TrimSpace(input.Slug))
-	create := tenancy.CreateTenantInput{Slug: input.Slug, Name: input.Name, CreatorID: user.ID}
+	if s.Config.TenantNameReserved(input.Slug) {
+		problem(w, http.StatusBadRequest, "This instance name is reserved. Choose another name.")
+		return
+	}
+	create := tenancy.CreateTenantInput{BackendMode: s.Config.BackendMode, Slug: input.Slug, Name: input.Name, CreatorID: user.ID}
 	owner, err := s.Catalog.UserByEmail(r.Context(), input.OwnerEmail)
 	if err == nil && owner.EmailVerified && owner.State == tenancy.StateActive {
 		create.InitialOwnerID = owner.ID
@@ -55,8 +59,72 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 		catalogError(w, err)
 		return
 	}
-	// The durable provisioning record is retried by Run, including after restart.
+	s.finishTenantCreation(w, r, tenant)
+}
+
+func (s *Server) createOwnTenant(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	if !s.throttle.allow(r, "create-tenant:"+user.ID) {
+		problem(w, http.StatusTooManyRequests, "Wait before creating another instance.")
+		return
+	}
+	var input struct {
+		Slug string `json:"slug"`
+		Name string `json:"name"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	input.Slug = strings.ToLower(strings.TrimSpace(input.Slug))
+	if s.Config.TenantNameReserved(input.Slug) {
+		problem(w, http.StatusBadRequest, "This instance name is reserved. Choose another name.")
+		return
+	}
+	createOwn := s.Catalog.CreateOwnTenant
+	if s.Config.BackendMode == tenancy.BackendConnected {
+		createOwn = s.Catalog.CreateOwnConnectedTenant
+	}
+	tenant, err := createOwn(r.Context(), user.ID, input.Slug, input.Name)
+	if err != nil {
+		catalogError(w, err)
+		return
+	}
+	s.finishTenantCreation(w, r, tenant)
+}
+
+func (s *Server) finishTenantCreation(w http.ResponseWriter, r *http.Request, tenant tenancy.Tenant) {
+	// The tenant is durable before calling WorkOS. A provider outage leaves one
+	// pending tenant for reconciliation rather than an orphaned organization.
+	if err := s.syncWorkOSOrganization(r.Context(), tenant); err != nil {
+		s.Logger.Error("WorkOS organization creation pending", "tenant", tenant.ID)
+		_ = s.Catalog.SaveProvisioningJob(r.Context(), tenancy.ProvisioningJob{TenantID: tenant.ID, State: "pending", Phase: "connecting WorkOS"})
+	}
 	respond(w, http.StatusAccepted, tenant)
+}
+
+func (s *Server) requestTenantJoin(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	if !s.throttle.allow(r, "join-tenant:"+user.ID) {
+		problem(w, http.StatusTooManyRequests, "Wait before requesting to join another instance.")
+		return
+	}
+	var input struct {
+		Slug string `json:"slug"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	if err := s.Catalog.RequestTenantJoin(r.Context(), user.ID, input.Slug); err != nil {
+		catalogError(w, err)
+		return
+	}
+	respond(w, http.StatusAccepted, map[string]string{"message": "Your request is waiting for instance owner approval."})
 }
 
 func (s *Server) tenantMetadata(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +195,7 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 	// Check authority before resolving another global identity by email.
 	m, err := s.Catalog.Membership(r.Context(), tenantID, actor.ID)
 	if err != nil || m.Role != tenancy.RoleOwner {
-		problem(w, http.StatusForbidden, "Tenant owner access required.")
+		problem(w, http.StatusForbidden, "Instance owner access required.")
 		return
 	}
 	user, err := s.Catalog.UserByEmail(r.Context(), input.Email)
@@ -193,11 +261,18 @@ func (s *Server) syncMember(r *http.Request, tenantID, userID string) error {
 	if err != nil {
 		return err
 	}
+	if connection, e := s.Catalog.InstanceConnection(r.Context(), tenantID); e == nil && connection.BackendMode == tenancy.BackendConnected {
+		s.disconnectInstanceStreams(connectionKey(connection))
+		return s.syncWorkOSOrganization(r.Context(), tenant)
+	}
 	runtime, err := s.runtime(tenant)
 	if err != nil {
 		return err
 	}
-	return s.syncUser(r.Context(), runtime.Store, tenantID, userID)
+	if err := s.syncUser(r.Context(), runtime.Store, tenantID, userID); err != nil {
+		return err
+	}
+	return s.syncWorkOSOrganization(r.Context(), tenant)
 }
 
 func (s *Server) syncUser(ctx context.Context, data *store.SQLStore, tenantID, userID string) error {
@@ -229,4 +304,17 @@ func (s *Server) syncUser(ctx context.Context, data *store.SQLStore, tenantID, u
 	local.Username, local.Email, local.DisplayName, local.SystemRole, local.State, local.PasswordHash = u.Email, u.Email, u.Name, role, state, ""
 	local.UpdatedAt = time.Now().UTC()
 	return data.UpdateUser(ctx, local)
+}
+
+func (s *Server) listJoinRequests(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	requests, err := s.Catalog.TenantJoinRequests(r.Context(), user.ID, chi.URLParam(r, "id"))
+	if err != nil {
+		catalogError(w, err)
+		return
+	}
+	respond(w, http.StatusOK, requests)
 }

@@ -26,6 +26,8 @@ const sourceCookie = "dispatch-ui-source"
 const productionCookiePrefix = "__Host-dispatch-ui-production-"
 const sourcePath = "/__dispatch_ui/data-source"
 
+var previewWorkloadPrefix = regexp.MustCompile(`^p[0-9]+-`)
+
 var labelPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type Config struct {
@@ -90,6 +92,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	slug, valid := s.tenantSlug(r.Host)
 	if !valid {
 		http.NotFound(w, r)
+		return
+	}
+	// Workload hosts belong to the dev platform, including their page and
+	// assets. The production data selector applies only to the console UI.
+	if previewWorkloadPrefix.MatchString(slug) || strings.HasPrefix(slug, "pr-") || strings.HasPrefix(slug, "app-") {
+		s.workload(w, r)
 		return
 	}
 	expectedOrigin := s.origin.Scheme + "://" + r.Host
@@ -242,6 +250,30 @@ func readAllowed(r *http.Request, platform bool) bool {
 		return false
 	}
 	if platform {
+		if r.URL.Path == "/api/v1/account/workos/authenticate" {
+			// Signing in is allowed; linking accounts and accepting invitations
+			// must happen on production itself, outside the read-only preview.
+			if r.Body == nil || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+				return false
+			}
+			raw, err := io.ReadAll(io.LimitReader(r.Body, (64<<10)+1))
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+			if err != nil || len(raw) > 64<<10 {
+				return false
+			}
+			var in map[string]json.RawMessage
+			if json.Unmarshal(raw, &in) != nil {
+				return false
+			}
+			for key := range in {
+				switch key {
+				case "method", "email", "password", "code", "state", "organizationId", "tenantId", "codeChallenge", "resume":
+				default:
+					return false
+				}
+			}
+			return true
+		}
 		return r.URL.Path == "/api/v1/account/login" || r.URL.Path == "/api/v1/account/logout" || r.URL.Path == "/api/v1/account/handoffs"
 	}
 	return r.URL.Path == "/api/v1/hosted/auth/exchange" || r.URL.Path == "/api/v1/hosted/auth/logout"

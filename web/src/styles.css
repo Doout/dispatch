@@ -2,7 +2,7 @@
 .shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); height: 100dvh; }
 .rail { position: relative; z-index: 30; display: flex; flex-direction: column; height: 100dvh; min-height: 0; color: #dce4ea; background: var(--graphite); }
 .wordmark { display: flex; flex: 0 0 64px; align-items: center; gap: 11px; height: 64px; padding: 0 20px; border-bottom: 1px solid rgba(255,255,255,.08); }
-.wordmark > svg { width: 30px; color: #8cbcff; }
+.wordmark > .brand-icon { width: 30px; color: #8cbcff; }
 .wordmark > div { display: grid; gap: 2px; }
 .wordmark > div > span { color: #fff; font-size: 19px; font-weight: 730; letter-spacing: -.02em; }
 .wordmark > div > small { color: #83919d; font-size: 11px; }
@@ -524,7 +524,7 @@
 
 /* Empty and prerequisite states */
 .empty-state, .prerequisite-state { display: flex; align-items: center; gap: 18px; min-height: 210px; padding: 40px 32px; background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-surface); }
-.empty-state > svg { flex: 0 0 auto; width: 31px; color: #739ed0; }
+.empty-state > .brand-icon { flex: 0 0 auto; width: 31px; color: #739ed0; }
 .empty-state > div, .prerequisite-state > div { flex: 1; }
 .empty-state h2, .prerequisite-state h2 { margin: 0 0 6px; font-size: 16px; }
 .empty-state p, .prerequisite-state p { max-width: 60ch; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
@@ -1668,7 +1668,7 @@
 .auth-screen { display: grid; height: 100dvh; overflow-y: auto; min-height: 0; padding: 24px; background: var(--graphite); place-items: center; }
 .auth-card { width: min(100%, 410px); padding: 36px; background: #fff; border: 1px solid var(--rule); border-radius: 18px; box-shadow: var(--shadow-surface); }
 .auth-brand { display: flex; align-items: center; gap: 10px; }
-.auth-brand svg { width: 27px; color: var(--blue); }
+.auth-brand .brand-icon { width: 27px; color: var(--blue); }
 .auth-brand strong { font-size: 16px; }
 .auth-card header { margin: 28px 0 22px; }
 .auth-card h1, .auth-connection-error h1 { margin: 0; font-size: 26px; letter-spacing: -.035em; }
@@ -1749,7 +1749,7 @@
   .app-bar-start { display: flex; }
   .menu-button { display: grid; width: 44px; height: 44px; padding: 0; color: #263742; background: transparent; border: 0; place-items: center; }
   .mobile-brand { display: flex; align-items: center; gap: 8px; }
-  .mobile-brand svg { width: 24px; color: var(--blue); }
+  .mobile-brand .brand-icon { width: 24px; color: var(--blue); }
   .mobile-brand strong { font-size: 15px; }
   .page-scroll { height: auto; overflow: visible; }
   .page-layout { min-height: calc(100dvh - 58px); padding: 28px 24px 50px; }

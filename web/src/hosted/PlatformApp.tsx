@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowRight,
   ArrowUpRight,
   ArrowsClockwise,
   Buildings,
@@ -20,6 +19,7 @@ import {
   HostedError,
   hostedRequest,
   tenantDestination,
+  directInstanceDestination,
   type Account,
   type HostedPlatform,
   type Membership,
@@ -29,6 +29,10 @@ import { TenantMembers } from "./TenantMembers";
 import { AccountForm } from "./AccountForm";
 import { AccountSettings } from "./AccountSettings";
 import { TenantDirectory } from "./TenantDirectory";
+import { CreateTenant } from "./CreateTenant";
+import { JoinTenant } from "./JoinTenant";
+import { InstanceConnection } from "./InstanceConnection";
+import { instanceNeedsRefresh, useSetupRefresh } from "./useSetupRefresh";
 
 type View = "mine" | "catalog" | "account";
 
@@ -51,6 +55,11 @@ export function PlatformApp({
   const [memberships, setMemberships] = useState<Membership[]>([]),
     [invitations, setInvitations] = useState<Tenant[]>([]);
   const [selectedMembers, setSelectedMembers] = useState("");
+  const [selectedConnection, setSelectedConnection] = useState("");
+  const [tenantAction, setTenantAction] = useState<"create" | "join" | null>(
+    null,
+  );
+  const [joinRequests, setJoinRequests] = useState<Tenant[]>([]);
   const [verification, setVerification] = useState(
     () =>
       new URLSearchParams(window.location.hash.slice(1)).get("verify_email") ??
@@ -68,9 +77,11 @@ export function PlatformApp({
     const result = await hostedRequest<{
       memberships: Membership[];
       invitations: Tenant[];
+      joinRequests?: Tenant[];
     }>("/account/tenants");
     setMemberships(result.memberships);
     setInvitations(result.invitations);
+    setJoinRequests(result.joinRequests ?? []);
   }, []);
   const load = useCallback(async () => {
     setError("");
@@ -86,6 +97,23 @@ export function PlatformApp({
       setLoading(false);
     }
   }, [loadMemberships]);
+  const refreshSetup = useCallback(async () => {
+    try {
+      await loadMemberships();
+      setError("");
+    } catch (cause) {
+      if (cause instanceof HostedError && cause.status === 401) await load();
+      else setError((cause as Error).message);
+    }
+  }, [loadMemberships, load]);
+  useSetupRefresh(
+    !!account &&
+      memberships.some(
+        ({ tenant, connection }) =>
+          instanceNeedsRefresh(tenant.state) || connection !== undefined,
+      ),
+    refreshSetup,
+  );
   useEffect(() => {
     if (verification)
       window.history.replaceState(
@@ -122,6 +150,9 @@ export function PlatformApp({
       setMemberships([]);
       setInvitations([]);
       setSelectedMembers("");
+      setSelectedConnection("");
+      setTenantAction(null);
+      setJoinRequests([]);
       window.history.replaceState(window.history.state, "", signInAddress);
     } catch (cause) {
       setError((cause as Error).message);
@@ -157,23 +188,42 @@ export function PlatformApp({
     !handoff.codeChallenge
   )
     return <LandingPage />;
+  if (
+    account &&
+    (query.get("link") === "workos" ||
+      query.get("view") === "reset-password" ||
+      query.has("managed_state"))
+  ) {
+    return (
+      <AccountForm
+        configuration={configuration}
+        mode="login"
+        onDone={() => window.location.assign("/?view=account")}
+      />
+    );
+  }
   if (!account)
     return (
       <AccountForm
         configuration={configuration}
         mode="login"
         onDone={() => void load()}
-        initialError={error}
+        initialError={error || query.get("auth_error") || ""}
       />
     );
   const selected = memberships.find(
     (membership) => membership.tenant.id === selectedMembers,
+  );
+  const connectionMembership = memberships.find(
+    (membership) => membership.tenant.id === selectedConnection,
   );
   const activeView =
     view === "catalog" && !account.platformAdmin ? "mine" : view;
   const navigate = (next: View) => {
     setView(next);
     setSelectedMembers("");
+    setSelectedConnection("");
+    setTenantAction(null);
     const url = new URL(window.location.href);
     url.searchParams.set("view", next);
     window.history.replaceState(
@@ -222,7 +272,7 @@ export function PlatformApp({
           onClick={() => navigate("mine")}
         >
           <Buildings size={18} aria-hidden="true" />
-          My tenants
+          My instances
         </button>
         {account.platformAdmin && (
           <button
@@ -230,7 +280,7 @@ export function PlatformApp({
             onClick={() => navigate("catalog")}
           >
             <UsersThree size={18} aria-hidden="true" />
-            Tenant directory
+            Instance directory
           </button>
         )}
         <button
@@ -250,20 +300,81 @@ export function PlatformApp({
             </button>
           </p>
         )}
-        {activeView === "mine" && (
+        {activeView === "mine" && tenantAction === "create" && (
+          <CreateTenant
+            origin={configuration.dataOrigin ?? configuration.origin}
+            reservedTenantNames={configuration.reservedTenantNames}
+            tenants={memberships.map(({ tenant }) => tenant)}
+            selfService
+            onCancel={() => setTenantAction(null)}
+            onCreated={async () => {
+              await loadMemberships();
+              setTenantAction(null);
+            }}
+          />
+        )}
+        {activeView === "mine" && tenantAction === "join" && (
+          <JoinTenant
+            origin={configuration.dataOrigin ?? configuration.origin}
+            onCancel={() => setTenantAction(null)}
+            onRequested={async () => {
+              await loadMemberships();
+              setTenantAction(null);
+            }}
+          />
+        )}
+        {activeView === "mine" && connectionMembership && (
+          <InstanceConnection
+            key={connectionMembership.tenant.id}
+            membership={connectionMembership}
+            onClose={() => setSelectedConnection("")}
+            onChanged={loadMemberships}
+          />
+        )}
+        {activeView === "mine" && !tenantAction && !connectionMembership && (
           <>
             <header className="hosted-page-heading">
               <div>
-                <h1>My tenants</h1>
-                <p>Tenants you belong to and your role in each.</p>
+                <h1>My instances</h1>
+                <p>Your instances and your role in each.</p>
               </div>
-              <button className="quiet-button" onClick={() => void load()}>
-                <ArrowsClockwise size={16} aria-hidden="true" />
-                Refresh
-              </button>
+              <div className="hosted-row-actions">
+                {memberships.length > 0 && (
+                  <>
+                    <button
+                      className="quiet-button"
+                      onClick={() => setTenantAction("join")}
+                    >
+                      Join instance
+                    </button>
+                    <button
+                      className="primary-button"
+                      onClick={() => setTenantAction("create")}
+                    >
+                      Create instance
+                    </button>
+                  </>
+                )}
+                <button className="quiet-button" onClick={() => void load()}>
+                  <ArrowsClockwise size={16} aria-hidden="true" />
+                  Refresh
+                </button>
+              </div>
             </header>
             {handoff.tenantId && !error && (
-              <p role="status">Opening your tenant...</p>
+              <p role="status">Opening your instance...</p>
+            )}
+            {memberships.some(({ tenant }) =>
+              ["pending", "provisioning"].includes(tenant.state),
+            ) && (
+              <p role="status">
+                Instance setup is in progress. This page updates automatically.
+              </p>
+            )}
+            {memberships.some(({ tenant }) => tenant.state === "failed") && (
+              <p role="status">
+                Instance setup failed. We will retry automatically.
+              </p>
             )}
             {invitations.length > 0 && (
               <section className="hosted-panel">
@@ -277,9 +388,38 @@ export function PlatformApp({
                 ))}
               </section>
             )}
+            {joinRequests.length > 0 && (
+              <section
+                className="hosted-panel"
+                aria-label="Pending join requests"
+              >
+                <h2>Requests to join</h2>
+                {joinRequests.map((tenant) => (
+                  <div className="hosted-invitation" key={tenant.id}>
+                    <div>
+                      <strong>{tenant.slug}</strong>
+                      <p>
+                        {
+                          new URL(
+                            configuration.dataOrigin ?? configuration.origin,
+                          ).protocol
+                        }
+                        //{tenant.slug}.
+                        {
+                          new URL(
+                            configuration.dataOrigin ?? configuration.origin,
+                          ).host
+                        }
+                      </p>
+                    </div>
+                    <span>Waiting for owner approval</span>
+                  </div>
+                ))}
+              </section>
+            )}
             {(memberships.length > 5 || membershipFilter) && (
               <label className="hosted-search">
-                <span>Find a tenant</span>
+                <span>Find an instance</span>
                 <span className="hosted-search-field">
                   <MagnifyingGlass size={18} aria-hidden="true" />
                   <input
@@ -299,7 +439,7 @@ export function PlatformApp({
                 <table className="hosted-table">
                   <thead>
                     <tr>
-                      <th>Tenant</th>
+                      <th>Instance</th>
                       <th>Your role</th>
                       <th>Status</th>
                       <th>
@@ -314,11 +454,24 @@ export function PlatformApp({
                         <tr key={membership.tenant.id}>
                           <td>
                             <strong>{membership.tenant.name}</strong>
-                            <small>{membership.tenant.slug}</small>
+                            <small>
+                              {membership.tenant.slug}.
+                              {new URL(configuration.origin).host}
+                            </small>
                           </td>
                           <td>{membership.role}</td>
                           <td>
-                            <TenantStatus state={membership.tenant.state} />
+                            {membership.connection ? (
+                              <span className="hosted-status">
+                                {membership.connection.state === "connected"
+                                  ? "Connected"
+                                  : membership.connection.state === "offline"
+                                    ? "Offline"
+                                    : "Connect a server"}
+                              </span>
+                            ) : (
+                              <TenantStatus state={membership.tenant.state} />
+                            )}
                           </td>
                           <td>
                             <div className="hosted-row-actions">
@@ -332,18 +485,58 @@ export function PlatformApp({
                                   Members
                                 </button>
                               )}
-                              {membership.tenant.state === "active" && (
-                                <a
-                                  className="quiet-button"
-                                  href={tenantDestination(
-                                    membership.url,
-                                    configuration.origin,
-                                  )}
-                                >
-                                  Open tenant
-                                  <ArrowUpRight size={15} aria-hidden="true" />
-                                </a>
-                              )}
+                              {membership.role === "owner" &&
+                                membership.connection && (
+                                  <button
+                                    className="quiet-button"
+                                    onClick={() =>
+                                      setSelectedConnection(
+                                        membership.tenant.id,
+                                      )
+                                    }
+                                  >
+                                    {membership.connection.state ===
+                                    "not_connected"
+                                      ? "Connect server"
+                                      : "Connection"}
+                                  </button>
+                                )}
+                              {membership.connection &&
+                                !membership.connection.remoteAccess &&
+                                membership.connection.instanceUrl && (
+                                  <a
+                                    className="quiet-button"
+                                    href={directInstanceDestination(
+                                      membership.connection.instanceUrl,
+                                    )}
+                                    rel="noreferrer"
+                                  >
+                                    Open instance
+                                    <ArrowUpRight
+                                      size={15}
+                                      aria-hidden="true"
+                                    />
+                                  </a>
+                                )}
+                              {membership.tenant.state === "active" &&
+                                (!membership.connection ||
+                                  (membership.connection.remoteAccess &&
+                                    membership.connection.state ===
+                                      "connected")) && (
+                                  <a
+                                    className="quiet-button"
+                                    href={tenantDestination(
+                                      membership.url,
+                                      configuration.origin,
+                                    )}
+                                  >
+                                    Open instance
+                                    <ArrowUpRight
+                                      size={15}
+                                      aria-hidden="true"
+                                    />
+                                  </a>
+                                )}
                             </div>
                           </td>
                         </tr>
@@ -356,7 +549,7 @@ export function PlatformApp({
               <div className="hosted-table-footer">
                 <p>
                   Showing {membershipLimit} of {visibleMemberships.length}{" "}
-                  tenants
+                  instances
                 </p>
                 <button
                   className="quiet-button"
@@ -368,7 +561,7 @@ export function PlatformApp({
             )}
             {memberships.length > 0 && visibleMemberships.length === 0 && (
               <HostedEmpty
-                title="No matching tenants"
+                title="No matching instances"
                 action={
                   <button
                     className="quiet-button"
@@ -383,21 +576,25 @@ export function PlatformApp({
             )}
             {memberships.length === 0 && !error && (
               <HostedEmpty
-                title="No tenants yet"
+                title="No instances yet"
                 action={
-                  account.platformAdmin ? (
+                  <div className="hosted-row-actions">
+                    <button
+                      className="primary-button"
+                      onClick={() => setTenantAction("create")}
+                    >
+                      Create instance
+                    </button>
                     <button
                       className="quiet-button"
-                      onClick={() => navigate("catalog")}
+                      onClick={() => setTenantAction("join")}
                     >
-                      Browse tenant directory{" "}
-                      <ArrowRight size={16} aria-hidden="true" />
+                      Join instance
                     </button>
-                  ) : undefined
+                  </div>
                 }
               >
-                You are not a member of a tenant yet.
-                {!account.platformAdmin && " Ask a tenant owner to invite you."}
+                Create an instance for your team or ask to join an existing one.
               </HostedEmpty>
             )}
             {selected && (
@@ -413,10 +610,12 @@ export function PlatformApp({
         {activeView === "catalog" && account.platformAdmin && (
           <TenantDirectory
             origin={configuration.dataOrigin ?? configuration.origin}
+            reservedTenantNames={configuration.reservedTenantNames}
           />
         )}
         {activeView === "account" && (
           <AccountSettings
+            configuration={configuration}
             account={account}
             onPasswordChanged={() => {
               setAccount(null);

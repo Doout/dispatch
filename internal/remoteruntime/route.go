@@ -17,11 +17,11 @@ func (r Request) ValidateRoute(record *core.ApplicationRoute) error {
 	if record == nil {
 		return nil
 	}
-	plan, err := routing.Plan(r.Deployment, r.Application, r.Server)
+	plan, err := routing.Plan(r.Deployment, r.App(), r.Server)
 	if err != nil || plan == nil || (r.Operation != runtimecontract.Deploy && r.Operation != runtimecontract.Rollback) {
 		return errors.New("unexpected runtime route evidence")
 	}
-	if record.AppID != plan.AppID || record.ProjectID != plan.ProjectID || record.ServerID != plan.ServerID || record.Hostname != plan.Hostname || record.RequestedDeploymentID != plan.RequestedDeploymentID || record.EntryPoint != plan.EntryPoint || record.TLSResolver != plan.TLSResolver || record.RequireTLS != plan.RequireTLS {
+	if record.AppID != plan.AppID || record.ProjectID != plan.ProjectID || record.ServerID != plan.ServerID || record.Hostname != plan.Hostname || record.RequestedDeploymentID != plan.RequestedDeploymentID || record.EntryPoint != plan.EntryPoint || record.TLSResolver != plan.TLSResolver || record.RequireTLS != plan.RequireTLS || record.GatewayTLS != plan.GatewayTLS {
 		return errors.New("runtime route does not match accepted ownership and configuration")
 	}
 	if record.State != "preparing" && record.State != "published" {
