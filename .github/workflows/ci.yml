@@ -132,6 +132,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - name: Require successful race matrices
+        env:
+          RACE_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          results = json.loads(os.environ['RACE_RESULTS'])
+          assert all(job['result'] == 'success' for job in results.values()), results
+          PYTHON
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:

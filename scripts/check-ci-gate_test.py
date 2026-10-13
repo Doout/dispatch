@@ -35,6 +35,15 @@ class RequiredStatusTest(unittest.TestCase):
         self.assertIn('--verify api-race-results --count 8', self.jobs['api-coverage'])
         self.assertIn('--verify go-race-results --count 6', self.jobs['api-coverage'])
 
+    def test_coverage_rejects_failed_matrices_even_with_complete_artifacts(self):
+        body = self.jobs['api-coverage'].split('        run: |\n', 1)[1].split('      - uses:', 1)[0]
+        command = textwrap.dedent(body)
+        for result in ('success', 'failure', 'cancelled', 'skipped'):
+            env = dict(os.environ, RACE_RESULTS=json.dumps({'api-race': {'result': result},
+                                                          'go-race': {'result': 'success'}}))
+            process = subprocess.run(['bash', '-e', '-c', command], env=env, capture_output=True)
+            self.assertEqual(process.returncode == 0, result == 'success', process.stderr)
+
     def test_race_suites_run_in_parallel_with_bounded_jobs(self):
         for name in ('api-race', 'go-race', 'frontend', 'security'):
             self.assertNotRegex(self.jobs[name], r'(?m)^    needs:')
