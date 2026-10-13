@@ -83,7 +83,7 @@ it("uses WorkOS email codes inside Doodship and preserves instance handoff input
   fireEvent.change(screen.getByLabelText("Email"), {
     target: { value: "member@example.test" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue with email" }));
   await screen.findByLabelText("Email code");
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/account/workos/authenticate");
   expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({
