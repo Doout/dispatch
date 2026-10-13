@@ -230,11 +230,11 @@ func (m *Manager) ExportContainer(ctx context.Context, id, output string) (err e
 		args = append(args, "--mount", readonlyMount(mount, fmt.Sprintf("/input/%d", i)))
 		script += fmt.Sprintf("test -d /input/%d; mkdir -p /backup/%s; cp -a /input/%d /backup/%s/%d; ", i, portableMountRoot, i, portableMountRoot, i)
 	}
-	script += "tar -cpf /backup/data.tar -C /source .; "
+	script += "tar -I 'gzip -1' -cf /backup/data.tar.gz -C /source ."
 	if len(extra) > 0 {
-		script += "tar -rpf /backup/data.tar -C /backup " + portableMountRoot + "; "
+		script += " -C /backup " + portableMountRoot
 	}
-	script += fmt.Sprintf("gzip -1 /backup/data.tar; chown %d:%d /backup/data.tar.gz; sync /backup/data.tar.gz", os.Getuid(), os.Getgid())
+	script += fmt.Sprintf("; chown %d:%d /backup/data.tar.gz; sync /backup/data.tar.gz", os.Getuid(), os.Getgid())
 	args = append(args, c.Image, "-c", script)
 	if err = saveJSON(m.path("container-export.json"), config); err != nil {
 		return err
