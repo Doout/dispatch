@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/doout/dispatch/internal/sourceerror"
 	"strings"
+	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/oklog/ulid/v2"
@@ -90,6 +92,9 @@ func (s *SQLStore) SearchEventActivity(ctx context.Context, search core.EventAct
 			return nil, err
 		}
 		item.ID, item.CreatedAt, item.Transport = id, parseTime(created), transport
+		if item.Transport == "poll" && item.State == "failed" && item.Message != "" {
+			item.Message = sourceerror.Describe(errors.New(item.Message)).Message
+		}
 		if resourceID != "" {
 			item.ResourceID = resourceID
 		}
@@ -145,15 +150,51 @@ func nonNilRevisionIDs(ids []string) []string {
 
 // SavePollCheck keeps one current check per repository and journals failure and recovery transitions.
 func (s *SQLStore) SavePollCheck(ctx context.Context, key string, item core.EventActivity) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var payload string
-	err := s.db.QueryRowContext(ctx, s.q("SELECT payload FROM event_activity WHERE project_id=? AND dedup_key=?"), item.ProjectID, key).Scan(&payload)
+	query := "SELECT payload FROM event_activity WHERE project_id=? AND dedup_key=?"
+	if s.postgres {
+		query += " FOR UPDATE"
+	}
+	err = tx.QueryRowContext(ctx, s.q(query), item.ProjectID, key).Scan(&payload)
 	var previous core.EventActivity
 	if err == nil {
-		if err := json.Unmarshal([]byte(payload), &previous); err != nil {
+		if err = json.Unmarshal([]byte(payload), &previous); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if previous.State == "failed" {
+		previous.Message = sourceerror.Describe(errors.New(previous.Message)).Message
+	}
+	if item.State == "failed" {
+		item.Message = sourceerror.Describe(errors.New(item.Message)).Message
+		item.Attempts = 1
+		if previous.State == "failed" && previous.NextAttemptAt != nil {
+			item.Attempts = previous.Attempts + 1
+		}
+		if item.NextAttemptAt != nil {
+			base := item.NextAttemptAt.Sub(item.CreatedAt)
+			if base < 30*time.Second {
+				base = 30 * time.Second
+			}
+			ceiling := max(base, 15*time.Minute)
+			delay := base
+			// Bounded arithmetic also preserves intervals above the retry ceiling.
+			for n := 1; n < item.Attempts && delay < ceiling; n++ {
+				delay = min(ceiling, delay+min(delay, ceiling-delay))
+			}
+			next := item.CreatedAt.Add(delay)
+			item.NextAttemptAt = &next
+		}
+	} else {
+		item.Attempts = 0
+		item.NextAttemptAt = nil
 	}
 	if item.State == "failed" && (previous.State != "failed" || previous.Message != item.Message) || item.State == "processed" && previous.State == "failed" {
 		transition := item
@@ -164,9 +205,25 @@ func (s *SQLStore) SavePollCheck(ctx context.Context, key string, item core.Even
 			transition.Kind = "poll_recovered"
 			transition.Message = "Polling resumed."
 		}
-		if err := s.SaveEventActivity(ctx, "poll-transition:"+transition.ID, transition); err != nil {
+		if err = s.saveEventActivity(ctx, tx, "poll-transition:"+transition.ID, transition); err != nil {
 			return err
 		}
 	}
-	return s.SaveEventActivity(ctx, key, item)
+	if err = s.saveEventActivity(ctx, tx, key, item); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLStore) GetPollCheck(ctx context.Context, projectID, key string) (core.EventActivity, error) {
+	var raw string
+	var item core.EventActivity
+	if err := s.db.QueryRowContext(ctx, s.q("SELECT payload FROM event_activity WHERE project_id=? AND dedup_key=? AND is_check=TRUE"), projectID, key).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return item, ErrNotFound
+		}
+		return item, err
+	}
+	err := json.Unmarshal([]byte(raw), &item)
+	return item, err
 }

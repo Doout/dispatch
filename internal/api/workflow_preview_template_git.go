@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/sourceerror"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
@@ -87,7 +88,7 @@ func (a *API) syncPreviewTemplate(ctx context.Context, id string) (core.Workflow
 		syncErr = a.validatePreviewTemplateWatchConflicts(ctx, refreshed)
 	}
 	if syncErr != nil {
-		item.GitSource.LastError = syncErr.Error()
+		item.GitSource.LastError = sourceerror.Describe(syncErr).Message
 	} else {
 		item = refreshed
 	}
@@ -107,18 +108,30 @@ func (a *API) syncWorkflowPreviewTemplates(ctx context.Context) error {
 		if item.GitSource == nil || !item.Active {
 			continue
 		}
-		refreshed, syncErr := a.syncPreviewTemplate(ctx, item.ID)
-		if errors.Is(syncErr, store.ErrNotFound) {
-			continue
-		}
 		source, err := a.store.GetConfigSource(ctx, item.ConfigSourceID)
 		if err != nil {
 			joined = errors.Join(joined, err)
 			continue
 		}
+		prior, err := a.store.GetPollCheck(ctx, source.ProjectID, "template-sync:"+item.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			joined = errors.Join(joined, err)
+			continue
+		}
+		if prior.NextAttemptAt != nil && time.Now().Before(*prior.NextAttemptAt) {
+			continue
+		}
+		refreshed, syncErr := a.syncPreviewTemplate(ctx, item.ID)
+		if errors.Is(syncErr, store.ErrNotFound) {
+			continue
+		}
+
 		check := core.EventActivity{ID: ulid.Make().String(), ProjectID: source.ProjectID, RuleID: "template-sync:" + item.ID, Name: item.Name, Transport: "poll", Kind: "template_check", Repository: item.GitSource.Repository, Branch: item.GitSource.Branch, State: "processed", CreatedAt: time.Now().UTC(), Check: true}
 		if syncErr != nil {
-			check.State, check.Message = "failed", syncErr.Error()
+			if errors.Is(syncErr, context.Canceled) {
+				continue
+			}
+			sourceerror.SetPollFailure(&check, syncErr, 30*time.Second)
 			joined = errors.Join(joined, fmt.Errorf("template %s: %w", item.Name, syncErr))
 		}
 		joined = errors.Join(joined, a.store.SavePollCheck(ctx, check.RuleID, check))
@@ -142,7 +155,12 @@ func (a *API) syncWorkflowPreviewTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		problem(w, http.StatusBadGateway, "Template sync failed", err.Error())
+		failure := sourceerror.Describe(err)
+		status := http.StatusBadGateway
+		if failure.Transient {
+			status = http.StatusServiceUnavailable
+		}
+		problem(w, status, "Template sync failed", failure.Message)
 		return
 	}
 	writeJSON(w, http.StatusOK, item)

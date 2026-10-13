@@ -3614,6 +3614,7 @@ paths:
       responses:
         "200": { description: Configuration synced. }
         "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /config-sources/{configSourceId}/repository-check:
     parameters:
       - { in: path, name: configSourceId, required: true, schema: { type: string } }
@@ -3882,6 +3883,7 @@ paths:
         "200": { description: Template synced, including gitSource.commitSha and gitSource.syncedAt. }
         "404": { $ref: "#/components/responses/Problem" }
         "502": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /workflow/preview-triggers:
     get:
       operationId: listWorkflowPreviewTriggers
@@ -5725,8 +5727,8 @@ components:
       required: [id, projectId, ruleId, name, transport, kind, repository, state, createdAt]
       properties:
         deliveryId: { type: string, description: Durable receipt ID for a webhook delivery activity row. }
-        attempts: { type: integer, minimum: 0 }
-        nextAttemptAt: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 0, description: "Consecutive failed poll attempts or webhook delivery attempts." }
+        nextAttemptAt: { type: string, format: date-time, description: "Earliest next poll or delivery attempt. Temporary polling failures preserve this deadline across restarts." }
         id: {type: string}
         projectId: {type: string}
         ruleId: {type: string}

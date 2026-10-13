@@ -28,7 +28,7 @@ func (s *Service) CheckSourceRepository(ctx context.Context, id string) (core.Co
 	previous := source.RepositoryStatus
 	source.RepositoryStatus, source.UpdatedAt = &status, time.Now().UTC()
 	if checkErr := githubapp.RequireAccessible(status); checkErr != nil {
-		source.State, source.LastError = "invalid", checkErr.Error()
+		source = sourceFailure(source, checkErr, time.Now().UTC())
 	} else {
 		source.RepositoryID = status.RepositoryID
 		// Access can recover while configuration errors remain. A full sync is

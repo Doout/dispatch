@@ -63,6 +63,9 @@ func (s *Service) repositoryHead(ctx context.Context, source core.ConfigSource, 
 	output.limit = maxJobLogBytes
 	cmd.Stdout, cmd.Stderr = &output, &output
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("cannot access %s: %w", repository, ctx.Err())
+		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 2 {
 			return "", fmt.Errorf("branch or tag %q was not found in %s", branch, repository)

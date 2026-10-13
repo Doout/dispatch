@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/doout/dispatch/internal/sourceerror"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -57,7 +58,7 @@ func (r GitHubCommentReader) get(ctx context.Context, endpoint string, target an
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return response.StatusCode, fmt.Errorf("GitHub comment poll returned %s", response.Status)
+		return response.StatusCode, sourceerror.FromResponse(response)
 	}
 	decoder := json.NewDecoder(response.Body)
 	decoder.UseNumber()

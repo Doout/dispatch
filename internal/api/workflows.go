@@ -10,6 +10,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/sourceerror"
 	"github.com/doout/dispatch/internal/store"
 	workflowservice "github.com/doout/dispatch/internal/workflow"
 	"github.com/go-chi/chi/v5"
@@ -214,7 +215,12 @@ func (a *API) syncConfigSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		problem(w, http.StatusUnprocessableEntity, "Configuration sync blocked", err.Error())
+		failure := sourceerror.Describe(err)
+		if failure.Transient {
+			problem(w, http.StatusServiceUnavailable, "Repository unavailable", failure.Message)
+			return
+		}
+		problem(w, http.StatusUnprocessableEntity, "Configuration sync blocked", failure.Message)
 		return
 	}
 	writeJSON(w, http.StatusOK, item)

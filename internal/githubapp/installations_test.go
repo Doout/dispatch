@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/sourceerror"
 )
 
 func installationTestManager(t *testing.T, endpoint string) *Manager {
@@ -161,5 +163,42 @@ func TestRepositoryInstallationRejectsSuspendedAndWrongApp(t *testing.T) {
 				t.Fatal("invalid installation accepted")
 			}
 		})
+	}
+}
+
+func TestInstallationMaintenanceDoesNotSuggestChangingPermissions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+		_, _ = w.Write([]byte(`<html><title>GitHub Enterprise is currently down for maintenance</title><style>private-page</style></html>`))
+	}))
+	defer server.Close()
+	manager := installationTestManager(t, server.URL)
+	_, err := manager.RepositoryInstallation(context.Background(), "app", "team/service")
+	if err == nil || strings.Contains(err.Error(), "<html>") || strings.Contains(err.Error(), "private-page") || strings.Contains(err.Error(), "Check that this App") {
+		t.Fatalf("maintenance misreported: %v", err)
+	}
+}
+
+func TestRepositoryCheckKeepsRetryDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`{"message":"API rate limit exceeded"}`))
+	}))
+	defer server.Close()
+	manager := installationTestManager(t, server.URL)
+	status, err := manager.CheckRepository(context.Background(), "app", "team/service", 42)
+	if err != nil || status.State != "unavailable" || status.RetryAt.Before(time.Now().Add(119*time.Second)) {
+		t.Fatalf("rate-limit deadline lost: %+v %v", status, err)
+	}
+	failure := RequireAccessible(status)
+	var temporary *sourceerror.TemporaryError
+	if !errors.As(failure, &temporary) || temporary.RetryAt != status.RetryAt {
+		t.Fatalf("poller lost provider deadline: %v", failure)
+	}
+	body, err := json.Marshal(status)
+	if err != nil || strings.Contains(string(body), "RetryAt") || strings.Contains(string(body), "retryAt") {
+		t.Fatal("request-local deadline changed the API contract")
 	}
 }

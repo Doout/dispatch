@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/doout/dispatch/internal/sourceerror"
 	"net/http"
 	"strings"
 	"time"
@@ -43,6 +44,9 @@ func (m *Manager) RepositoryInstallation(ctx context.Context, id, repository str
 	}
 	endpoint := strings.TrimRight(connection.APIURL, "/") + "/repos/" + path + "/installation"
 	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &result, connection.PrivateNetworkID); err != nil {
+		if sourceerror.Describe(err).Transient {
+			return 0, fmt.Errorf("find GitHub App installation for %s: %w", repository, err)
+		}
 		return 0, fmt.Errorf("find GitHub App installation for %s: %w. Check that this App is installed for the repository and has access to it", repository, err)
 	}
 	if result.ID < 1 || result.AppID != connection.AppID {

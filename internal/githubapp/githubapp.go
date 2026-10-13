@@ -24,6 +24,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/edge"
+	"github.com/doout/dispatch/internal/sourceerror"
 )
 
 type Store interface {
@@ -802,12 +803,7 @@ func (m *Manager) request(ctx context.Context, method, endpoint, token string, b
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(response.Body, 8<<10))
-		message := strings.TrimSpace(string(detail))
-		if message == "" {
-			message = response.Status
-		}
-		return &responseError{StatusCode: response.StatusCode, Status: response.Status, Message: message}
+		return sourceerror.FromResponse(response)
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		return nil
@@ -828,11 +824,4 @@ func State(connection core.GitHubAppConnection) string {
 	return "ready"
 }
 
-type responseError struct {
-	StatusCode      int
-	Status, Message string
-}
-
-func (e *responseError) Error() string {
-	return fmt.Sprintf("GitHub returned %s: %s", e.Status, e.Message)
-}
+type responseError = sourceerror.HTTPError
