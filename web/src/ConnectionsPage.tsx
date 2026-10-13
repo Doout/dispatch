@@ -1,3 +1,6 @@
+import { InstanceConnectionSettings } from "./InstanceConnectionSettings";
+import { useHostedTenant } from "./hosted/context";
+import "./SettingsPage.css";
 import { destructiveRequest } from "./api";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import {
@@ -71,6 +74,8 @@ function githubAppInstallURL(connection: GitHubAppConnection) {
 }
 
 export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnection = () => {}, notice, onNotice, onChanged, onAddRelay = () => {} }: { overview: Overview; selectedConnectionID?: string; onOpenConnection?: (id: string | null) => void; notice: string; onNotice: (value: string) => void; onChanged: () => Promise<void>; onAddRelay?: () => void }) {
+  const hosted = useHostedTenant();
+  const showDoodship = overview.identity?.systemRole === "owner" && !hosted;
 	const edgeNetworks = (overview.privateNetworks ?? []).filter((network) => network.driver === "dispatch_agent");
   const [creating, setCreating] = useState(false);
   const [creatingSecretStore, setCreatingSecretStore] = useState(false);
@@ -261,6 +266,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
 			: <ConnectionAddMenu onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />} />
     {notice && <div className="connection-notice" role="status"><CheckCircle size={18} weight="fill" /><span>{notice}</span><button aria-label="Dismiss message" onClick={() => onNotice("")}><X size={15} /></button></div>}
     {error && <p className="form-error connection-error" role="alert">{error}</p>}
+    {showDoodship && <InstanceConnectionSettings key={overview.identity?.id} active={!creating && !creatingSecretStore && !creatingPrivateNetwork && !creatingLanewayNetwork} />}
     {creating ? <section className="inline-create connection-editor" aria-labelledby="connection-editor-title">
       <header><div><h2 id="connection-editor-title">{editing ? "Edit GitHub App" : "Add GitHub App"}</h2></div></header>
       {!editing && <div className="connection-method" role="radiogroup" aria-label="GitHub App setup method">
@@ -330,7 +336,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
 		<SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={allPrivateNetworks} creating={false} editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} />
 		<LanewayNetworksSection networks={lanewayNetworks} creating={false} onCreatingChange={setCreatingLanewayNetwork} onChanged={onChanged} />
 		<PrivateNetworksSection networks={privateNetworks} stores={secretStores} githubApps={overview.githubApps} creating={false} editing={editingPrivateNetwork} initialDriver={privateNetworkDriver} onCreatingChange={setCreatingPrivateNetwork} onEditingChange={setEditingPrivateNetwork} onChanged={onChanged} />
-	</div> : <ConnectionsEmpty onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />}
+	</div> : <ConnectionsEmpty title={showDoodship ? "Providers and networks" : undefined} onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />}
   </div>;
 }
 
@@ -349,9 +355,9 @@ function ConnectionAddMenu({ onGitHub, onSecretStore, onPrivateNetwork, onLanewa
   </DropdownMenu.Root>;
 }
 
-function ConnectionsEmpty({ onGitHub, onSecretStore, onPrivateNetwork, onLanewayNetwork }: { onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void; onLanewayNetwork: () => void }) {
+function ConnectionsEmpty({ title = "No connections", onGitHub, onSecretStore, onPrivateNetwork, onLanewayNetwork }: { title?: string; onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void; onLanewayNetwork: () => void }) {
   return <section className="connections-empty" aria-labelledby="connections-empty-title">
-		<header className="connections-empty-head"><span><PlugsConnected size={20} /></span><div><h2 id="connections-empty-title">No connections</h2><p>Add a provider or edge route.</p></div></header>
+		<header className="connections-empty-head"><span><PlugsConnected size={20} /></span><div><h2 id="connections-empty-title">{title}</h2><p>Add a provider or edge route.</p></div></header>
 		<div className="connection-empty-groups">
 			<section className="connection-empty-group" aria-labelledby="provider-connections-title"><h3 id="provider-connections-title">Providers</h3><div>
 				<button type="button" onClick={onGitHub}><span className="connection-provider-icon github"><GithubLogo size={18} weight="fill" /></span><span><strong>GitHub App</strong><small>Source control</small></span><ArrowRight size={15} /></button>

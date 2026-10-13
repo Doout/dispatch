@@ -3,6 +3,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionsPage } from "./ConnectionsPage";
+import { HostedTenantContext } from "./hosted/context";
+import type { HostedTenant } from "./hosted/client";
+import * as client from "./api";
 import { api, type Overview, type PrivateNetwork } from "./api";
 
 const overview: Overview = {
@@ -190,4 +193,22 @@ it("shows both organization installations without replacing the current connecti
  expect(screen.getByText("App access confirmed")).toBeTruthy();
  expect(screen.getByText("No App access")).toBeTruthy();
  expect(update).not.toHaveBeenCalled();
+});
+
+
+it("offers Doodship setup only to local installation owners", () => {
+  const owner = { ...overview, identity: { id: "local-owner", systemRole: "owner" } } as Overview;
+  const request = vi.spyOn(client, "request");
+  const page = render(<ConnectionsPage overview={owner} notice="" onNotice={() => {}} onChanged={async () => {}} />);
+  expect(screen.getByRole("heading", { name: "Doodship" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Providers and networks" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Manage connection" })).toBeTruthy();
+  expect(request).not.toHaveBeenCalled();
+  page.rerender(<HostedTenantContext.Provider value={{ mode: "tenant" } as HostedTenant}>
+    <ConnectionsPage overview={owner} notice="" onNotice={() => {}} onChanged={async () => {}} />
+  </HostedTenantContext.Provider>);
+  expect(screen.queryByRole("heading", { name: "Doodship" })).toBeNull();
+  page.rerender(<ConnectionsPage overview={{ ...owner, identity: { ...owner.identity!, systemRole: "member" } }} notice="" onNotice={() => {}} onChanged={async () => {}} />);
+  expect(screen.queryByRole("heading", { name: "Doodship" })).toBeNull();
+  expect(request).not.toHaveBeenCalled();
 });

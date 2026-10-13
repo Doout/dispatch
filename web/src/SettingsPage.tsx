@@ -12,8 +12,6 @@ import {
   type InterfaceSettingsProps,
 } from "./interface/InterfaceSettings";
 import { uiFeatures, type UIFeatureKey } from "./featureFlags";
-import { InstanceConnectionSettings } from "./InstanceConnectionSettings";
-import { useHostedTenant } from "./hosted/context";
 import type { SettingsSection } from "./routes";
 
 type Props = {
@@ -39,31 +37,22 @@ function SettingsContent({
   navigationInShell = false,
 }: Props) {
   const owner = overview.identity?.systemRole === "owner";
-  const hosted = useHostedTenant();
   const id = useId();
   const [section, setSection] = useState<SettingsSection>(
     interfaceSettings ? "interface" : "features",
   );
-  const [connectionVisited, setConnectionVisited] = useState(false);
   const tabs: { key: SettingsSection; label: string }[] = [
     ...(interfaceSettings
       ? [{ key: "interface" as const, label: "Interface" }]
-      : []),
-    ...(owner && !hosted
-      ? [{ key: "connection" as const, label: "Doodship connection" }]
       : []),
     ...(owner ? [{ key: "features" as const, label: "Features" }] : []),
   ];
   const selected =
     tabs.find((tab) => tab.key === (routeSection ?? section))?.key ??
     tabs[0]?.key;
-  useEffect(() => {
-    if (selected === "connection") setConnectionVisited(true);
-  }, [selected]);
   function select(next: SettingsSection) {
     if (onSectionChange) onSectionChange(next);
     else setSection(next);
-    if (next === "connection") setConnectionVisited(true);
   }
   return (
     <div
@@ -125,26 +114,6 @@ function SettingsContent({
           tabIndex={0}
         >
           <InterfaceSettings {...interfaceSettings} />
-        </div>
-      )}
-      {owner && !hosted && (
-        <div
-          className="settings-panel"
-          id={`${id}-connection-panel`}
-          role={navigationInShell ? "region" : "tabpanel"}
-          aria-label={navigationInShell ? "Doodship connection" : undefined}
-          aria-labelledby={
-            navigationInShell ? undefined : `${id}-connection-tab`
-          }
-          hidden={selected !== "connection"}
-          tabIndex={0}
-        >
-          {connectionVisited && (
-            <InstanceConnectionSettings
-              initialExpanded
-              active={selected === "connection"}
-            />
-          )}
         </div>
       )}
       {owner ? (

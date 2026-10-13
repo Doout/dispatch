@@ -22,12 +22,17 @@ export function InstanceConnectionSettings({
   active?: boolean;
 }) {
   const [expanded, setExpanded] = useState(initialExpanded);
+  const [visited, setVisited] = useState(initialExpanded);
   const id = useId();
   return (
-    <section className="settings-features instance-connection-settings">
+    <section
+      className="settings-features instance-connection-settings"
+      data-expanded={expanded}
+      hidden={!active}
+    >
       <header>
         <div>
-          <h2>Doodship connection</h2>
+          <h2>Doodship</h2>
           <p>
             Connect this installation for webhooks and optional remote access.
           </p>
@@ -38,13 +43,20 @@ export function InstanceConnectionSettings({
             className="quiet-button"
             aria-controls={id}
             aria-expanded={expanded}
-            onClick={() => setExpanded((value) => !value)}
+            onClick={() => {
+              setVisited(true);
+              setExpanded((value) => !value);
+            }}
           >
             {expanded ? "Hide connection" : "Manage connection"}
           </button>
         )}
       </header>
-      {expanded && <ConnectionForm id={id} active={active} />}
+      {visited && (
+        <div hidden={!expanded}>
+          <ConnectionForm id={id} active={active && expanded} />
+        </div>
+      )}
     </section>
   );
 }
