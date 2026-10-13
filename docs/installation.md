@@ -106,13 +106,15 @@ The updater uses the currently installed controller image, which includes the CL
 
 ## Releases
 
-The release workflow runs for stable `vMAJOR.MINOR.PATCH` tags. It tests the code, publishes amd64 and arm64 controller images to GHCR with both the version and `stable` tags, then publishes Linux CLI archives and `SHA256SUMS` as GitHub release assets. The GHCR package must permit public pulls for unauthenticated installation; private installations can use `docker login ghcr.io` first. No release is created merely by building the source locally.
+The release workflow runs for stable `vMAJOR.MINOR.PATCH` tags. It requires successful main-branch CI for the exact tagged commit, reuses that run's tested frontend, publishes amd64 and arm64 controller images to GHCR with both the version and `stable` tags, then publishes Linux CLI archives and `SHA256SUMS` as GitHub release assets. The GHCR package must permit public pulls for unauthenticated installation; private installations can use `docker login ghcr.io` first. No release is created merely by building the source locally.
 
 Docker documents the raw environment-file format in its [Compose environment guide](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/). The image publishing workflow follows GitHub's [container publishing guide](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images).
 
 ## Build caching
 
-CI and releases share a Go module and compiled-package cache. Main-branch CI builds both architectures so subsequent release tags can reuse that cache. Release images package the same binaries as the CLI archives; they do not compile Go again inside Docker. Docker runtime layers are also cached for both architectures. Local controller, agent, and relay image builds use BuildKit cache mounts for package downloads and compiled output.
+CI runs eight balanced API race shards and six balanced shards for every other discovered Go package. Coverage checks require every test root to execute exactly once across each matrix. PostgreSQL and Docker fixtures, frontend checks, security checks and release builds run in separate jobs. Each test job has a ten-minute limit, with an eight-minute Go test timeout. The existing `test` status requires every validation job to succeed. Superseded CI runs on the same pull request or branch are cancelled.
+
+CI and releases share a Go module and compiled-package cache. Race and release compiler caches refresh per commit, with one writer per cache family. Main-branch CI builds both architectures so subsequent release tags can reuse that cache. Release tags reuse completed main CI instead of repeating the race suite. If CI has not passed for the tagged commit or its frontend artifact has expired, the release fails before publishing; complete or rerun main CI first. Release images package the same binaries as the CLI archives; they do not compile Go again inside Docker. Docker runtime layers are also cached for both architectures. Local controller, agent, and relay image builds use BuildKit cache mounts for package downloads and compiled output.
 
 Dockerfile application deployments keep an immutable image tag for each deployment and a stable, per-application cache tag. A rebuild imports the last successful cache tag and replaces it only after the new image builds successfully. Compose rebuilds use Docker's project and service image cache on the same Docker daemon.
 

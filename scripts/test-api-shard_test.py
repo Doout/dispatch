@@ -42,7 +42,7 @@ class AssignmentsTest(unittest.TestCase):
                              "TestCASE", "Test_New", "Example", "FuzzSeeds"])
 
     def test_discovery_and_future_roots_enter_all_shard_counts(self):
-        for count in (2, 3, 4):
+        for count in (2, 3, 4, 8):
             roots = shards.discovered_roots(discovery(self.roots + ["TestFutureRoot"]))
             assignments = shards.partition(roots, count)
             self.assertEqual(sorted(root for part in assignments for root in part), roots)
@@ -73,7 +73,7 @@ class AssignmentsTest(unittest.TestCase):
 
     def test_invalid_cli_and_empty_shards_fail(self):
         for args in ([], ["--shard", "-1"], ["--shard", "4"], ["--shard", "0", "--count", "1"],
-                     ["--shard", "0", "--count", "5"], ["--shard", "0", "--other-packages"],
+                     ["--shard", "0", "--count", "17"], ["--shard", "0", "--other-packages"],
                      ["--shard", "wrong"]):
             with self.subTest(args=args):
                 result = subprocess.run(["python3", str(SCRIPT), *args], capture_output=True)
@@ -126,7 +126,7 @@ class AssignmentsTest(unittest.TestCase):
             shards.run_other_packages()
             command = run.call_args_list[-1].args[0]
         self.assertNotIn(shards.PACKAGE, command)
-        self.assertEqual(command, ["go", "test", "-race", "-count=1", "-timeout", "40m",
+        self.assertEqual(command, ["go", "test", "-race", "-count=1", "-timeout", "8m",
                                    "dispatch/core", "dispatch/futurepackage"])
         for invalid in (packages + ["dispatch/core"], packages[:1], [shards.PACKAGE]):
             listed = "\n".join(json.dumps({"ImportPath": name}) for name in invalid)

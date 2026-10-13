@@ -5,13 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   postgres:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17
@@ -30,17 +34,18 @@ jobs:
       DISPATCH_STORE_POSTGRES_URL: postgres://dispatch_test:dispatch_test_password@127.0.0.1:5432/dispatch_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - name: Exercise isolated PostgreSQL persistence fixtures
         shell: bash
         run: |
           set -o pipefail
-          go test -race -count=1 -timeout 40m -json ./internal/store ./internal/tenancy | python3 scripts/check-test-results.py --require-name postgres
+          {
+            go test -race -count=1 -timeout 8m -json ./internal/store -run '(?i)postgres|^Test(StorageInventoryPersistenceAndProtection|DeploymentCatalog|DeploymentCatalogPostgres|ApplicationHistory).*$'
+            go test -race -count=1 -timeout 8m -json ./internal/tenancy
+          } | python3 scripts/check-test-results.py --require-name postgres
   docker-lifecycle:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     env:
       DISPATCH_RUNTIME_INTEGRATION: '1'
       DISPATCH_ROUTING_DOCKER_INTEGRATION: '1'
@@ -48,14 +53,12 @@ jobs:
       DISPATCH_OFFSITE_DAEMON_INTEGRATION: '1'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - name: Verify real Docker routing, recovery and automation journeys
         shell: bash
         run: |
           set -o pipefail
-          go test -race -count=1 -timeout 20m -json ./internal/deploy ./internal/agentruntime ./internal/api \
+          go test -race -count=1 -timeout 8m -json ./internal/deploy ./internal/agentruntime ./internal/api \
             -run '^(TestManagedDockerTraefikPromotionAndRestartIntegration|TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration|TestRemoteManagedRouteCandidateIntegration|TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration|TestTemporaryEnvironmentDockerRestartExpiryIntegration|TestPackagedMockProviderCLIAndMCPAcceptanceIntegration|TestWorkloadBackupSeparateDaemonsSourceLossIntegration)$' \
             | python3 scripts/check-test-results.py \
               --require-test TestManagedDockerTraefikPromotionAndRestartIntegration \
@@ -67,12 +70,10 @@ jobs:
               --require-test TestWorkloadBackupSeparateDaemonsSourceLossIntegration
   hosted-workers:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - name: Build isolated worker image
         run: docker build -f Containerfile.worker -t dispatch-worker:test .
       - name: Verify sandbox execution and cancellation
@@ -80,25 +81,23 @@ jobs:
         run: |
           set -o pipefail
           export DISPATCH_WORKER_TEST_IMAGE=$(docker image inspect --format '{{.Id}}' dispatch-worker:test)
-          go test -race -count=1 -timeout 10m -json ./internal/workflowrunner -run 'TestDisposable.*Integration' \
+          go test -race -count=1 -timeout 8m -json ./internal/workflowrunner -run 'TestDisposable.*Integration' \
             | python3 scripts/check-test-results.py \
               --require-test TestDisposableManagedWorkerIntegration \
               --require-test TestDisposableWorkerCancellationIntegration
   api-race:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - name: Run discovered API race tests
-        run: python3 scripts/test-api-shard.py --shard ${{ matrix.shard }} --count 4
+        run: python3 scripts/test-api-shard.py --shard ${{ matrix.shard }} --count 8
       - name: Preserve API discovery, coverage and timings
         if: always()
         uses: actions/upload-artifact@v4
@@ -106,10 +105,32 @@ jobs:
           name: api-race-${{ matrix.shard }}
           path: api-race-results/
           if-no-files-found: error
+  go-race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-go
+        with:
+          save: ${{ matrix.shard == 0 }}
+      - name: Run all other discovered Go race tests
+        run: python3 scripts/test-go-shard.py --shard ${{ matrix.shard }} --count 6
+      - name: Preserve Go discovery, coverage and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-race-${{ matrix.shard }}
+          path: go-race-results/
+          if-no-files-found: error
   api-coverage:
-    needs: api-race
+    needs: [api-race, go-race]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -117,28 +138,20 @@ jobs:
           pattern: api-race-*
           path: api-race-results/
           merge-multiple: true
-      - name: Verify complete API coverage and report shard timings
-        run: python3 scripts/test-api-shard.py --verify api-race-results --count 4
-  build-checks:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: go-race-*
+          path: go-race-results/
+          merge-multiple: true
+      - name: Verify complete race coverage
+        run: |
+          python3 scripts/test-api-shard.py --verify api-race-results --count 8
+          python3 scripts/test-go-shard.py --verify go-race-results --count 6
+  frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Install controller native toolchains
-        run: sudo apt-get update && sudo apt-get install -y g++ gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Restore Go modules and compiled packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-release-v1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-go-release-v1-${{ hashFiles('go.mod', 'go.sum') }}-
-            ${{ runner.os }}-go-release-v1-
       - uses: pnpm/action-setup@v4
         with:
           version: 11.18.0
@@ -152,17 +165,46 @@ jobs:
       - run: pnpm --dir web typecheck
       - run: pnpm --dir web test --maxWorkers=2
       - run: pnpm --dir web build
-      - name: Check deterministic API shard coverage and Go selection semantics
-        run: python3 scripts/test-api-shard_test.py
-      - name: Check required CI status dependencies
-        run: python3 scripts/check-ci-gate_test.py
-      - name: Check hosted image publication guards
-        run: node scripts/check-hosted-images_test.cjs
-      - name: Run the full race suite for all other discovered Go packages
-        run: python3 scripts/test-api-shard.py --other-packages
-      - run: sh scripts/install_test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: internal/ui/dist/
+          if-no-files-found: error
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-go
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+  build-checks:
+    needs: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install controller native toolchains
+        run: sudo apt-get update && sudo apt-get install -y g++ gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - uses: ./.github/actions/setup-go
+        with:
+          flavor: release
+          save: 'true'
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/ui/dist/
+      - name: Check discovered Go shard coverage and selection semantics
+        run: |
+          python3 scripts/test-api-shard_test.py
+          python3 scripts/test-go-shard_test.py
+      - name: Check required CI status dependencies
+        run: python3 scripts/check-ci-gate_test.py
+      - name: Check image and release publication guards
+        run: |
+          node scripts/check-hosted-images_test.cjs
+          node scripts/check-release-source_test.cjs
+      - run: sh scripts/install_test.sh
       - name: Build release binaries and prime the compiler cache
         run: sh scripts/build-release.sh development
       - uses: docker/setup-qemu-action@v3
@@ -178,20 +220,21 @@ jobs:
           cache-to: type=gha,mode=max,scope=dispatch-runtime
           tags: dispatch:test
   test:
-    needs: [build-checks, api-coverage, hosted-workers]
+    needs: [build-checks, api-coverage, hosted-workers, postgres, docker-lifecycle, frontend, security]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - name: Require hosted worker integration
+      - name: Require every validation job
         env:
-          HOSTED_WORKERS_RESULT: ${{ needs.hosted-workers.result }}
-        run: test "$HOSTED_WORKERS_RESULT" = success
-      - name: Require build checks and complete API race coverage
-        env:
-          BUILD_CHECKS_RESULT: ${{ needs.build-checks.result }}
-          API_COVERAGE_RESULT: ${{ needs.api-coverage.result }}
+          JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
-          if [[ "$BUILD_CHECKS_RESULT" != success || "$API_COVERAGE_RESULT" != success ]]; then
-            echo "Required jobs did not both succeed: build-checks=$BUILD_CHECKS_RESULT api-coverage=$API_COVERAGE_RESULT"
-            exit 1
-          fi
+          python3 - <<'PYTHON'
+          import json, os, sys
+          results = {name: job['result'] for name, job in json.loads(os.environ['JOB_RESULTS']).items()}
+          failed = {name: result for name, result in results.items() if result != 'success'}
+          if failed:
+              print(f'Required CI jobs did not succeed: {failed}')
+              sys.exit(1)
+          print('Every required validation job succeeded.')
+          PYTHON
