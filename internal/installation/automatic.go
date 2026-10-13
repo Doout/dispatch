@@ -153,6 +153,12 @@ func (m *Manager) AutoUpgrade(ctx context.Context, action string, interval time.
 // Each check acquires the same installation lock as the manual CLI. The lock is
 // released between checks so the sleeping worker never blocks operator commands.
 func (m *Manager) automaticCheck(ctx context.Context, interval time.Duration, pull bool) (time.Duration, error) {
+	defer func() {
+		var owner setupOwner
+		if raw, err := os.ReadFile(m.path("local-owner.json")); err == nil && json.Unmarshal(raw, &owner) == nil {
+			_ = m.ownSetupFiles(owner)
+		}
+	}()
 	wait := time.Minute
 	err := m.Locked(func() error {
 		if _, err := os.Stat(m.path("upgrade.json")); err == nil {

@@ -350,3 +350,14 @@ func TestInvalidSavedConnectionCanBeRepairedWithoutBlockingLocalAccess(t *testin
 		})
 	}
 }
+
+func TestEnrollmentRejectsUnexpectedInstanceBeforeSavingGrant(t *testing.T) {
+	m := testManager(t, nil)
+	server := enrollmentServer(t, nil)
+	if _, err := m.Configure(context.Background(), Setup{ControlPlaneURL: server.URL, EnrollmentToken: "once", ExpectedInstanceID: "other", OwnerUserID: "local-owner"}); err == nil {
+		t.Fatal("accepted another instance")
+	}
+	if m.Status().Configured {
+		t.Fatal("saved grant for unexpected instance")
+	}
+}
