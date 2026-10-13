@@ -1163,8 +1163,8 @@ func (s *SQLStore) ListDeployments(ctx context.Context, limit int) ([]core.Deplo
 	return s.listDeployments(ctx, limit, true)
 }
 
-// ListDeploymentSummaries omits internal snapshots, which are not serialized in
-// API responses. Detailed deployment reads retain the complete saved snapshot.
+// ListDeploymentSummaries omits internal snapshots and private application
+// configuration. Detailed deployment reads retain the complete saved inputs.
 func (s *SQLStore) ListDeploymentSummaries(ctx context.Context, limit int) ([]core.Deployment, error) {
 	return s.listDeployments(ctx, limit, false)
 }
@@ -1196,11 +1196,23 @@ func (s *SQLStore) listDeployments(ctx context.Context, limit int, includeSnapsh
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	appQuery := appSelect
+	if !includeSnapshot {
+		// These configuration columns are private and can contain megabytes of
+		// chart values. Summary responses never serialize them.
+		appQuery = strings.NewReplacer("compose_content", "''", "helm_values", "''", "helm_group_values", "''", "helm_provenance", "'{}'").Replace(appQuery)
+	}
 	for index := range items {
-		item, err := s.hydrateDeployment(ctx, items[index])
+		item := items[index]
+		app, err := scanApp(s.db.QueryRowContext(ctx, s.q(appQuery+` WHERE id=?`), item.AppID))
 		if err != nil {
 			return nil, err
 		}
+		server, err := s.GetServer(ctx, app.ServerID)
+		if err != nil {
+			return nil, err
+		}
+		item.App, item.Server = &app, &server
 		items[index] = item
 	}
 	return items, nil

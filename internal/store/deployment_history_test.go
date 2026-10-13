@@ -64,6 +64,13 @@ func TestDeploymentSummariesPreservePublicResponse(t *testing.T) {
 	must(data.SeedDemo(ctx))
 	apps, err := data.ListApps(ctx)
 	must(err)
+	app := apps[0]
+	app.HelmValues = "payload: " + strings.Repeat("v", 1<<20)
+	app.ComposeContent = strings.Repeat("c", 1<<20)
+	app.HelmGroupValues = strings.Repeat("g", 1<<20)
+	app.HookEnvironment = map[string]string{"TOKEN": "test-value"}
+	app.HelmProvenance = core.HelmProvenance{Sources: map[string]core.WorkflowSourceRevision{"service": {CommitSHA: "saved-sha"}}}
+	must(data.UpdateApp(ctx, app))
 	must(data.CreateDeployment(ctx, core.Deployment{ID: "large-snapshot", AppID: apps[0].ID, State: core.DeploymentSucceeded, CreatedAt: time.Now().Add(time.Hour), Snapshot: core.DeploymentSnapshot{Chart: "chart", Values: map[string]any{"payload": strings.Repeat("x", 1<<20)}}}))
 	full, err := data.ListDeployments(ctx, 100)
 	must(err)
@@ -78,6 +85,12 @@ func TestDeploymentSummariesPreservePublicResponse(t *testing.T) {
 	}
 	if full[0].ID != "large-snapshot" || full[0].Snapshot.Values["payload"] == nil {
 		t.Fatal("detailed history lost snapshot")
+	}
+	if full[0].App.HelmValues != app.HelmValues || full[0].App.HelmProvenance.Sources["service"].CommitSHA != "saved-sha" {
+		t.Fatal("detailed history lost private application configuration")
+	}
+	if summaries[0].App.HelmValues != "" || summaries[0].App.ComposeContent != "" || summaries[0].App.HelmGroupValues != "" || len(summaries[0].App.HelmProvenance.Sources) != 0 {
+		t.Fatal("summary loaded private application configuration")
 	}
 	if summaries[0].Snapshot.Values != nil {
 		t.Fatal("summary loaded internal snapshot")

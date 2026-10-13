@@ -1759,3 +1759,7 @@ CREATE INDEX workflow_worker_revision ON workflow_worker_jobs(revision_id);
 -- dispatch:migration 103_tenant_usage_indexes
 CREATE INDEX workflow_job_usage_finished ON workflow_job_results(finished_at) WHERE reused_from_id='' AND state IN ('succeeded','failed','cancelled');
 CREATE INDEX deployment_usage_finished ON deployments(finished_at) WHERE state IN ('succeeded','failed','cancelled');
+
+-- dispatch:migration 104_overview_history_indexes
+CREATE INDEX workflow_revisions_created_at ON workflow_revisions(created_at DESC);
+CREATE INDEX workflow_stage_runs_state ON workflow_stage_runs(state,revision_id);

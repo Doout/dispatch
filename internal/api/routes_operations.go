@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 func (a *API) operationsRoutes(r chi.Router) {
@@ -32,7 +33,7 @@ func (a *API) operationsRoutes(r chi.Router) {
 		})
 	})
 	r.Route("/overview", func(r chi.Router) {
-		r.Get("/", a.overview)
+		r.With(middleware.Compress(5, "application/json")).Get("/", a.overview)
 		r.Get("/watch", a.watchOverview)
 	})
 	r.Get("/analytics", a.analyticsSummary)
