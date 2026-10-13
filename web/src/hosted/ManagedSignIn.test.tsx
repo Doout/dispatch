@@ -9,6 +9,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountForm } from "./AccountForm";
 import type { HostedPlatform } from "./client";
+import * as hostedClient from "./client";
 const configuration: HostedPlatform = {
   mode: "platform",
   origin: "https://doodship.com",
@@ -36,6 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it("returns from hosted account setup without an error or automatic authentication", () => {
@@ -92,7 +94,7 @@ it("keeps retries inside the code form and uses the rotated state", async () => 
     <AccountForm configuration={configuration} mode="login" onDone={onDone} />,
   );
   email();
-  fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue with email" }));
   fireEvent.change(await screen.findByLabelText("Email code"), {
     target: { value: "123456" },
   });
@@ -169,7 +171,7 @@ it("uses an invitation's validated email and removes its token from the address 
     true,
   );
   expect(screen.queryByRole("button", { name: "Join waitlist" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue with email" }));
   await screen.findByLabelText("Email code");
   expect(JSON.parse(fetcher.mock.calls[1][1].body).invitationToken).toBe(
     "private-invite",
@@ -186,7 +188,7 @@ it("does not let an invalid invitation fall through into login", async () => {
   expect(
     (
       screen.getByRole("button", {
-        name: "Send sign-in code",
+        name: "Continue with email",
       }) as HTMLButtonElement
     ).disabled,
   ).toBe(true);
@@ -235,7 +237,7 @@ it("does not offer local password sign-in when WorkOS is enabled", () => {
     screen.queryByRole("button", { name: "Use previous login" }),
   ).toBeNull();
   expect(
-    screen.getByRole("button", { name: "Send sign-in code" }),
+    screen.getByRole("button", { name: "Continue with email" }),
   ).toBeTruthy();
 });
 it("resumes an OAuth verification step once without exposing the provider token", async () => {
@@ -294,7 +296,7 @@ it("connects an existing account after email verification without sending anothe
     />,
   );
   email();
-  fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue with email" }));
   fireEvent.change(await screen.findByLabelText("Email code"), {
     target: { value: "123456" },
   });
@@ -334,7 +336,7 @@ it("returns to sign in when a code continuation has expired or been consumed", a
   vi.stubGlobal("fetch", fetcher);
   form();
   email();
-  fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue with email" }));
   fireEvent.change(await screen.findByLabelText("Email code"), {
     target: { value: "123456" },
   });
@@ -344,7 +346,7 @@ it("returns to sign in when a code continuation has expired or been consumed", a
   expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe(
     "member@example.test",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue with email" }));
   await screen.findByLabelText("Email code");
   expect(JSON.parse(fetcher.mock.calls[2][1].body).state).toBeUndefined();
   expect(screen.queryByRole("alert")).toBeNull();
@@ -358,7 +360,7 @@ it("directs production-data previews to production for account connection", asyn
   vi.stubGlobal("fetch", fetcher);
   form({ ...configuration, dataOrigin: "https://doodship.com" });
   email();
-  fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue with email" }));
   fireEvent.change(await screen.findByLabelText("Email code"), {
     target: { value: "123456" },
   });
@@ -368,4 +370,31 @@ it("directs production-data previews to production for account connection", asyn
   });
   expect(link.getAttribute("href")).toBe("https://doodship.com/?view=login");
   expect(screen.queryByLabelText("Previous Doodship password")).toBeNull();
+});
+
+
+it("puts email before configured social login buttons inside the card", () => {
+  form({ ...configuration, workosLoginMethods: ["email-code", "github"] });
+  const heading = screen.getByRole("heading", { name: "Sign in", level: 1 });
+  const card = document.querySelector(".account-signin-card")!;
+  const emailButton = screen.getByRole("button", { name: "Continue with email" });
+  const githubButton = screen.getByRole("button", { name: "Continue with GitHub" });
+  expect(card.contains(heading)).toBe(false);
+  expect(card.contains(emailButton)).toBe(true);
+  expect(card.contains(githubButton)).toBe(true);
+  expect(emailButton.compareDocumentPosition(githubButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByPlaceholderText("Your email address")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Join waitlist" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Use a password" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Sign up" })).toBeNull();
+});
+
+it("starts configured GitHub login through the existing WorkOS flow", async () => {
+  const start = vi.spyOn(hostedClient, "startManagedLogin").mockResolvedValue(undefined);
+  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  form({ ...configuration, workosLoginMethods: ["email-code", "github"] });
+  fireEvent.click(screen.getByRole("button", { name: "Continue with GitHub" }));
+  await waitFor(() => expect(start).toHaveBeenCalledWith(false, false, "github", "", ""));
+  expect(fetcher).not.toHaveBeenCalled();
 });

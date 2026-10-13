@@ -65,6 +65,45 @@ export function AccountForm({
       setBusy(false);
     }
   };
+  if (managedSignIn) {
+    return (
+      <main className="hosted-auth-page account-signin account-managed-signin">
+        <a className="skip-link" href="#account-signin-content">
+          Skip to sign in
+        </a>
+        {landingEnabled && (
+          <header className="account-signin-header">
+            <a className="hosted-text-link" href="/">
+              Back to home <ArrowUpRight size={15} aria-hidden="true" />
+            </a>
+          </header>
+        )}
+        <section
+          id="account-signin-content"
+          className="account-signin-form"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+        >
+          <img
+            className="account-signin-logo"
+            src="/brand/doodship-logo-256.webp"
+            srcSet="/brand/doodship-logo-512.webp 2x"
+            width={80}
+            height={80}
+            alt="Doodship"
+            decoding="async"
+          />
+          <ManagedSignIn
+            configuration={configuration}
+            titleId={titleId}
+            onDone={onDone}
+            externalError={error}
+            onInteraction={() => setError("")}
+          />
+        </section>
+      </main>
+    );
+  }
   return (
     <main className="hosted-auth-page account-signin">
       <a className="skip-link" href="#account-signin-content">
@@ -131,14 +170,6 @@ export function AccountForm({
             <p className="form-success" role="status">
               {notice}
             </p>
-          )}
-          {managedSignIn && (
-            <ManagedSignIn
-              configuration={configuration}
-              titleId={titleId}
-              onDone={onDone}
-              onInteraction={() => setError("")}
-            />
           )}
           {localLogin && !managedSignIn && (
             <form
