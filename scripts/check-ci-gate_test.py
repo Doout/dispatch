@@ -23,7 +23,7 @@ class RequiredStatusTest(unittest.TestCase):
     def setUp(self):
         self.jobs = job_blocks(WORKFLOW.read_text())
         self.required = ['build-checks', 'api-coverage', 'hosted-workers', 'postgres',
-                         'docker-lifecycle', 'frontend', 'security']
+                         'docker-lifecycle', 'installation-portability', 'frontend', 'security']
 
     def test_required_status_covers_every_validation_branch(self):
         gate = self.jobs['test']

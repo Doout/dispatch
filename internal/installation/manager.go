@@ -25,23 +25,24 @@ const DefaultImage = "ghcr.io/doout/dispatch:stable"
 const managedLabel = "io.dispatch.installation"
 
 type Config struct {
-	ImportArchive string    `json:"importArchive,omitempty"`
-	Schema        int       `json:"schema"`
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Image         string    `json:"image"`
-	ImageID       string    `json:"imageId"`
-	Bind          string    `json:"bind"`
-	Port          int       `json:"port"`
-	Volume        string    `json:"volume"`
-	Socket        string    `json:"socket"`
-	DockerGID     uint32    `json:"dockerGid"`
-	PublicURL     string    `json:"publicUrl,omitempty"`
-	ProxyNetwork  string    `json:"proxyNetwork,omitempty"`
-	Hostname      string    `json:"hostname,omitempty"`
-	TLSResolver   string    `json:"tlsResolver,omitempty"`
-	InstalledAt   time.Time `json:"installedAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ImportArchive string      `json:"importArchive,omitempty"`
+	Schema        int         `json:"schema"`
+	ID            string      `json:"id"`
+	Name          string      `json:"name"`
+	Image         string      `json:"image"`
+	ImageID       string      `json:"imageId"`
+	Bind          string      `json:"bind"`
+	Port          int         `json:"port"`
+	Volume        string      `json:"volume"`
+	Socket        string      `json:"socket"`
+	DockerGID     uint32      `json:"dockerGid"`
+	PublicURL     string      `json:"publicUrl,omitempty"`
+	ProxyNetwork  string      `json:"proxyNetwork,omitempty"`
+	Hostname      string      `json:"hostname,omitempty"`
+	TLSResolver   string      `json:"tlsResolver,omitempty"`
+	DataMounts    []DataMount `json:"dataMounts,omitempty"`
+	InstalledAt   time.Time   `json:"installedAt"`
+	UpdatedAt     time.Time   `json:"updatedAt"`
 }
 type transaction struct {
 	Previous Config `json:"previous"`
@@ -177,6 +178,9 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,48}$`)
 var imagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$`)
 
 func validate(c Config) error {
+	if err := validateDataMounts(c.DataMounts); err != nil {
+		return err
+	}
 	if !namePattern.MatchString(c.Name) || !namePattern.MatchString(c.Volume) {
 		return errors.New("name and volume must start with a lowercase letter and contain only letters, numbers, _ or -")
 	}
@@ -228,6 +232,13 @@ func (m *Manager) composeData(c Config) ([]byte, error) {
 	spec := map[string]any{
 		"services": map[string]any{"dispatch": service},
 		"volumes":  map[string]any{"data": map[string]any{"external": true, "name": c.Volume}},
+	}
+	if len(c.DataMounts) > 0 {
+		volumes := []any{"data:/data", c.Socket + ":/var/run/docker.sock"}
+		for _, mount := range c.DataMounts {
+			volumes = append(volumes, map[string]any{"type": "volume", "source": "data", "target": mount.Target, "read_only": mount.ReadOnly, "volume": map[string]any{"subpath": mount.Subpath, "nocopy": true}})
+		}
+		service["volumes"] = volumes
 	}
 
 	if c.ProxyNetwork != "" {
@@ -365,7 +376,7 @@ func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bo
 	if _, err := os.Stat(m.path("installation.json")); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("installation already exists; use dispatch upgrade or dispatch recover")
 	}
-	for _, name := range []string{"compose.json", "dispatch.env", "upgrade.json", "export.json"} {
+	for _, name := range []string{"compose.json", "dispatch.env", "upgrade.json", "export.json", "container-export.json"} {
 		if _, err := os.Lstat(m.path(name)); !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("refusing to overwrite %s", m.path(name))
 		}
@@ -578,6 +589,9 @@ func (m *Manager) recoverTransaction(ctx context.Context, tx transaction) error 
 	return os.Remove(m.path("upgrade.json"))
 }
 func (m *Manager) Recover(ctx context.Context) error {
+	if handled, err := m.recoverContainerExport(ctx); handled || err != nil {
+		return err
+	}
 	installed, err := m.Load()
 	if err != nil {
 		return err

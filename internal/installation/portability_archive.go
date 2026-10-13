@@ -121,8 +121,11 @@ func unpackExport(input, stage string) (exportManifest, error) {
 	if err = json.Unmarshal(raw, &meta); err != nil {
 		return meta, err
 	}
-	if meta.Format != 1 || !imagePattern.MatchString(meta.Image) || len(meta.Files) != 2 {
+	if (meta.Format != 1 && meta.Format != 2) || meta.Format == 1 && len(meta.Mounts) > 0 || meta.Format == 2 && len(meta.Mounts) == 0 || !imagePattern.MatchString(meta.Image) || len(meta.Files) != 2 {
 		return meta, errors.New("unsupported or invalid export manifest")
+	}
+	if err = validateDataMounts(meta.Mounts); err != nil {
+		return meta, err
 	}
 	for _, name := range []string{"dispatch.env", "data.tar.gz"} {
 		sum, e := fileHash(filepath.Join(stage, name))

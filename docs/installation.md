@@ -84,13 +84,43 @@ sudo dispatch import \
 
 The usual install options also set the Docker socket, bind address and Traefik route. Host settings come from these options rather than the old server. The archived environment file is restored as-is, so check any server-specific addresses in it. Agents may need their controller URL updated. Re-enable automatic upgrades separately if you want them on the new server.
 
+### Export an existing Compose installation
+
+For the repository's older Compose setup, select the running controller container:
+
+```sh
+sudo dispatch export --container dispatch-dispatch-1 --output /root/dispatch-export.tar.gz
+```
+
+The CLI uses the local Docker engine to stop the controller, copy its data and restart it. It preserves the SQLite database, master key, analytics, logs, cached repositories, local backups and literal container environment. Mounted configuration directories such as `/kubeconfigs` are included. Import restores them at their original container paths, with their original read-only setting, using subdirectories in the new data volume. The old host paths and Compose project are not adopted.
+
+The controller must publish its HTTP port locally and keep its SQLite database and master key at `/data/dispatch.db` and `/data/dispatch-master.key`. Additional mounts must be configuration directories. Sockets, external PostgreSQL databases and system paths cannot be exported this way. Importing mounted configuration requires a Docker engine that supports volume subpaths. [Docker volume subpaths](https://docs.docker.com/engine/storage/volumes/#mount-a-volume-subdirectory).
+
+Run the same command through SSH when exporting another server:
+
+```sh
+ssh root@old-server 'dispatch export --container dispatch-dispatch-1 --output /root/dispatch-export.tar.gz'
+scp root@old-server:/root/dispatch-export.tar.gz ./dispatch-export.tar.gz
+```
+
+The administrator needs Docker access on the source. The CLI does not expose a database or key download endpoint in the application API. Concurrent container exports share a Docker lock, and `dispatch recover --dir DIRECTORY` restarts a controller after an interrupted export. Use the same CLI directory for export and recovery.
+
+Check the archive before importing it:
+
+```sh
+dispatch verify --input ./dispatch-export.tar.gz --dir ./dispatch-verification
+sudo dispatch import --input ./dispatch-export.tar.gz --public-url https://dispatch-new.example.com
+```
+
+Verification checks checksums, safe archive paths, database integrity and schema compatibility, and decrypts saved credentials with the archived master key. It runs offline without starting a controller or contacting deployment targets. Archives with mounted configuration use format 2 and require a CLI that supports it; format 1 archives remain supported.
+
 When the source image has a registry digest, import uses that exact image. For a local image, copy or rebuild it on the destination and use `--image IMAGE --pull=false`. Use `dispatch upgrade --image ghcr.io/doout/dispatch:stable` afterward to follow stable releases. Moving between CPU architectures requires an image published for both architectures; architecture-specific caches may need rebuilding.
 
 If an export or import is interrupted, run `dispatch recover --dir DIRECTORY`. An unfinished import retains its staged data and blocks upgrades until recovery completes. A failed health check also leaves the installation available for recovery.
 
 The archive contains the vault key and configuration secrets. It has mode `0600` and is not encrypted. Import only archives you trust. Transfer them over a trusted connection and protect them like database credentials. The archive format currently accepts up to 100 GiB of data and one million entries. Unsafe paths, links outside the data volume, device files, duplicate entries, incompatible manifests and checksum mismatches are rejected.
 
-This flow supports installations created by `dispatch install`. External PostgreSQL databases, custom Compose stacks and hosted tenant conversion require a separate migration. Docker images, application containers and application volumes outside the controller data volume are not copied. Keep deployment targets and external secret stores available, or reconnect them before running deployments on the new server.
+This flow supports installations created by `dispatch install` and compatible self-hosted Compose controllers selected with `--container`. External PostgreSQL databases and hosted tenant conversion require a separate migration. Docker images, application containers and application volumes that are not mounted in the controller are not copied. Keep deployment targets and external secret stores available, or reconnect them before running deployments on the new server.
 
 ## Upgrade
 
