@@ -1008,11 +1008,11 @@ func (a *API) deleteRoleAssignment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.Overview, error) {
-	// Approvals remain actionable even when newer runs move their revision out
+	// Active stages remain visible even when newer runs move their revision out
 	// of the recent-history window. Include their immutable context before the
 	// normal resource and project filters are applied.
 	var err error
-	overview.WorkflowRevisions, err = a.includePendingApprovalRevisions(ctx, overview.WorkflowRevisions, overview.WorkflowStageRuns, overview.WorkflowResources)
+	overview.WorkflowRevisions, err = a.includeActiveStageRevisions(ctx, overview.WorkflowRevisions, overview.WorkflowStageRuns, overview.WorkflowResources)
 	if err != nil {
 		return overview, err
 	}
@@ -1212,7 +1212,7 @@ func (a *API) filterOverview(ctx context.Context, overview core.Overview) (core.
 	return overview, nil
 }
 
-func (a *API) includePendingApprovalRevisions(ctx context.Context, revisions []core.WorkflowRevision, stages []core.WorkflowStageRun, resources []core.WorkflowResource) ([]core.WorkflowRevision, error) {
+func (a *API) includeActiveStageRevisions(ctx context.Context, revisions []core.WorkflowRevision, stages []core.WorkflowStageRun, resources []core.WorkflowResource) ([]core.WorkflowRevision, error) {
 	known := make(map[string]bool, len(revisions))
 	for _, revision := range revisions {
 		known[revision.ID] = true
@@ -1224,7 +1224,7 @@ func (a *API) includePendingApprovalRevisions(ctx context.Context, revisions []c
 		}
 	}
 	for _, stage := range stages {
-		if stage.State != "awaiting_approval" || known[stage.RevisionID] {
+		if (stage.State != "awaiting_approval" && stage.State != "queued" && stage.State != "running") || known[stage.RevisionID] {
 			continue
 		}
 		known[stage.RevisionID] = true

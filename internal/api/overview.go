@@ -123,7 +123,11 @@ func (a *API) overviewData(r *http.Request) (core.Overview, error) {
 	if err != nil {
 		return core.Overview{}, err
 	}
-	workflowStageRuns, err := a.store.ListWorkflowStageRuns(r.Context(), "")
+	revisionIDs := make([]string, len(workflowRevisions))
+	for i, revision := range workflowRevisions {
+		revisionIDs[i] = revision.ID
+	}
+	workflowStageRuns, err := a.store.ListWorkflowStageSummaries(r.Context(), revisionIDs)
 	if err != nil {
 		return core.Overview{}, err
 	}

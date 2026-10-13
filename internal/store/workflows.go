@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
@@ -616,6 +617,35 @@ func (s *SQLStore) ListWorkflowStageRuns(ctx context.Context, revisionID string)
 		args = append(args, revisionID)
 	}
 	query += ` ORDER BY created_at`
+	rows, err := s.db.QueryContext(ctx, s.q(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.WorkflowStageRun{}
+	for rows.Next() {
+		item, err := scanWorkflowStageRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// Overview needs the stages of its recent revisions and every unfinished stage.
+// Detailed history remains available through ListWorkflowStageRuns.
+func (s *SQLStore) ListWorkflowStageSummaries(ctx context.Context, revisionIDs []string) ([]core.WorkflowStageRun, error) {
+	query := workflowStageRunSelect + ` WHERE state IN ('queued','running','awaiting_approval')`
+	args := make([]any, len(revisionIDs))
+	if len(revisionIDs) > 0 {
+		placeholders := make([]string, len(revisionIDs))
+		for i, id := range revisionIDs {
+			placeholders[i], args[i] = "?", id
+		}
+		query += ` OR revision_id IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	query += ` ORDER BY created_at,id`
 	rows, err := s.db.QueryContext(ctx, s.q(query), args...)
 	if err != nil {
 		return nil, err

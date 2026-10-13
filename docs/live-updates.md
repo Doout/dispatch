@@ -1,5 +1,7 @@
 # Overview updates
 
+The overview includes the latest 100 workflow revisions and their stages, plus older queued, running, and approval stages with their revision context. Historical stages and logs load through the revision detail endpoints. Deployment summaries omit private chart and Compose inputs; detailed reads retain them. The overview supports gzip compression without changing its version header or the live update stream.
+
 The UI loads `/api/v1/overview` once, retaining its `X-Overview-Version` header. It then opens an authenticated fetch stream at `/api/v1/overview/watch` with that version in `Last-Event-ID`.
 
 The stream sends only `patch` events containing a base version, a resulting version, and JSON Patch operations (`add`, `remove`, `replace`, `move`). Object changes include only changed fields. Arrays of records are aligned by ID, so inserting, deleting, or moving a record does not resend unchanged records. There is no initial snapshot event and no application data while idle. Small SSE comments keep the connection alive every 30 seconds.

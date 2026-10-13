@@ -211,6 +211,7 @@ type Store interface {
 	UpdateWorkflowStageRun(context.Context, core.WorkflowStageRun) error
 	GetWorkflowStageRun(context.Context, string) (core.WorkflowStageRun, error)
 	ListWorkflowStageRuns(context.Context, string) ([]core.WorkflowStageRun, error)
+	ListWorkflowStageSummaries(context.Context, []string) ([]core.WorkflowStageRun, error)
 
 	CreateProject(context.Context, core.Project) error
 	UpdateProject(context.Context, core.Project) error
