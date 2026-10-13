@@ -49,6 +49,13 @@ func TestAutomaticHistoryRetentionAndExpiredComparison(t *testing.T) {
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &comparison) != nil || comparison.Available || len(comparison.Changes) != 0 {
 		t.Fatal("expired inputs produced a false comparison")
 	}
+	for _, suffix := range []string{"/topology?values=chart", "/manifests", "/resources/Deployment/example"} {
+		response := httptest.NewRecorder()
+		a.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/deployments/000000"+suffix, nil))
+		if response.Code != http.StatusConflict {
+			t.Fatalf("expired resource inspection used current settings: %s status %d", suffix, response.Code)
+		}
+	}
 	pin := httptest.NewRecorder()
 	a.ServeHTTP(pin, tokenRequest(http.MethodPut, "/api/v1/deployments/000000/retention-pin", strings.NewReader(`{"pinned":true}`)))
 	if pin.Code != 409 {

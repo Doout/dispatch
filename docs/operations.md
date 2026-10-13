@@ -154,7 +154,8 @@ A changed policy returns HTTP 409 and requires a fresh preview.
 
 Inputs expire independently of run summaries. Responses mark affected versions
 with `inputsExpiredAt`, and comparison and rollback report that their saved
-inputs are unavailable. Build job logs expire independently of cached outputs
+inputs are unavailable. Historical topology and resource inspection return HTTP
+409 instead of falling back to current application settings. Build job logs expire independently of cached outputs
 and fingerprints. Active workflow logs are retained.
 
 Project administrators can pin a retained release with
