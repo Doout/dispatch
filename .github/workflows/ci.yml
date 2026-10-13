@@ -99,12 +99,13 @@ jobs:
       - name: Run discovered API race tests
         run: python3 scripts/test-api-shard.py --shard ${{ matrix.shard }} --count 8
       - name: Preserve API discovery, coverage and timings
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: api-race-${{ matrix.shard }}
           path: api-race-results/
           if-no-files-found: error
+          overwrite: true
   go-race:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -120,15 +121,16 @@ jobs:
       - name: Run all other discovered Go race tests
         run: python3 scripts/test-go-shard.py --shard ${{ matrix.shard }} --count 6
       - name: Preserve Go discovery, coverage and timings
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: go-race-${{ matrix.shard }}
           path: go-race-results/
           if-no-files-found: error
+          overwrite: true
   api-coverage:
     needs: [api-race, go-race]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -179,6 +181,7 @@ jobs:
           name: web-dist
           path: internal/ui/dist/
           if-no-files-found: error
+          overwrite: true
   security:
     runs-on: ubuntu-latest
     timeout-minutes: 10

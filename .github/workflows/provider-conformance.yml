@@ -8,20 +8,22 @@ on:
     paths: ['internal/provider/**', 'internal/provision/**', 'internal/store/infrastructure*', 'internal/store/migrations/**', 'cmd/dispatch-provider-*/**', 'Containerfile.provider-mock', 'examples/providers/**', 'docs/provider-api.md', 'docs/provider-packaging.md', 'scripts/test-provider-sidecar.sh', 'scripts/check-provider-fixtures.py', '.github/workflows/provider-conformance.yml', 'go.mod', 'go.sum']
   workflow_dispatch:
 
+concurrency:
+  group: provider-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - run: python3 scripts/check-provider-fixtures.py
-      - run: go test -race -p 2 ./internal/provider/... ./internal/provision ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
+      - run: go test -race -p 2 -timeout 8m ./internal/provider/... ./internal/provision ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
       - run: go vet ./internal/provider/... ./internal/provision ./cmd/dispatch-provider-mock ./cmd/dispatch-provider-conformance
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
@@ -52,7 +54,7 @@ jobs:
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'Doout/dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: write
