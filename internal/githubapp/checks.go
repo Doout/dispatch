@@ -46,13 +46,15 @@ type CheckRunUpdate struct {
 type CheckRunError struct {
 	Message         string
 	CreateUncertain bool
+	cause           error
 }
 
 func (e *CheckRunError) Error() string { return e.Message }
+func (e *CheckRunError) Unwrap() error { return e.cause }
 
 func checkRunFailure(err error, creating bool) error {
 	var response *responseError
-	if errors.As(err, &response) {
+	if errors.As(err, &response) && !response.RateLimited {
 		switch response.StatusCode {
 		case 401, 403:
 			return &CheckRunError{Message: "Grant Checks: write to the GitHub App, approve the installation permission update or reinstall it, then verify the connection. Reporting will retry."}
@@ -62,12 +64,12 @@ func checkRunFailure(err error, creating bool) error {
 			return &CheckRunError{Message: "GitHub rejected the captured check identity or commit. Inspect the resolved source commit and App installation."}
 		}
 	}
-	return &CheckRunError{Message: "GitHub check reporting is unavailable. Dispatch will retry reconciliation without changing the workflow outcome.", CreateUncertain: creating}
+	return &CheckRunError{Message: "GitHub check reporting is unavailable. Dispatch will retry reconciliation without changing the workflow outcome.", CreateUncertain: creating, cause: err}
 }
 
 func (m *Manager) checkRunRequestFailure(r core.WorkflowCheckReport, err error, creating bool) error {
 	var response *responseError
-	if errors.As(err, &response) && (response.StatusCode == 401 || response.StatusCode == 403) {
+	if errors.As(err, &response) && (response.StatusCode == 401 || response.StatusCode == 403) && !response.RateLimited {
 		// A repaired App grant needs a newly issued installation token.
 		m.Invalidate(r.GitHubAppID)
 	}

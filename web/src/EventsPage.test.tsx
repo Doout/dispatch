@@ -174,3 +174,23 @@ it("shows durable delivery retry attempts without treating them as deployment ou
   expect(screen.getByText("Repository installation lookup failed; retry scheduled.")).toBeTruthy();
   expect(screen.queryByText(/View run/)).toBeNull();
 });
+
+it("shows a scheduled retry for an outage while keeping permission failures actionable", async () => {
+ const retry = { ...check, message: "GitHub is down for maintenance.", attempts: 2, nextAttemptAt: new Date(Date.now() + 60_000).toISOString() };
+ vi.spyOn(api, "eventRules").mockResolvedValue([{ ...rule, check: retry }]);
+ vi.spyOn(api, "eventActivity").mockResolvedValue({ items: [], total: 0 });
+ page("rules");
+ expect(await screen.findByText("Retry scheduled")).toBeTruthy();
+ expect(screen.getByText("GitHub is down for maintenance.")).toBeTruthy();
+ expect(screen.getByText(/Polling retries automatically/)).toBeTruthy();
+ expect(screen.queryByText("Check failed")).toBeNull();
+});
+
+it("does not label a webhook delivery failure as a polling outage", async () => {
+ vi.spyOn(api, "eventRules").mockResolvedValue([]);
+ vi.spyOn(api, "eventActivity").mockResolvedValue({ items: [{ ...event, state: "failed", transport: "webhook", kind: "webhook_delivery", nextAttemptAt: new Date().toISOString() }], total: 1 });
+ page("activity");
+ expect(await screen.findByText("failed")).toBeTruthy();
+ expect(screen.queryByText("retrying")).toBeNull();
+ expect(screen.queryByText(/Polling retries automatically/)).toBeNull();
+});

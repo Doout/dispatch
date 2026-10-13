@@ -8,6 +8,8 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/events"
+	"github.com/doout/dispatch/internal/sourceerror"
+	"github.com/doout/dispatch/internal/workflow"
 )
 
 type eventRule struct {
@@ -43,7 +45,7 @@ func (a *API) configuredEventRules(ctx context.Context) ([]eventRule, error) {
 	bySource := map[string]core.ConfigSource{}
 	for _, source := range sources {
 		bySource[source.ID] = source
-		result = append(result, eventRule{ID: "configuration:" + source.ID, Name: source.Name, ProjectIDs: []string{source.ProjectID}, Kind: "configuration", ConnectionID: source.GitHubAppID, Repositories: []string{source.Repository}, Branch: source.Branch, Mode: source.SyncMode, Interval: source.PollIntervalSeconds, Enabled: source.Active, Error: source.LastError, CheckKeys: []string{"configuration:" + source.ID}})
+		result = append(result, eventRule{ID: "configuration:" + source.ID, Name: source.Name, ProjectIDs: []string{source.ProjectID}, Kind: "configuration", ConnectionID: source.GitHubAppID, Repositories: []string{source.Repository}, Branch: source.Branch, Mode: source.SyncMode, Interval: int(workflow.SourcePollInterval(source).Seconds()), Enabled: source.Active, Error: sourceerror.Normalize(source.LastError), CheckKeys: []string{"configuration:" + source.ID}})
 	}
 	templates, err := a.store.ListWorkflowPreviewTemplates(ctx)
 	if err != nil {
@@ -59,7 +61,7 @@ func (a *API) configuredEventRules(ctx context.Context) ([]eventRule, error) {
 			rule.CheckKeys = append(rule.CheckKeys, previewCheckKey(rule.ConnectionID, repo))
 		}
 		if template.GitSource != nil {
-			rule.Error = template.GitSource.LastError
+			rule.Error = sourceerror.Normalize(template.GitSource.LastError)
 			rule.CheckKeys = append(rule.CheckKeys, "template-sync:"+template.ID)
 		}
 		result = append(result, rule)

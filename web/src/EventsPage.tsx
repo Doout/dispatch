@@ -28,7 +28,7 @@ const transportName: Record<string, string> = {
   history: "Earlier activity",
 };
 const activityName: Record<string, string> = {
- webhook_delivery: "Webhook delivery",
+  webhook_delivery: "Webhook delivery",
   branch_scan: "Source changed",
   configuration_sync: "Configuration synced",
   poll_failed: "Polling failed",
@@ -37,10 +37,19 @@ const activityName: Record<string, string> = {
 function timeLabel(value: string) {
   return new Date(value).toLocaleString();
 }
+function retrying(item: EventActivity | undefined) {
+  return (
+    item?.transport === "poll" &&
+    item.state === "failed" &&
+    !!item.nextAttemptAt &&
+    (item.check || item.kind === "poll_failed")
+  );
+}
 function checkLabel(rule: EventRule) {
   if (!rule.enabled) return "Paused";
   if (rule.mode === "webhook") return "Waiting for webhooks";
   if (!rule.check) return "Waiting for first check";
+  if (retrying(rule.check)) return "Retry scheduled";
   if (rule.check.state === "failed") return "Check failed";
   const seconds =
     rule.intervalSeconds && rule.intervalSeconds >= 30
@@ -291,9 +300,11 @@ export function EventsListPage({
                         <td data-label="Last check">
                           <strong
                             className={
-                              rule.check?.state === "failed"
-                                ? "event-error"
-                                : ""
+                              retrying(rule.check)
+                                ? "event-warning"
+                                : rule.check?.state === "failed"
+                                  ? "event-error"
+                                  : ""
                             }
                           >
                             {checkLabel(rule)}
@@ -305,10 +316,25 @@ export function EventsListPage({
                                 {timeLabel(rule.check.createdAt)}
                               </small>
                               {rule.check.state === "failed" && (
-                                <small className="event-error">
+                                <small
+                                  className={
+                                    retrying(rule.check)
+                                      ? "event-warning"
+                                      : "event-error"
+                                  }
+                                >
                                   {rule.check.message}
                                 </small>
                               )}
+                              {rule.enabled &&
+                                rule.mode !== "webhook" &&
+                                retrying(rule.check) && (
+                                  <small>
+                                    Polling retries automatically. Next check
+                                    after {timeLabel(rule.check.nextAttemptAt!)}
+                                    .
+                                  </small>
+                                )}
                             </>
                           )}
                         </td>
@@ -436,7 +462,11 @@ function ActivityRow({
     <tr>
       <td data-label="Event">
         <strong>{item.name}</strong>
-        <small>{activityName[item.kind] ?? item.kind.replaceAll("_", " ")}</small>
+        <small>
+          {retrying(item)
+            ? "Polling interrupted"
+            : (activityName[item.kind] ?? item.kind.replaceAll("_", " "))}
+        </small>
       </td>
       <td data-label="Source">
         <span>
@@ -450,9 +480,26 @@ function ActivityRow({
         {item.commitSha && <code>{item.commitSha.slice(0, 12)}</code>}
       </td>
       <td data-label="Outcome">
-        <StatusLabel state={item.state} />
-        {item.deliveryId && <small>Attempt {item.attempts ?? 0}{item.nextAttemptAt ? ` · Retry ${timeLabel(item.nextAttemptAt)}` : ""}</small>}
-        {item.message && <small className="event-error">{item.message}</small>}
+        <StatusLabel state={retrying(item) ? "retrying" : item.state} />
+        {item.deliveryId && (
+          <small>
+            Attempt {item.attempts ?? 0}
+            {item.nextAttemptAt
+              ? ` · Retry ${timeLabel(item.nextAttemptAt)}`
+              : ""}
+          </small>
+        )}
+        {item.message && (
+          <small className={retrying(item) ? "event-warning" : "event-error"}>
+            {item.message}
+          </small>
+        )}
+        {retrying(item) && (
+          <small>
+            Polling retries automatically. Next check after{" "}
+            {timeLabel(item.nextAttemptAt!)}.
+          </small>
+        )}
       </td>
       <td data-label="Received">{timeLabel(item.createdAt)}</td>
       <td data-label="Run">

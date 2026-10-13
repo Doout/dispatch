@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/sourceerror"
 )
 
 // CheckRepository uses a fresh installation inventory. Cached credentials do not
@@ -21,8 +22,13 @@ func (m *Manager) CheckRepository(ctx context.Context, appID, repository string,
 	items, err := m.ListRepositories(ctx, appID)
 	if err != nil {
 		status.State, status.Detail, status.Recovery = "unavailable", "Repository access could not be checked.", "Check the GitHub App connection and retry. The configured source has not changed."
+		if failure := sourceerror.Describe(err); failure.Transient {
+			status.RetryAt = failure.RetryAt
+			status.Transient = true
+			status.Detail, status.Recovery = failure.Message, "Polling will retry automatically. The configured source has not changed."
+		}
 		var response *responseError
-		if errors.As(err, &response) && (response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404) {
+		if errors.As(err, &response) && (response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404) && !response.RateLimited {
 			status.State, status.Detail, status.Recovery = "inaccessible", "The GitHub App could not list its repositories.", "Check installation access and App permissions, then retry."
 		}
 		return status, nil
@@ -75,6 +81,9 @@ func (m *Manager) CheckRepository(ctx context.Context, appID, repository string,
 func RequireAccessible(status core.RepositoryStatus) error {
 	if status.State == "accessible" {
 		return nil
+	}
+	if status.State == "unavailable" && status.Transient {
+		return &sourceerror.TemporaryError{Message: status.Detail, RetryAt: status.RetryAt}
 	}
 	return fmt.Errorf("%s %s", status.Detail, status.Recovery)
 }

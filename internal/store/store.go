@@ -41,6 +41,7 @@ type Store interface {
 	StorageStore
 	SaveEventActivity(context.Context, string, core.EventActivity) error
 	SavePollCheck(context.Context, string, core.EventActivity) error
+	GetPollCheck(context.Context, string, string) (core.EventActivity, error)
 	CountEventActivity(context.Context, core.EventActivitySearch) (int, error)
 	SearchEventActivity(context.Context, core.EventActivitySearch) ([]core.EventActivity, error)
 

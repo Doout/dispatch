@@ -17,6 +17,7 @@ import (
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/secretvalue"
+	"github.com/doout/dispatch/internal/sourceerror"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workflowrunner"
 	"github.com/oklog/ulid/v2"
@@ -283,12 +284,27 @@ func validateResourceSet(resources []parsedResource) error {
 }
 
 func (s *Service) sourceError(ctx context.Context, source core.ConfigSource, cause error) (core.ConfigSource, error) {
-	now := time.Now().UTC()
-	source.State, source.LastError, source.UpdatedAt = "invalid", cause.Error(), now
+	if errors.Is(cause, context.Canceled) {
+		return source, cause
+	}
+	source = sourceFailure(source, cause, time.Now().UTC())
 	if err := s.Store.UpdateConfigSource(ctx, source); err != nil {
 		return source, errors.Join(cause, err)
 	}
 	return source, cause
+}
+
+func sourceFailure(source core.ConfigSource, cause error, now time.Time) core.ConfigSource {
+	failure := sourceerror.Describe(cause)
+	if failure.Transient {
+		if source.State != "invalid" || source.LastError == "" || sourceerror.Describe(errors.New(source.LastError)).Transient {
+			source.State, source.LastError = "degraded", failure.Message
+		}
+	} else {
+		source.State, source.LastError = "invalid", failure.Message
+	}
+	source.UpdatedAt = now
+	return source
 }
 
 func ParsePush(contents []byte) (Push, error) {
@@ -540,13 +556,22 @@ func (s *Service) PollOnce(ctx context.Context) error {
 }
 
 func (s *Service) pollSource(ctx context.Context, source core.ConfigSource, now time.Time) (result error) {
+	check, err := s.Store.GetPollCheck(ctx, source.ProjectID, "check:configuration:"+source.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if check.NextAttemptAt != nil && now.Before(*check.NextAttemptAt) && !source.UpdatedAt.After(check.CreatedAt) {
+		return nil
+	}
 	defer func() {
 		item := core.EventActivity{ID: ulid.Make().String(), ProjectID: source.ProjectID, RuleID: "configuration:" + source.ID,
 			Name: source.Name, Transport: "poll", Kind: "repository_check", Repository: source.Repository, Branch: source.Branch,
 			CreatedAt: time.Now().UTC(), State: "processed", Check: true}
+		if errors.Is(result, context.Canceled) {
+			return
+		}
 		if result != nil {
-			item.State = "failed"
-			item.Message = result.Error()
+			sourceerror.SetPollFailure(&item, result, SourcePollInterval(source))
 		}
 		result = errors.Join(result, s.Store.SavePollCheck(ctx, "check:"+item.RuleID, item))
 	}()
@@ -558,7 +583,7 @@ func (s *Service) pollSource(ctx context.Context, source core.ConfigSource, now 
 	head, err := s.repositoryHead(ctx, source, source.Repository, source.Branch)
 	if err != nil {
 		_, recordErr := s.sourceError(ctx, source, err)
-		return errors.Join(err, recordErr)
+		return recordErr
 	}
 	// A webhook setup warning does not make an unchanged polling source invalid.
 	// Retry configuration errors, but do not reimport on every healthy fallback scan.
@@ -624,12 +649,16 @@ func (s *Service) pollSource(ctx context.Context, source core.ConfigSource, now 
 	return joined
 }
 
-func pollDue(source core.ConfigSource, now time.Time) bool {
+func SourcePollInterval(source core.ConfigSource) time.Duration {
 	interval := source.PollIntervalSeconds
 	if interval < 30 {
 		interval = defaultPollInterval
 	}
-	return source.LastPolledAt == nil || now.Sub(*source.LastPolledAt) >= time.Duration(interval)*time.Second
+	return time.Duration(interval) * time.Second
+}
+
+func pollDue(source core.ConfigSource, now time.Time) bool {
+	return source.LastPolledAt == nil || now.Sub(*source.LastPolledAt) >= SourcePollInterval(source)
 }
 
 func (s *Service) snapshotChanged(ctx context.Context, resource core.WorkflowResource, snapshot map[string]core.WorkflowSourceRevision) bool {

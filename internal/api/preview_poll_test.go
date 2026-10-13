@@ -271,7 +271,22 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 	if err != nil || len(checks) != 1 || checks[0].State != "failed" || checks[0].Message == "" {
 		t.Fatalf("failed poll not visible: %+v %v", checks, err)
 	}
+	if checks[0].NextAttemptAt == nil {
+		t.Fatal("temporary outage did not schedule a retry")
+	}
 	failLookup.Store(false)
+	if err := a.PollPreviewsOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	delayed, err := data.GetPollCheck(ctx, "project", previewCheckKey("", "acme/service"))
+	if err != nil || delayed.State != "failed" || delayed.Attempts != 1 {
+		t.Fatalf("poll bypassed persisted backoff: %+v %v", delayed, err)
+	}
+	at := time.Now().Add(-time.Second)
+	delayed.NextAttemptAt = &at
+	if err := data.SaveEventActivity(ctx, previewCheckKey("", "acme/service"), delayed); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.PollPreviewsOnce(ctx); err != nil {
 		t.Fatal(err)
 	}

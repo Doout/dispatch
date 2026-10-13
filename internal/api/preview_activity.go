@@ -15,6 +15,8 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/events"
 	"github.com/doout/dispatch/internal/groups"
+	"github.com/doout/dispatch/internal/sourceerror"
+	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -120,14 +122,27 @@ func (a *API) pollPreviewTarget(ctx context.Context, target *previewPollTarget) 
 			}
 		}
 	}
+	now := time.Now().UTC()
+	for projectID := range projects {
+		check, err := a.store.GetPollCheck(ctx, projectID, previewCheckKey(target.connectionID, target.repository))
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		if check.NextAttemptAt != nil && now.Before(*check.NextAttemptAt) {
+			return nil
+		}
+	}
 	target.transport = "poll"
 	defer func() {
+		if errors.Is(result, context.Canceled) {
+			return
+		}
+
 		for projectID := range projects {
 			key := previewCheckKey(target.connectionID, target.repository)
 			item := core.EventActivity{ID: ulid.Make().String(), ProjectID: projectID, RuleID: key, Name: target.repository, Transport: "poll", Kind: "preview_check", Repository: target.repository, State: "processed", CreatedAt: time.Now().UTC(), Check: true}
 			if result != nil {
-				item.State = "failed"
-				item.Message = result.Error()
+				sourceerror.SetPollFailure(&item, result, 30*time.Second)
 			}
 			result = errors.Join(result, a.store.SavePollCheck(ctx, key, item))
 		}

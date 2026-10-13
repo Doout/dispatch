@@ -302,3 +302,18 @@ For actual disaster recovery:
 
 An actual restore is an operator action. The verification API only creates
 isolated temporary restores.
+
+### Repository polling outages
+
+Repository polling keeps the last valid application configuration during timeouts,
+GitHub maintenance, server errors, and request limits. These failures show a retry
+schedule in Events. Missing credentials, denied access, and invalid configuration
+still require a correction.
+
+Retries start at the normal polling interval and double after repeated temporary
+failures, up to 15 minutes. Longer configured intervals and GitHub's retry deadlines
+are honored. The saved check carries the retry deadline across restarts; cursors do
+not advance on an incomplete scan. Recovery clears the delay and adds a recovery
+event. Repeated failures with the same message update the current check without
+adding duplicate history. HTML error pages never enter new polling messages, and
+older polling messages are summarized when read.

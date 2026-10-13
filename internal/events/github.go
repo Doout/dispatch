@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/doout/dispatch/internal/sourceerror"
 	"net/http"
 	"net/url"
 	"strings"
@@ -70,11 +70,11 @@ func (n GitHubNotifier) UpdateComment(ctx context.Context, repository string, nu
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		contents, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
-		if response.StatusCode == http.StatusForbidden {
-			return "", fmt.Errorf("%w: %s", ErrCommentForbidden, strings.TrimSpace(string(contents)))
+		failure := sourceerror.FromResponse(response)
+		if response.StatusCode == http.StatusForbidden && !failure.RateLimited {
+			return "", fmt.Errorf("%w: %w", ErrCommentForbidden, failure)
 		}
-		return "", fmt.Errorf("preview comment update returned %s: %s", response.Status, strings.TrimSpace(string(contents)))
+		return "", fmt.Errorf("preview comment update: %w", failure)
 	}
 	var result struct {
 		ID json.Number `json:"id"`
@@ -157,7 +157,7 @@ func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository strin
 		if response.StatusCode == http.StatusNotFound {
 			return SourceRevision{}, ErrPullRequestNotFound
 		}
-		return SourceRevision{}, fmt.Errorf("pull request lookup returned %s", response.Status)
+		return SourceRevision{}, sourceerror.FromResponse(response)
 	}
 	var payload struct {
 		State string `json:"state"`
@@ -218,7 +218,7 @@ func (r GitHubResolver) ResolveBranch(ctx context.Context, repository, branch st
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return SourceRevision{}, fmt.Errorf("branch lookup returned %s", response.Status)
+		return SourceRevision{}, sourceerror.FromResponse(response)
 	}
 	var payload struct {
 		SHA string `json:"sha"`
