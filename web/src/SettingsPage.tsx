@@ -14,21 +14,30 @@ import {
 import { uiFeatures, type UIFeatureKey } from "./featureFlags";
 import { InstanceConnectionSettings } from "./InstanceConnectionSettings";
 import { useHostedTenant } from "./hosted/context";
+import type { SettingsSection } from "./routes";
 
 type Props = {
   overview: Overview;
   onChanged?: () => void | Promise<void>;
   interfaceSettings?: InterfaceSettingsProps;
+  section?: SettingsSection;
+  onSectionChange?: (section: SettingsSection) => void;
+  navigationInShell?: boolean;
 };
-
-type SettingsSection = "interface" | "connection" | "features";
 
 export function SettingsPage(props: Props) {
   // Keep account-specific form state out of the next user's settings.
   return <SettingsContent key={props.overview.identity?.id} {...props} />;
 }
 
-function SettingsContent({ overview, onChanged, interfaceSettings }: Props) {
+function SettingsContent({
+  overview,
+  onChanged,
+  interfaceSettings,
+  section: routeSection,
+  onSectionChange,
+  navigationInShell = false,
+}: Props) {
   const owner = overview.identity?.systemRole === "owner";
   const hosted = useHostedTenant();
   const id = useId();
@@ -45,20 +54,30 @@ function SettingsContent({ overview, onChanged, interfaceSettings }: Props) {
       : []),
     ...(owner ? [{ key: "features" as const, label: "Features" }] : []),
   ];
-  const selected = tabs.find((tab) => tab.key === section)?.key ?? tabs[0]?.key;
+  const selected =
+    tabs.find((tab) => tab.key === (routeSection ?? section))?.key ??
+    tabs[0]?.key;
+  useEffect(() => {
+    if (selected === "connection") setConnectionVisited(true);
+  }, [selected]);
   function select(next: SettingsSection) {
-    setSection(next);
+    if (onSectionChange) onSectionChange(next);
+    else setSection(next);
     if (next === "connection") setConnectionVisited(true);
   }
   return (
-    <div className="page-layout settings-page">
-      <header className="page-header settings-header">
-        <div>
-          <h1>Settings</h1>
-          <p>Interface preferences and installation settings.</p>
-        </div>
-      </header>
-      {tabs.length > 0 && (
+    <div
+      className={`page-layout settings-page${navigationInShell ? " settings-page-integrated" : ""}`}
+    >
+      {!navigationInShell && (
+        <header className="page-header settings-header">
+          <div>
+            <h1>Settings</h1>
+            <p>Interface preferences and installation settings.</p>
+          </div>
+        </header>
+      )}
+      {!navigationInShell && tabs.length > 0 && (
         <div
           className="settings-tabs"
           role="tablist"
@@ -97,8 +116,11 @@ function SettingsContent({ overview, onChanged, interfaceSettings }: Props) {
         <div
           className="settings-panel"
           id={`${id}-interface-panel`}
-          role="tabpanel"
-          aria-labelledby={`${id}-interface-tab`}
+          role={navigationInShell ? "region" : "tabpanel"}
+          aria-label={navigationInShell ? "Interface" : undefined}
+          aria-labelledby={
+            navigationInShell ? undefined : `${id}-interface-tab`
+          }
           hidden={selected !== "interface"}
           tabIndex={0}
         >
@@ -109,8 +131,11 @@ function SettingsContent({ overview, onChanged, interfaceSettings }: Props) {
         <div
           className="settings-panel"
           id={`${id}-connection-panel`}
-          role="tabpanel"
-          aria-labelledby={`${id}-connection-tab`}
+          role={navigationInShell ? "region" : "tabpanel"}
+          aria-label={navigationInShell ? "Doodship connection" : undefined}
+          aria-labelledby={
+            navigationInShell ? undefined : `${id}-connection-tab`
+          }
           hidden={selected !== "connection"}
           tabIndex={0}
         >
@@ -126,8 +151,9 @@ function SettingsContent({ overview, onChanged, interfaceSettings }: Props) {
         <div
           className="settings-panel"
           id={`${id}-features-panel`}
-          role="tabpanel"
-          aria-labelledby={`${id}-features-tab`}
+          role={navigationInShell ? "region" : "tabpanel"}
+          aria-label={navigationInShell ? "Features" : undefined}
+          aria-labelledby={navigationInShell ? undefined : `${id}-features-tab`}
           hidden={selected !== "features"}
           tabIndex={0}
         >

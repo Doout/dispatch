@@ -196,3 +196,46 @@ it("applies a controller feature disable from the overview stream without reload
   expect(primary().getByRole("link", { name: "Automation" }).getAttribute("href")).toBe("/events");
   expect(client.request).not.toHaveBeenCalled();
 });
+
+it("uses the shell's Settings links without nesting another settings page", async () => {
+  const user = userEvent.setup();
+  path("/settings");
+  vi.mocked(client.api.overview).mockResolvedValue(overview("settings-owner", true));
+  localStorage.setItem(interfacePreferenceKey("settings-owner"), "new");
+  vi.spyOn(client.api, "access").mockResolvedValue({ users: [] } as unknown as Awaited<ReturnType<typeof client.api.access>>);
+  vi.mocked(client.request).mockImplementation(async <T,>(url: string) => (url === "/api/v1/instance-connection"
+    ? { configured: false, connected: false, controlPlaneURL: "", directURL: "", remoteAccess: false, userMappings: [] }
+    : { operationsEnabled: false }) as T);
+  render(<DispatchApp />);
+  const navigation = within(await screen.findByRole("navigation", { name: "Settings pages" }));
+  expect(screen.queryByRole("tablist", { name: "Settings sections" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Settings" })).toBeNull();
+  expect(navigation.getByRole("link", { name: "Interface" }).getAttribute("aria-current")).toBe("page");
+  expect(vi.mocked(client.request).mock.calls.some(([url]) => url === "/api/v1/instance-connection")).toBe(false);
+
+  await user.click(navigation.getByRole("link", { name: "Doodship connection" }));
+  expect(window.location.pathname).toBe("/settings/connection");
+  expect(navigation.getByRole("link", { name: "Doodship connection" }).getAttribute("aria-current")).toBe("page");
+  expect(navigation.getByRole("link", { name: "Interface" }).getAttribute("aria-current")).toBeNull();
+  expect(screen.getAllByRole("heading", { name: "Doodship connection" })).toHaveLength(1);
+  await user.type(await screen.findByLabelText("Instance address"), "https://private.example.test");
+  await user.click(navigation.getByRole("link", { name: "Features" }));
+  expect(window.location.pathname).toBe("/settings/features");
+  expect(screen.getByRole("switch", { name: "Operations" })).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "Instance address" })).toBeNull();
+  act(() => { path("/settings/connection"); window.dispatchEvent(new PopStateEvent("popstate")); });
+  expect((screen.getByLabelText("Instance address") as HTMLInputElement).value).toBe("https://private.example.test");
+  expect(vi.mocked(client.request).mock.calls.filter(([url]) => url === "/api/v1/instance-connection")).toHaveLength(1);
+  expect(screen.queryByRole("tablist", { name: "Settings sections" })).toBeNull();
+});
+
+it.each(["connection", "features"])("keeps owner-only Settings section %s unavailable to members", async section => {
+  path(`/settings/${section}`);
+  localStorage.setItem(interfacePreferenceKey("interface-member"), "new");
+  render(<DispatchApp />);
+  const navigation = within(await screen.findByRole("navigation", { name: "Settings pages" }));
+  expect(navigation.queryByRole("link", { name: "Doodship connection" })).toBeNull();
+  expect(navigation.queryByRole("link", { name: "Features" })).toBeNull();
+  expect(screen.getByRole("switch", { name: "New interface" })).toBeTruthy();
+  expect(client.request).not.toHaveBeenCalled();
+});

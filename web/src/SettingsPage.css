@@ -483,6 +483,66 @@
   }
 }
 
-.settings-field { display: grid; gap: 8px; min-width: 0; }
+.settings-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
 
-.settings-features > .settings-feedback { margin: 0 24px 24px; }
+.settings-features > .settings-feedback {
+  margin: 0 24px 24px;
+}
+
+/* The app shell owns navigation; settings content uses the same page grid. */
+.interface-shell .page-layout.settings-page-integrated {
+  max-width: 1640px;
+}
+.settings-page-integrated .settings-features {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.settings-page-integrated .settings-features > header {
+  padding: 0 0 22px;
+}
+.settings-page-integrated .settings-features > header h2 {
+  font-size: 22px;
+}
+.settings-page-integrated .settings-experimental > header h2 {
+  font-size: 16px;
+}
+.settings-page-integrated .settings-feature-row {
+  padding: 24px 0;
+}
+.settings-page-integrated .instance-connection-status {
+  padding: 18px 0;
+  background: transparent;
+}
+.settings-page-integrated .instance-connection-section {
+  grid-template-columns: minmax(180px, 280px) minmax(0, 760px);
+  padding: 28px 0;
+}
+.settings-page-integrated
+  .instance-connection-body
+  fieldset
+  > .instance-connection-actions {
+  padding: 20px 0;
+}
+.settings-page-integrated .settings-feedback,
+.settings-page-integrated .instance-connection-body > .settings-feedback {
+  margin-left: 0;
+  margin-right: 0;
+}
+.settings-page-integrated .instance-connection-body > p:not(.settings-feedback),
+.settings-page-integrated .instance-connection-confirm {
+  padding: 24px 0;
+}
+.settings-page-integrated .instance-connection-body form > .settings-error {
+  padding-left: 0;
+  padding-right: 0;
+}
+@media (max-width: 700px) {
+  .settings-page-integrated .instance-connection-section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

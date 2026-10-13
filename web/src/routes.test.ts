@@ -102,3 +102,12 @@ describe("application routes", () => {
     });
   });
 });
+
+it("round trips Settings sections and falls back for unknown sections", () => {
+  for (const settingsSection of ["connection", "features"] as const) {
+    const route = { view: "settings" as const, settingsSection };
+    expect(readRoute({ pathname: routePath(route), search: "" })).toEqual(route);
+  }
+  expect(routePath({ view: "settings", settingsSection: "interface" })).toBe("/settings");
+  expect(readRoute({ pathname: "/settings/unknown", search: "" })).toEqual({ view: "settings" });
+});
