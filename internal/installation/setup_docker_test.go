@@ -149,8 +149,16 @@ func TestConnectedDockerSetup(t *testing.T) {
 	if version, err := m.Run(ctx, binary, "version"); err != nil || !strings.Contains(version, "Dispatch") {
 		t.Fatal("installed binary cannot run", err)
 	}
-	if _, err = m.Run(ctx, binary, "status"); err != nil {
-		t.Fatal("installed CLI did not find home configuration", err)
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		_, err = m.Run(ctx, binary, "status")
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "another installation command is running") || time.Now().After(deadline) {
+			t.Fatal("installed CLI did not find home configuration", err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	// Read the controller's private grant through a helper, with no credentials in logs.
 	ownerRaw, err := os.ReadFile(m.path("local-owner.json"))
