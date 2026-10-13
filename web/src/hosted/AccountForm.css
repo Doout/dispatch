@@ -262,3 +262,84 @@
   border: 1px solid var(--hosted-rule);
   border-radius: 8px;
 }
+
+.account-signin.account-managed-signin,
+.hosted-auth-page.account-managed-signin {
+  display: flex;
+  flex-direction: column;
+  background: var(--hosted-bg);
+}
+.account-managed-signin .account-signin-header {
+  flex-shrink: 0;
+  min-height: 64px;
+  padding: 20px 28px;
+  justify-content: flex-end;
+}
+.account-managed-signin .account-signin-form {
+  width: min(420px, calc(100% - 40px));
+  margin: clamp(40px, 9dvh, 96px) auto 64px;
+  padding: 0;
+}
+.account-signin-logo {
+  display: block;
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 24px;
+  object-fit: contain;
+}
+.account-managed-signin .account-signin-form h1 {
+  margin: 0 0 28px;
+  font-size: 28px;
+  text-align: center;
+}
+.account-signin-card {
+  padding: 36px;
+  background: var(--hosted-paper);
+  border: 1px solid var(--hosted-rule);
+  border-radius: 16px;
+}
+.account-signin-card .account-signin-description {
+  margin: 0 0 24px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.account-signin-card .account-signin-divider {
+  margin: 24px 0;
+}
+.account-signin-card .account-social-buttons {
+  gap: 12px;
+}
+.account-signin-card .account-social-buttons .account-signin-divider {
+  margin: 24px 0 12px;
+}
+.account-signin-card .secondary-button {
+  min-height: 48px;
+  border: 1px solid var(--hosted-rule-strong);
+  border-radius: 8px;
+  color: var(--hosted-ink);
+  background: var(--hosted-paper);
+  font-size: 14px;
+}
+.account-signin-card .account-waitlist {
+  margin-top: 24px;
+  line-height: 1.65;
+}
+@media (max-width: 480px) {
+  .account-managed-signin .account-signin-header {
+    min-height: 56px;
+    padding: 16px 20px;
+  }
+  .account-managed-signin .account-signin-form {
+    margin-top: 32px;
+  }
+  .account-signin-card {
+    padding: 24px;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  .account-signin-logo {
+    padding: 6px;
+    border-radius: 12px;
+    background: #fff;
+  }
+}

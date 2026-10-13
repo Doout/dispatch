@@ -38,11 +38,13 @@ export function ManagedSignIn({
   titleId,
   onDone,
   onInteraction,
+  externalError,
 }: {
   configuration: HostedPlatform;
   titleId: string;
   onDone: () => void;
   onInteraction?: () => void;
+  externalError?: string;
 }) {
   const [query] = useState(() => new URLSearchParams(window.location.search));
   const [resetToken] = useState(() =>
@@ -241,7 +243,7 @@ export function ManagedSignIn({
       ? "Connect your account"
       : invitation
         ? "You're invited to Doodship"
-        : "Sign in to Doodship",
+        : "Sign in",
     "email-code": "Check your email",
     "verify-email": "Verify your email",
     totp: "Two-step verification",
@@ -255,260 +257,263 @@ export function ManagedSignIn({
   return (
     <>
       <h1 id={titleId}>{titles[step]}</h1>
-      {codeStep && (
-        <p className="account-signin-description">
-          {step === "totp"
-            ? "Enter the code from your authenticator app."
-            : `If this email can sign in, a code has been sent to ${email}.`}
-        </p>
-      )}
-      {step === "waitlist" && (
-        <p className="account-signin-description">
-          Doodship is open by invitation. Request yours here.
-        </p>
-      )}
-      {step === "link-account" && (
-        <p className="account-signin-description">
-          {previewingProduction
-            ? "Connect your account on production, then return here to sign in."
-            : "Email verified. Enter your previous Doodship password once to keep your instances and access."}
-        </p>
-      )}
-      {linking && step === "login" && (
-        <p className="account-signin-description">
-          Verify your email to keep your instances and access.
-        </p>
-      )}
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
-      {notice && (
-        <p className="form-success" role="status">
-          {notice}
-        </p>
-      )}
-      {step === "login" &&
-        !linking &&
-        (methods.includes("github") || methods.includes("google")) && (
-          <div className="account-social-buttons">
-            {methods.includes("github") && (
-              <button
-                className="secondary-button"
-                disabled={busy || !invitationReady}
-                onClick={() => void social("github")}
-              >
-                <GithubLogo size={19} />
-                Continue with GitHub
-              </button>
-            )}
-            {methods.includes("google") && (
-              <button
-                className="secondary-button"
-                disabled={busy || !invitationReady}
-                onClick={() => void social("google")}
-              >
-                <GoogleLogo size={19} />
-                Continue with Google
-              </button>
-            )}
-            <div className="account-signin-divider">
-              <span>or use email</span>
-            </div>
-          </div>
+      <div className="account-signin-card">
+        {codeStep && (
+          <p className="account-signin-description">
+            {step === "totp"
+              ? "Enter the code from your authenticator app."
+              : `If this email can sign in, a code has been sent to ${email}.`}
+          </p>
         )}
-      {step === "link-account" && previewingProduction ? (
-        <a
-          className="primary-button"
-          href={`${configuration.dataOrigin}/?view=login`}
-        >
-          Connect account on production
-        </a>
-      ) : step === "organization" ? (
-        <div className="account-organization-buttons" aria-busy={busy}>
-          {progress?.organizations?.map((org) => (
-            <button
-              key={org.id}
-              className="secondary-button"
-              disabled={busy}
-              onClick={(event) => void submit(event, org.id)}
-            >
-              {org.name}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <form
-          className="hosted-form"
-          aria-busy={busy}
-          onSubmit={(event) => void submit(event)}
-        >
-          {(["login", "waitlist", "forgot-password"] as Step[]).includes(
-            step,
-          ) && (
-            <label>
-              Email
-              <input
-                type="email"
-                autoComplete="username"
-                autoFocus
-                value={email}
-                readOnly={!!invitation || linking}
-                onChange={(event) => setEmail(event.target.value)}
-                required
-                maxLength={254}
+        {step === "waitlist" && (
+          <p className="account-signin-description">
+            Doodship is open by invitation. Request yours here.
+          </p>
+        )}
+        {step === "link-account" && (
+          <p className="account-signin-description">
+            {previewingProduction
+              ? "Connect your account on production, then return here to sign in."
+              : "Email verified. Enter your previous Doodship password once to keep your instances and access."}
+          </p>
+        )}
+        {linking && step === "login" && (
+          <p className="account-signin-description">
+            Verify your email to keep your instances and access.
+          </p>
+        )}
+        {(error || externalError) && (
+          <p className="form-error" role="alert">
+            {error || externalError}
+          </p>
+        )}
+        {notice && (
+          <p className="form-success" role="status">
+            {notice}
+          </p>
+        )}
+        {step === "link-account" && previewingProduction ? (
+          <a
+            className="primary-button"
+            href={`${configuration.dataOrigin}/?view=login`}
+          >
+            Connect account on production
+          </a>
+        ) : step === "organization" ? (
+          <div className="account-organization-buttons" aria-busy={busy}>
+            {progress?.organizations?.map((org) => (
+              <button
+                key={org.id}
+                className="secondary-button"
+                disabled={busy}
+                onClick={(event) => void submit(event, org.id)}
+              >
+                {org.name}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <form
+            className="hosted-form"
+            aria-busy={busy}
+            onSubmit={(event) => void submit(event)}
+          >
+            {(["login", "waitlist", "forgot-password"] as Step[]).includes(
+              step,
+            ) && (
+              <label>
+                Email
+                <input
+                  type="email"
+                  autoComplete="username"
+                  placeholder="Your email address"
+                  autoFocus
+                  value={email}
+                  readOnly={!!invitation || linking}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                  maxLength={254}
+                />
+              </label>
+            )}
+            {step === "login" && method === "password" && (
+              <PasswordField
+                label="Password"
+                value={password}
+                onChange={setPassword}
               />
-            </label>
+            )}
+            {step === "link-account" && (
+              <PasswordField
+                label="Previous Doodship password"
+                value={password}
+                onChange={setPassword}
+              />
+            )}
+            {step === "login" &&
+              method === "password" &&
+              !previewingProduction && (
+                <button
+                  type="button"
+                  className="account-signin-switch"
+                  disabled={busy}
+                  onClick={() => changeStep("forgot-password")}
+                >
+                  Forgot password?
+                </button>
+              )}
+            {codeStep && (
+              <>
+                {progress?.secret && (
+                  <div className="account-mfa-setup">
+                    <p>
+                      Add this setup key to your authenticator app, then enter
+                      its code.
+                    </p>
+                    <code>{progress.secret}</code>
+                  </div>
+                )}
+                <label>
+                  {step === "totp" ? "Authenticator code" : "Email code"}
+                  <input
+                    autoFocus
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    value={code}
+                    onChange={(event) =>
+                      setCode(event.target.value.replace(/\D/g, ""))
+                    }
+                    required
+                  />
+                </label>
+              </>
+            )}
+            {step === "reset-password" && (
+              <>
+                <PasswordField
+                  label="New password"
+                  newPassword
+                  value={password}
+                  onChange={setPassword}
+                />
+                <PasswordField
+                  label="Confirm password"
+                  newPassword
+                  value={confirmation}
+                  onChange={setConfirmation}
+                />
+              </>
+            )}
+            <button
+              className="primary-button"
+              disabled={busy || (step === "login" && !invitationReady)}
+            >
+              {busy
+                ? "Please wait..."
+                : step === "login"
+                  ? method === "email-code"
+                    ? "Continue with email"
+                    : "Sign in"
+                  : step === "waitlist"
+                    ? "Request invitation"
+                    : step === "forgot-password"
+                      ? "Send reset link"
+                      : step === "reset-password"
+                        ? "Save password"
+                        : step === "link-account"
+                          ? "Connect account"
+                          : "Verify code"}
+            </button>
+          </form>
+        )}
+        {step === "login" &&
+          !linking &&
+          (methods.includes("github") || methods.includes("google")) && (
+            <div className="account-social-buttons">
+              <div className="account-signin-divider">
+                <span>OR</span>
+              </div>
+              {methods.includes("github") && (
+                <button
+                  className="secondary-button"
+                  disabled={busy || !invitationReady}
+                  onClick={() => void social("github")}
+                >
+                  <GithubLogo size={19} />
+                  Continue with GitHub
+                </button>
+              )}
+              {methods.includes("google") && (
+                <button
+                  className="secondary-button"
+                  disabled={busy || !invitationReady}
+                  onClick={() => void social("google")}
+                >
+                  <GoogleLogo size={19} />
+                  Continue with Google
+                </button>
+              )}
+            </div>
           )}
-          {step === "login" && method === "password" && (
-            <PasswordField
-              label="Password"
-              value={password}
-              onChange={setPassword}
-            />
+        {step === "login" &&
+          methods.includes("email-code") &&
+          methods.includes("password") && (
+            <button
+              type="button"
+              className="account-signin-switch account-method-switch"
+              disabled={busy}
+              onClick={() => {
+                setMethod(method === "email-code" ? "password" : "email-code");
+                setPassword("");
+                setError("");
+              }}
+            >
+              {method === "email-code" ? "Use a password" : "Use an email code"}
+            </button>
           )}
-          {step === "link-account" && (
-            <PasswordField
-              label="Previous Doodship password"
-              value={password}
-              onChange={setPassword}
-            />
-          )}
-          {step === "login" &&
-            method === "password" &&
-            !previewingProduction && (
+        {step === "login" && methods.includes("sso") && !linking && (
+          <button
+            type="button"
+            className="account-signin-switch account-method-switch"
+            disabled={busy || !email}
+            onClick={() => void social("sso")}
+          >
+            Sign in with SSO
+          </button>
+        )}
+        {step === "login" &&
+          configuration.waitlistEnabled &&
+          !previewingProduction &&
+          !invitation &&
+          !linking && (
+            <p className="account-waitlist">
+              Access is by invitation.{" "}
               <button
                 type="button"
                 className="account-signin-switch"
                 disabled={busy}
-                onClick={() => changeStep("forgot-password")}
+                onClick={() => changeStep("waitlist")}
               >
-                Forgot password?
+                Join waitlist
               </button>
-            )}
-          {codeStep && (
-            <>
-              {progress?.secret && (
-                <div className="account-mfa-setup">
-                  <p>
-                    Add this setup key to your authenticator app, then enter its
-                    code.
-                  </p>
-                  <code>{progress.secret}</code>
-                </div>
-              )}
-              <label>
-                {step === "totp" ? "Authenticator code" : "Email code"}
-                <input
-                  autoFocus
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
-                  value={code}
-                  onChange={(event) =>
-                    setCode(event.target.value.replace(/\D/g, ""))
-                  }
-                  required
-                />
-              </label>
-            </>
+            </p>
           )}
-          {step === "reset-password" && (
-            <>
-              <PasswordField
-                label="New password"
-                newPassword
-                value={password}
-                onChange={setPassword}
-              />
-              <PasswordField
-                label="Confirm password"
-                newPassword
-                value={confirmation}
-                onChange={setConfirmation}
-              />
-            </>
-          )}
-          <button
-            className="primary-button"
-            disabled={busy || (step === "login" && !invitationReady)}
-          >
-            {busy
-              ? "Please wait..."
-              : step === "login"
-                ? method === "email-code"
-                  ? "Send sign-in code"
-                  : "Sign in"
-                : step === "waitlist"
-                  ? "Request invitation"
-                  : step === "forgot-password"
-                    ? "Send reset link"
-                    : step === "reset-password"
-                      ? "Save password"
-                      : step === "link-account"
-                        ? "Connect account"
-                        : "Verify code"}
-          </button>
-        </form>
-      )}
-      {step === "login" &&
-        methods.includes("email-code") &&
-        methods.includes("password") && (
+        {step !== "login" && (
           <button
             type="button"
             className="account-signin-switch account-method-switch"
             disabled={busy}
-            onClick={() => {
-              setMethod(method === "email-code" ? "password" : "email-code");
-              setPassword("");
-              setError("");
-            }}
+            onClick={() => changeStep("login")}
           >
-            {method === "email-code" ? "Use a password" : "Use an email code"}
+            {codeStep || step === "organization"
+              ? "Start sign-in again"
+              : "Back to sign in"}
           </button>
         )}
-      {step === "login" && methods.includes("sso") && !linking && (
-        <button
-          type="button"
-          className="account-signin-switch account-method-switch"
-          disabled={busy || !email}
-          onClick={() => void social("sso")}
-        >
-          Sign in with SSO
-        </button>
-      )}
-      {step === "login" &&
-        configuration.waitlistEnabled &&
-        !previewingProduction &&
-        !invitation &&
-        !linking && (
-          <p className="account-waitlist">
-            Access is by invitation.{" "}
-            <button
-              type="button"
-              className="account-signin-switch"
-              disabled={busy}
-              onClick={() => changeStep("waitlist")}
-            >
-              Join waitlist
-            </button>
-          </p>
-        )}
-      {step !== "login" && (
-        <button
-          type="button"
-          className="account-signin-switch account-method-switch"
-          disabled={busy}
-          onClick={() => changeStep("login")}
-        >
-          {codeStep || step === "organization"
-            ? "Start sign-in again"
-            : "Back to sign in"}
-        </button>
-      )}
+      </div>
     </>
   );
 }
