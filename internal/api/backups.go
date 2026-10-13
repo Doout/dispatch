@@ -43,12 +43,23 @@ func (a *API) runBackup(w http.ResponseWriter, r *http.Request, verify bool) {
 			problem(w, 422, "Restore check failed", "The backup could not be restored and verified. Check the backup record and database permissions.")
 			return
 		}
+		if _, pruneErr := manager.PruneVerified(ctx, backup.DefaultVerifiedCopies); pruneErr != nil {
+			a.logger.Warn("controller backup retention skipped", "error", pruneErr)
+		}
 		writeJSON(w, 200, record)
 	} else {
 		record, err := manager.Create(ctx)
 		if err != nil {
 			problem(w, 422, "Backup failed", "Check storage space, the vault key, and database backup tool permissions.")
 			return
+		}
+		record, err = manager.Verify(ctx, record.ID)
+		if err != nil {
+			problem(w, 422, "Restore check failed", "The new backup was retained for inspection. Older verified copies were kept.")
+			return
+		}
+		if _, pruneErr := manager.PruneVerified(ctx, backup.DefaultVerifiedCopies); pruneErr != nil {
+			a.logger.Warn("controller backup retention skipped", "error", pruneErr)
 		}
 		writeJSON(w, 201, record)
 	}

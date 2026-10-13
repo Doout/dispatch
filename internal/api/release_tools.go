@@ -98,7 +98,9 @@ func (a *API) getDeploymentRelease(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	message := "Select a successful retained version and review its inputs before rollback. Database migrations and external effects are not reversed."
-	if d.State != core.DeploymentSucceeded {
+	if d.InputsExpiredAt != nil {
+		message = "Saved deployment inputs expired under the retention policy."
+	} else if d.State != core.DeploymentSucceeded {
 		message = "Only successful deployments can be selected as a rollback version."
 	}
 	writeJSON(w, 200, deploymentReleaseResponse{note, links, message})

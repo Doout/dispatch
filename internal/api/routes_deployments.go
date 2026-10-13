@@ -25,6 +25,7 @@ func (a *API) deploymentsRoutes(r chi.Router) {
 			})
 			r.With(a.deploymentPermission(core.PermissionDeploymentCancel)).Post("/cancel", a.cancelDeployment)
 			r.With(a.deploymentPermission(core.PermissionProjectConfigure)).Put("/release", a.updateDeploymentRelease)
+			r.With(a.deploymentPermission(core.PermissionProjectManage)).Put("/retention-pin", a.setDeploymentRetentionPin)
 			r.Group(func(r chi.Router) {
 				r.Use(a.deploymentPermission(core.PermissionDeploymentRun))
 				r.Post("/rollback-preview", a.previewDeploymentRollback)

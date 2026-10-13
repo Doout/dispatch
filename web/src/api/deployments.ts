@@ -19,6 +19,8 @@ export type DeploymentState =
   | "cancelled";
 
 export type Deployment = {
+  inputsExpiredAt?: string;
+  retentionPinned?: boolean;
   health?: DeploymentHealth;
   id: string;
   appId: string;

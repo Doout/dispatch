@@ -121,6 +121,10 @@ func (a *API) writeDeploymentComparison(w http.ResponseWriter, r *http.Request, 
 
 func compareDeploymentSnapshots(from, to core.Deployment) deploymentComparison {
 	result := deploymentComparison{FromID: from.ID, ToID: to.ID, Basis: "inputs", Changes: []deploymentChange{}, Message: "Saved deployment inputs. These can include values the chart does not use. Sensitive values, chart defaults, and live changes are excluded."}
+	if from.InputsExpiredAt != nil || to.InputsExpiredAt != nil {
+		result.Message = "Saved deployment inputs expired under the retention policy."
+		return result
+	}
 	if from.Snapshot.TargetID == "" || to.Snapshot.TargetID == "" {
 		result.Message = "Saved inputs are unavailable for one of these deployments. Current application settings are not used as historical values."
 		return result

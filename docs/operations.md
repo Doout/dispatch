@@ -131,36 +131,44 @@ occur if another operator starts a deployment during the request.
 
 ## Retention
 
-Each project stores log age, failed-run age, and a minimum number of runs per
-application. Saving a policy does not schedule cleanup. The Cleanup view uses
-three separate steps:
+The default policy keeps logs for 14 days, saved deployment inputs for 30 days,
+and completed run summaries for 90 days. Each application keeps at least 20
+recent runs and 20 successful rollback versions. Current releases, published
+and previous route versions, pinned releases, active workflows and previews,
+and the newest drift baseline retain their inputs. Historical completed workflow
+links do not permanently protect large snapshots.
 
-1. Edit the limits and choose **Save policy**.
-2. Choose **Preview cleanup** to inspect eligible and protected counts.
-3. Choose **Review removal**, confirm the selected project, and apply cleanup.
+The controller starts automatic cleanup five minutes after startup and repeats
+it hourly. Cleanup uses bounded batches, rechecks the policy in each transaction,
+and pauses while a runtime cleanup review holds the project lease. Set
+`pauseAutomatic` to stop scheduled history cleanup; manual previews and cleanup
+remain available. Runtime containers, images and volumes require their separate
+reviewed cleanup. There is no system service or scheduled host task.
 
-Preview and apply accept an optional `expectedPolicy` containing the reviewed
-`projectId`, `logDays`, `runDays`, and `keepRuns`. Both compare it with the saved
-policy in the same transaction that evaluates cleanup. A changed policy returns
-409 and requires a fresh review. Apply also requires `confirm` to equal the
-project ID. The UI sends the policy captured for preview and never writes a policy
-with PUT during apply. Eligibility is checked again at apply, so counts may change
-after preview. Existing API clients may omit `expectedPolicy`; an empty preview
-body and confirm-only apply remain supported.
+The Operations page lets project administrators edit log, input and summary
+ages, pause automatic cleanup, and preview eligible history. Existing saved
+policies retain their configured ages. A missing or zero `snapshotDays` uses
+30 days. Saving a policy changes the next scheduled cleanup. Preview and apply
+accept `expectedPolicy`; apply also requires `confirm` equal to the project ID.
+A changed policy returns HTTP 409 and requires a fresh preview.
 
-Cleanup preserves:
+Inputs expire independently of run summaries. Responses mark affected versions
+with `inputsExpiredAt`, and comparison and rollback report that their saved
+inputs are unavailable. Build job logs expire independently of cached outputs
+and fingerprints. Active workflow logs are retained.
 
-- Active and successful deployments, including historical rollback candidates.
-- Encrypted drift baselines and the runs they belong to.
-- Runs referenced by workflow stages, preview groups, or retained runtime artifact indexes.
-- The configured minimum number of recent runs for each application.
-- Logs from the latest successful release and active runs.
+Project administrators can pin a retained release with
+`PUT /api/v1/deployments/{id}/retention-pin` and `{"pinned":true}`. Send
+`{"pinned":false}` to release the pin. Pinning cannot recover expired inputs.
+The deployment response includes `retentionPinned`. Pinning, routing, rollback
+acceptance and cleanup use deployment row locks so a concurrent operation cannot
+acquire inputs after they expire.
 
-Eligible old logs and unreferenced failed or cancelled deployments can be removed.
-Successful snapshots and their service credentials remain retained because Helm
-history may still reference them. This controller cleanup does not uninstall Helm
-releases or delete runtime resources. Audit events and analytics archives have
-independent retention and are not pruned by this action.
+History cleanup never deletes application records. It also retains run records
+needed by temporary-environment ownership or runtime artifact cleanup. SQLite
+reuses pages freed by cleanup; reducing the database file itself requires a
+separate maintenance compaction. Audit events and analytics archives have their
+own retention policies.
 
 ### Runtime artifacts
 
@@ -245,6 +253,12 @@ its latest verified backup is ordered by successful verification time. The
 `GET /api/v1/operations/backups` inventory returns up to 100 records. A record is
 metadata, not a fresh check that its files are still present. Paths, backup
 contents, and credentials are never returned.
+
+New controller backups receive an isolated restore check automatically. Retention
+keeps the two newest verified copies, checking their checksums before deleting an
+older recorded copy. Removed copies remain in the inventory as `pruned`. Failed
+checks, unverified copies, loose database files and workload backups are outside
+this policy. Loose upgrade copies must be archived separately before cleanup.
 
 SQLite uses `VACUUM INTO` for a consistent snapshot. PostgreSQL uses `pg_dump` in
 custom archive format. The runtime image includes PostgreSQL client tools; their

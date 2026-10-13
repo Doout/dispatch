@@ -102,12 +102,23 @@ func (s *SQLStore) SaveApplicationRouteObservation(ctx context.Context, before, 
 		return ErrRouteConflict
 	}
 	after.UpdatedAt = time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE application_routes SET record=? WHERE app_id=? AND requested_deployment_id=? AND record=?`), jsonText(after), before.AppID, before.RequestedDeploymentID, jsonText(before))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.checkRuntimeReferences(ctx, tx, []string{after.RequestedDeploymentID, after.DeploymentID, after.PreviousDeploymentID}); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, s.q(`UPDATE application_routes SET record=? WHERE app_id=? AND requested_deployment_id=? AND record=?`), jsonText(after), before.AppID, before.RequestedDeploymentID, jsonText(before))
 	err = changed(result, err)
 	if errors.Is(err, ErrNotFound) {
 		return ErrRouteConflict
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *SQLStore) GetApplicationRoute(ctx context.Context, appID string) (core.ApplicationRoute, error) {
 	var route core.ApplicationRoute

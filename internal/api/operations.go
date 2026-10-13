@@ -333,7 +333,7 @@ func (a *API) saveRetention(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, p)
 }
 func validRetentionPolicy(p core.RetentionPolicy) bool {
-	return p.LogDays >= 1 && p.LogDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000 && p.ImageDays >= 0 && p.ImageDays <= 36500 && p.StoppedRevisionDays >= 0 && p.StoppedRevisionDays <= 36500 && (p.KeepRollbackRevisions == 0 || p.KeepRollbackRevisions >= 2 && p.KeepRollbackRevisions <= 10000)
+	return p.LogDays >= 1 && p.LogDays <= 36500 && p.SnapshotDays >= 0 && p.SnapshotDays <= 36500 && p.RunDays >= 1 && p.RunDays <= 36500 && p.KeepRuns >= 5 && p.KeepRuns <= 10000 && p.ImageDays >= 0 && p.ImageDays <= 36500 && p.StoppedRevisionDays >= 0 && p.StoppedRevisionDays <= 36500 && (p.KeepRollbackRevisions == 0 || p.KeepRollbackRevisions >= 2 && p.KeepRollbackRevisions <= 10000)
 }
 func (a *API) previewRetention(w http.ResponseWriter, r *http.Request) { a.runRetention(w, r, false) }
 func (a *API) applyRetention(w http.ResponseWriter, r *http.Request)   { a.runRetention(w, r, true) }

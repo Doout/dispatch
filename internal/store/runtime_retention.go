@@ -18,18 +18,22 @@ func (s *SQLStore) checkRuntimeReferences(ctx context.Context, tx *changeTx, ids
 		if id == "" {
 			continue
 		}
-		query := `SELECT id FROM deployments WHERE id=?`
+		query := `SELECT id,inputs_expired_at FROM deployments WHERE id=?`
 		if s.postgres {
 			query += ` FOR UPDATE`
 		}
 		var found string
-		if err := tx.QueryRowContext(ctx, s.q(query), id).Scan(&found); err != nil {
+		var expired sql.NullString
+		if err := tx.QueryRowContext(ctx, s.q(query), id).Scan(&found, &expired); err != nil {
 			// Workflow recovery can record an unresolved deployment reference. There
 			// are no retained inputs to fence until that deployment exists.
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			return err
+		}
+		if expired.Valid {
+			return ErrDeploymentInputsExpired
 		}
 		var n int
 		if err := tx.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM runtime_artifact_retirements WHERE deployment_id=?`), id).Scan(&n); err != nil {
@@ -51,11 +55,11 @@ type retentionQuery interface {
 
 func (s *SQLStore) runtimeRetentionReferences(ctx context.Context, q retentionQuery, app string, keep int) ([]core.RuntimeRetentionReference, error) {
 	rows, err := q.QueryContext(ctx, s.q(`SELECT d.id,d.created_at,d.state,
- EXISTS(SELECT 1 FROM workflow_stage_runs w WHERE w.deployment_ids LIKE '%' || d.id || '%'),
- EXISTS(SELECT 1 FROM preview_group_run_components p WHERE p.deployment_id=d.id),
+ EXISTS(SELECT 1 FROM workflow_stage_runs w JOIN workflow_revisions v ON v.id=w.revision_id WHERE w.deployment_ids LIKE '%' || d.id || '%' AND (v.state IN ('queued','running','awaiting_approval') OR w.state IN ('queued','running','awaiting_approval'))),
+ EXISTS(SELECT 1 FROM preview_group_run_components p JOIN preview_group_runs g ON g.id=p.run_id WHERE p.deployment_id=d.id AND g.state<>'closed'),
  EXISTS(SELECT 1 FROM deployment_drift_baselines b WHERE b.deployment_id=d.id),
  EXISTS(SELECT 1 FROM application_routes r WHERE r.app_id=d.app_id AND r.record LIKE '%' || d.id || '%'),
- EXISTS(SELECT 1 FROM temporary_environments e WHERE e.deployment_id=d.id AND e.state<>'closed')
+ EXISTS(SELECT 1 FROM temporary_environments e WHERE e.deployment_id=d.id AND e.state<>'closed'), d.retention_pinned
  FROM deployments d WHERE d.app_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT 10001`), app)
 	if err != nil {
 		return nil, err
@@ -66,8 +70,8 @@ func (s *SQLStore) runtimeRetentionReferences(ctx context.Context, q retentionQu
 	for rows.Next() {
 		var r core.RuntimeRetentionReference
 		var created, state string
-		var workflow, preview, baseline, route, environment bool
-		if err = rows.Scan(&r.DeploymentID, &created, &state, &workflow, &preview, &baseline, &route, &environment); err != nil {
+		var workflow, preview, baseline, route, environment, pinned bool
+		if err = rows.Scan(&r.DeploymentID, &created, &state, &workflow, &preview, &baseline, &route, &environment, &pinned); err != nil {
 			return nil, err
 		}
 		r.AppID = app
@@ -80,6 +84,9 @@ func (s *SQLStore) runtimeRetentionReferences(ctx context.Context, q retentionQu
 			}
 		} else if state != "failed" && state != "cancelled" {
 			r.Protected = append(r.Protected, "Deployment is active")
+		}
+		if pinned {
+			r.Protected = append(r.Protected, "Release is pinned")
 		}
 		if environment {
 			r.Protected = append(r.Protected, "Owned by an active temporary environment")
@@ -160,14 +167,17 @@ func (s *SQLStore) ClaimRuntimeRetentionReview(ctx context.Context, r core.Runti
 	return tx.Commit()
 }
 func (s *SQLStore) checkRuntimeRetentionPolicy(ctx context.Context, tx *changeTx, p core.RetentionPolicy) error {
-	saved := core.RetentionPolicy{ProjectID: p.ProjectID, LogDays: 30, RunDays: 90, KeepRuns: 20}
+	saved := core.DefaultRetentionPolicy(p.ProjectID)
 	var raw string
 	err := tx.QueryRowContext(ctx, s.q(`SELECT payload FROM retention_policies WHERE project_id=?`), p.ProjectID).Scan(&raw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err == nil && json.Unmarshal([]byte(raw), &saved) != nil {
-		return ErrRetentionPolicyChanged
+	if err == nil {
+		saved = core.RetentionPolicy{}
+		if json.Unmarshal([]byte(raw), &saved) != nil {
+			return ErrRetentionPolicyChanged
+		}
 	}
 	if saved != p {
 		return ErrRetentionPolicyChanged

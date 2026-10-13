@@ -113,6 +113,9 @@ func (m Manager) Verify(ctx context.Context, id string) (core.BackupRecord, erro
 			b = r
 		}
 	}
+	if b.State == "pruned" {
+		return b, errors.New("backup expired under the retention policy")
+	}
 	if b.ID == "" {
 		return b, store.ErrNotFound
 	}
