@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: dispatch-release
@@ -14,9 +15,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 10
     permissions:
       contents: write
+      actions: read
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -24,38 +26,29 @@ jobs:
         shell: bash
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Use a stable vMAJOR.MINOR.PATCH tag'; exit 1; }
+      - id: revision
+        name: Resolve the release commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - id: source
+        name: Require successful CI for the exact release commit
+        uses: actions/github-script@v7
+        env:
+          TESTED_SHA: ${{ steps.revision.outputs.sha }}
+        with:
+          script: |
+            await require('./scripts/release-source.cjs')({ github, context, core });
       - name: Install controller native toolchains
         run: sudo apt-get update && sudo apt-get install -y g++ gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
         with:
-          go-version-file: go.mod
-          cache: false
-      - name: Restore Go modules and compiled packages
-        uses: actions/cache@v4
+          flavor: release
+      - name: Reuse the frontend built and tested by main CI
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-release-v1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-go-release-v1-${{ hashFiles('go.mod', 'go.sum') }}-
-            ${{ runner.os }}-go-release-v1-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.18.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - run: pnpm --dir web install --frozen-lockfile
-      - run: pnpm --dir web audit --prod --audit-level high
-      - run: pnpm --dir web test --maxWorkers=2
-      - run: pnpm --dir web build
-      - run: go test -race -p 2 -timeout 40m ./...
-      - run: sh scripts/install_test.sh
-      - run: go vet ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          name: web-dist
+          path: internal/ui/dist/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.source.outputs.run-id }}
       - name: Build release binaries once
         run: sh scripts/build-release.sh "$GITHUB_REF_NAME"
       - uses: docker/setup-qemu-action@v3

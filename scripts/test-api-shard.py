@@ -4,8 +4,8 @@
 The ordinary suite preserves four existing opt-in Docker fixture skips. The
 required Docker and PostgreSQL jobs keep their existing fixture selections and
 use check-test-results.py to reject every skip in those selections.
-Issue #96 timing baseline: PR #95, run 37135882037, API 2299.959 seconds.
-Compare runner timings against primary release CI run 37131689522.
+Timings from main CI run 38085554617 balance roots across eight runners.
+New tests join discovery automatically and receive a default timing weight.
 """
 
 import argparse
@@ -74,7 +74,7 @@ def discovered_roots(events):
 
 
 def validate_assignments(roots, shards):
-    require(2 <= len(shards) <= 4, "Use two to four API shards")
+    require(2 <= len(shards) <= 16, "Use two to sixteen API shards")
     require(roots == sorted(set(roots)) and roots, "Discovery roots must be unique and sorted")
     for shard in shards:
         require(isinstance(shard, list) and shard, "Empty or invalid shard")
@@ -84,8 +84,14 @@ def validate_assignments(roots, shards):
 
 
 def partition(roots, count):
-    require(2 <= count <= 4, "Use two to four API shards")
-    shards = [roots[index::count] for index in range(count)]
+    require(2 <= count <= 16, "Use two to sixteen API shards")
+    weights = json.loads(Path(__file__).with_name("api-test-timings.json").read_text())["rootSeconds"]
+    shards, loads = [[] for _ in range(count)], [0] * count
+    for root in sorted(roots, key=lambda root: (-weights.get(root, 5), root)):
+        index = min(range(count), key=lambda index: (loads[index], index))
+        shards[index].append(root)
+        loads[index] += weights.get(root, 5)
+    shards = [sorted(assigned) for assigned in shards]
     validate_assignments(roots, shards)
     return shards
 
@@ -127,7 +133,7 @@ def check_results(events, assigned):
 
 
 def verify_summaries(summaries, count):
-    require(2 <= count <= 4, "Use two to four API shards")
+    require(2 <= count <= 16, "Use two to sixteen API shards")
     require(len(summaries) == count, "Missing or duplicate shard summaries")
     ordered = sorted(summaries, key=lambda item: item["shard"])
     require([item["shard"] for item in ordered] == list(range(count)), "Invalid shard indices")
@@ -146,7 +152,7 @@ def run_shard(index, count, output):
     require(0 <= index < count, "Shard index is out of range")
     output.mkdir(parents=True, exist_ok=True)
     discovery = subprocess.run(
-        ["go", "test", "-race", "-count=1", "-timeout", "40m", "-list", ".", "-json", "./internal/api"],
+        ["go", "test", "-race", "-count=1", "-timeout", "8m", "-list", ".", "-json", "./internal/api"],
         text=True, capture_output=True, check=True,
     )
     (output / f"discovery-{index}.jsonl").write_text(discovery.stdout)
@@ -155,7 +161,7 @@ def run_shard(index, count, output):
     assigned = shards[index]
     (output / f"assignments-{index}.json").write_text(json.dumps(shards, indent=2) + "\n")
     print(f"API shard {index + 1}/{count}: {len(assigned)} of {len(roots)} discovered roots", flush=True)
-    command = ["go", "test", "-race", "-count=1", "-timeout", "40m", "-json", "./internal/api", "-run", selection_pattern(assigned)]
+    command = ["go", "test", "-race", "-count=1", "-timeout", "8m", "-json", "./internal/api", "-run", selection_pattern(assigned)]
     with (output / f"results-{index}.jsonl").open("w") as log:
         process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE)
         for line in process.stdout:
@@ -178,7 +184,7 @@ def run_other_packages():
     require(packages.count(PACKAGE) == 1 and len(set(packages)) == len(packages), "Invalid package discovery")
     packages.remove(PACKAGE)
     require(packages, "No non-API packages discovered")
-    subprocess.run(["go", "test", "-race", "-count=1", "-timeout", "40m", *packages], check=True)
+    subprocess.run(["go", "test", "-race", "-count=1", "-timeout", "8m", *packages], check=True)
 
 
 def main():
@@ -191,15 +197,15 @@ def main():
     args = parser.parse_args()
     require(sum((args.shard is not None, args.verify is not None, args.other_packages)) == 1,
             "Select exactly one of --shard, --verify or --other-packages")
-    require(2 <= args.count <= 4, "Use two to four API shards")
+    require(2 <= args.count <= 16, "Use two to sixteen API shards")
     if args.other_packages:
         run_other_packages()
     elif args.verify:
         summaries = [json.loads(path.read_text()) for path in args.verify.glob("summary-*.json")]
         for item in verify_summaries(summaries, args.count):
-            headroom = (1 - item["seconds"] / 2400) * 100
+            headroom = (1 - item["seconds"] / 480) * 100
             print(f"API shard {item['shard'] + 1}/{args.count}: {len(item['roots'])} roots, "
-                  f"{item['seconds']:.3f}s, {headroom:.1f}% below unchanged 40m timeout")
+                  f"{item['seconds']:.3f}s, {headroom:.1f}% below 8m test timeout")
         print(f"Complete API coverage: {len(summaries[0]['discovered'])} roots, exactly once")
     else:
         run_shard(args.shard, args.count, args.output)
