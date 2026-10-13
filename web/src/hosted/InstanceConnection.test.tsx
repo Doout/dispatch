@@ -62,12 +62,15 @@ it("creates a one-use token only on owner request and keeps it out of URLs and b
     />,
   );
   const create = await screen.findByRole("button", {
-    name: "Create connection token",
+    name: "Set up server",
   });
   expect(fetcher.mock.calls.some(([, init]) => init.method === "POST")).toBe(
     false,
   );
   fireEvent.click(create);
+  await userEvent.click(
+    await screen.findByRole("tab", { name: "Existing installation" }),
+  );
   await screen.findByLabelText("Connection token");
   expect(
     (screen.getByLabelText("Connection token") as HTMLInputElement).type,

@@ -83,10 +83,11 @@ jobs:
         run: |
           set -o pipefail
           go test -race -count=1 -timeout 8m -json ./internal/installation \
-            -run '^(TestPortableDockerInstallation|TestComposeDockerInstallationExport)$' \
+            -run '^(TestPortableDockerInstallation|TestComposeDockerInstallationExport|TestConnectedDockerSetup)$' \
             | python3 scripts/check-test-results.py \
               --require-test TestPortableDockerInstallation \
-              --require-test TestComposeDockerInstallationExport
+              --require-test TestComposeDockerInstallationExport \
+              --require-test TestConnectedDockerSetup
   hosted-workers:
     runs-on: ubuntu-latest
     timeout-minutes: 10

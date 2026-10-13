@@ -7,12 +7,7 @@ import {
 } from "./client";
 import { useSetupRefresh } from "./useSetupRefresh";
 
-type Enrollment = {
-  enrollmentToken: string;
-  expiresAt: string;
-  platformURL: string;
-  subject: string;
-};
+import { InstanceInstall, type Enrollment } from "./InstanceInstall";
 
 export function InstanceConnection({
   membership,
@@ -104,18 +99,29 @@ export function InstanceConnection({
                 ? "Server offline"
                 : "No server connected"}
           </h2>
-          <p>
-            {status.remoteAccess
-              ? "Remote access is enabled by your server."
-              : "Remote access is disabled. Members open your server's own address."}
-          </p>
-          {status.instanceUrl && (
-            <p className="hosted-connection-address">{status.instanceUrl}</p>
+          {status.state === "not_connected" ? (
+            <p>
+              Set up a new server with Docker, or connect an existing
+              installation.
+            </p>
+          ) : (
+            <>
+              <p>
+                {status.remoteAccess
+                  ? "Remote access is enabled by your server."
+                  : "Remote access is disabled. Members open your server's own address."}
+              </p>
+              {status.instanceUrl && (
+                <p className="hosted-connection-address">
+                  {status.instanceUrl}
+                </p>
+              )}
+              <p>
+                Webhooks use the outbound connection even when remote access is
+                disabled.
+              </p>
+            </>
           )}
-          <p>
-            Webhooks use the outbound connection even when remote access is
-            disabled.
-          </p>
           {membership.role === "owner" && (
             <div className="hosted-row-actions">
               {status.state === "not_connected" && (
@@ -125,10 +131,10 @@ export function InstanceConnection({
                   onClick={() => void createEnrollment()}
                 >
                   {busy
-                    ? "Creating token..."
+                    ? "Preparing setup..."
                     : enrollment
                       ? "Generate another token"
-                      : "Create connection token"}
+                      : "Set up server"}
                 </button>
               )}
               {status.state !== "not_connected" && (
@@ -144,57 +150,13 @@ export function InstanceConnection({
           )}
         </section>
       )}
-      {enrollment && (
-        <section className="hosted-panel hosted-connection-instructions">
-          <h2>Connect your self-hosted installation</h2>
-          <ol>
-            <li>Sign in to your self-hosted installation as an owner.</li>
-            <li>Open Settings, then Doodship connection.</li>
-            <li>
-              Enter the control plane address and connection token below, then
-              connect.
-            </li>
-          </ol>
-          <label>
-            Control plane address
-            <input readOnly value={enrollment.platformURL} />
-          </label>
-          <label>
-            Connection token
-            <input
-              readOnly
-              type="password"
-              autoComplete="off"
-              value={enrollment.enrollmentToken}
-            />
-          </label>
-          <button
-            className="quiet-button"
-            onClick={() =>
-              void navigator.clipboard
-                .writeText(enrollment.enrollmentToken)
-                .catch(() =>
-                  setError(
-                    "Copy failed. Select the token field and copy it manually.",
-                  ),
-                )
-            }
-          >
-            Copy token
-          </button>
-          <p>
-            Expires {new Date(enrollment.expiresAt).toLocaleTimeString()}. The
-            token works once. It is only shown here.
-          </p>
-          <label>
-            Your Doodship account ID
-            <input readOnly value={enrollment.subject} />
-          </label>
-          <p>
-            To allow remote access, map this account ID to a local user in your
-            installation. Other members need their own mapping.
-          </p>
-        </section>
+      {enrollment && status?.state === "not_connected" && (
+        <InstanceInstall
+          key={enrollment.enrollmentToken}
+          enrollment={enrollment}
+          instanceID={membership.tenant.id}
+          onError={setError}
+        />
       )}
       {confirmDisconnect && (
         <section className="hosted-panel" aria-label="Confirm disconnection">

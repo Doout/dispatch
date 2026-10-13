@@ -29,12 +29,13 @@ type UserMapping struct {
 	UserID  string `json:"userID"`
 }
 type Setup struct {
-	ControlPlaneURL string        `json:"controlPlaneURL"`
-	EnrollmentToken string        `json:"enrollmentToken,omitempty"`
-	DirectURL       string        `json:"directURL"`
-	RemoteAccess    bool          `json:"remoteAccess"`
-	UserMappings    []UserMapping `json:"userMappings"`
-	OwnerUserID     string        `json:"ownerUserID,omitempty"`
+	ExpectedInstanceID string        `json:"expectedInstanceID,omitempty"`
+	ControlPlaneURL    string        `json:"controlPlaneURL"`
+	EnrollmentToken    string        `json:"enrollmentToken,omitempty"`
+	DirectURL          string        `json:"directURL"`
+	RemoteAccess       bool          `json:"remoteAccess"`
+	UserMappings       []UserMapping `json:"userMappings"`
+	OwnerUserID        string        `json:"ownerUserID,omitempty"`
 }
 type Status struct {
 	Configured      bool          `json:"configured"`
@@ -293,6 +294,9 @@ func (m *Manager) Configure(ctx context.Context, input Setup) (Status, error) {
 		}
 		if err = m.call(ctx, http.MethodPost, cp+"/api/v1/instance-connections/enroll", "", map[string]any{"enrollmentToken": input.EnrollmentToken, "directURL": input.DirectURL, "remoteAccess": input.RemoteAccess, "installationID": next.InstallationID}, &response); err != nil {
 			return Status{}, err
+		}
+		if input.ExpectedInstanceID != "" && input.ExpectedInstanceID != response.InstanceID {
+			return Status{}, errors.New("connection token belongs to another instance")
 		}
 		if response.InstanceID == "" || response.Credential == "" || response.Generation < 1 {
 			return Status{}, errors.New("control plane returned incomplete connection credentials")

@@ -164,3 +164,25 @@ test('Docker pull and runtime failures fail the check', () => {
     throw failure;
   }), error => error === failure);
 });
+
+ test('checks self-hosted controller versions on both architectures', () => {
+   const f = imageFixture();
+   checkImage({ ...f.config, product: 'controller' }, args => {
+     const result = f.docker(args);
+     return args[0] === 'buildx' ? result : `Dispatch main-${sha}\n`;
+   });
+   assert.equal(f.calls.length, 3);
+ });
+
+ test('self-hosted publication uses the CI source guard before advancing main', () => {
+   const workflow = readFileSync(join(__dirname, '../.github/workflows/controller-images.yml'), 'utf8');
+   assert.match(workflow, /workflows: \[CI\]/);
+   assert.match(workflow, /github\.event\.workflow_run\.event == 'push'/);
+   assert.match(workflow, /ref: \$\{\{ needs\.source\.outputs\.sha \}\}/);
+   assert.match(workflow, /file: Containerfile\n/);
+   assert.match(workflow, /platforms: linux\/amd64,linux\/arm64/);
+   assert.match(workflow, /IMAGE_PRODUCT: controller/);
+   assert.equal(workflow.match(/require\('\.\/scripts\/hosted-image-source\.cjs'\)/g).length, 2);
+   assert.ok(workflow.indexOf('Check both architectures') < workflow.indexOf('Recheck main before updating its tag'));
+   assert.ok(workflow.indexOf('Recheck main before updating its tag') < workflow.indexOf('name: Update the main image'));
+ });

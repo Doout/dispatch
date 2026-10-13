@@ -74,7 +74,7 @@ The Compose file binds the controller to `127.0.0.1:8080`, mounts the host Docke
 
 ### Doodship control plane
 
-The separate `dispatch-platform` controller handles accounts, instance membership and public ingress. Connect an existing self-hosted installation through Settings. Its outbound WebSocket carries webhooks, approved user requests and published application traffic without an inbound firewall port. Databases, logs and execution stay on the customer's server. Remote user access is off until a local owner enables it and links users.
+The separate `dispatch-platform` controller handles accounts, instance membership and public ingress. For a new server, open an instance in Doodship and copy its Docker setup command or download its Compose file. Setup installs under `$HOME/.doodship`, links the owner, and enables Docker updates. See [server setup](docs/installation.md#connect-a-new-server-to-doodship). Connect an existing installation through Settings → Connections → Doodship. Its outbound WebSocket carries webhooks, approved user requests and published application traffic without an inbound firewall port. Databases, logs and execution stay on the customer's server. Remote user access is off until a local owner enables it and links users.
 
 See [instance connections](docs/tenant-servers.md) for setup, disconnect behavior and upgrade compatibility, [hosted setup](docs/hosted-tenants.md) for the Docker control plane, and [DNS providers](docs/dns-providers.md) for provider credentials.
 

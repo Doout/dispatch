@@ -449,6 +449,10 @@ func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bo
 		return fmt.Errorf("installation retained for repair; run dispatch recover --dir %s: %w", m.Dir, err)
 	}
 	if seed == "" {
+		if _, e := os.Stat(m.path("local-owner.json")); e == nil {
+			fmt.Fprintln(m.Out, "Server started. Connecting to Doodship.")
+			return nil
+		}
 		fmt.Fprintf(m.Out, "Dispatch is ready at http://%s. Complete owner setup in the browser.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
 	} else {
 		fmt.Fprintf(m.Out, "Dispatch imported at http://%s. Sign in with your existing account.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
@@ -537,6 +541,15 @@ func (m *Manager) Upgrade(ctx context.Context, image string, pull, check bool) e
 			return fmt.Errorf("upgrade failed: %w; recovery also failed: %v; run dispatch recover --dir %s", err, recovery, m.Dir)
 		}
 		return fmt.Errorf("upgrade failed; previous image and data restored: %w", err)
+	}
+	if _, e := os.Stat(m.path("local-owner.json")); e == nil {
+		current, e := m.Load()
+		if e != nil {
+			return e
+		}
+		if e = m.syncCLI(ctx, current); e != nil {
+			return fmt.Errorf("controller upgraded; local CLI update failed: %w", e)
+		}
 	}
 	fmt.Fprintln(m.Out, "Dispatch upgraded. Backup:", backup)
 	return nil

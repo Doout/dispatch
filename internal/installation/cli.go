@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ var Version = "development"
 const help = `Usage: dispatch <command> [options]
 
   serve                  Run the controller (also the default with no arguments)
+  setup                  Install and connect a Docker controller to Doodship
   install                Install a Docker controller
   export                 Save a portable self-hosted installation archive
   import                 Create an installation from an export archive
@@ -29,6 +31,7 @@ const help = `Usage: dispatch <command> [options]
   version                Show the CLI version
 
 Installation commands default to --dir /opt/dispatch.
+The setup command defaults to $HOME/.doodship. A setup-installed CLI uses its own installation directory.
 Run dispatch <command> --help for options.
 `
 
@@ -60,7 +63,21 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 	}
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(out)
-	dir := fs.String("dir", "/opt/dispatch", "managed installation directory")
+	defaultDir := "/opt/dispatch"
+	if executable, e := os.Executable(); e == nil && filepath.Base(filepath.Dir(executable)) == "bin" {
+		candidate := filepath.Dir(filepath.Dir(executable))
+		if _, e = os.Stat(filepath.Join(candidate, "installation.json")); e == nil {
+			defaultDir = candidate
+		}
+	}
+	if command == "setup" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return true, err
+		}
+		defaultDir = filepath.Join(home, ".doodship")
+	}
+	dir := fs.String("dir", defaultDir, "managed installation directory")
 	timeout := fs.Duration("timeout", 90*time.Second, "time to wait for the controller to become healthy")
 	var image *string
 	var pull *bool
@@ -71,9 +88,18 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 	var registryConfig *string
 	var archive *string
 	var container *string
+	var connectionStdin, automatic *bool
+	var hostUID, hostGID *int
 	switch command {
-	case "install", "import":
+	case "setup", "install", "import":
 		defaultImage := DefaultImage
+		if command == "setup" {
+			defaultImage = "ghcr.io/doout/dispatch:main"
+			connectionStdin = fs.Bool("connection-stdin", false, "read connection JSON from standard input")
+			automatic = fs.Bool("auto-update", true, "enable the Docker updater")
+			hostUID = fs.Int("host-uid", os.Getuid(), "host user who owns installation files")
+			hostGID = fs.Int("host-gid", os.Getgid(), "host group who owns installation files")
+		}
 		if command == "import" {
 			defaultImage = ""
 			archive = fs.String("input", "", "export archive to import")
@@ -148,13 +174,23 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 			return m.Export(ctx, *archive)
 		case "verify":
 			return m.VerifyExport(ctx, *archive)
-		case "install", "import":
+		case "setup", "install", "import":
 			c.Image = *image
 			if c.Volume == "" {
 				c.Volume = c.Name + "-data"
 			}
 			if command == "import" {
 				return m.Import(ctx, *archive, c, *pull)
+			}
+			if command == "setup" {
+				if !*connectionStdin {
+					return errors.New("setup requires --connection-stdin")
+				}
+				input, err := ReadConnection(os.Stdin)
+				if err != nil {
+					return err
+				}
+				return m.Setup(ctx, c, input, *pull, *automatic, *hostUID, *hostGID)
 			}
 			return m.Install(ctx, c, *envFile, *pull)
 		case "upgrade":

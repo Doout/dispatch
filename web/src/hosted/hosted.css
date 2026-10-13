@@ -1162,12 +1162,83 @@
   object-fit: contain;
 }
 
-.hosted-connection-page { display: grid; gap: 24px; min-width: 0; }
-.hosted-connection-page > .quiet-button { justify-self: start; }
-.hosted-connection-page .hosted-panel { margin: 0; }
-.hosted-connection-instructions { display: grid; gap: 16px; }
-.hosted-connection-instructions ol { margin: 0; padding-left: 20px; line-height: 1.8; }
-.hosted-connection-instructions label { display: grid; gap: 8px; font-weight: 600; }
-.hosted-connection-instructions input { width: 100%; min-width: 0; }
-.hosted-connection-instructions > button { justify-self: start; }
-.hosted-connection-address { overflow-wrap: anywhere; }
+.hosted-connection-page {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.hosted-connection-page > .quiet-button {
+  justify-self: start;
+}
+.hosted-connection-page .hosted-panel {
+  margin: 0;
+}
+.hosted-connection-instructions {
+  display: grid;
+  gap: 16px;
+}
+.hosted-connection-instructions ol {
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.8;
+}
+.hosted-connection-instructions label {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+}
+.hosted-connection-instructions input {
+  width: 100%;
+  min-width: 0;
+}
+.hosted-connection-instructions > button {
+  justify-self: start;
+}
+.hosted-connection-address {
+  overflow-wrap: anywhere;
+}
+
+.hosted-install-methods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hosted-install-methods [aria-selected="true"] {
+  color: var(--hosted-blue);
+  border-color: var(--hosted-blue);
+  background: var(--hosted-blue-soft);
+}
+.hosted-install-options {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.hosted-install-options > button {
+  justify-self: start;
+}
+.hosted-install-options .hosted-install-access {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hosted-install-access input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+.hosted-install-command {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 20px;
+  overflow-x: auto;
+  border: 1px solid var(--hosted-rule);
+  border-radius: 8px;
+  background: var(--hosted-bg);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.hosted-install-options small {
+  color: var(--hosted-muted);
+  font-weight: 400;
+}
