@@ -114,10 +114,12 @@ it("keeps controller feature settings separate from a member's interface prefere
   vi.mocked(client.api.overview).mockResolvedValue(overview("interface-owner", true));
   render(<DispatchApp />);
   await screen.findByRole("switch", { name: "New interface" });
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Features" }));
   const operations = screen.getByRole("switch", { name: "Operations" }) as HTMLInputElement;
   await waitFor(() => expect(operations.disabled).toBe(false));
   expect(client.request).toHaveBeenCalledWith("/api/v1/settings");
   vi.mocked(client.request).mockClear();
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Interface" }));
   await userEvent.setup().click(screen.getByRole("switch", { name: "New interface" }));
   expect(primary().getByRole("link", { name: "Workloads" })).toBeTruthy();
   expect(operations.checked).toBe(false);

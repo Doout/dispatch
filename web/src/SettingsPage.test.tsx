@@ -114,7 +114,7 @@ it("defaults each experimental UI feature off when older settings omit the flags
   expect(toggle.checked).toBe(false); expect(toggle.disabled).toBe(false);
  }
  expect(control().checked).toBe(true);
- expect(screen.getByText(/Running jobs and API access stay active/)).toBeTruthy();
+ expect(screen.getByText(/do not stop running jobs or restrict API access/)).toBeTruthy();
 });
 
 it("saves only the changed feature and retains independent flags after a page reload", async () => {
@@ -182,4 +182,37 @@ it("rechecks a flag after a concurrent owner reverses it during saving", async (
  expect((screen.getByRole("switch", { name: "Workload backups" }) as HTMLInputElement).checked).toBe(false);
  expect((screen.getByRole("switch", { name: "Automation credentials" }) as HTMLInputElement).checked).toBe(true);
  expect(request.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "PUT", "GET"]);
+});
+
+it("loads connection settings on demand and keeps unsaved edits when changing tabs", async () => {
+ const connection = { configured: false, connected: false, controlPlaneURL: "", directURL: "", remoteAccess: false, userMappings: [] };
+ const request = vi.spyOn(client, "request").mockImplementation(async <T,>(path: string) => (path === "/api/v1/instance-connection" ? connection : { operationsEnabled: false }) as T);
+ vi.spyOn(client.api, "access").mockResolvedValue({ users: [] } as unknown as Awaited<ReturnType<typeof client.api.access>>);
+ const user = userEvent.setup();
+ render(<SettingsPage overview={owner} interfaceSettings={{ enabled: true, onChange: vi.fn() }} />);
+ expect(screen.getByRole("tab", { name: "Interface" }).getAttribute("aria-selected")).toBe("true");
+ expect(request.mock.calls.some(([path]) => path === "/api/v1/instance-connection")).toBe(false);
+ await user.click(screen.getByRole("tab", { name: "Doodship connection" }));
+ await screen.findByLabelText("Connection token");
+ await user.type(screen.getByLabelText("Instance address"), "https://private.example.test");
+ await user.click(screen.getByRole("tab", { name: "Features" }));
+ expect(screen.queryByRole("textbox", { name: "Instance address" })).toBeNull();
+ await user.click(screen.getByRole("tab", { name: "Doodship connection" }));
+ expect((screen.getByLabelText("Instance address") as HTMLInputElement).value).toBe("https://private.example.test");
+ expect(request.mock.calls.filter(([path]) => path === "/api/v1/instance-connection")).toHaveLength(1);
+});
+
+it("supports keyboard navigation across settings tabs", async () => {
+ vi.spyOn(client, "request").mockResolvedValue({ operationsEnabled: false });
+ vi.spyOn(client.api, "access").mockResolvedValue({ users: [] } as unknown as Awaited<ReturnType<typeof client.api.access>>);
+ render(<SettingsPage overview={owner} interfaceSettings={{ enabled: true, onChange: vi.fn() }} />);
+ const user = userEvent.setup();
+ screen.getByRole("tab", { name: "Interface" }).focus();
+ await user.keyboard("{End}");
+ expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Features" }));
+ expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(document.activeElement?.id);
+ await user.keyboard("{Home}");
+ expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Interface" }));
+ await user.keyboard("{ArrowLeft}");
+ expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Features" }));
 });
