@@ -17,7 +17,7 @@ func recoverySchema(kind string) map[string]any {
 		confirmation := object(map[string]any{"resourceId": text(), "action": map[string]any{"type": "string", "enum": []string{"delete", "restore"}}, "expectedVersion": text(), "confirmName": text()}, []string{"resourceId", "action", "expectedVersion", "confirmName"})
 		return object(map[string]any{"confirmation": confirmation}, []string{"confirmation"})
 	case "RuntimeRetentionReviewInput", "RuntimeRetentionApplyInput":
-		policy := object(map[string]any{"projectId": text(), "logDays": integer(1, 36500), "runDays": integer(1, 36500), "keepRuns": integer(5, 10000), "imageDays": integer(0, 36500), "stoppedRevisionDays": integer(0, 36500), "keepRollbackRevisions": map[string]any{"anyOf": []any{map[string]any{"type": "integer", "const": 0}, integer(2, 10000)}}}, []string{"projectId", "logDays", "runDays", "keepRuns", "imageDays", "stoppedRevisionDays", "keepRollbackRevisions"})
+		policy := object(map[string]any{"projectId": text(), "snapshotDays": integer(0, 36500), "pauseAutomatic": map[string]any{"type": "boolean"}, "logDays": integer(1, 36500), "runDays": integer(1, 36500), "keepRuns": integer(5, 10000), "imageDays": integer(0, 36500), "stoppedRevisionDays": integer(0, 36500), "keepRollbackRevisions": map[string]any{"anyOf": []any{map[string]any{"type": "integer", "const": 0}, integer(2, 10000)}}}, []string{"projectId", "snapshotDays", "pauseAutomatic", "logDays", "runDays", "keepRuns", "imageDays", "stoppedRevisionDays", "keepRollbackRevisions"})
 		props := map[string]any{"scope": map[string]any{"type": "string", "const": "runtime"}, "expectedPolicy": policy}
 		required := []string{"scope", "expectedPolicy"}
 		if kind == "RuntimeRetentionApplyInput" {
