@@ -44,9 +44,9 @@ services:
         condition: service_started
     environment:
       DISPATCH_UI_PREVIEW_ADDR: 127.0.0.1:8082
-      DISPATCH_UI_PREVIEW_ORIGIN: https://dispatch.local.cicd.onl
+      DISPATCH_UI_PREVIEW_ORIGIN: https://local.doodship.com
       DISPATCH_UI_PREVIEW_DEVELOPMENT: http://127.0.0.1:8081
-      DISPATCH_UI_PREVIEW_PRODUCTION: https://dispatch.cicd.onl
+      DISPATCH_UI_PREVIEW_PRODUCTION: https://doodship.com
       DISPATCH_UI_PREVIEW_ACCESS_KEY_FILE: /run/secrets/ui-preview-access-key
     volumes:
       - ./ui-preview-access-key:/run/secrets/ui-preview-access-key:ro
@@ -84,7 +84,7 @@ A missing, unreadable or short key prevents startup. The proxy has no keyless mo
 
 The proxy maps production tenant console links and sign-in redirects to the same tenant under the development domain. It preserves sign-in handoff codes and their PKCE checks. The tenant directory still displays production addresses.
 
-For tenant navigation, the development gateway, DNS and certificate must cover `*.dispatch.local.cicd.onl`. Without that coverage, the root account console works, but tenant consoles cannot open through dev. Links to deployed applications keep their actual destinations.
+For tenant navigation, the development gateway, DNS and certificate must cover `*.local.doodship.com`. Without that coverage, the root account console works, but tenant consoles cannot open through dev. Links to deployed applications keep their actual destinations.
 
 ## Return to the regular dev backend
 

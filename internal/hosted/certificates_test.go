@@ -96,48 +96,18 @@ func TestHostedTLSOnlyServesRegisteredControlPlaneHosts(t *testing.T) {
 	}
 }
 
-func TestHostedTenantCertificateEndpointProtectsPrivateKeys(t *testing.T) {
+func TestHostedCertificateEndpointCannotExportSharedKey(t *testing.T) {
 	f := newHostedFixture(t)
-	a := f.tenant(t, "alpha", "owner-a")
-	b := f.tenant(t, "bravo", "owner-b")
-	ctx := context.Background()
-	if err := f.catalog.SetMembership(ctx, "owner-a", tenancy.Membership{TenantID: a.ID, UserID: "member", Role: tenancy.RoleMember}); err != nil {
-		t.Fatal(err)
-	}
+	tenant := f.tenant(t, "alpha", "owner-a")
 	root := f.server.Config.RootDomain
-	platform := hostedCertificateFixture(t, root, "*."+root)
-	alpha := hostedCertificateFixture(t, "*.alpha."+root)
-	bravo := hostedCertificateFixture(t, "*.bravo."+root)
-	f.server.cacheCertificate(platformOwner, platform)
-	f.server.cacheCertificate(a.ID, alpha)
-	f.server.cacheCertificate(b.ID, bravo)
-	host, path := "alpha."+root, "/api/v1/hosted/certificate"
-	for _, token := range []string{f.session(t, "platform", tenancy.AudiencePlatform), f.session(t, "owner-b", tenancy.TenantAudience(b.ID)), f.session(t, "member", tenancy.TenantAudience(a.ID)), "old-dns-token", "worker-token", ""} {
-		w := f.request(t, host, http.MethodGet, path, token, nil)
-		if w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "PRIVATE KEY") {
-			t.Fatal("certificate key disclosed to a nonowner", w.Code)
+	f.server.cacheCertificate(platformOwner, hostedCertificateFixture(t, root, "*."+root))
+	for _, token := range []string{f.session(t, "owner-a", tenancy.TenantAudience(tenant.ID)), f.session(t, "platform", tenancy.AudiencePlatform), ""} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			w := f.request(t, "alpha."+root, method, "/api/v1/hosted/certificate", token, nil)
+			if w.Code != 404 || strings.Contains(w.Body.String(), "PRIVATE KEY") {
+				t.Fatal(w.Code, w.Body.String())
+			}
 		}
-	}
-	owner := f.session(t, "owner-a", tenancy.TenantAudience(a.ID))
-	w := f.request(t, host, http.MethodGet, path, owner, nil)
-	var bundle struct {
-		CertificatePEM string `json:"certificatePem"`
-		PrivateKeyPEM  string `json:"privateKeyPem"`
-	}
-	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &bundle) != nil || bundle.PrivateKeyPEM != string(alpha.PrivateKeyPEM) || bundle.CertificatePEM != string(alpha.CertificatePEM) || w.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("owner did not receive its private, uncached certificate bundle", w.Code)
-	}
-	if bundle.PrivateKeyPEM == string(platform.PrivateKeyPEM) || bundle.PrivateKeyPEM == string(bravo.PrivateKeyPEM) {
-		t.Fatal("owner received another certificate key")
-	}
-	if w := f.request(t, host, http.MethodPost, path, owner, nil); w.Code != http.StatusMethodNotAllowed {
-		t.Fatal("certificate endpoint accepted a write", w.Code)
-	}
-	if err := f.catalog.RevokeSession(ctx, owner); err != nil {
-		t.Fatal(err)
-	}
-	if w := f.request(t, host, http.MethodGet, path, owner, nil); w.Code != http.StatusForbidden {
-		t.Fatal("revoked session retrieved certificate")
 	}
 }
 
@@ -169,7 +139,7 @@ func TestHostedCertificateRestartLoadsValidBundleBeforeRenewal(t *testing.T) {
 	// the saved certificate must still restore the console's TLS after restart.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := f.server.reconcileCertificate(ctx, nil); err == nil {
+	if err := f.server.reconcileCertificate(ctx); err == nil {
 		t.Fatal("cancelled renewal succeeded")
 	}
 	if cert, err := tlsFixtureHandshake(t, f.server, root); err != nil || cert.VerifyHostname(root) != nil {

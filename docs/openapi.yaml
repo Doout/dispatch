@@ -9,6 +9,50 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /instance-connection:
+    get:
+      operationId: getInstanceConnection
+      description: Local owner only. Return connection status and approved user mappings without installation credentials. This route is unavailable through the control plane.
+      responses:
+        '200': { description: Connection status. }
+        '403': { description: Local owner access required. }
+    put:
+      operationId: configureInstanceConnection
+      description: Local owner only. Connect using a one-use enrollment token, or update the current connection's direct address, remote access policy and user mappings. Default remote access is off. No control-plane user can change this grant through the tunnel.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [controlPlaneURL, remoteAccess, userMappings]
+              properties:
+                controlPlaneURL: { type: string, format: uri }
+                enrollmentToken: { type: string, description: Required for initial enrollment. Never stored in browser URLs. }
+                directURL: { type: string }
+                remoteAccess: { type: boolean, default: false }
+                ownerUserID: { type: string, description: Explicitly link the enrolling Doodship owner subject to this active local user. }
+                userMappings:
+                  type: array
+                  maxItems: 5000
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [subject, userID]
+                    properties:
+                      subject: { type: string, description: Stable Doodship account ID. }
+                      userID: { type: string, description: Existing active local user ID. }
+      responses:
+        '200': { description: Saved connection status. }
+        '400': { description: Invalid connection settings or enrollment refused. }
+        '403': { description: Local owner access required. }
+    delete:
+      operationId: disconnectInstance
+      description: Local owner only. Remove the local connection grant, close active remote streams and ask the control plane to revoke its credential. Local revocation does not depend on the control plane being reachable.
+      responses:
+        '204': { description: Disconnected. }
+        '403': { description: Local owner access required. }
   /neon-providers:
     get:
       operationId: listNeonProviders
@@ -5560,9 +5604,17 @@ components:
       required: [baseDomain]
       properties:
         baseDomain: { type: string, example: apps.example.com }
-        entryPoint: { type: string, description: Defaults to websecure when requireTls is true and web otherwise. }
+        hosted:
+          type: object
+          readOnly: true
+          description: Routing ownership assigned by the hosted platform. Tenant requests cannot set this field.
+          properties:
+            tenantId: { type: string }
+            tenantSlug: { type: string }
+            rootDomain: { type: string }
+        entryPoint: { type: string, description: Defaults to websecure when requireTls is true and web otherwise. Hosted targets default to web because public TLS terminates at the platform ingress. }
         requireTls: { type: boolean, default: false }
-        tlsResolver: { type: string, description: Required when requireTls is true. }
+        tlsResolver: { type: string, description: Required for standalone targets when requireTls is true. Hosted targets use the platform wildcard certificate. }
         composeService: { type: string, description: Optional default ingress service for multi-service Compose definitions. }
     ApplicationRoute:
       type: object
@@ -5574,6 +5626,7 @@ components:
         hostname: { type: string }
         entryPoint: { type: string }
         requireTls: { type: boolean }
+        gatewayTls: { type: boolean, readOnly: true, description: Public TLS terminates at the control-plane ingress; the target route uses HTTP. }
         tlsResolver: { type: string }
         requestedDeploymentId: { type: string }
         deploymentId: { type: string, description: Currently published candidate identity. }

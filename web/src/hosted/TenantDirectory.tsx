@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowsClockwise, MagnifyingGlass, Plus } from "@phosphor-icons/react";
 import { hostedRequest, type Tenant } from "./client";
-import { HostedEmpty, TenantStatus } from "./HostedChrome";
+import { HostedEmpty, TenantStatus, instanceStatus } from "./HostedChrome";
 import { UsagePanel } from "./UsagePanel";
 import { CreateTenant } from "./CreateTenant";
+import { instanceNeedsRefresh, useSetupRefresh } from "./useSetupRefresh";
 
-export function TenantDirectory({ origin }: { origin: string }) {
+export function TenantDirectory({
+  origin,
+  reservedTenantNames,
+}: {
+  origin: string;
+  reservedTenantNames?: string[];
+}) {
   const [tenants, setTenants] = useState<Tenant[]>([]),
     [selected, setSelected] = useState<Tenant | null>(null),
     [created, setCreated] = useState<Tenant | null>(null),
@@ -22,17 +29,22 @@ export function TenantDirectory({ origin }: { origin: string }) {
     if (!creating && formWasOpen.current) createButton.current?.focus();
     formWasOpen.current = creating;
   }, [creating]);
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
     setError("");
-    setLoading(true);
+    if (!quiet) setLoading(true);
     try {
       setTenants(await hostedRequest<Tenant[]>("/platform/tenants"));
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, []);
+  const refreshSetup = useCallback(() => load(true), [load]);
+  useSetupRefresh(
+    tenants.some((tenant) => instanceNeedsRefresh(tenant.state)),
+    refreshSetup,
+  );
   useEffect(() => {
     void load();
   }, [load]);
@@ -41,7 +53,9 @@ export function TenantDirectory({ origin }: { origin: string }) {
       `${tenant.name} ${tenant.slug}.${hostname}`
         .toLowerCase()
         .includes(filter.toLowerCase()) &&
-      (!stateFilter || tenant.state === stateFilter),
+      (!stateFilter ||
+        tenant.state === stateFilter ||
+        (stateFilter === "pending" && tenant.state === "provisioning")),
   );
   const openCreate = () => {
     setCreated(null);
@@ -51,6 +65,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
     return (
       <CreateTenant
         origin={origin}
+        reservedTenantNames={reservedTenantNames}
         tenants={tenants}
         onCreated={async (tenant) => {
           setCreated(tenant);
@@ -71,8 +86,8 @@ export function TenantDirectory({ origin }: { origin: string }) {
     <>
       <header className="hosted-page-heading">
         <div>
-          <h1>Tenant directory</h1>
-          <p>Find tenants by address and view their usage.</p>
+          <h1>Instance directory</h1>
+          <p>Find instances by address and view their usage.</p>
         </div>
         <div className="hosted-row-actions">
           <button
@@ -90,7 +105,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
               onClick={openCreate}
             >
               <Plus size={16} aria-hidden="true" />
-              Create tenant
+              Create instance
             </button>
           )}
         </div>
@@ -109,9 +124,9 @@ export function TenantDirectory({ origin }: { origin: string }) {
         </p>
       )}
       {tenants.length > 0 && (
-        <dl className="hosted-summary" aria-label="Tenant totals">
+        <dl className="hosted-summary" aria-label="Instance totals">
           <div>
-            <dt>All tenants</dt>
+            <dt>All instances</dt>
             <dd>{tenants.length.toLocaleString()}</dd>
           </div>
           <div>
@@ -123,10 +138,12 @@ export function TenantDirectory({ origin }: { origin: string }) {
             </dd>
           </div>
           <div>
-            <dt>Pending</dt>
+            <dt>Setting up</dt>
             <dd>
               {tenants
-                .filter((tenant) => tenant.state === "pending")
+                .filter((tenant) =>
+                  ["pending", "provisioning"].includes(tenant.state),
+                )
                 .length.toLocaleString()}
             </dd>
           </div>
@@ -135,7 +152,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
       {tenants.length > 0 && (
         <div className="hosted-list-toolbar">
           <label className="hosted-search">
-            <span>Find a tenant</span>
+            <span>Find an instance</span>
             <span className="hosted-search-field">
               <MagnifyingGlass size={18} aria-hidden="true" />
               <input
@@ -145,7 +162,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
                   setFilter(event.target.value);
                   setLimit(50);
                 }}
-                placeholder="Tenant name or address"
+                placeholder="Instance name or address"
               />
             </span>
           </label>
@@ -159,11 +176,17 @@ export function TenantDirectory({ origin }: { origin: string }) {
               }}
             >
               <option value="">All statuses</option>
-              {[...new Set(tenants.map((tenant) => tenant.state))]
+              {[
+                ...new Set(
+                  tenants.map((tenant) =>
+                    tenant.state === "provisioning" ? "pending" : tenant.state,
+                  ),
+                ),
+              ]
                 .sort()
                 .map((state) => (
                   <option key={state} value={state}>
-                    {state}
+                    {instanceStatus(state)}
                   </option>
                 ))}
             </select>
@@ -172,7 +195,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
       )}
       {loading && (
         <p className="hosted-loading" role="status">
-          Loading tenants...
+          Loading instances...
         </p>
       )}
       {tenants.length > 0 && (
@@ -180,7 +203,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
           <table className="hosted-table">
             <thead>
               <tr>
-                <th>Tenant</th>
+                <th>Instance</th>
                 <th>Status</th>
                 <th>Created</th>
                 <th>
@@ -218,7 +241,7 @@ export function TenantDirectory({ origin }: { origin: string }) {
       {!loading && !error && visible.length === 0 && (
         <HostedEmpty
           title={
-            tenants.length === 0 ? "No tenants yet" : "No matching tenants"
+            tenants.length === 0 ? "No instances yet" : "No matching instances"
           }
           action={
             tenants.length > 0 ? (
@@ -238,20 +261,20 @@ export function TenantDirectory({ origin }: { origin: string }) {
                 onClick={openCreate}
               >
                 <Plus size={16} aria-hidden="true" />
-                Create tenant
+                Create instance
               </button>
             )
           }
         >
           {tenants.length === 0
-            ? "Create a tenant and assign an owner."
-            : "Try a different tenant name, address or status."}
+            ? "Create an instance and assign an owner."
+            : "Try a different instance name, address or status."}
         </HostedEmpty>
       )}
       {visible.length > limit && (
         <div className="hosted-table-footer">
           <p>
-            Showing {limit} of {visible.length} tenants
+            Showing {limit} of {visible.length} instances
           </p>
           <button
             className="quiet-button"
@@ -262,7 +285,12 @@ export function TenantDirectory({ origin }: { origin: string }) {
         </div>
       )}
       {selected && (
-        <UsagePanel tenant={selected} onClose={() => setSelected(null)} />
+        <UsagePanel
+          tenant={
+            tenants.find((tenant) => tenant.id === selected.id) ?? selected
+          }
+          onClose={() => setSelected(null)}
+        />
       )}
     </>
   );

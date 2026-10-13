@@ -4,17 +4,53 @@ import (
 	"context"
 	"database/sql"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/oklog/ulid/v2"
 )
 
-var tenantSlug = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-var reservedSlugs = map[string]bool{"www": true, "api": true, "admin": true, "auth": true, "login": true, "platform": true, "settings": true, "assets": true, "static": true, "healthz": true, "mail": true, "smtp": true, "ns": true, "ns1": true, "ns2": true, "_acme-challenge": true}
+var previewWorkloadPrefix = regexp.MustCompile(`^p[0-9]+-`)
 
-func ValidSlug(slug string) bool { return tenantSlug.MatchString(slug) && !reservedSlugs[slug] }
+var tenantSlug = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+var reservedSlugs = map[string]bool{"local": true, "www": true, "api": true, "admin": true, "auth": true, "login": true, "platform": true, "settings": true, "assets": true, "static": true, "healthz": true, "mail": true, "smtp": true, "ns": true, "ns1": true, "ns2": true, "_acme-challenge": true}
+
+func ReservedTenantPrefix(slug string) bool {
+	return previewWorkloadPrefix.MatchString(slug) || strings.HasPrefix(slug, "pr-") || strings.HasPrefix(slug, "app-")
+}
+func ValidSlug(slug string) bool {
+	return tenantSlug.MatchString(slug) && !reservedSlugs[slug] && !ReservedTenantPrefix(slug)
+}
+
+func ReservedTenantNames() []string {
+	names := make([]string, 0, len(reservedSlugs))
+	for name := range reservedSlugs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
 
 func (c *Catalog) CreateTenant(ctx context.Context, in CreateTenantInput) (Tenant, error) {
+	return c.createTenant(ctx, in, false)
+}
+
+func (c *Catalog) CreateOwnConnectedTenant(ctx context.Context, user, slug, name string) (Tenant, error) {
+	return c.createTenant(ctx, CreateTenantInput{CreatorID: user, InitialOwnerID: user, Slug: slug, Name: name, BackendMode: "connected"}, true)
+}
+
+// CreateOwnTenant assigns the caller as owner without granting platform access.
+func (c *Catalog) CreateOwnTenant(ctx context.Context, user, slug, name string) (Tenant, error) {
+	return c.createTenant(ctx, CreateTenantInput{CreatorID: user, InitialOwnerID: user, Slug: slug, Name: name}, true)
+}
+
+func (c *Catalog) createTenant(ctx context.Context, in CreateTenantInput, own bool) (Tenant, error) {
+	if in.BackendMode == "" {
+		in.BackendMode = "embedded"
+	}
+	if in.BackendMode != "embedded" && in.BackendMode != "connected" {
+		return Tenant{}, ErrInvalid
+	}
 	in.Slug = strings.ToLower(strings.TrimSpace(in.Slug))
 	in.Name = strings.TrimSpace(in.Name)
 	in.InvitationEmail = normalizeEmail(in.InvitationEmail)
@@ -38,7 +74,7 @@ func (c *Catalog) CreateTenant(ctx context.Context, in CreateTenantInput) (Tenan
 	if err != nil {
 		return Tenant{}, err
 	}
-	if creator.State != StateActive || !creator.PlatformAdmin {
+	if creator.State != StateActive || (!own && !creator.PlatformAdmin) || (own && (!creator.EmailVerified || in.InitialOwnerID != creator.ID || in.InvitationEmail != "")) {
 		return Tenant{}, ErrDenied
 	}
 	if in.InitialOwnerID != "" {
@@ -52,8 +88,14 @@ func (c *Catalog) CreateTenant(ctx context.Context, in CreateTenantInput) (Tenan
 	}
 	now := c.now().UTC()
 	tenant := Tenant{ID: ulid.Make().String(), Slug: in.Slug, Name: in.Name, State: "pending", CreatedAt: now}
+	if in.BackendMode == BackendConnected {
+		tenant.State = StateActive
+	}
 	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO tenants(id,slug,name,state,created_at) VALUES(?,?,?,?,?)`), tenant.ID, tenant.Slug, tenant.Name, tenant.State, millis(now)); err != nil {
 		return Tenant{}, conflict(err)
+	}
+	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO instance_connections(tenant_id,mode) VALUES(?,?)`), tenant.ID, in.BackendMode); err != nil {
+		return Tenant{}, err
 	}
 	if in.InitialOwnerID != "" {
 		_, err = tx.ExecContext(ctx, c.q(`INSERT INTO tenant_memberships(tenant_id,user_id,role,state,version,created_at) VALUES(?,?,'owner','active',1,?)`), tenant.ID, in.InitialOwnerID, millis(now))
@@ -63,7 +105,11 @@ func (c *Catalog) CreateTenant(ctx context.Context, in CreateTenantInput) (Tenan
 	if err != nil {
 		return Tenant{}, err
 	}
-	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO tenant_provisioning(tenant_id,state,phase,updated_at) VALUES(?,'pending','database',?)`), tenant.ID, millis(now)); err != nil {
+	jobState, phase := "pending", "database"
+	if in.BackendMode == BackendConnected {
+		jobState, phase = "succeeded", "awaiting connection"
+	}
+	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO tenant_provisioning(tenant_id,state,phase,updated_at) VALUES(?,?,?,?)`), tenant.ID, jobState, phase, millis(now)); err != nil {
 		return Tenant{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -230,7 +276,7 @@ func (c *Catalog) membershipWrite(ctx context.Context, tx *sql.Tx, actor, tenant
 }
 
 func (c *Catalog) SetMembership(ctx context.Context, actor string, m Membership) error {
-	if m.Role != RoleOwner && m.Role != RoleAdmin && m.Role != RoleMember {
+	if !IsTenantRole(m.Role) {
 		return ErrInvalid
 	}
 	if m.State == "" {
@@ -261,6 +307,9 @@ func (c *Catalog) SetMembership(ctx context.Context, actor string, m Membership)
 	}
 	_, err = tx.ExecContext(ctx, c.q(`INSERT INTO tenant_memberships(tenant_id,user_id,role,state,version,created_at) VALUES(?,?,?,?,1,?) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=excluded.role,state=excluded.state,version=tenant_memberships.version+1`), m.TenantID, m.UserID, m.Role, m.State, millis(c.now()))
 	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, c.q(`DELETE FROM tenant_join_requests WHERE tenant_id=? AND user_id=?`), m.TenantID, m.UserID); err != nil {
 		return err
 	}
 	return tx.Commit()

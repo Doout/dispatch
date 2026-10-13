@@ -1,4 +1,132 @@
-# Hosted tenants
+# Hosted instances
+
+Doodship runs one shared `dispatch-platform` control plane. Its default backend
+mode is `connected`. Customers connect complete self-hosted installations, each
+with its own operational databases, credentials, queues, logs and execution.
+The customer installation initiates an authenticated outbound WebSocket. The
+control plane uses that connection for approved requests and does not dial the
+customer's server.
+
+The UI calls these installations instances. Catalog tables and existing API paths
+continue to use `tenant`. Creating an instance records its name, membership and
+WorkOS organization. It does not create an operational database or start a
+customer backend on the control plane.
+
+Read [Connect a self-hosted instance](tenant-servers.md) for enrollment, remote
+access, worker traffic, application routing and disconnect behavior.
+
+## Connected mode
+
+```mermaid
+flowchart LR
+  U[Browser or API client] --> P[Shared control plane]
+  P --> C[Accounts, memberships and routing catalog]
+  S[Customer self-hosted installation] -->|Outbound authenticated WebSocket| P
+  P -->|Approved requests over the existing connection| S
+  S --> D[Customer databases, vault and analytics]
+  W[Customer workers] --> S
+  P -->|DNS-01 certificate proofs| CF[Cloudflare]
+```
+
+The platform administrator can see instance metadata and aggregate usage. Access
+to an instance's operational API requires active membership and an owner-approved
+mapping to an active local account. Platform administration does not grant that
+access. The local backend checks the mapped user's own permissions.
+
+Remote user access is disabled by default. With it disabled, members open the
+installation's configured URL on their LAN or VPN. Webhooks, approved node APIs
+and published application traffic can still use the outbound connection. An
+offline backend returns an unavailable response. There is no central execution
+fallback and no managed worker allocation.
+
+Use one root DNS record and an installation wildcard pointing at the control
+plane. Instances use `<instance>.doodship.com`; published applications use flat
+addresses such as `p223-<stable-id>-<instance>.doodship.com`. The existing wildcard
+covers both. Creating an instance does not create a DNS record. Unknown hosts
+return 404. Custom managed DNS records are disabled. Wildcard certificate keys
+stay at the control-plane ingress.
+
+Platform and instance sessions have different audiences and host-only secure
+cookies. Opening a remote instance uses a one-use handoff bound to its HTTPS
+origin and a PKCE verifier. Membership and account state are checked on API
+requests and during live streams. Disconnect revokes installation credentials,
+instance sessions and in-flight requests. Local accounts and running jobs remain
+available on the customer server.
+
+The customer backend reports daily aggregate usage. The catalog retains connected
+instance reports for 90 days. These totals are customer reports, not independently
+verified billing evidence. See [data isolation](tenant-data-isolation.md) for what
+each side stores.
+
+Only one controller may own a catalog at a time. Directory and PostgreSQL locks
+enforce this. Active-active control-plane failover is not implemented.
+
+## Prepare a connected control plane
+
+Build `Containerfile.hosted` and run the controller in Docker. The
+[development Compose guide](hosted-dev.md) includes a PostgreSQL catalog, ingress
+proxy and private credential files. No systemd service or Docker socket mount is
+required.
+
+Connected mode needs a catalog login that owns only the catalog database. It does
+not need a provisioner login, `CREATEDB`, `CREATEROLE`, or customer database URLs.
+The legacy Compose preparation script may still create a provisioner credential
+for embedded compatibility; connected mode does not use it to create customer
+stores.
+
+A direct TLS deployment uses settings such as:
+
+```dotenv
+DISPATCH_HOSTED_BACKEND_MODE=connected
+DISPATCH_HOSTED_DATA_DIR=/var/lib/dispatch-platform
+DISPATCH_HOSTED_ROOT_DOMAIN=doodship.com
+DISPATCH_HOSTED_CATALOG_URL_FILE=/run/secrets/dispatch-catalog-url
+DISPATCH_HOSTED_CONSOLE_ADDRESSES=192.0.2.10
+DISPATCH_HOSTED_DNS_PROVIDER=cloudflare
+DISPATCH_HOSTED_CLOUDFLARE_ZONE_ID=replace-with-zone-id
+DISPATCH_HOSTED_CLOUDFLARE_API_TOKEN_FILE=/run/secrets/cloudflare-api-token
+DISPATCH_HOSTED_ADDR=0.0.0.0:8443
+DISPATCH_HOSTED_TLS_MODE=certificate
+DISPATCH_HOSTED_TLS_CERT_FILE=/run/secrets/dispatch-console-chain.pem
+DISPATCH_HOSTED_TLS_KEY_FILE=/run/secrets/dispatch-console-key.pem
+```
+
+Replace documentation addresses before use. Credential files must be private and
+readable by the image's UID and GID `65532`. Keep the data directory private and
+persistent. Configure WorkOS separately using [authentication](authentication.md).
+TLS issuance and renewal use the same ingress settings described below for
+embedded mode; neither depends on customer deployment jobs.
+
+SQLite catalogs are available for disposable development with
+`DISPATCH_HOSTED_ALLOW_SQLITE=true`. Connected mode creates no operational SQLite
+files on the control plane.
+
+Before accepting users, connect two self-hosted installations and check that
+membership, local user mappings and worker credentials cannot cross between them.
+Test remote access both enabled and disabled, disconnect during a log stream,
+verify an offline webhook returns an unavailable response, and check a published
+application through the outbound connection. Back up the catalog and ingress TLS
+state centrally. Back up each customer's databases, keys and connection file on
+its own installation.
+
+## Existing installations
+
+Existing embedded instances retain their recorded storage mode and data. Starting
+the controller with the new connected default does not convert, move or delete
+those operational databases. It also does not start their old central runtimes.
+Set `DISPATCH_HOSTED_BACKEND_MODE=embedded` explicitly to continue serving them.
+
+Moving data requires an export and restore onto a self-hosted installation, then
+creating a connected instance and enrolling that installation. Automatic
+conversion of an existing embedded catalog entry is not implemented. Verify the
+restored data before retiring the previous backend.
+
+## Legacy embedded mode
+
+The following setup and execution instructions apply only when
+`DISPATCH_HOSTED_BACKEND_MODE=embedded`. They describe the older arrangement in
+which the control plane owns per-instance operational databases and runtimes.
+They do not describe the connected default.
 
 Hosted Dispatch runs as a separate `dispatch-platform` process. The existing
 `dispatch` binary keeps its single-installation behavior. Use a new data directory
@@ -16,7 +144,7 @@ resources and can view membership. A member uses the existing project and team
 grants. Only an owner can add, remove, or change members, and a tenant must retain
 an active owner.
 
-## Processes and data
+### Processes and data
 
 ```mermaid
 flowchart LR
@@ -47,10 +175,10 @@ Only one hosted controller may use a catalog at a time. A PostgreSQL advisory
 lock and a data-directory lock enforce this. Restart the controller to replace
 it. This version does not provide active-active controller failover.
 
-## Hostnames, sessions, and DNS
+### Hostnames, sessions, and DNS
 
-`dispatch.cicd.onl` serves global login, account settings, tenant selection, and the
-platform directory. `agentops.dispatch.cicd.onl` serves that tenant's console.
+`doodship.com` serves global login, account settings, tenant selection, and the
+platform directory. `agentops.doodship.com` serves that tenant's console.
 Unknown hosts and deeper workload names never fall through to a tenant console.
 Forwarded Host headers do not select a tenant.
 
@@ -61,30 +189,44 @@ state are checked on requests and live-stream refreshes. A platform cookie does
 not authorize a tenant API. Existing tenant automation tokens continue to work
 against that tenant's operational API.
 
-Use an existing Cloudflare zone that contains the root domain. Create the root
-console record once in Cloudflare and point it at the control-plane ingress.
-Dispatch creates the exact tenant console record and, when a workload ingress is
-configured, a wildcard beneath that tenant.
+Use an existing Cloudflare zone containing the root domain. Create the root
+record and one wildcard per installation, both pointing to the control-plane
+ingress. Tenant creation and deployment do not add DNS records.
 
 | Name | Destination | Managed by |
 | --- | --- | --- |
-| `dispatch.cicd.onl` | Control-plane ingress | Operator |
-| `agentops.dispatch.cicd.onl` | Control-plane ingress | Dispatch |
-| `*.agentops.dispatch.cicd.onl` | Workload ingress | Dispatch |
+| `doodship.com` | Production ingress | Operator |
+| `*.doodship.com` | Production ingress | Operator |
+| `local.doodship.com` | Development ingress | Operator |
+| `*.local.doodship.com` | Development ingress | Operator |
 
-A wildcard DNS answer supplies the ingress address. The ingress still needs the
-application's host rule and TLS certificate. Existing target routing handles
-workload traffic. Tenant administrators can add A, AAAA, CNAME or TXT records
-for one-label workload names through `/api/v1/hosted/dns`. Console, wildcard,
-ACME and other tenants' records are reserved.
+Tenant consoles use `agentops.doodship.com`. Workloads use one label, such as
+`p223-<stable-id>-agentops.doodship.com`. The stable ID separates apps
+and projects with the same PR number. Development uses the same layout below
+`local.doodship.com`. Tenant names beginning with `p<number>-`, `pr-` or `app-` are reserved,
+as is `local`. Long tenant names are shortened to keep the workload label within
+63 characters; the stable ID is preserved.
 
-DNS changes are saved before publication. A provider failure returns `202` with
-`syncState: pending`; background reconciliation retries the saved change. A
-successful write returns `200` with `syncState: synced`. Provider acceptance does
-not mean every recursive resolver has refreshed its cache. See
-[DNS providers](dns-providers.md) for Cloudflare credentials, ownership and TLS.
+Dispatch stores hostname ownership in the catalog. Deployment destinations and
+configuration stay in the tenant database. Only registered hosts with a published
+route reach the workload gateway. Unknown names return 404, even if DNS resolves
+them. Custom tenant DNS records and custom Docker application domains are not
+available. Existing custom DNS records survive migration, but cannot be edited
+through Dispatch.
 
-## Preparing a new installation
+Set `DISPATCH_HOSTED_WORKLOAD_GATEWAY` to the operator's shared workload ingress.
+It accepts the original Host and routes it to the target's published workload.
+An explicit `http://gateway:8080` origin supports an ingress on a private Docker
+network. HTTPS origins verify the upstream certificate. A bare IP or hostname
+uses HTTPS on port 443. Public TLS terminates at the control-plane ingress;
+workers do not receive its wildcard key.
+
+This gateway requires connectivity to the workload ingress. It does not create
+an outbound tunnel to private customer workers. Without a configured gateway,
+published workload requests return 503. Helm chart ingress remains chart-managed.
+See [DNS providers](dns-providers.md) for credentials, ownership and TLS.
+
+### Preparing a new installation
 
 These commands are for the new installation host. They are not an upgrade or a
 migration procedure for an existing Dispatch data directory.
@@ -114,8 +256,9 @@ See [tenant data isolation](tenant-data-isolation.md) for the access boundary.
 Save these values in `hosted.env` for the controller container:
 
 ```dotenv
+DISPATCH_HOSTED_BACKEND_MODE=embedded
 DISPATCH_HOSTED_DATA_DIR=/var/lib/dispatch-platform
-DISPATCH_HOSTED_ROOT_DOMAIN=dispatch.cicd.onl
+DISPATCH_HOSTED_ROOT_DOMAIN=doodship.com
 DISPATCH_HOSTED_CATALOG_URL_FILE=/run/secrets/dispatch-catalog-url
 DISPATCH_HOSTED_POSTGRES_ADMIN_URL_FILE=/run/secrets/dispatch-provisioner-url
 DISPATCH_HOSTED_CONSOLE_ADDRESSES=192.0.2.10
@@ -233,7 +376,7 @@ The root console's `/healthz` endpoint reports that the HTTP process is running.
 when the catalog is unavailable or uninitialized. Neither endpoint verifies DNS
 publication, certificate issuance, worker availability or individual tenant databases.
 
-## TLS bootstrap and renewal
+### TLS bootstrap and renewal
 
 Use `DISPATCH_HOSTED_TLS_MODE=certificate` with a trusted console certificate
 while testing DNS-01 issuance. Keep its certificate and key paths configured.
@@ -258,26 +401,23 @@ certificates remain available through renewal failures until they expire. The
 controller publishes each DNS-01 TXT value through Cloudflare, checks the zone's
 authoritative nameservers, then removes only that challenge's record.
 
-The root and tenant consoles share a certificate for `dispatch.cicd.onl` and
-`*.dispatch.cicd.onl`. Workload hosts need a separate wildcard certificate for
-each tenant, such as `*.agentops.dispatch.cicd.onl`. An authenticated tenant owner
-or admin can retrieve its workload bundle at `GET /api/v1/hosted/certificate`.
-The response includes `certificatePem`, `privateKeyPem`, `notAfter` and
-`renewAfter`. Configure the workload ingress to install and refresh that bundle.
-Cloudflare receives DNS records; certificate private keys stay with Dispatch
-and the ingress that installs them.
+The root, tenant consoles and flat workload hosts share a certificate for
+`doodship.com` and `*.doodship.com`. The dev installation uses `local.doodship.com`
+and `*.local.doodship.com`. Wildcard private keys stay at each installation's
+control-plane ingress. Tenant certificate downloads are disabled. Cloudflare
+receives only DNS-01 TXT proofs, never certificate keys.
 
 A proxy container can terminate HTTPS instead. `DISPATCH_HOSTED_TLS_MODE=proxy`
 requires a loopback listener, so the proxy must share the controller's network
 namespace. Set trusted proxy CIDRs only for a proxy that replaces or correctly
 appends `X-Forwarded-For`. The public Host and Origin checks still apply.
 
-## Tenant creation and usage
+### Tenant creation and usage
 
 The platform directory accepts a tenant name, slug, and initial owner email.
 Creation returns `202` and a pending tenant. The controller retries provisioning
 from durable state after failures or restarts. It creates the isolated database,
-vault and directories, publishes DNS, then marks the tenant active. A failed
+vault and directories, registers its console address, then marks the tenant active. A failed
 attempt records a fixed provisioning phase, not raw database errors or tenant
 content. Tenant slugs and the root domain are immutable in this version. The catalog
 also binds the DNS provider and zone ID. Token rotation for that zone is allowed;
@@ -296,13 +436,13 @@ override, operational resource, or credential endpoint. Membership changes use a
 separate API that checks the acting account's tenant owner role. See
 [hosted API](hosted-openapi.yaml) for routes and request contracts.
 
-## Handoff checks
+### Handoff checks
 
 Before accepting users on a new installation:
 
-1. Verify the operator-created root record resolves to the ingress. Create a
-   test tenant and verify its console and wildcard records in Cloudflare and
-   through public DNS. Check pending updates recover after a provider failure.
+1. Verify the root and installation wildcard resolve to the ingress. Create a
+   test tenant and verify its console without adding DNS records. Check that
+   provider outages do not prevent tenant creation.
 2. Create two test tenants with different owners. Confirm platform-only access
    cannot enter either tenant, and tenant sessions and worker credentials cannot
    cross between them.
@@ -310,7 +450,7 @@ Before accepting users on a new installation:
    and deploy to its intended target. Verify a managed worker cannot receive a
    tenant-mode build or repository credentials.
 4. Complete staging DNS-01 issuance and test renewal without running a deployment.
-   Install the tenant certificate at the workload ingress and verify host routing.
+   Verify a registered flat workload hostname uses the shared ingress certificate.
 5. Back up the catalog, tenant databases, generated database credentials, vault
    keys, ACME state, and worker receipts. Test recovery into separate infrastructure.
 
@@ -319,7 +459,7 @@ reviewed import and production provider/ingress configuration belong to the next
 deployment task. Local provider fixtures cover ownership and retries. Live
 Cloudflare publication still needs validation with an operator-supplied token.
 
-## Hosted execution limits
+### Hosted execution limits
 
 Hosted mode rejects operations that still require local controller tools or files.
 These include controller backup/restore, SSH installation, Laneway installation,

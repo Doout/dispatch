@@ -2,8 +2,7 @@ openapi: 3.1.0
 info:
   title: Dispatch hosted API
   version: 0.1.0
-  description: Hosted identity, metadata-only platform administration, tenant membership and provider-managed
-    DNS. Browser mutations require an exact Origin when cookies are present. No CORS access is granted
+  description: Hosted identity, metadata-only platform administration, tenant membership and registered tenant console hosts. Custom DNS editing is unavailable. Browser mutations require an exact Origin when cookies are present. No CORS access is granted
     to sibling workload hosts. Tenant operational endpoints are documented separately in openapi.yaml.
 servers:
 - url: https://{host}/api/v1
@@ -16,6 +15,114 @@ security:
 - platformSession: []
 - bearerSession: []
 paths:
+  /tenants/{id}/connection:
+    parameters:
+    - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      operationId: getHostedInstanceConnection
+      description: Active instance members can inspect connection state, remote access policy and the owner-approved direct address. Platform administrator status alone grants no access.
+      responses:
+        '200': { description: Connection state. }
+        '403': { description: Instance membership required. }
+    post:
+      operationId: createHostedInstanceEnrollment
+      description: Instance owner only. Issue a ten-minute, single-use enrollment token. A live grant must be disconnected before enrolling a replacement installation. The response contains enrollmentToken, expiresAt, platformURL and the owner's stable subject ID.
+      responses:
+        '201': { description: One-use enrollment token. }
+        '403': { description: Instance owner access required. }
+        '409': { description: A server is already enrolled or the instance uses embedded storage. }
+    delete:
+      operationId: revokeHostedInstanceConnection
+      description: Instance owner only. Revoke the installation credential and instance sessions and close active outbound streams. Local access and workloads remain independent.
+      responses:
+        '204': { description: Connection revoked. }
+        '403': { description: Instance owner access required. }
+  /instance-connections/enroll:
+    post:
+      operationId: enrollHostedInstance
+      security: []
+      description: Self-hosted installation only, without browser cookies or Origin. Exchange an enrollment token for instanceID, credential, generation, websocketURL, ownerSubject, instanceSlug and rootDomain. The platform never contacts the supplied direct URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enrollmentToken, installationID]
+              properties:
+                enrollmentToken: { type: string }
+                installationID: { type: string }
+                directURL: { type: string }
+                remoteAccess: { type: boolean, default: false }
+      responses:
+        '201': { description: Installation credential and versioned connection endpoint. }
+        '403': { description: Browser request or enrollment denied. }
+  /instance-connections/ws:
+    get:
+      operationId: connectHostedInstanceSocket
+      security:
+      - installationGrant: []
+      description: Installation bearer credential only. The self-hosted controller initiates a WebSocket using the doodship-instance-v1 subprotocol. Supports bounded HTTP and SSE forwarding; application WebSocket upgrades are not supported.
+      responses:
+        '101': { description: Outbound instance connection established. }
+        '401': { description: Missing or revoked installation credential. }
+  /instance-connections/policy:
+    put:
+      operationId: updateHostedInstancePolicy
+      security:
+      - installationGrant: []
+      description: Installation bearer credential only, without browser cookies or Origin. Publish the locally approved directURL and remoteAccess policy. Changing the policy closes existing streams before reconnection.
+      responses:
+        '204': { description: Policy updated. }
+  /instance-connections/current:
+    delete:
+      operationId: revokeCurrentHostedInstance
+      security:
+      - installationGrant: []
+      description: Installation bearer credential only. Revoke this installation's grant and instance sessions.
+      responses:
+        '204': { description: Grant revoked. }
+  /instance-connections/routes:
+    get:
+      operationId: listConnectedInstanceRoutes
+      security:
+      - installationGrant: []
+      description: Installation bearer credential only. List this instance's registered hostname ownership IDs, without deployment destinations.
+      responses:
+        '200': { description: Registered addresses. }
+        '409':
+          description: The registered address inventory exceeds the active address limit. Remove unused application routes before publishing another.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: publishConnectedInstanceRoute
+      security:
+      - installationGrant: []
+      description: Installation bearer credential only. Reserve a generated single-label hostname using appID, projectID, serverID and optional previewNumber. The live destination stays on the self-hosted backend.
+      responses:
+        '201': { description: Reserved hostname. }
+        '409':
+          description: This instance has reached its active address limit. Remove unused application routes before publishing another.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: releaseConnectedInstanceRoute
+      security:
+      - installationGrant: []
+      description: Installation bearer credential only. Release this instance's route identified by appID and serverID.
+      responses:
+        '204': { description: Address released. }
+  /instance-connections/usage:
+    post:
+      operationId: reportConnectedInstanceUsage
+      security:
+      - installationGrant: []
+      description: Installation bearer credential only. Replace daily aggregate totals for this instance within the last seven days. Reject cross-instance reports. Retain connected-instance daily usage for 90 days.
+      responses:
+        '204': { description: Aggregate report saved. }
   /hosted:
     get:
       operationId: hostedMode
@@ -38,12 +145,295 @@ paths:
                     type: string
                   registrationEnabled:
                     type: boolean
+                  waitlistEnabled:
+                    type: boolean
+                    description: The sign-in page offers the WorkOS waitlist.
+                  workosLoginMethods:
+                    type: array
+                    items:
+                      type: string
+                      enum: [email-code, password, github, google, sso]
+                  authkitEnabled:
+                    type: boolean
+                  reservedTenantNames:
+                    type: array
+                    items:
+                      type: string
+                    description: Tenant names reserved by this installation, including local.
+                  passwordLoginEnabled:
+                    type: boolean
                   tenant:
                     $ref: '#/components/schemas/Tenant'
                   loginUrl: *id001
         default:
           $ref: '#/components/responses/Problem'
       security: []
+  /account/workos/authenticate:
+    post:
+      operationId: authenticateManagedAccount
+      description: Doodship login backed by WorkOS. Requires an exact Origin header. Start with method and email; password is required for the password method. Email codes only provision users with a validated invitation or an existing active, verified account. Continue with a browser-bound state and code or organizationId. With password migration enabled, link-account requires previousPassword after WorkOS authentication; email verification alone never links accounts. Resume retrieves and rotates a continuation. Retries cannot extend the original ten-minute deadline. Tenant handoffs retain their target organization and still require local membership.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                method:
+                  type: string
+                  enum: [email-code, password]
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  maxLength: 4096
+                previousPassword:
+                  type: string
+                  maxLength: 4096
+                  description: Previous Doodship password for link-account. Checked locally and never forwarded to WorkOS. Account linking is blocked in production-data previews.
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                state:
+                  type: string
+                organizationId:
+                  type: string
+                invitationToken:
+                  type: string
+                  maxLength: 512
+                tenantId:
+                  type: string
+                codeChallenge:
+                  type: string
+                link:
+                  type: boolean
+                  description: Requires a current local account session and the same email.
+                resume:
+                  type: boolean
+      responses:
+        '200':
+          description: Next login step, retry message with rotated state, or completed login with a host-only session cookie. Provider continuation tokens never leave the server. TOTP setup keys are returned only during enrollment.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [step]
+                properties:
+                  step:
+                    type: string
+                    enum: [email-code, verify-email, totp, organization, link-account, complete]
+                  state:
+                    type: string
+                  email:
+                    type: string
+                  secret:
+                    type: string
+                  message:
+                    type: string
+                  returnTo:
+                    type: string
+                  organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/workos/invitation:
+    post:
+      operationId: inspectManagedInvitation
+      description: Validates a pending unexpired WorkOS invitation and returns its email. Requires an exact Origin header. No account or session is created.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  maxLength: 512
+      responses:
+        '200':
+          description: Validated invitation email.
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/workos/waitlist:
+    post:
+      operationId: joinManagedWaitlist
+      description: Adds an email to the WorkOS environment's default waitlist and requests its confirmation email. Existing accounts receive the same response. No Doodship account or session is created. Requires an exact Origin header.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '202':
+          description: Request received.
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/workos/password-reset:
+    post:
+      operationId: requestManagedPasswordReset
+      description: Requests a WorkOS reset email when password login is enabled. Returns the same confirmation for missing accounts. Requires an exact Origin header.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '202':
+          description: If the account exists, a reset link was sent.
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/workos/password-reset/confirm:
+    post:
+      operationId: confirmManagedPasswordReset
+      description: Changes the WorkOS password using a reset token. WorkOS enforces password policy and token expiry. Creates no Doodship session. Requires an exact Origin header.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                  maxLength: 512
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 4096
+      responses:
+        '200':
+          description: Password changed. Sign in to create a session.
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/workos/start:
+    post:
+      operationId: startWorkOSLogin
+      description: Starts AuthKit login with PKCE and a browser-bound cookie. Set link to connect an authenticated existing account. Tenant and challenge preserve a tenant handoff destination.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                provider:
+                  type: string
+                  enum: [github, google, sso]
+                  description: Optional direct provider login instead of the AuthKit hosted form.
+                email:
+                  type: string
+                  format: email
+                  description: Required for direct SSO discovery.
+                tenantId:
+                  type: string
+                codeChallenge:
+                  type: string
+                link:
+                  type: boolean
+                waitlist:
+                  type: boolean
+                  description: Opens the WorkOS waitlist. Cannot be combined with linking or a tenant handoff.
+                invitationToken:
+                  type: string
+                  maxLength: 512
+                  description: Invitation token received from WorkOS. Cannot be combined with linking or the waitlist.
+      responses:
+        '200':
+          description: Authorization URL. The browser must retain the state cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorizationUrl:
+                    type: string
+                    format: uri
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/workos/callback:
+    get:
+      operationId: completeWorkOSLogin
+      description: Consumes the browser-bound attempt and exchanges the authorization code on the server. Existing email addresses require explicit linking.
+      security: []
+      parameters:
+      - in: query
+        name: state
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: code
+        schema:
+          type: string
+      responses:
+        '303':
+          description: Redirect to Dispatch with a host-only session cookie on success, or to sign-in with an error.
+        default:
+          $ref: '#/components/responses/Problem'
+  /tenants/{id}/join-requests:
+    get:
+      operationId: listTenantJoinRequests
+      description: Tenant owner only. Lists up to 100 explicit join requests and new provider users
+        awaiting approval. Approve through the existing member creation endpoint. Removed members are excluded.
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Pending users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    email:
+                      type: string
+                    name:
+                      type: string
+        default:
+          $ref: '#/components/responses/Problem'
   /account/login:
     post:
       operationId: hostedLogin
@@ -76,7 +466,8 @@ paths:
   /account/register:
     post:
       operationId: registerHostedAccount
-      description: Root host only. Sends a recipient verification link when registration is configured.
+      description: Root host only. Public registration is closed by default. Sends a recipient
+        verification link only when DISPATCH_HOSTED_ALLOW_REGISTRATION is true and SMTP is configured.
         No password is accepted before email verification. Repeating the request can resend an expired
         link.
       responses:
@@ -182,7 +573,8 @@ paths:
   /account/tenants:
     get:
       operationId: myHostedTenants
-      description: Returns only this account's active memberships and recipient-matched invitations.
+      description: Returns only this account's active memberships, recipient-matched invitations,
+        and its pending requests to join tenants.
       responses:
         '200':
           description: Success.
@@ -209,6 +601,61 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Tenant'
+                  joinRequests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tenant'
+        default:
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: createOwnHostedTenant
+      description: Creates a tenant owned by the signed-in, active, verified account. Creates the
+        WorkOS organization before returning when WorkOS is available. An outage leaves the
+        tenant pending for automatic retry. Does not grant platform administrator access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [slug, name]
+              properties:
+                slug:
+                  type: string
+                  pattern: '^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$'
+                name:
+                  type: string
+                  maxLength: 120
+      responses:
+        '202':
+          description: Tenant saved. Provisioning continues in the background.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        default:
+          $ref: '#/components/responses/Problem'
+  /account/join-requests:
+    post:
+      operationId: requestHostedTenantMembership
+      description: Records the signed-in account's request to join an active tenant. Repeating a
+        request is safe. Only the tenant owner can approve it through the members API. A request
+        does not grant membership, and removed members cannot request access again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [slug]
+              properties:
+                slug:
+                  type: string
+      responses:
+        '202':
+          description: Waiting for tenant owner approval.
         default:
           $ref: '#/components/responses/Problem'
   /account/invitations/{id}/accept:
@@ -490,119 +937,12 @@ paths:
         name: userId
         required: true
         schema: *id001
-  /hosted/dns:
-    get:
-      operationId: listTenantDNS
-      description: Tenant console only. Owner/admin only. Lists this tenant's desired DNS records and
-        publication state, excluding ACME challenges. A synced record has been accepted by the provider; recursive caches may still
-        contain an older answer.
-      responses:
-        '200':
-          description: Success.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/DNSRecord'
-        default:
-          $ref: '#/components/responses/Problem'
-      security: *id003
-    put:
-      operationId: writeTenantDNS
-      description: Tenant console only. Owner/admin only. Names must be one label below the tenant console
-        hostname. Console, wildcard, ACME and other tenant names are reserved. New records use generation
-        0; updates require the existing generation. Changes are saved before provider publication.
-        Pending changes are retried after provider failures and controller restarts.
-      responses:
-        '200':
-          description: Saved and published to the DNS provider.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DNSRecord'
-        '202':
-          description: Saved; publication is pending and will be retried.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DNSRecord'
-        default:
-          $ref: '#/components/responses/Problem'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DNSWrite'
-      security: *id003
-    delete:
-      operationId: deleteTenantDNS
-      description: Deletes only a user-managed record with the exact expected generation.
-      responses:
-        '204':
-          description: Removed from the catalog and DNS provider.
-        '202':
-          description: Removed from desired records; provider deletion is pending and will be retried.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id: *id001
-                  syncState:
-                    type: string
-                    enum:
-                    - pending
-                required:
-                - id
-                - syncState
-        default:
-          $ref: '#/components/responses/Problem'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                name: *id001
-                type: *id001
-                generation:
-                  type: integer
-                  minimum: 1
-              required:
-              - name
-              - type
-              - generation
-      security: *id003
-  /hosted/certificate:
-    get:
-      operationId: getTenantCertificate
-      description: Tenant console only. Owner/admin only. Returns only this tenant's workload wildcard
-        certificate and private key. Returns 503 until issuance succeeds. Never returns the console wildcard
-        key.
-      responses:
-        '200':
-          description: Success.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  certificatePem: *id001
-                  privateKeyPem:
-                    type: string
-                    format: password
-                  notAfter: &id004
-                    type: string
-                    format: date-time
-                  renewAfter: *id004
-        default:
-          $ref: '#/components/responses/Problem'
-      security: *id003
 components:
   securitySchemes:
+    installationGrant:
+      type: http
+      scheme: bearer
+      description: The self-hosted installation grant. It cannot act as a user session.
     platformSession:
       type: apiKey
       in: cookie
@@ -634,7 +974,12 @@ components:
           type: boolean
         emailVerified:
           type: boolean
-        createdAt: *id004
+        workosLinked:
+          type: boolean
+          description: Whether this account has a connected WorkOS identity. Returned by the account endpoint.
+        createdAt: &id004
+          type: string
+          format: date-time
       required:
       - id
       - email
@@ -742,71 +1087,6 @@ components:
           type: integer
           format: int64
           minimum: 0
-    DNSRecord:
-      type: object
-      properties:
-        id: *id001
-        ownerId: *id001
-        tenantId: *id001
-        name: *id001
-        type:
-          type: string
-          enum:
-          - A
-          - AAAA
-          - CNAME
-          - TXT
-        values:
-          type: array
-          items: *id001
-        ttl:
-          type: integer
-          minimum: 60
-          maximum: 86400
-        generation:
-          type: integer
-          minimum: 0
-        syncState:
-          type: string
-          description: Provider publication state. Synced does not guarantee recursive cache refresh.
-          enum:
-          - pending
-          - synced
-      required:
-      - id
-      - name
-      - type
-      - values
-      - ttl
-      - generation
-      - syncState
-    DNSWrite:
-      type: object
-      properties:
-        name: *id001
-        type:
-          type: string
-          enum:
-          - A
-          - AAAA
-          - CNAME
-          - TXT
-        values:
-          type: array
-          items: *id001
-        ttl:
-          type: integer
-          minimum: 60
-          maximum: 86400
-        generation:
-          type: integer
-          minimum: 0
-      required:
-      - name
-      - type
-      - values
-      - ttl
-      - generation
     Problem:
       type: object
       properties:

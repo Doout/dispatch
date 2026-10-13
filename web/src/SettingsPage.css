@@ -44,3 +44,17 @@
   .settings-feedback { margin-right: 16px; margin-left: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .settings-switch > span, .settings-switch > span::after { transition: none; } }
+
+.instance-connection-settings { margin-bottom: 22px; }
+.instance-connection-body { padding: 20px; }
+.instance-connection-body form, .instance-connection-body fieldset { display: grid; gap: 16px; min-width: 0; }
+.instance-connection-body fieldset { border: 0; padding: 0; margin: 0; }
+.instance-connection-body label { display: grid; gap: 8px; font-size: 12px; font-weight: 600; }
+.instance-connection-body input:not([type="checkbox"]), .instance-connection-body select { width: 100%; min-width: 0; }
+.instance-connection-body p { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
+.instance-connection-body h3 { font-size: 14px; margin: 10px 0 0; }
+.instance-connection-body .instance-connection-toggle { display: flex; align-items: center; gap: 8px; }
+.instance-connection-mapping { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.instance-connection-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.instance-connection-confirm { display: grid; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--rule); }
+@media (max-width: 600px) { .instance-connection-mapping { grid-template-columns: minmax(0, 1fr); } .instance-connection-settings > header { flex-wrap: wrap; } }

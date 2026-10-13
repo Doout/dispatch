@@ -1,3 +1,4 @@
+import { useHostedTenant } from "./hosted/context";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Cube, Key, LockKey, TerminalWindow } from "@phosphor-icons/react";
 import { api, GitHubRepository, HelmChartInspection, HelmValue, KubernetesServerInput, Overview, Project, Secret, Server } from "./api";
@@ -308,6 +309,7 @@ function repositoryIdentifier(value: string) {
 }
 
 export function AppForm({ data, onChanged, focusName = false, initialSourceType = "compose", sourceTypeLocked = false, template = false }: { data: Overview; onChanged: Changed; focusName?: boolean; initialSourceType?: ApplicationSourceType; sourceTypeLocked?: boolean; template?: boolean }) {
+  const hosted = useHostedTenant();
   const readyServers = useMemo(() => data.servers.filter((server) => server.state === "ready"), [data.servers]);
   const initialServers = readyServers.filter((server) => initialSourceType === "helm" ? isKubernetesRuntime(server.runtime) : server.runtime === "docker");
   const [projectID, setProjectID] = useState(data.projects[0]?.id ?? "");
@@ -482,7 +484,7 @@ export function AppForm({ data, onChanged, focusName = false, initialSourceType 
       {helmOrigin !== "git" && <label><span>Version</span><input placeholder="Chart default" value={helmVersion} onChange={(event) => setHelmVersion(event.target.value)} spellCheck={false} /></label>}
       <label><span>Namespace</span><input placeholder="Server default" value={helmNamespace} onChange={(event) => setHelmNamespace(event.target.value)} spellCheck={false} /></label>
       <label><span>Release name</span><input placeholder="Application name + ID" value={helmRelease} onChange={(event) => setHelmRelease(event.target.value)} spellCheck={false} /></label>
-      <details className="optional-settings preview-settings wide"><summary>Advanced settings <span>Optional</span></summary><div><label><span>Preview URL</span><input placeholder="https://preview.example.com" value={domain} onChange={(event) => setDomain(event.target.value)} spellCheck={false} /></label></div></details>
+      {(!hosted || sourceType === "helm") && <details className="optional-settings preview-settings wide"><summary>Advanced settings <span>Optional</span></summary><div><label><span>Preview URL</span><input placeholder="https://preview.example.com" value={domain} onChange={(event) => setDomain(event.target.value)} spellCheck={false} /></label></div></details>}
     </>}
     {repositorySource && <details className="optional-settings repository-access wide"><summary>Repository access <span>Optional</span></summary><div>
       <label><span>Authentication</span><select value={sourceAuthType} onChange={(event) => { setSourceAuthType(event.target.value as "" | "github_app" | "github_token" | "ssh_key"); setSourceCredentialID(""); invalidateHelmInspection(); }}><option value="">Public repository</option><option value="github_app">GitHub App</option><option value="github_token">GitHub token</option><option value="ssh_key">SSH private key</option></select></label>

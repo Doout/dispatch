@@ -16,7 +16,10 @@ passed = [event["Test"] for event in events if event.get("Action") == "pass" and
 required = [test for test in passed if args.require_name.lower() in test.lower()]
 missing = sorted(set(args.require_test) - set(passed))
 for event in events:
-    if event.get("Action") == "output" and any(word in event.get("Output", "") for word in ["FAIL", "panic:"]):
+    if event.get("Action") == "output" and (
+        event.get("Test") in failed
+        or any(word in event.get("Output", "") for word in ["FAIL", "panic:"])
+    ):
         print(event["Output"], end="")
 if skipped or failed or not passed or missing or args.require_name and not required:
     print(f"Integration fixtures failed: skipped={skipped}, failed={failed}, missing={missing}, required-name passes={len(required)}", file=sys.stderr)

@@ -1,6 +1,6 @@
 {
-  "name": "Dispatch",
-  "short_name": "Dispatch",
+  "name": "Doodship",
+  "short_name": "Doodship",
   "description": "Deployment control",
   "start_url": "/",
   "display": "standalone",
@@ -8,9 +8,15 @@
   "theme_color": "#111c2d",
   "icons": [
     {
-      "src": "/dispatch-mark.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/brand/doodship-app-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/doodship-app-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]

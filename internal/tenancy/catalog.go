@@ -113,19 +113,32 @@ func (c *Catalog) Migrate(ctx context.Context) error {
 }
 
 var catalogSchema = []string{
+
 	`CREATE TABLE IF NOT EXISTS tenancy_schema (version INTEGER PRIMARY KEY)`,
 	`CREATE TABLE IF NOT EXISTS tenancy_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('active','disabled','pending')), platform_admin INTEGER NOT NULL DEFAULT 0, email_verified INTEGER NOT NULL DEFAULT 0, password_hash TEXT NOT NULL DEFAULT '', version BIGINT NOT NULL DEFAULT 1, created_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS tenants (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','provisioning','active','failed')), created_at BIGINT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS instance_connections (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id), mode TEXT NOT NULL CHECK(mode IN ('embedded','connected')), generation BIGINT NOT NULL DEFAULT 0, credential_hash TEXT NOT NULL DEFAULT '', installation_id TEXT NOT NULL DEFAULT '', direct_url TEXT NOT NULL DEFAULT '', remote_access INTEGER NOT NULL DEFAULT 0, owner_subject TEXT NOT NULL DEFAULT '')`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS instance_credentials ON instance_connections(credential_hash) WHERE credential_hash <> ''`,
+	`CREATE TABLE IF NOT EXISTS instance_enrollments (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id), token_hash TEXT NOT NULL UNIQUE, owner_subject TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS tenant_memberships (tenant_id TEXT NOT NULL REFERENCES tenants(id), user_id TEXT NOT NULL REFERENCES tenancy_users(id), role TEXT NOT NULL CHECK(role IN ('owner','admin','member')), state TEXT NOT NULL CHECK(state IN ('active','disabled')), version BIGINT NOT NULL DEFAULT 1, created_at BIGINT NOT NULL, PRIMARY KEY(tenant_id,user_id))`,
 	`CREATE INDEX IF NOT EXISTS tenant_memberships_user ON tenant_memberships(user_id,state)`,
 	`CREATE TABLE IF NOT EXISTS tenant_invitations (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id), email TEXT NOT NULL, created_at BIGINT NOT NULL, accepted_by TEXT REFERENCES tenancy_users(id))`,
 	`CREATE TABLE IF NOT EXISTS tenancy_sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES tenancy_users(id), audience TEXT NOT NULL, user_version BIGINT NOT NULL, membership_version BIGINT NOT NULL DEFAULT 0, expires_at BIGINT NOT NULL, created_at BIGINT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS tenancy_external_users (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES tenancy_users(id), PRIMARY KEY(provider,subject), UNIQUE(provider,user_id))`,
+	`CREATE TABLE IF NOT EXISTS tenancy_login_attempts (token_hash TEXT PRIMARY KEY, browser_hash TEXT NOT NULL, data TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS tenancy_login_origins (token_hash TEXT PRIMARY KEY, provider TEXT NOT NULL, subject TEXT NOT NULL, session_id TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS tenant_workos_organizations (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id), organization_id TEXT NOT NULL UNIQUE, sync_digest TEXT NOT NULL DEFAULT '')`,
+	`CREATE TABLE IF NOT EXISTS tenant_join_requests (tenant_id TEXT NOT NULL REFERENCES tenants(id), user_id TEXT NOT NULL REFERENCES tenancy_users(id), created_at BIGINT NOT NULL, PRIMARY KEY(tenant_id,user_id))`,
+	`CREATE INDEX IF NOT EXISTS tenant_join_requests_user ON tenant_join_requests(user_id)`,
+
 	`CREATE INDEX IF NOT EXISTS tenancy_sessions_user ON tenancy_sessions(user_id)`,
 	`CREATE INDEX IF NOT EXISTS tenancy_sessions_expiry ON tenancy_sessions(expires_at)`,
 	`CREATE TABLE IF NOT EXISTS tenant_handoffs (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES tenancy_users(id), tenant_id TEXT NOT NULL REFERENCES tenants(id), origin TEXT NOT NULL, code_challenge TEXT NOT NULL, user_version BIGINT NOT NULL, membership_version BIGINT NOT NULL, expires_at BIGINT NOT NULL, created_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS tenancy_email_verifications (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES tenancy_users(id), email TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS tenant_usage (tenant_id TEXT NOT NULL REFERENCES tenants(id), period_start BIGINT NOT NULL, period_end BIGINT NOT NULL, projects BIGINT NOT NULL, applications BIGINT NOT NULL, members BIGINT NOT NULL, builds BIGINT NOT NULL, deployments BIGINT NOT NULL, build_seconds BIGINT NOT NULL, runtime_seconds BIGINT NOT NULL, storage_bytes BIGINT NOT NULL, transfer_bytes BIGINT NOT NULL, updated_at BIGINT NOT NULL, measured TEXT NOT NULL DEFAULT '[]', PRIMARY KEY(tenant_id,period_start,period_end))`,
+	`CREATE INDEX IF NOT EXISTS tenant_usage_end ON tenant_usage(period_end)`,
 	`CREATE TABLE IF NOT EXISTS tenant_domains (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), hostname TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, state TEXT NOT NULL, claim_hash TEXT NOT NULL, created_at BIGINT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS tenant_workload_hosts (hostname TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), app_id TEXT NOT NULL, project_id TEXT NOT NULL, server_id TEXT NOT NULL, UNIQUE(tenant_id,app_id))`,
 	`CREATE TABLE IF NOT EXISTS tenant_provisioning (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id), state TEXT NOT NULL, phase TEXT NOT NULL, updated_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS tenant_zone_generation (id INTEGER PRIMARY KEY CHECK(id=1), generation BIGINT NOT NULL)`,
 	`INSERT INTO tenant_zone_generation(id,generation) VALUES(1,0) ON CONFLICT(id) DO NOTHING`,

@@ -1,7 +1,7 @@
 .interface-shell { grid-template-columns: 196px minmax(0, 1fr); --radius-surface: 8px; --radius-control: 6px; background: #f7f8fa; }
 .interface-shell .interface-rail { color: var(--ink); background: #fff; border-right: 1px solid var(--rule); }
 .interface-shell .wordmark { height: 58px; flex-basis: 58px; padding: 0 18px; border-bottom: 1px solid var(--rule); }
-.interface-shell .wordmark > svg { width: 25px; color: var(--blue); }
+.interface-shell .wordmark > .brand-icon { width: 25px; color: var(--blue); }
 .interface-shell .wordmark > span { color: var(--ink); font-weight: 750; font-size: 17px; letter-spacing: -.04em; }
 .interface-shell .wordmark > button { color: var(--muted); }
 .interface-shell .nav-list { gap: 4px; padding: 18px 10px; }

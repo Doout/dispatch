@@ -17,7 +17,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <React.Suspense
           fallback={
             <div className="hosted-auth" role="status">
-              Loading Dispatch…
+              Loading Doodship...
             </div>
           }
         >

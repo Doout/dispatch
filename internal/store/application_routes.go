@@ -45,7 +45,7 @@ func (s *SQLStore) reserveApplicationRoute(ctx context.Context, tx *changeTx, pl
 		if current.Hostname != plan.Hostname || current.ProjectID != plan.ProjectID || current.ServerID != plan.ServerID {
 			return plan, ErrRouteConflict
 		}
-		if current.DeploymentID != "" && (current.EntryPoint != plan.EntryPoint || current.RequireTLS != plan.RequireTLS || current.TLSResolver != plan.TLSResolver) {
+		if current.DeploymentID != "" && (current.EntryPoint != plan.EntryPoint || current.RequireTLS != plan.RequireTLS || current.TLSResolver != plan.TLSResolver || current.GatewayTLS != plan.GatewayTLS) {
 			return plan, ErrRouteConflict
 		}
 		if current.RequestedDeploymentID == plan.RequestedDeploymentID {
@@ -82,7 +82,7 @@ func (s *SQLStore) SaveApplicationRoute(ctx context.Context, route core.Applicat
 	if err != nil {
 		return err
 	}
-	if current.RequestedDeploymentID != route.RequestedDeploymentID || current.ProjectID != route.ProjectID || current.ServerID != route.ServerID || current.Hostname != route.Hostname {
+	if current.RequestedDeploymentID != route.RequestedDeploymentID || current.ProjectID != route.ProjectID || current.ServerID != route.ServerID || current.Hostname != route.Hostname || current.GatewayTLS != route.GatewayTLS || current.EntryPoint != route.EntryPoint || current.RequireTLS != route.RequireTLS || current.TLSResolver != route.TLSResolver {
 		return ErrRouteConflict
 	}
 	if current.DeploymentID == current.RequestedDeploymentID && route.DeploymentID != route.RequestedDeploymentID {
@@ -98,7 +98,7 @@ func (s *SQLStore) SaveApplicationRoute(ctx context.Context, route core.Applicat
 // A public probe must not overwrite a route promotion or newer reservation
 // that completed while its DNS/TLS request was in flight.
 func (s *SQLStore) SaveApplicationRouteObservation(ctx context.Context, before, after core.ApplicationRoute) error {
-	if before.AppID != after.AppID || before.RequestedDeploymentID != after.RequestedDeploymentID || before.ProjectID != after.ProjectID || before.ServerID != after.ServerID || before.Hostname != after.Hostname {
+	if before.AppID != after.AppID || before.RequestedDeploymentID != after.RequestedDeploymentID || before.ProjectID != after.ProjectID || before.ServerID != after.ServerID || before.Hostname != after.Hostname || before.GatewayTLS != after.GatewayTLS || before.RequireTLS != after.RequireTLS || before.EntryPoint != after.EntryPoint || before.TLSResolver != after.TLSResolver {
 		return ErrRouteConflict
 	}
 	after.UpdatedAt = time.Now().UTC()
@@ -141,6 +141,22 @@ func (s *SQLStore) ListApplicationRoutes(ctx context.Context) ([]core.Applicatio
 		result = append(result, route)
 	}
 	return result, rows.Err()
+}
+
+// GetApplicationRouteByHostname uses the unique hostname index for ingress,
+// avoiding a scan of every application for each public HTTP request.
+func (s *SQLStore) GetApplicationRouteByHostname(ctx context.Context, hostname string) (core.ApplicationRoute, error) {
+	var route core.ApplicationRoute
+	var raw string
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT record FROM application_routes WHERE hostname=?`), hostname).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return route, ErrNotFound
+	}
+	if err != nil {
+		return route, err
+	}
+	err = json.Unmarshal([]byte(raw), &route)
+	return route, err
 }
 func (s *SQLStore) DeleteApplicationRoute(ctx context.Context, appID, serverID string) error {
 	_, err := s.db.ExecContext(ctx, s.q(`DELETE FROM application_routes WHERE app_id=? AND server_id=?`), appID, serverID)

@@ -119,7 +119,7 @@ func (a *API) createGitHubApp(w http.ResponseWriter, r *http.Request) {
 	webhookURL := ""
 	relayWebhookID := ""
 	if delivery == "direct" {
-		webhookURL = externalOrigin(r) + "/api/v1/events/github/apps/" + id
+		webhookURL = a.githubWebhookOrigin(r) + "/api/v1/events/github/apps/" + id
 	}
 	if delivery == "relay" {
 		relayServer, relayErr := a.store.GetServer(r.Context(), strings.TrimSpace(input.RelayServerID))
@@ -443,7 +443,7 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	webhookURL := ""
 	relayWebhookID := ""
 	if delivery == "direct" {
-		webhookURL = origin + "/api/v1/events/github/apps/" + connectionID
+		webhookURL = a.githubWebhookOrigin(r) + "/api/v1/events/github/apps/" + connectionID
 	}
 	if delivery == "relay" {
 		relayServer, relayErr := a.store.GetServer(r.Context(), strings.TrimSpace(input.RelayServerID))
@@ -599,6 +599,15 @@ func externalOrigin(r *http.Request) string {
 		host = r.Host
 	}
 	return scheme + "://" + host
+}
+
+func (a *API) githubWebhookOrigin(r *http.Request) string {
+	if a.eventConfig.InstanceConnection != nil {
+		if origin := a.eventConfig.InstanceConnection.PublicOrigin(); origin != "" {
+			return origin
+		}
+	}
+	return externalOrigin(r)
 }
 
 func (a *API) githubAppServices(ctx context.Context, id string) (githubEventServices, error) {

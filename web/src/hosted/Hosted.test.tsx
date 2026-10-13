@@ -66,7 +66,7 @@ it("falls back only for a legacy endpoint and preserves errors", async () => {
     .fn()
     .mockResolvedValueOnce(new Response("Not found", { status: 404 }))
     .mockResolvedValueOnce(
-      new Response("<html>Dispatch</html>", {
+      new Response("<html>Doodship</html>", {
         headers: { "Content-Type": "text/html" },
       }),
     )
@@ -76,7 +76,7 @@ it("falls back only for a legacy endpoint and preserves errors", async () => {
   expect(await detectHosted()).toBeNull();
   expect(await detectHosted()).toBeNull();
   await expect(detectHosted()).rejects.toThrow("offline");
-  await expect(detectHosted()).rejects.toThrow("Unable to reach Dispatch");
+  await expect(detectHosted()).rejects.toThrow("Unable to reach Doodship");
 });
 
 it("does not mount legacy UI when hosted detection fails", async () => {
@@ -90,7 +90,7 @@ it("does not mount legacy UI when hosted detection fails", async () => {
   expect(screen.queryByText("Legacy application")).toBeNull();
 });
 
-it("clears legacy credentials and consumes a tenant callback once", async () => {
+it("clears legacy credentials and consumes an instance callback once", async () => {
   sessionStorage.setItem("dispatch-admin-token", "old-token");
   sessionStorage.setItem("dispatch-impersonated-user", "other-user");
   window.history.replaceState({}, "", "/#tenant_code=one-use-code");
@@ -103,11 +103,11 @@ it("clears legacy credentials and consumes a tenant callback once", async () => 
   render(
     <StrictMode>
       <HostedGate>
-        <p>Tenant application</p>
+        <p>Instance application</p>
       </HostedGate>
     </StrictMode>,
   );
-  await screen.findByText("Tenant application");
+  await screen.findByText("Instance application");
   expect(sessionStorage.getItem("dispatch-admin-token")).toBeNull();
   expect(sessionStorage.getItem("dispatch-impersonated-user")).toBeNull();
   expect(window.location.hash).toBe("");
@@ -117,8 +117,8 @@ it("clears legacy credentials and consumes a tenant callback once", async () => 
   expect(exchanges).toHaveLength(1);
 });
 
-it("uses central sign-in for tenants without showing local login forms", () => {
-  const fetcher = vi.fn();
+it("offers Doodship and instance providers without local password forms", async () => {
+  const fetcher = vi.fn().mockResolvedValue(json([{id:"github",name:"Company GitHub",type:"github",baseUrl:"https://github.com"}]));
   vi.stubGlobal("fetch", fetcher);
   render(
     <HostedTenantContext.Provider value={hostedTenant}>
@@ -126,10 +126,10 @@ it("uses central sign-in for tenants without showing local login forms", () => {
     </HostedTenantContext.Provider>,
   );
   expect(
-    screen.getByRole("link", { name: "Sign in" }).getAttribute("href"),
+    screen.getByRole("link", { name: "Sign in with Doodship" }).getAttribute("href"),
   ).toBe(`${hostedTenant.origin}/api/v1/hosted/auth/start`);
   expect(screen.queryByLabelText("Password")).toBeNull();
-  expect(fetcher).not.toHaveBeenCalled();
+  expect(await screen.findByRole("button",{name:"Sign in with Company GitHub"})).toBeTruthy();
 });
 
 it("offers central account links instead of local password changes", async () => {
@@ -164,7 +164,7 @@ it("offers central account links instead of local password changes", async () =>
   expect(screen.queryByRole("menuitem", { name: "My profile" })).toBeNull();
 });
 
-it("gives a platform administrator metadata and usage without tenant controls", async () => {
+it("gives a platform administrator metadata and usage without instance controls", async () => {
   const user = userEvent.setup();
   const fetcher = vi.fn(async (path: string) => {
     if (path === "/api/v1/account") return json(account);
@@ -175,13 +175,13 @@ it("gives a platform administrator metadata and usage without tenant controls", 
   });
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={platform} />);
-  await screen.findByText("You are not a member of a tenant yet.");
-  await user.click(screen.getByRole("button", { name: "Tenant directory" }));
+  await screen.findByText("Create an instance for your team or ask to join an existing one.");
+  await user.click(screen.getByRole("button", { name: "Instance directory" }));
   await screen.findByRole("button", { name: "View usage" });
-  expect(screen.queryByRole("link", { name: "Open tenant" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Open instance" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Members" })).toBeNull();
   expect(
-    screen.queryByRole("button", { name: /Delete|Suspend|Edit tenant/ }),
+    screen.queryByRole("button", { name: /Delete|Suspend|Edit instance/ }),
   ).toBeNull();
   await user.click(screen.getByRole("button", { name: "View usage" }));
   await screen.findByText("No usage has been recorded for this period.");
@@ -245,7 +245,7 @@ it("does not present missing usage as measured zero", async () => {
   expect(screen.getByText("0")).not.toBeNull();
 });
 
-it("rejects handoff addresses outside an exact tenant host", () => {
+it("rejects handoff addresses outside an exact instance host", () => {
   expect(
     tenantDestination(
       "https://agentops.dispatch.example.test/#tenant_code=one",
@@ -261,7 +261,7 @@ it("rejects handoff addresses outside an exact tenant host", () => {
     expect(() => tenantDestination(url, platform.origin)).toThrow();
 });
 
-it("retries tenant sign-in after a failed handoff", async () => {
+it("retries instance sign-in after a failed handoff", async () => {
   window.history.replaceState({}, "", "/?tenant=tenant-a&challenge=challenge");
   const user = userEvent.setup();
   let handoffs = 0;
@@ -285,5 +285,5 @@ it("retries tenant sign-in after a failed handoff", async () => {
   await user.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(handoffs).toBe(2));
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByText("Opening your tenant...")).not.toBeNull();
+  expect(screen.getByText("Opening your instance...")).not.toBeNull();
 });

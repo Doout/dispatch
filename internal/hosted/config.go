@@ -1,5 +1,5 @@
-// Package hosted serves the platform catalog and tenant controllers on distinct
-// registered hosts. Each tenant controller receives its own operational store.
+// Package hosted serves the platform catalog and routes instance requests through
+// customer-initiated connections. Embedded runtimes remain an explicit legacy mode.
 package hosted
 
 import (
@@ -7,25 +7,49 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/doout/dispatch/internal/dnsprovider"
+	"github.com/doout/dispatch/internal/tenancy"
 )
 
 type Config struct {
-	RootDomain        string
-	TrustedProxyCIDRs []string
-	DataDirectory     string
-	ConsoleAddresses  []string
-	WorkloadGateway   string
-	DNSProvider       dnsprovider.Provider
-	SessionDuration   time.Duration
-	SMTP              SMTPConfig
-	Certificates      CertificateConfig
+	BackendMode         string
+	AllowRegistration   bool
+	WorkOS              WorkOSConfig
+	RootDomain          string
+	ReservedTenantNames []string
+	TrustedProxyCIDRs   []string
+	DataDirectory       string
+	ConsoleAddresses    []string
+	WorkloadGateway     string
+	DNSProvider         dnsprovider.Provider
+	SessionDuration     time.Duration
+	SMTP                SMTPConfig
+	Certificates        CertificateConfig
 }
 
 func (c *Config) Validate() error {
+	if c.BackendMode == "" {
+		c.BackendMode = tenancy.BackendEmbedded
+	}
+	if c.BackendMode != tenancy.BackendEmbedded && c.BackendMode != tenancy.BackendConnected {
+		return errors.New("backend mode must be embedded or connected")
+	}
+	reserved := tenancy.ReservedTenantNames()
+	for _, name := range c.ReservedTenantNames {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if !tenancy.ValidSlug(name) && !slices.Contains(reserved, name) && !(tenancy.ReservedTenantPrefix(name) && validHostname(name) && !strings.Contains(name, ".")) {
+			return errors.New("reserved tenant names must be valid subdomain labels")
+		}
+		if !slices.Contains(reserved, name) {
+			reserved = append(reserved, name)
+		}
+	}
+	slices.Sort(reserved)
+	c.ReservedTenantNames = reserved
 	c.RootDomain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(c.RootDomain), "."))
 	if !validHostname(c.RootDomain) || net.ParseIP(c.RootDomain) != nil || strings.Count(c.RootDomain, ".") < 1 {
 		return errors.New("a DNS root domain is required")
@@ -44,8 +68,18 @@ func (c *Config) Validate() error {
 	if c.DNSProvider == nil {
 		return errors.New("a DNS provider is required")
 	}
-	if c.WorkloadGateway != "" && net.ParseIP(c.WorkloadGateway) == nil && !validHostname(c.WorkloadGateway) {
-		return errors.New("workload gateway must be an IP address or DNS name")
+	if c.WorkloadGateway != "" {
+		gateway := c.WorkloadGateway
+		if strings.Contains(gateway, "://") {
+			u, err := url.Parse(gateway)
+			if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.User != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+				return errors.New("workload gateway must be an HTTP or HTTPS ingress origin")
+			}
+			gateway = u.Hostname()
+		}
+		if net.ParseIP(gateway) == nil && !validHostname(gateway) || gateway == c.RootDomain {
+			return errors.New("workload gateway must be a separate ingress address")
+		}
 	}
 	if c.SessionDuration == 0 {
 		c.SessionDuration = 12 * time.Hour
@@ -63,6 +97,9 @@ func (c *Config) Validate() error {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return errors.New("trusted proxies must use CIDR notation")
 		}
+	}
+	if err := c.WorkOS.validate(); err != nil {
+		return err
 	}
 	return c.SMTP.Validate()
 }
@@ -86,6 +123,10 @@ func validHostname(host string) bool {
 
 func (c Config) Origin() string                  { return "https://" + c.RootDomain }
 func (c Config) TenantOrigin(slug string) string { return "https://" + slug + "." + c.RootDomain }
+
+func (c Config) TenantNameReserved(name string) bool {
+	return slices.Contains(c.ReservedTenantNames, name) || tenancy.ReservedTenantPrefix(name)
+}
 
 func canonicalHost(raw string) (string, bool) {
 	if strings.ContainsAny(raw, " /\\\t\r\n@%") {

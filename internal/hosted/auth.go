@@ -16,6 +16,10 @@ import (
 )
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if !s.passwordLoginAllowed() {
+		problem(w, http.StatusForbidden, "Use the managed sign-in page.")
+		return
+	}
 	var input struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -42,6 +46,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if !s.Config.AllowRegistration {
+		problem(w, http.StatusForbidden, "Registration is closed. Join the waitlist to request an invitation.")
+		return
+	}
+	if !s.passwordLoginAllowed() {
+		problem(w, http.StatusForbidden, "Use the managed sign-in page.")
+		return
+	}
 	if s.Config.SMTP.Address == "" {
 		problem(w, http.StatusServiceUnavailable, "Registration is not configured.")
 		return
@@ -87,6 +99,14 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) verifyEmail(w http.ResponseWriter, r *http.Request) {
+	if !s.Config.AllowRegistration {
+		problem(w, http.StatusForbidden, "Registration is closed. Use your invitation to sign in.")
+		return
+	}
+	if !s.passwordLoginAllowed() {
+		problem(w, http.StatusForbidden, "Use the managed sign-in page.")
+		return
+	}
 	var input struct {
 		Token    string `json:"token"`
 		Password string `json:"password"`
@@ -114,6 +134,16 @@ func (s *Server) verifyEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if origin, err := s.Catalog.LoginOrigin(r.Context(), requestToken(r, platformCookie)); err == nil && origin.Provider == "workos" && s.workos != nil {
+		s.workosSessionMu.Lock()
+		delete(s.workosSessions, origin.Subject+":"+origin.SessionID)
+		s.workosSessionMu.Unlock()
+		if err = s.workos.RevokeSession(r.Context(), origin.SessionID); err != nil {
+			problem(w, http.StatusServiceUnavailable, "Sign-out could not finish. Try again.")
+			return
+		}
+	}
+
 	if err := s.Catalog.RevokeSession(r.Context(), requestToken(r, platformCookie)); err != nil {
 		catalogError(w, err)
 		return
@@ -124,11 +154,22 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 	if user, ok := s.user(w, r); ok {
-		respond(w, http.StatusOK, user)
+		linked := false
+		if _, err := s.Catalog.ExternalSubject(r.Context(), "workos", user.ID); err == nil {
+			linked = true
+		}
+		respond(w, http.StatusOK, struct {
+			tenancy.User
+			WorkOSLinked bool `json:"workosLinked"`
+		}{user, linked})
 	}
 }
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	if !s.passwordLoginAllowed() {
+		problem(w, http.StatusForbidden, "Use the managed sign-in page.")
+		return
+	}
 	user, ok := s.user(w, r)
 	if !ok {
 		return
@@ -163,9 +204,10 @@ func (s *Server) memberships(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type entry struct {
-		Tenant tenancy.Tenant `json:"tenant"`
-		Role   string         `json:"role"`
-		URL    string         `json:"url"`
+		Tenant     tenancy.Tenant            `json:"tenant"`
+		Role       string                    `json:"role"`
+		URL        string                    `json:"url"`
+		Connection *instanceConnectionStatus `json:"connection,omitempty"`
 	}
 	items := []entry{}
 	for _, membership := range memberships {
@@ -174,14 +216,27 @@ func (s *Server) memberships(w http.ResponseWriter, r *http.Request) {
 			catalogError(w, err)
 			return
 		}
-		items = append(items, entry{tenant, membership.Role, s.Config.TenantOrigin(tenant.Slug) + "/api/v1/hosted/auth/start"})
+		item := entry{Tenant: tenant, Role: membership.Role, URL: s.Config.TenantOrigin(tenant.Slug) + "/api/v1/hosted/auth/start"}
+		if connection, e := s.Catalog.InstanceConnection(r.Context(), tenant.ID); e == nil && connection.BackendMode == tenancy.BackendConnected {
+			status := s.connectionStatus(connection)
+			item.Connection = &status
+			if !connection.RemoteAccess {
+				item.URL = connection.DirectURL
+			}
+		}
+		items = append(items, item)
 	}
 	invitations, err := s.Catalog.PendingInvitations(r.Context(), user.ID)
 	if err != nil {
 		catalogError(w, err)
 		return
 	}
-	respond(w, http.StatusOK, map[string]any{"memberships": items, "invitations": invitations})
+	requests, err := s.Catalog.PendingJoinRequests(r.Context(), user.ID)
+	if err != nil {
+		catalogError(w, err)
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"memberships": items, "invitations": invitations, "joinRequests": requests})
 }
 
 func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +278,10 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 		catalogError(w, err)
 		return
 	}
+	if err = s.Catalog.CopyLoginOrigin(r.Context(), requestToken(r, platformCookie), code, time.Minute); err != nil {
+		catalogError(w, err)
+		return
+	}
 	respond(w, http.StatusOK, map[string]string{"url": origin + "/#tenant_code=" + url.QueryEscape(code)})
 }
 
@@ -252,17 +311,31 @@ func (s *Server) tenantAuth(w http.ResponseWriter, r *http.Request, tenant tenan
 			problem(w, http.StatusForbidden, "Start sign-in again.")
 			return
 		}
+		if login, e := s.Catalog.LoginOrigin(r.Context(), input.Code); e == nil && login.Provider == "workos" {
+			if s.workos == nil {
+				problem(w, 403, "Start sign-in again.")
+				return
+			}
+			if e = s.checkWorkOSSession(r.Context(), login.Subject, login.SessionID); e != nil {
+				problem(w, 403, "Start sign-in again.")
+				return
+			}
+		} else if e != nil && !errors.Is(e, tenancy.ErrNotFound) {
+			catalogError(w, e)
+			return
+		}
 		token, err := s.Catalog.ExchangeHandoff(r.Context(), tenancy.HandoffExchange{Code: input.Code, TenantID: tenant.ID, Origin: s.Config.TenantOrigin(tenant.Slug), CodeVerifier: cookie.Value, SessionDuration: s.Config.SessionDuration})
 		if err != nil {
 			catalogError(w, err)
 			return
 		}
+
 		setSession(w, "__Host-dispatch-handoff", "", -1)
 		setSession(w, tenantCookie, token, int(s.Config.SessionDuration.Seconds()))
 		w.WriteHeader(http.StatusNoContent)
 	case r.URL.Path == "/api/v1/hosted/auth/logout" && r.Method == http.MethodPost:
 		token := requestToken(r, tenantCookie)
-		if _, err := s.Catalog.AuthenticateSession(r.Context(), token, tenancy.TenantAudience(tenant.ID)); err == nil {
+		if _, err := s.authenticateSession(r.Context(), token, tenancy.TenantAudience(tenant.ID)); err == nil {
 			if err = s.Catalog.RevokeSession(r.Context(), token); err != nil {
 				catalogError(w, err)
 				return

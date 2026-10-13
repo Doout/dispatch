@@ -63,6 +63,10 @@ func (a *API) updateApplicationConfiguration(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	candidate := applyApplicationUpdate(app, input)
+	if a.auth.Hosted != nil && candidate.BuildType != core.BuildTypeHelm && input.Domain != nil && strings.TrimSpace(*input.Domain) != "" {
+		problem(w, 422, "Custom domain unavailable", "Hosted application addresses are assigned automatically. Leave the domain empty.")
+		return
+	}
 	if !a.hostedSourceInput(w, candidate.SourceRepo) {
 		return
 	}
@@ -153,7 +157,7 @@ func validateApplicationUpdate(app *core.App, server core.Server) error {
 		app.Domain = domain
 	}
 	for _, check := range app.HealthPolicy.Checks {
-		if check.Scope != "" && check.Scope != "workload" && app.Domain == "" {
+		if check.Scope != "" && check.Scope != "workload" && app.Domain == "" && (server.Routing == nil || server.Routing.Hosted == nil) {
 			return errors.New("Keep an application domain while route or certificate readiness checks are required.")
 		}
 	}

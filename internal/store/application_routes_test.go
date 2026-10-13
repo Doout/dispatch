@@ -64,6 +64,14 @@ func TestApplicationRouteOwnershipAndProbeRace(t *testing.T) {
 	if current.DeploymentID != "second" || current.PreviousDeploymentID != "first" {
 		t.Fatal("active route evidence lost", current)
 	}
+	byHostname, err := data.GetApplicationRouteByHostname(ctx, first.Hostname)
+	must(err)
+	if byHostname.AppID != "app" || byHostname.DeploymentID != "second" || byHostname.Destination != second.Destination {
+		t.Fatal("hostname lookup did not return the current owned destination", byHostname)
+	}
+	if _, err = data.GetApplicationRouteByHostname(ctx, "unknown.apps.example.com"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("unknown host matched an application route", err)
+	}
 	verified := current
 	verified.State = "active"
 	verified.Certificate.State = "verified"

@@ -156,3 +156,29 @@ func TestSQLiteFailedMigrationRollsBackAndRestoresForeignKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationCompatibilityRejectsFutureSchemas(t *testing.T) {
+	ctx := context.Background()
+	data, err := Open(ctx, filepath.Join(t.TempDir(), "compatibility.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer data.Close()
+	// An older, known schema is valid for an isolated restore upgrade.
+	if err = data.applyMigrations(ctx, migrationSteps(t, "sqlite")[:3]); err != nil {
+		t.Fatal(err)
+	}
+	if err = data.CheckMigrationCompatibility(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = data.db.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES('999_future_schema','2026-10-10')`); err != nil {
+		t.Fatal(err)
+	}
+	if err = data.CheckMigrationCompatibility(ctx); err == nil {
+		t.Fatal("future schema accepted")
+	}
+	var count int
+	if err = data.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version='999_future_schema'`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("compatibility check changed the database")
+	}
+}

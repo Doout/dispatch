@@ -1,0 +1,264 @@
+.account-signin {
+  display: grid;
+  --account-input-border: #7c8da6;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(400px, 1.1fr);
+  min-height: 100dvh;
+  background: var(--hosted-paper);
+}
+.hosted-auth-page.account-signin {
+  background: var(--hosted-paper);
+}
+.account-signin-aside {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 32px clamp(24px, 3vw, 40px);
+  background: var(--hosted-bg);
+}
+.account-signin-illustration {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding-bottom: 68px;
+}
+.account-signin-illustration img {
+  display: block;
+  width: clamp(256px, 24vw, 320px);
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+.account-signin-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.account-signin-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 100px;
+  padding: 24px 40px;
+}
+.account-signin-mobile-brand {
+  display: none;
+}
+.account-signin-form {
+  width: min(360px, calc(100% - 64px));
+  margin: auto;
+  padding: 32px 0 132px;
+  outline: none;
+}
+.account-signin-form h1 {
+  margin: 0 0 32px;
+  font-size: 28px;
+  line-height: 1.25;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+.account-signin-description {
+  margin: -20px 0 28px;
+  color: var(--hosted-muted);
+  font-size: 13px;
+}
+.account-signin-form .hosted-form {
+  gap: 20px;
+}
+.account-signin-form .hosted-form label {
+  font-size: 13px;
+}
+.account-signin-form .hosted-form input {
+  min-height: 48px;
+  padding: 12px 14px;
+  font-size: 15px;
+  border-radius: 8px;
+  border-color: var(--account-input-border);
+}
+.account-signin-form .primary-button {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.account-signin-form .form-error,
+.account-signin-form .form-success {
+  margin: 0 0 20px;
+}
+.account-password-field {
+  display: grid;
+  gap: 7px;
+}
+.account-password-input {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--account-input-border);
+  border-radius: 8px;
+  background: var(--hosted-paper);
+}
+.account-password-input:focus-within {
+  border-color: var(--hosted-blue);
+  box-shadow: 0 0 0 3px var(--hosted-blue-soft);
+}
+.account-signin-form .account-password-input input {
+  flex: 1;
+  min-height: 46px;
+  border: 0;
+  background: transparent;
+}
+.account-signin-form .account-password-input input:focus-visible {
+  outline: none;
+}
+.account-password-input button {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-right: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--hosted-muted);
+  background: none;
+  cursor: pointer;
+}
+.account-password-input button:hover {
+  color: var(--hosted-ink);
+  background: var(--hosted-bg);
+}
+.account-signin-switch {
+  justify-self: center;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--hosted-blue);
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.account-signin-switch:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.account-waitlist {
+  margin: 12px 0 0;
+  color: var(--hosted-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.account-signin-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 24px 0;
+  color: var(--hosted-muted);
+  font-size: 12px;
+}
+.account-signin-divider::before,
+.account-signin-divider::after {
+  flex: 1;
+  height: 1px;
+  background: var(--hosted-rule);
+  content: "";
+}
+@media (max-width: 767px) {
+  .account-signin {
+    display: flex;
+    flex-direction: column;
+  }
+  .account-signin-aside {
+    display: none;
+  }
+  .account-signin-content {
+    flex: 1;
+  }
+  .account-signin-header {
+    justify-content: space-between;
+    min-height: 84px;
+    gap: 16px;
+    padding: 24px;
+  }
+  .account-signin-mobile-brand {
+    display: block;
+  }
+  .account-signin-header .hosted-text-link {
+    font-size: 12px;
+  }
+  .account-signin-form {
+    width: min(360px, calc(100% - 48px));
+    margin: 0 auto;
+    padding: clamp(32px, 9dvh, 72px) 0 48px;
+  }
+  .account-signin-form h1 {
+    font-size: 26px;
+  }
+  .account-signin-form .hosted-form input {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .hosted-auth-page.account-signin {
+    --account-input-border: #6f8096;
+    --hosted-blue: #85b0ff;
+    --hosted-blue-hover: #a4c3ff;
+    --hosted-blue-soft: #243754;
+  }
+}
+
+@media (min-width: 768px) and (max-height: 600px) {
+  .account-signin-header {
+    min-height: 64px;
+    padding: 16px 32px;
+  }
+  .account-signin-form {
+    padding: 16px 0;
+  }
+  .account-signin-form h1 {
+    margin-bottom: 24px;
+  }
+  .account-signin-form .hosted-form {
+    gap: 16px;
+  }
+  .account-signin-aside {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+  .account-signin-illustration {
+    padding-bottom: 32px;
+  }
+  .account-signin-illustration img {
+    width: 224px;
+  }
+}
+
+.account-social-buttons,
+.account-organization-buttons {
+  display: grid;
+  gap: 12px;
+}
+.account-social-buttons .secondary-button,
+.account-organization-buttons .secondary-button {
+  width: 100%;
+  min-height: 48px;
+  justify-content: center;
+  gap: 10px;
+}
+.account-social-buttons .account-signin-divider {
+  margin: 12px 0 20px;
+}
+.account-method-switch {
+  display: block;
+  margin: 14px auto 0;
+}
+.account-mfa-setup {
+  font-size: 13px;
+}
+.account-mfa-setup code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--hosted-rule);
+  border-radius: 8px;
+}

@@ -18,9 +18,6 @@ var (
 )
 
 const (
-	RoleOwner        = "owner"
-	RoleAdmin        = "admin"
-	RoleMember       = "member"
 	StateActive      = "active"
 	StateDisabled    = "disabled"
 	StatePending     = "pending"
@@ -59,6 +56,7 @@ type Membership struct {
 }
 
 type CreateTenantInput struct {
+	BackendMode     string
 	Slug            string
 	Name            string
 	InitialOwnerID  string

@@ -14,7 +14,7 @@ import (
 	"github.com/doout/dispatch/internal/tenancy"
 )
 
-func TestHostedProvisioningRetriesAndRehydratesDNS(t *testing.T) {
+func TestHostedProvisioningRetriesWithoutTenantDNS(t *testing.T) {
 	f := newHostedFixture(t)
 	ctx := context.Background()
 	tenant, err := f.catalog.CreateTenant(ctx, tenancy.CreateTenantInput{Slug: "retry", Name: "Retry", CreatorID: "platform", InitialOwnerID: "owner-a"})
@@ -55,16 +55,13 @@ func TestHostedProvisioningRetriesAndRehydratesDNS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var console, workload bool
 	for _, record := range records {
-		if record.TenantID != tenant.ID {
-			continue
+		if record.TenantID == tenant.ID {
+			t.Fatal("tenant creation allocated DNS records", record)
 		}
-		console = console || record.Name == "retry."+f.server.Config.RootDomain
-		workload = workload || record.Name == "*.retry."+f.server.Config.RootDomain
 	}
-	if !console || !workload {
-		t.Fatal("missing tenant records", records)
+	if domain, err := f.catalog.DomainByHostname(ctx, "retry."+f.server.Config.RootDomain); err != nil || domain.State != tenancy.StateActive {
+		t.Fatal(domain, err)
 	}
 	if err = f.server.ReconcileTenants(ctx); err != nil {
 		t.Fatal(err)
@@ -76,7 +73,7 @@ func TestHostedProvisioningRetriesAndRehydratesDNS(t *testing.T) {
 	if members, err := f.catalog.ListMemberships(ctx, "platform"); err != nil || len(members) != 0 {
 		t.Fatal("provisioning enrolled creator", members, err)
 	}
-	// A new controller instance reads the persisted tenant and DNS records.
+	// A new controller restores tenant routing without contacting the DNS provider.
 	restarted, err := New(ctx, f.server.Config, f.catalog, original, f.server.Logger)
 	if err != nil {
 		t.Fatal(err)

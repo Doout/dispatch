@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -94,6 +95,9 @@ func (a *API) beginOAuth(w http.ResponseWriter, r *http.Request, linkUserID, ret
 	a.cleanOAuthLocked(now)
 	a.oauthStates[state] = oauthState{ProviderID: provider.ID, Verifier: verifier, LinkUserID: linkUserID, ReturnTo: safeOAuthReturnTo(returnTo), ExpiresAt: now.Add(10 * time.Minute)}
 	a.oauthMu.Unlock()
+	if a.auth.Hosted != nil {
+		http.SetCookie(w, &http.Cookie{Name: "__Host-dispatch-oauth", Value: state, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	}
 	values := url.Values{
 		"client_id":             {provider.ClientID},
 		"redirect_uri":          {a.oauthCallbackURL(r)},
@@ -130,6 +134,21 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 		a.redirectOAuthError(w, r, "Sign-in request expired. Try again.")
 		return
 	}
+	if a.auth.Hosted != nil {
+		cookie, err := r.Cookie("__Host-dispatch-oauth")
+		http.SetCookie(w, &http.Cookie{Name: "__Host-dispatch-oauth", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+		if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(stateValue)) != 1 {
+			a.redirectOAuthError(w, r, "Start sign-in again.")
+			return
+		}
+		if state.LinkUserID != "" {
+			identity, err := a.auth.Hosted.Authenticate(r)
+			if err != nil || identity.ID != state.LinkUserID {
+				a.redirectOAuthError(w, r, "Sign in before linking an account.")
+				return
+			}
+		}
+	}
 	provider, err := a.store.GetAuthProvider(r.Context(), state.ProviderID)
 	if err != nil || provider.State != core.AuthProviderStateReady {
 		a.redirectOAuthError(w, r, "This sign-in method is unavailable.")
@@ -146,6 +165,13 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state.LinkUserID != "" {
+		if a.auth.Hosted != nil {
+			identity, err := a.auth.Hosted.Authenticate(r)
+			if err != nil || identity.ID != state.LinkUserID {
+				a.redirectOAuthError(w, r, "Sign in before linking an account.")
+				return
+			}
+		}
 		if err := a.linkExternalIdentity(r.Context(), provider, profile, state.LinkUserID); err != nil {
 			message := "Dispatch could not link this account."
 			switch {
@@ -162,6 +188,31 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.redirectOAuthLink(w, r, state.ReturnTo, "linked", provider.Name+" linked.")
+		return
+	}
+	if a.auth.Hosted != nil {
+		identity, err := a.store.GetExternalIdentity(r.Context(), provider.ID, profile.Subject)
+		if errors.Is(err, store.ErrNotFound) && provider.Provisioning == core.AuthProvisionApproval && a.auth.Hosted.EnrollExternal != nil {
+			userID, enrollErr := a.auth.Hosted.EnrollExternal(r.Context(), provider.ID, profile.Subject, profile.Email, profile.DisplayName)
+			if enrollErr == nil {
+				enrollErr = a.linkExternalIdentity(r.Context(), provider, profile, userID)
+			}
+			if enrollErr == nil {
+				a.redirectOAuthError(w, r, "Your account is waiting for tenant owner approval.")
+				return
+			}
+			a.redirectOAuthError(w, r, "This account could not request access. If you already have a Dispatch account, sign in and link this method from your profile.")
+			return
+		}
+		if err != nil || a.auth.Hosted.CompleteExternal == nil {
+			a.redirectOAuthError(w, r, "Link this sign-in method from your tenant account before using it.")
+			return
+		}
+		if err = a.auth.Hosted.CompleteExternal(w, r, identity.UserID, provider.ID, profile.Subject); err != nil {
+			a.redirectOAuthError(w, r, "This account does not have access to this tenant.")
+			return
+		}
+		http.Redirect(w, r, a.publicOrigin(r)+"/", http.StatusSeeOther)
 		return
 	}
 	user, err := a.resolveExternalUser(r.Context(), provider, profile)

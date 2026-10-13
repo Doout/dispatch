@@ -71,13 +71,17 @@ func (a *API) createApp(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+	if a.auth.Hosted != nil && input.BuildType != string(core.BuildTypeHelm) && strings.TrimSpace(input.Domain) != "" {
+		problem(w, 422, "Custom domain unavailable", "Hosted application addresses are assigned automatically. Leave the domain empty.")
+		return
+	}
 	policy, err := core.NormalizeHealthPolicy(input.HealthPolicy)
 	if err != nil {
 		problem(w, 422, "Invalid health policy", err.Error())
 		return
 	}
 	for _, check := range policy.Checks {
-		if check.Scope != "workload" && input.Domain == "" {
+		if check.Scope != "workload" && input.Domain == "" && (a.auth.Hosted == nil || a.auth.Hosted.RoutingScope == nil) {
 			problem(w, 422, "Route required", "Configure an application domain before requiring route or certificate readiness.")
 			return
 		}

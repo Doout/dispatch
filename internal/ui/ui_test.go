@@ -1,11 +1,23 @@
 package ui
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestHandlerServesAppManifest(t *testing.T) {
+	response := httptest.NewRecorder()
+	Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/site.webmanifest", nil))
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/manifest+json" {
+		t.Fatalf("manifest response = %d, %q", response.Code, response.Header().Get("Content-Type"))
+	}
+	if !json.Valid(response.Body.Bytes()) {
+		t.Fatal("manifest must contain JSON, not the application entrypoint")
+	}
+}
 
 func TestHandlerServesApplicationRoutes(t *testing.T) {
 	for _, target := range []string{

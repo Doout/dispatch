@@ -11,6 +11,42 @@ import (
 //go:embed migrations/sqlite/*.sql migrations/postgres/*.sql
 var migrations embed.FS
 
+// CheckMigrationCompatibility rejects data from schema versions this binary
+// cannot interpret. Restore callers run this before migrating an isolated copy.
+func (s *SQLStore) CheckMigrationCompatibility(ctx context.Context) error {
+	dialect := "sqlite"
+	if s.postgres {
+		dialect = "postgres"
+	}
+	contents, err := migrations.ReadFile("migrations/" + dialect + "/migrations.sql")
+	if err != nil {
+		return err
+	}
+	steps, err := parseMigrations(string(contents))
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(steps))
+	for _, step := range steps {
+		known[step.version] = true
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var version string
+		if err = rows.Scan(&version); err != nil {
+			return err
+		}
+		if !known[version] {
+			return fmt.Errorf("unknown database migration %q; use a newer Dispatch version", version)
+		}
+	}
+	return rows.Err()
+}
+
 func (s *SQLStore) Migrate(ctx context.Context) error {
 	dialect := "sqlite"
 	if s.postgres {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
@@ -28,6 +29,16 @@ func (l DeploymentLifecycle) StartPreview(ctx context.Context, preview core.Prev
 	}
 	instance := previewApplication(template, preview)
 	instance.HelmProvenance.PullRequests[0].CommitSHA = preview.HeadSHA
+	server, err := l.Store.GetServer(ctx, instance.ServerID)
+	if err != nil {
+		return StartResult{}, err
+	}
+	if instance.BuildType != core.BuildTypeHelm && server.Routing != nil && server.Routing.Hosted != nil {
+		instance.Domain, err = routing.HostedHostname(*server.Routing.Hosted, instance)
+		if err != nil {
+			return StartResult{}, err
+		}
+	}
 	githubURL := "https://github.com"
 	if triggers, err := l.Store.ListEventTriggers(ctx, template.ID); err == nil {
 		for _, trigger := range triggers {

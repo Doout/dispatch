@@ -54,6 +54,16 @@ export function LandingPage() {
             className="hosted-workflow"
             aria-label="A deployment workflow"
           >
+            <img
+              className="hosted-courier"
+              src="/brand/doodship-courier-256.webp"
+              srcSet="/brand/doodship-courier-256.webp 256w, /brand/doodship-courier-512.webp 512w"
+              sizes="160px"
+              width={160}
+              height={160}
+              alt=""
+              decoding="async"
+            />
             <figcaption>How a deployment runs</figcaption>
             <ol>
               {[
@@ -152,7 +162,7 @@ export function LandingPage() {
           aria-labelledby="self-host-title"
         >
           <div>
-            <h2 id="self-host-title">Run Dispatch on your own server.</h2>
+            <h2 id="self-host-title">Run Doodship on your own server.</h2>
             <p>
               Install the controller with Docker. Connect a repository and a
               deployment target, then run deployments through the UI, CLI or

@@ -7,9 +7,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/doout/dispatch/internal/api"
-	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/instancebridge"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/tenancy"
 	"github.com/doout/dispatch/internal/ui"
@@ -36,21 +37,30 @@ type runtimeInitialization struct {
 var errServerClosed = errors.New("hosted server closed")
 
 type Server struct {
-	Config       Config
-	Catalog      *tenancy.Catalog
-	OpenRuntime  RuntimeFactory
-	Logger       *slog.Logger
-	ctx          context.Context
-	cancel       context.CancelFunc
-	platform     http.Handler
-	mu           sync.Mutex
-	runtimes     map[string]*TenantRuntime
-	initializing map[string]*runtimeInitialization
-	closed       bool
-	closeDone    chan struct{}
-	throttle     loginThrottle
-	dnsMu        sync.Mutex
-	certificates certificateCache
+	connectionMu      sync.Mutex
+	connections       map[*instanceConnectionWatch]struct{}
+	connectionsDone   chan struct{}
+	Bridge            *instancebridge.Broker
+	workloadTransport http.RoundTripper
+	workosSessionMu   sync.Mutex
+	workosSessions    map[string]time.Time
+	workos            workOSService
+	workosMu          sync.Mutex
+	Config            Config
+	Catalog           *tenancy.Catalog
+	OpenRuntime       RuntimeFactory
+	Logger            *slog.Logger
+	ctx               context.Context
+	cancel            context.CancelFunc
+	platform          http.Handler
+	mu                sync.Mutex
+	runtimes          map[string]*TenantRuntime
+	initializing      map[string]*runtimeInitialization
+	closed            bool
+	closeDone         chan struct{}
+	throttle          loginThrottle
+	dnsMu             sync.Mutex
+	certificates      certificateCache
 }
 
 func New(ctx context.Context, cfg Config, catalog *tenancy.Catalog, factory RuntimeFactory, logger *slog.Logger) (*Server, error) {
@@ -61,7 +71,13 @@ func New(ctx context.Context, cfg Config, catalog *tenancy.Catalog, factory Runt
 		logger = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	s := &Server{Config: cfg, Catalog: catalog, OpenRuntime: factory, Logger: logger, ctx: ctx, cancel: cancel, runtimes: map[string]*TenantRuntime{}, initializing: map[string]*runtimeInitialization{}, closeDone: make(chan struct{})}
+	s := &Server{Bridge: instancebridge.NewBroker(), Config: cfg, Catalog: catalog, OpenRuntime: factory, Logger: logger, ctx: ctx, cancel: cancel, runtimes: map[string]*TenantRuntime{}, initializing: map[string]*runtimeInitialization{}, closeDone: make(chan struct{})}
+	if cfg.WorkOS.enabled() {
+		s.workos = newWorkOSClient(cfg.WorkOS)
+	}
+	s.connections = map[*instanceConnectionWatch]struct{}{}
+	s.connectionsDone = make(chan struct{})
+	go s.watchInstanceConnections()
 	s.platform = s.platformRoutes()
 	return s, nil
 }
@@ -83,6 +99,8 @@ func (s *Server) Close() {
 	s.mu.Unlock()
 
 	s.cancel()
+	s.Bridge.Close()
+	<-s.connectionsDone
 	for _, runtime := range runtimes {
 		if runtime.Close != nil {
 			runtime.Close()
@@ -114,7 +132,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug, found := strings.CutSuffix(host, "."+s.Config.RootDomain)
-	if !found || strings.Contains(slug, ".") {
+	if found && !strings.Contains(slug, ".") && tenancy.ReservedTenantPrefix(slug) {
+		s.workload(w, r, host)
+		return
+	}
+	if !found || strings.Contains(slug, ".") || s.Config.TenantNameReserved(slug) {
 		http.NotFound(w, r)
 		return
 	}
@@ -136,21 +158,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tenant.State != tenancy.StateActive {
-		problem(w, http.StatusServiceUnavailable, "This tenant is being prepared.")
+		problem(w, http.StatusServiceUnavailable, "This instance is being set up.")
 		return
 	}
-	if r.URL.Path == "/api/v1/hosted/dns" {
-		s.tenantDNS(w, r, tenant)
+	if r.URL.Path == "/api/v1/hosted/dns" || r.URL.Path == "/api/v1/hosted/certificate" {
+		http.NotFound(w, r)
 		return
 	}
-	if r.URL.Path == "/api/v1/hosted/certificate" {
-		s.tenantCertificate(w, r, tenant)
+	connection, err := s.Catalog.InstanceConnection(r.Context(), tenant.ID)
+	if err != nil {
+		catalogError(w, err)
+		return
+	}
+	if connection.BackendMode == tenancy.BackendConnected {
+		s.connectedInstance(w, r, tenant, connection)
+		return
+	}
+	if s.Config.BackendMode == tenancy.BackendConnected {
+		problem(w, 503, "This instance needs to be connected to its self-hosted installation.")
 		return
 	}
 	runtime, err := s.runtime(tenant)
 	if err != nil {
 		s.Logger.Error("tenant controller unavailable", "tenant", tenant.ID)
-		problem(w, http.StatusServiceUnavailable, "Tenant unavailable.")
+		problem(w, http.StatusServiceUnavailable, "Instance unavailable.")
 		return
 	}
 	runtime.Handler.ServeHTTP(w, r)
@@ -199,22 +230,10 @@ func (s *Server) runtime(tenant tenancy.Tenant) (*TenantRuntime, error) {
 }
 
 func (s *Server) openRuntime(tenant tenancy.Tenant) (*TenantRuntime, error) {
-	auth := &api.HostedAuth{TenantID: tenant.ID, LoginURL: s.Config.Origin()}
-	auth.Authenticate = func(r *http.Request) (core.Identity, error) {
-		user, err := s.Catalog.AuthenticateSession(r.Context(), requestToken(r, tenantCookie), tenancy.TenantAudience(tenant.ID))
-		if err != nil {
-			return core.Identity{}, err
-		}
-		membership, err := s.Catalog.Membership(r.Context(), tenant.ID, user.ID)
-		if err != nil || membership.State != tenancy.StateActive {
-			return core.Identity{}, tenancy.ErrDenied
-		}
-		role := core.UserRoleMember
-		if membership.Role == tenancy.RoleOwner || membership.Role == tenancy.RoleAdmin {
-			role = core.UserRoleOwner
-		}
-		return core.Identity{ID: user.ID, Kind: core.PrincipalUser, Username: user.Email, DisplayName: user.Name, SystemRole: role}, nil
+	if s.Config.BackendMode == tenancy.BackendConnected || s.OpenRuntime == nil {
+		return nil, errors.New("embedded backend disabled")
 	}
+	auth := s.tenantAuthenticator(tenant)
 	runtime, err := s.OpenRuntime(s.ctx, tenant, auth)
 	if err != nil {
 		return nil, err
@@ -239,12 +258,30 @@ func (s *Server) openRuntime(tenant tenancy.Tenant) (*TenantRuntime, error) {
 func (s *Server) platformRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/readyz", s.readiness)
+	r.Get("/api/v1/tenants/{id}/connection", s.getInstanceConnection)
+	r.Post("/api/v1/tenants/{id}/connection", s.createInstanceEnrollment)
+	r.Delete("/api/v1/tenants/{id}/connection", s.disconnectInstance)
+	r.Post("/api/v1/instance-connections/enroll", s.enrollInstance)
+	r.Get("/api/v1/instance-connections/ws", s.instanceSocket)
+	r.Put("/api/v1/instance-connections/policy", s.updateInstancePolicy)
+	r.Delete("/api/v1/instance-connections/current", s.disconnectCurrentInstance)
+	r.Get("/api/v1/instance-connections/routes", s.listInstanceRoutes)
+	r.Post("/api/v1/instance-connections/routes", s.publishInstanceRoute)
+	r.Delete("/api/v1/instance-connections/routes", s.removeInstanceRoute)
+	r.Post("/api/v1/instance-connections/usage", s.reportInstanceUsage)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	r.Get("/api/v1/hosted", func(w http.ResponseWriter, r *http.Request) {
-		respond(w, http.StatusOK, map[string]any{"mode": "platform", "origin": s.Config.Origin(), "registrationEnabled": s.Config.SMTP.Address != ""})
+		respond(w, http.StatusOK, map[string]any{"mode": "platform", "backendMode": s.Config.BackendMode, "origin": s.Config.Origin(), "reservedTenantNames": s.Config.ReservedTenantNames, "registrationEnabled": s.Config.AllowRegistration && s.passwordLoginAllowed() && s.Config.SMTP.Address != "", "authkitEnabled": s.workos != nil, "workosLoginMethods": s.Config.WorkOS.loginMethods(), "passwordLoginEnabled": s.passwordLoginAllowed(), "waitlistEnabled": s.workos != nil && !s.Config.AllowRegistration})
 	})
+	r.Post("/api/v1/account/workos/authenticate", s.managedLogin)
+	r.Post("/api/v1/account/workos/invitation", s.managedInvitation)
+	r.Post("/api/v1/account/workos/waitlist", s.managedWaitlist)
+	r.Post("/api/v1/account/workos/password-reset", s.managedPasswordReset)
+	r.Post("/api/v1/account/workos/password-reset/confirm", s.managedConfirmPasswordReset)
+	r.Post("/api/v1/account/workos/start", s.startWorkOS)
+	r.Get("/api/v1/account/workos/callback", s.completeWorkOS)
 	r.Post("/api/v1/account/login", s.login)
 	r.Post("/api/v1/account/register", s.register)
 	r.Post("/api/v1/account/verify-email", s.verifyEmail)
@@ -252,12 +289,15 @@ func (s *Server) platformRoutes() http.Handler {
 	r.Get("/api/v1/account", s.account)
 	r.Put("/api/v1/account/password", s.changePassword)
 	r.Get("/api/v1/account/tenants", s.memberships)
+	r.Post("/api/v1/account/tenants", s.createOwnTenant)
+	r.Post("/api/v1/account/join-requests", s.requestTenantJoin)
 	r.Post("/api/v1/account/handoffs", s.handoff)
 	r.Post("/api/v1/account/invitations/{id}/accept", s.acceptInvitation)
 	r.Get("/api/v1/platform/tenants", s.listTenants)
 	r.Post("/api/v1/platform/tenants", s.createTenant)
 	r.Get("/api/v1/platform/tenants/{id}", s.tenantMetadata)
 	r.Get("/api/v1/platform/tenants/{id}/usage", s.tenantUsage)
+	r.Get("/api/v1/tenants/{id}/join-requests", s.listJoinRequests)
 	r.Get("/api/v1/tenants/{id}/members", s.listMembers)
 	r.Post("/api/v1/tenants/{id}/members", s.addMember)
 	r.Put("/api/v1/tenants/{id}/members/{userId}", s.setMember)
@@ -269,7 +309,7 @@ func (s *Server) platformRoutes() http.Handler {
 }
 
 func (s *Server) user(w http.ResponseWriter, r *http.Request) (tenancy.User, bool) {
-	user, err := s.Catalog.AuthenticateSession(r.Context(), requestToken(r, platformCookie), tenancy.AudiencePlatform)
+	user, err := s.authenticateSession(r.Context(), requestToken(r, platformCookie), tenancy.AudiencePlatform)
 	if err != nil {
 		problem(w, http.StatusUnauthorized, "Sign in to continue.")
 		return tenancy.User{}, false

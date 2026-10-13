@@ -53,7 +53,12 @@ it.each([
   " team",
   "team ",
   "a".repeat(64),
+  "p223-team",
+  "p223-abc-team",
+  "pr-team",
+  "app-team",
   "www",
+  "local",
   "api",
   "ns1",
   "agentops",
@@ -63,7 +68,7 @@ it.each([
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
     const onCreated = show();
-    const input = screen.getByLabelText("Tenant name");
+    const input = screen.getByLabelText("Instance name");
     fireEvent.change(input, { target: { value: name } });
     fireEvent.submit(input.closest("form")!);
     expect((await screen.findAllByRole("alert")).length).toBeGreaterThan(0);
@@ -75,14 +80,14 @@ it.each([
 );
 
 it.each(["a", "team-01", "a".repeat(63)])(
-  "creates valid tenant %j with one name and the configured address",
+  "creates valid instance %j with one name and the configured address",
   async (name) => {
     const fetcher = vi.fn(async (_path: string, _options: RequestInit) =>
       json({ ...tenant, slug: name, name }, 202),
     );
     vi.stubGlobal("fetch", fetcher);
     const onCreated = show([]);
-    const input = screen.getByLabelText("Tenant name");
+    const input = screen.getByLabelText("Instance name");
     fireEvent.change(input, { target: { value: name.toUpperCase() } });
     fireEvent.change(screen.getByLabelText("Owner email"), {
       target: { value: "owner@example.test" },
@@ -109,10 +114,10 @@ it("keeps the owner email and lets the admin choose another name after an API co
   );
   vi.stubGlobal("fetch", fetcher);
   const onCreated = show([]);
-  const input = screen.getByLabelText("Tenant name");
+  const input = screen.getByLabelText("Instance name");
   await user.type(input, "taken");
   await user.type(screen.getByLabelText("Owner email"), "owner@example.test");
-  await user.click(screen.getByRole("button", { name: "Create tenant" }));
+  await user.click(screen.getByRole("button", { name: "Create instance" }));
   expect((await screen.findByRole("alert")).textContent).toContain(
     "already uses this name",
   );
@@ -123,7 +128,7 @@ it("keeps the owner email and lets the admin choose another name after an API co
   await user.clear(input);
   await user.type(input, "team-01");
   expect(screen.queryByRole("alert")).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Create tenant" }));
+  await user.click(screen.getByRole("button", { name: "Create instance" }));
   await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
@@ -133,7 +138,7 @@ it("keeps empty fields quiet and shows the address only after entering a valid n
   const fetcher = vi.fn();
   vi.stubGlobal("fetch", fetcher);
   show([]);
-  const name = screen.getByLabelText("Tenant name");
+  const name = screen.getByLabelText("Instance name");
   expect((name as HTMLInputElement).value).toBe("");
   expect(screen.queryByRole("status")).toBeNull();
   await user.tab();
@@ -158,10 +163,10 @@ it.each(["", "not-an-email"])(
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
     show([]);
-    await user.type(screen.getByLabelText("Tenant name"), "example-team");
+    await user.type(screen.getByLabelText("Instance name"), "example-team");
     const owner = screen.getByLabelText("Owner email");
     if (email) await user.type(owner, email);
-    await user.click(screen.getByRole("button", { name: "Create tenant" }));
+    await user.click(screen.getByRole("button", { name: "Create instance" }));
     expect((await screen.findByRole("alert")).textContent).toBe(
       email ? "Enter a valid email address." : "Enter an owner email.",
     );
@@ -169,3 +174,24 @@ it.each(["", "not-an-email"])(
     expect(fetcher).not.toHaveBeenCalled();
   },
 );
+
+it("blocks names reserved by this installation", async () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  render(
+    <CreateTenant
+      origin="https://doodship.com"
+      tenants={[]}
+      reservedTenantNames={["demo"]}
+      onCreated={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  const input = screen.getByLabelText("Instance name");
+  fireEvent.change(input, { target: { value: "demo" } });
+  fireEvent.submit(input.closest("form")!);
+  expect((await screen.findAllByRole("alert"))[0].textContent).toContain(
+    '"demo" is reserved',
+  );
+  expect(fetcher).not.toHaveBeenCalled();
+});

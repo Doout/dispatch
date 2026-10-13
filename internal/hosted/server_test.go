@@ -173,7 +173,7 @@ func TestHostedPlatformMetadataDoesNotGrantTenantAuthority(t *testing.T) {
 func TestHostedHostOriginAndDNSBoundaries(t *testing.T) {
 	f := newHostedFixture(t)
 	a := f.tenant(t, "alpha", "owner-a")
-	b := f.tenant(t, "bravo", "owner-b")
+	f.tenant(t, "bravo", "owner-b")
 	token := f.session(t, "owner-a", tenancy.TenantAudience(a.ID))
 	host := "alpha." + f.server.Config.RootDomain
 	for _, bad := range []string{"evil.test", "preview.alpha." + f.server.Config.RootDomain, "missing." + f.server.Config.RootDomain} {
@@ -200,30 +200,6 @@ func TestHostedHostOriginAndDNSBoundaries(t *testing.T) {
 		if w.Code != 403 {
 			t.Fatal("cookie write accepted foreign/missing origin", origin, w.Code)
 		}
-	}
-	record := map[string]any{"name": "preview." + host, "type": "A", "values": []string{"192.0.2.20"}, "ttl": 300}
-	w = f.request(t, host, http.MethodPut, "/api/v1/hosted/dns", token, record)
-	if w.Code != 200 {
-		t.Fatal("tenant DNS creation", w.Code, w.Body.String())
-	}
-	var saved tenancy.ZoneRecord
-	if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil {
-		t.Fatal(err)
-	}
-	record["name"] = "preview.bravo." + f.server.Config.RootDomain
-	w = f.request(t, host, http.MethodPut, "/api/v1/hosted/dns", token, record)
-	if w.Code != 400 {
-		t.Fatal("tenant wrote sibling DNS", w.Code)
-	}
-	record["name"] = "_acme-challenge." + host
-	w = f.request(t, host, http.MethodPut, "/api/v1/hosted/dns", token, record)
-	if w.Code != 400 {
-		t.Fatal("tenant wrote ACME DNS", w.Code)
-	}
-	bToken := f.session(t, "owner-b", tenancy.TenantAudience(b.ID))
-	w = f.request(t, "bravo."+f.server.Config.RootDomain, http.MethodGet, "/api/v1/hosted/dns", bToken, nil)
-	if w.Code != 200 || strings.Contains(w.Body.String(), saved.ID) {
-		t.Fatal("tenant saw sibling DNS", w.Code, w.Body.String())
 	}
 	admin := f.session(t, "platform", tenancy.AudiencePlatform)
 	for _, bearer := range []string{admin, token} {

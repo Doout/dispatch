@@ -4,6 +4,7 @@ import { HostedError, hostedRequest, type Tenant } from "./client";
 
 // Keep these rules aligned with tenancy.ValidSlug. The API checks them again.
 const reservedNames = new Set([
+  "local",
   "www",
   "api",
   "admin",
@@ -22,28 +23,38 @@ const reservedNames = new Set([
   "_acme-challenge",
 ]);
 const nameTakenMessage =
-  "A tenant already uses this name. Choose another name.";
-function nameProblem(name: string, tenants: Tenant[]) {
-  if (!name) return "Enter a tenant name.";
+  "An instance already uses this name. Choose another name.";
+function nameProblem(name: string, tenants: Tenant[], reserved: string[]) {
+  if (!name) return "Enter an instance name.";
   if (name.length > 63) return "Use 63 characters or fewer.";
   if (!/^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name))
     return "Start with a letter. Use lowercase letters, numbers and hyphens, and end with a letter or number.";
-  if (reservedNames.has(name))
-    return `"${name}" is reserved. Choose another tenant name.`;
+  if (
+    reservedNames.has(name) ||
+    reserved.includes(name) ||
+    /^p[0-9]+-/.test(name) ||
+    name.startsWith("pr-") ||
+    name.startsWith("app-")
+  )
+    return `"${name}" is reserved. Choose another instance name.`;
   if (tenants.some((tenant) => tenant.slug === name)) return nameTakenMessage;
   return "";
 }
 
 export function CreateTenant({
   origin,
+  reservedTenantNames = [],
   tenants,
   onCreated,
   onCancel,
+  selfService = false,
 }: {
   origin: string;
+  reservedTenantNames?: string[];
   tenants: Tenant[];
   onCreated: (tenant: Tenant) => Promise<void>;
   onCancel: () => void;
+  selfService?: boolean;
 }) {
   const [name, setName] = useState(""),
     [ownerEmail, setOwnerEmail] = useState(""),
@@ -63,7 +74,7 @@ export function CreateTenant({
   }, [conflictName, busy]);
   const hostname = new URL(origin).host;
   const validationError =
-    nameProblem(name, tenants) ||
+    nameProblem(name, tenants, reservedTenantNames) ||
     (name && name === conflictName ? nameTakenMessage : "");
   const nameError = submitted || (nameTouched && name) ? validationError : "";
   const submit = async (event: FormEvent) => {
@@ -71,11 +82,13 @@ export function CreateTenant({
     if (busy) return;
     setNameTouched(true);
     setSubmitted(true);
-    const emailError = !ownerEmail.trim()
-      ? "Enter an owner email."
-      : !ownerInput.current?.validity.valid
-        ? "Enter a valid email address."
-        : "";
+    const emailError = selfService
+      ? ""
+      : !ownerEmail.trim()
+        ? "Enter an owner email."
+        : !ownerInput.current?.validity.valid
+          ? "Enter a valid email address."
+          : "";
     setOwnerError(emailError);
     if (validationError || emailError) {
       (validationError ? nameInput : ownerInput).current?.focus();
@@ -84,11 +97,15 @@ export function CreateTenant({
     setBusy(true);
     setError("");
     try {
-      const tenant = await hostedRequest<Tenant>("/platform/tenants", "POST", {
-        name,
-        slug: name,
-        ownerEmail: ownerEmail.trim(),
-      });
+      const tenant = await hostedRequest<Tenant>(
+        selfService ? "/account/tenants" : "/platform/tenants",
+        "POST",
+        {
+          name,
+          slug: name,
+          ...(!selfService ? { ownerEmail: ownerEmail.trim() } : {}),
+        },
+      );
       await onCreated(tenant);
     } catch (cause) {
       if (cause instanceof HostedError && cause.status === 409) {
@@ -112,10 +129,10 @@ export function CreateTenant({
         disabled={busy}
       >
         <ArrowLeft size={16} aria-hidden="true" />
-        Back to tenants
+        Back to instances
       </button>
       <header className="hosted-page-heading">
-        <h1 id="create-tenant-title">Create tenant</h1>
+        <h1 id="create-tenant-title">Create instance</h1>
       </header>
       <form
         className="hosted-panel hosted-form hosted-create-form"
@@ -129,7 +146,7 @@ export function CreateTenant({
         }}
       >
         <div className="hosted-tenant-name-field">
-          <label htmlFor="tenant-name">Tenant name</label>
+          <label htmlFor="tenant-name">Instance name</label>
           <input
             id="tenant-name"
             ref={nameInput}
@@ -161,42 +178,49 @@ export function CreateTenant({
         </div>
         {name && !validationError && (
           <div className="hosted-tenant-address">
-            <span>Tenant address</span>
+            <span>Instance address</span>
             <output htmlFor="tenant-name">
               {name}.{hostname}
             </output>
           </div>
         )}
-        <label className="hosted-form-wide">
-          <span id="tenant-owner-label">Owner email</span>
-          <input
-            ref={ownerInput}
-            type="email"
-            value={ownerEmail}
-            onChange={(event) => {
-              setOwnerEmail(event.target.value);
-              setOwnerError("");
-            }}
-            required
-            disabled={busy}
-            autoComplete="email"
-            aria-labelledby="tenant-owner-label"
-            aria-invalid={Boolean(ownerError)}
-            aria-describedby={`tenant-owner-help${ownerError ? " tenant-owner-error" : ""}`}
-          />
-          <small id="tenant-owner-help" className="hosted-field-hint">
-            The owner manages this tenant and its members.
-          </small>
-          {ownerError && (
-            <span
-              id="tenant-owner-error"
-              role="alert"
-              className="hosted-field-error"
-            >
-              {ownerError}
-            </span>
-          )}
-        </label>
+        {!selfService && (
+          <label className="hosted-form-wide">
+            <span id="tenant-owner-label">Owner email</span>
+            <input
+              ref={ownerInput}
+              type="email"
+              value={ownerEmail}
+              onChange={(event) => {
+                setOwnerEmail(event.target.value);
+                setOwnerError("");
+              }}
+              required
+              disabled={busy}
+              autoComplete="email"
+              aria-labelledby="tenant-owner-label"
+              aria-invalid={Boolean(ownerError)}
+              aria-describedby={`tenant-owner-help${ownerError ? " tenant-owner-error" : ""}`}
+            />
+            <small id="tenant-owner-help" className="hosted-field-hint">
+              The owner manages this instance and its members.
+            </small>
+            {ownerError && (
+              <span
+                id="tenant-owner-error"
+                role="alert"
+                className="hosted-field-error"
+              >
+                {ownerError}
+              </span>
+            )}
+          </label>
+        )}
+        {selfService && (
+          <p className="hosted-field-hint">
+            You will own this instance and manage its members.
+          </p>
+        )}
         {error && (
           <p role="alert" className="form-error hosted-form-wide">
             {error}
@@ -204,7 +228,7 @@ export function CreateTenant({
         )}
         <div className="hosted-row-actions hosted-form-wide">
           <button className="primary-button" disabled={busy}>
-            {busy ? "Creating..." : "Create tenant"}
+            {busy ? "Creating..." : "Create instance"}
           </button>
           <button
             type="button"

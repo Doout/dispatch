@@ -57,14 +57,14 @@
 .hosted-brand-mark {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   color: var(--hosted-blue);
 }
-.hosted-brand-mark svg {
+.hosted-brand-mark .brand-icon {
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
 }
 .hosted-brand strong {
   font-size: 19px;
@@ -400,7 +400,6 @@
   background: var(--hosted-bg);
   font-size: 10px;
   font-weight: 600;
-  text-transform: capitalize;
   white-space: nowrap;
 }
 .hosted-status[data-state="active"] {
@@ -408,7 +407,8 @@
   background: var(--hosted-green-soft);
   border-color: transparent;
 }
-.hosted-status[data-state="pending"] {
+.hosted-status[data-state="pending"],
+.hosted-status[data-state="provisioning"] {
   color: var(--hosted-blue);
   background: var(--hosted-blue-soft);
   border-color: transparent;
@@ -648,7 +648,7 @@
   border: 1px solid var(--hosted-rule);
   border-radius: 12px;
 }
-.hosted-auth > svg {
+.hosted-auth > .brand-icon {
   display: block;
   width: 36px;
   height: 36px;
@@ -659,42 +659,6 @@
   margin: 24px 0;
   font-size: 24px;
   line-height: 1.3;
-}
-.hosted-auth-page {
-  background: var(--hosted-bg);
-}
-.hosted-auth-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  max-width: 1280px;
-  padding: 24px 40px;
-  margin: 0 auto;
-}
-.hosted-auth-card {
-  width: min(440px, calc(100% - 40px));
-  margin: clamp(32px, 8dvh, 88px) auto 64px;
-  padding: 36px;
-  background: var(--hosted-paper);
-  border: 1px solid var(--hosted-rule);
-  border-radius: 14px;
-  box-shadow: 0 10px 40px rgb(24 38 56 / 4%);
-}
-.hosted-auth-card h1 {
-  margin: 0;
-  font-size: 24px;
-  line-height: 1.3;
-  font-weight: 750;
-  letter-spacing: -0.03em;
-}
-.hosted-auth-description {
-  margin: 10px 0 28px;
-  color: var(--hosted-muted);
-  font-size: 12px;
-}
-.hosted-auth-card .hosted-form > button {
-  width: 100%;
 }
 .hosted-text-link {
   display: inline-flex;
@@ -1101,13 +1065,6 @@
   .hosted-summary {
     gap: 32px;
   }
-  .hosted-auth-header {
-    padding: 20px;
-  }
-  .hosted-auth-card {
-    padding: 28px;
-    margin-top: 40px;
-  }
   .hosted-public-header {
     padding: 16px 20px;
   }
@@ -1185,9 +1142,6 @@
   .hosted-usage {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .hosted-auth-header > .hosted-text-link {
-    font-size: 11px;
-  }
   .hosted-hero-actions {
     gap: 20px;
   }
@@ -1199,3 +1153,21 @@
     transition: none;
   }
 }
+
+.hosted-courier {
+  display: block;
+  width: 160px;
+  height: 160px;
+  margin: -12px auto 20px;
+  object-fit: contain;
+}
+
+.hosted-connection-page { display: grid; gap: 24px; min-width: 0; }
+.hosted-connection-page > .quiet-button { justify-self: start; }
+.hosted-connection-page .hosted-panel { margin: 0; }
+.hosted-connection-instructions { display: grid; gap: 16px; }
+.hosted-connection-instructions ol { margin: 0; padding-left: 20px; line-height: 1.8; }
+.hosted-connection-instructions label { display: grid; gap: 8px; font-weight: 600; }
+.hosted-connection-instructions input { width: 100%; min-width: 0; }
+.hosted-connection-instructions > button { justify-self: start; }
+.hosted-connection-address { overflow-wrap: anywhere; }

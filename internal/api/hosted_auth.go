@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -11,9 +12,14 @@ import (
 // store. Authentication must recheck membership, including on every stream tick.
 // No request header can install or change this callback.
 type HostedAuth struct {
-	TenantID     string
-	LoginURL     string
-	Authenticate func(*http.Request) (core.Identity, error)
+	RoutingScope     *core.HostedRoutingScope
+	ReserveHostname  func(context.Context, core.ApplicationRoute) error
+	ReleaseHostname  func(context.Context, string, string) error
+	TenantID         string
+	LoginURL         string
+	Authenticate     func(*http.Request) (core.Identity, error)
+	EnrollExternal   func(context.Context, string, string, string, string) (string, error)
+	CompleteExternal func(http.ResponseWriter, *http.Request, string, string, string) error
 }
 
 func (a *API) hostedBoundary(next http.Handler) http.Handler {
@@ -25,6 +31,12 @@ func (a *API) hostedBoundary(next http.Handler) http.Handler {
 		path := strings.TrimSuffix(r.URL.Path, "/")
 		if path == "/api/v1/auth/status" {
 			writeJSON(w, http.StatusOK, map[string]any{"setupRequired": false, "tokenLoginAvailable": false, "hosted": true, "loginUrl": a.auth.Hosted.LoginURL})
+			return
+		}
+		// Tenant-owned providers remain behind the regular owner and direct-user
+		// middleware. Passwords and shadow-user mutations stay centrally managed.
+		if path == "/api/v1/auth/callback" || path == "/api/v1/auth/links" || path == "/api/v1/auth/providers" || strings.HasPrefix(path, "/api/v1/auth/providers/") {
+			next.ServeHTTP(w, r)
 			return
 		}
 		// Global identity changes are served only by the platform account API.

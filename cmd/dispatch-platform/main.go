@@ -77,18 +77,22 @@ func run(ctx context.Context, args []string, out io.Writer, logger *slog.Logger)
 	if err = catalog.Migrate(ctx); err != nil {
 		return errors.New("cannot migrate hosted catalog")
 	}
-	factory, err := tenancy.NewFactory(tenancy.FactoryConfig{RootDir: filepath.Join(config.Hosted.DataDirectory, "tenants"), PostgresAdminURL: config.PostgresAdminURL})
-	if err != nil {
-		return err
-	}
-	defer factory.Close()
-	server, err := hosted.New(ctx, config.Hosted, catalog, func(ctx context.Context, tenant tenancy.Tenant, auth *api.HostedAuth) (*hosted.TenantRuntime, error) {
-		runtime, err := factory.Open(ctx, tenant.ID)
+	var runtimeFactory hosted.RuntimeFactory
+	if config.Hosted.BackendMode == tenancy.BackendEmbedded {
+		factory, err := tenancy.NewFactory(tenancy.FactoryConfig{RootDir: filepath.Join(config.Hosted.DataDirectory, "tenants"), PostgresAdminURL: config.PostgresAdminURL})
 		if err != nil {
-			return nil, err
+			return err
 		}
-		return hostedruntime.New(ctx, runtime, tenant, auth, config.Hosted.TenantOrigin(tenant.Slug), logger)
-	}, logger)
+		defer factory.Close()
+		runtimeFactory = func(ctx context.Context, tenant tenancy.Tenant, auth *api.HostedAuth) (*hosted.TenantRuntime, error) {
+			runtime, err := factory.Open(ctx, tenant.ID)
+			if err != nil {
+				return nil, err
+			}
+			return hostedruntime.New(ctx, runtime, tenant, auth, config.Hosted.TenantOrigin(tenant.Slug), logger)
+		}
+	}
+	server, err := hosted.New(ctx, config.Hosted, catalog, runtimeFactory, logger)
 	if err != nil {
 		return err
 	}

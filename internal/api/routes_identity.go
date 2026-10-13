@@ -5,6 +5,11 @@ import (
 )
 
 func (a *API) identityRoutes(r chi.Router) {
+	if a.auth.Hosted == nil && a.eventConfig.InstanceConnection != nil {
+		r.With(a.ownerOnly).Get("/instance-connection", a.instanceConnectionStatus)
+		r.With(a.ownerOnly).Put("/instance-connection", a.configureInstanceConnection)
+		r.With(a.ownerOnly).Delete("/instance-connection", a.disconnectInstanceConnection)
+	}
 	a.automationRoutes(r)
 	r.Get("/auth/me", a.authMe)
 	r.Post("/auth/logout", a.logout)

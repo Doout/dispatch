@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
-	"net/http"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -41,14 +40,7 @@ func (c catalogSolver) authorize(ctx context.Context, ch certificates.Challenge)
 		}
 		return platformOwner, nil
 	}
-	tenant, err := c.server.Catalog.Tenant(ctx, ch.OwnerID)
-	if err != nil {
-		return "", err
-	}
-	if name != "_acme-challenge."+tenant.Slug+"."+c.server.Config.RootDomain {
-		return "", tenancy.ErrDenied
-	}
-	return tenant.ID, nil
+	return "", tenancy.ErrDenied
 }
 
 func (c catalogSolver) Present(ctx context.Context, ch certificates.Challenge) error {
@@ -128,16 +120,12 @@ func (c catalogSolver) Cleanup(ctx context.Context, ch certificates.Challenge) e
 	return c.server.syncDNSRecord(ctx, challengeID(ch))
 }
 
-func (s *Server) reconcileCertificate(ctx context.Context, tenant *tenancy.Tenant) error {
+func (s *Server) reconcileCertificate(ctx context.Context) error {
 	if s.Config.Certificates.DirectoryURL == "" {
 		return nil
 	}
 	owner, host := platformOwner, s.Config.RootDomain
 	domains := []string{host, "*." + host}
-	if tenant != nil {
-		owner, host = tenant.ID, tenant.Slug+"."+s.Config.RootDomain
-		domains = []string{"*." + host}
-	}
 	r := certificates.Reconciler{DirectoryURL: s.Config.Certificates.DirectoryURL, Email: s.Config.Certificates.Email, TermsAccepted: s.Config.Certificates.TermsAccepted, StoreDirectory: filepath.Join(s.Config.DataDirectory, "certificates"), Solver: catalogSolver{s}}
 	request := certificates.CertificateRequest{ID: host, OwnerID: owner, Generation: 1, Domains: domains}
 	if cached, err := r.Cached(request); err == nil {
@@ -160,8 +148,8 @@ func (s *Server) cacheCertificate(owner string, result certificates.CertificateR
 	s.certificates.items[owner] = result
 }
 
-// GetCertificate serves control-plane hosts only. Workload ingress receives
-// the individual tenant bundle through its tenant-authenticated endpoint.
+// GetCertificate serves registered one-label hosts using the installation bundle.
+// Its private key never leaves the control-plane ingress.
 func (s *Server) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	host, ok := canonicalHost(hello.ServerName)
 	if !ok {
@@ -172,8 +160,17 @@ func (s *Server) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 		if !found || strings.Contains(slug, ".") {
 			return nil, errors.New("unrecognized TLS server name")
 		}
-		if _, err := s.Catalog.TenantBySlug(hello.Context(), slug); err != nil {
-			return nil, errors.New("unrecognized TLS server name")
+		if tenancy.ReservedTenantPrefix(slug) {
+			if _, err := s.Catalog.WorkloadHost(hello.Context(), host); err != nil {
+				return nil, errors.New("unrecognized TLS server name")
+			}
+		} else {
+			if s.Config.TenantNameReserved(slug) {
+				return nil, errors.New("unrecognized TLS server name")
+			}
+			if _, err := s.Catalog.TenantBySlug(hello.Context(), slug); err != nil {
+				return nil, errors.New("unrecognized TLS server name")
+			}
 		}
 	}
 	s.certificates.RLock()
@@ -184,24 +181,4 @@ func (s *Server) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 	}
 	cert, err := tls.X509KeyPair(result.CertificatePEM, result.PrivateKeyPEM)
 	return &cert, err
-}
-
-func (s *Server) tenantCertificate(w http.ResponseWriter, r *http.Request, tenant tenancy.Tenant) {
-	if !s.tenantOwner(r, tenant) {
-		problem(w, http.StatusForbidden, "Tenant administrator access required.")
-		return
-	}
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		problem(w, http.StatusMethodNotAllowed, "Method not allowed.")
-		return
-	}
-	s.certificates.RLock()
-	result, ok := s.certificates.items[tenant.ID]
-	s.certificates.RUnlock()
-	if !ok || !result.NotAfter.After(time.Now()) {
-		problem(w, http.StatusServiceUnavailable, "Certificate is not ready.")
-		return
-	}
-	respond(w, http.StatusOK, map[string]any{"certificatePem": string(result.CertificatePEM), "privateKeyPem": string(result.PrivateKeyPEM), "notAfter": result.NotAfter, "renewAfter": result.RenewAfter})
 }

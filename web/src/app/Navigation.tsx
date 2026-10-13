@@ -157,7 +157,7 @@ export function Nav({
         <div className="wordmark">
           <Mark />
           <div>
-            <span>Dispatch</span>
+            <span>Doodship</span>
           </div>
           <button aria-label="Close navigation" onClick={onClose}>
             <X size={20} weight="bold" />
@@ -239,7 +239,7 @@ export function AccountMenu({
             <span>{secondary}</span>
           </div>
           <DropdownMenu.Separator className="account-menu-separator" />
-          {hosted ? <><DropdownMenu.Item asChild className="account-menu-item"><a href={accountURL(hosted)}><UserCircle size={18} />Account settings</a></DropdownMenu.Item><DropdownMenu.Item asChild className="account-menu-item"><a href={accountURL(hosted, "mine")}><UsersThree size={18} />My tenants</a></DropdownMenu.Item></> : <DropdownMenu.Item
+          {hosted ? <><DropdownMenu.Item asChild className="account-menu-item"><a href={accountURL(hosted)}><UserCircle size={18} />Account settings</a></DropdownMenu.Item><DropdownMenu.Item asChild className="account-menu-item"><a href={accountURL(hosted, "mine")}><UsersThree size={18} />My instances</a></DropdownMenu.Item></> : <DropdownMenu.Item
             className="account-menu-item"
             onSelect={onOpenProfile}
           >

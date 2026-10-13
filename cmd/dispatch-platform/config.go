@@ -78,7 +78,12 @@ func readConfiguration() (configuration, error) {
 	}
 	c.CatalogURL = database
 	c.Hosted.DataDirectory = root
+	c.Hosted.BackendMode = strings.TrimSpace(os.Getenv("DISPATCH_HOSTED_BACKEND_MODE"))
+	if c.Hosted.BackendMode == "" {
+		c.Hosted.BackendMode = "connected"
+	}
 	c.Hosted.RootDomain = os.Getenv("DISPATCH_HOSTED_ROOT_DOMAIN")
+	c.Hosted.ReservedTenantNames = list(os.Getenv("DISPATCH_HOSTED_RESERVED_TENANT_NAMES"))
 	c.Hosted.TrustedProxyCIDRs = list(os.Getenv("DISPATCH_HOSTED_TRUSTED_PROXIES"))
 	c.Hosted.ConsoleAddresses = list(os.Getenv("DISPATCH_HOSTED_CONSOLE_ADDRESSES"))
 	c.Hosted.WorkloadGateway = strings.TrimSpace(os.Getenv("DISPATCH_HOSTED_WORKLOAD_GATEWAY"))
@@ -88,9 +93,20 @@ func readConfiguration() (configuration, error) {
 	if c.PostgresAdminURL, err = secret("DISPATCH_HOSTED_POSTGRES_ADMIN_URL"); err != nil {
 		return c, err
 	}
-	if strings.HasPrefix(database, "postgres") && c.PostgresAdminURL == "" {
+	if c.Hosted.BackendMode == "embedded" && strings.HasPrefix(database, "postgres") && c.PostgresAdminURL == "" {
 		return c, errors.New("PostgreSQL hosted mode requires DISPATCH_HOSTED_POSTGRES_ADMIN_URL_FILE for isolated tenant databases")
 	}
+	c.Hosted.WorkOS.ClientID = strings.TrimSpace(os.Getenv("DISPATCH_WORKOS_CLIENT_ID"))
+	c.Hosted.WorkOS.AllowPasswordLogin = os.Getenv("DISPATCH_WORKOS_ALLOW_PASSWORD_LOGIN") == "true"
+	if methods := strings.TrimSpace(os.Getenv("DISPATCH_WORKOS_LOGIN_METHODS")); methods != "" {
+		for _, method := range strings.Split(methods, ",") {
+			c.Hosted.WorkOS.LoginMethods = append(c.Hosted.WorkOS.LoginMethods, strings.TrimSpace(method))
+		}
+	}
+	if c.Hosted.WorkOS.APIKey, err = secret("DISPATCH_WORKOS_API_KEY"); err != nil {
+		return c, err
+	}
+	c.Hosted.AllowRegistration = os.Getenv("DISPATCH_HOSTED_ALLOW_REGISTRATION") == "true"
 	c.Hosted.SMTP = hosted.SMTPConfig{Address: os.Getenv("DISPATCH_HOSTED_SMTP_ADDRESS"), Username: os.Getenv("DISPATCH_HOSTED_SMTP_USERNAME"), From: os.Getenv("DISPATCH_HOSTED_SMTP_FROM")}
 	if c.Hosted.SMTP.Password, err = secret("DISPATCH_HOSTED_SMTP_PASSWORD"); err != nil {
 		return c, err

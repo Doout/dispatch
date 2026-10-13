@@ -166,7 +166,7 @@ function LocalAuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
       <section className="auth-card" aria-labelledby="auth-title">
         <div className="auth-brand">
           <Mark />
-          <strong>Dispatch</strong>
+          <strong>Doodship</strong>
         </div>
         {setupRequired === null ? (
           error ? (
@@ -359,7 +359,7 @@ function LocalAuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
               <Key size={19} />
               <span>
                 <strong>Local account</strong>
-                <small>Dispatch password</small>
+                <small>Doodship password</small>
               </span>
             </button>
           )}

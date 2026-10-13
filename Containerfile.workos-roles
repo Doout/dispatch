@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.27.2-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY cmd/sync-workos-roles ./cmd/sync-workos-roles
+COPY internal/tenancy/roles ./internal/tenancy/roles
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/sync-workos-roles ./cmd/sync-workos-roles
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/sync-workos-roles /usr/local/bin/sync-workos-roles
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/sync-workos-roles"]
