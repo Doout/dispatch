@@ -19,6 +19,7 @@ const help = `Usage: dispatch <command> [options]
   install                Install a Docker controller
   export                 Save a portable self-hosted installation archive
   import                 Create an installation from an export archive
+  verify                 Check an export archive, database and master key
   upgrade                Pull and apply a controller upgrade
   status                 Show the managed installation and its health
   recover                Recover an interrupted install or upgrade
@@ -69,6 +70,7 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 	var interval *time.Duration
 	var registryConfig *string
 	var archive *string
+	var container *string
 	switch command {
 	case "install", "import":
 		defaultImage := DefaultImage
@@ -92,6 +94,9 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 		}
 	case "export":
 		archive = fs.String("output", "", "archive destination; must not already exist")
+		container = fs.String("container", "", "export an existing self-hosted Docker container, including mounted configuration directories")
+	case "verify":
+		archive = fs.String("input", "", "export archive to verify without starting a controller")
 	case "upgrade":
 		image = fs.String("image", "", "change the image reference followed by this installation")
 		pull = fs.Bool("pull", true, "pull before upgrading (false uses a local image)")
@@ -137,7 +142,12 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 	return true, m.Locked(func() error {
 		switch command {
 		case "export":
+			if *container != "" {
+				return m.ExportContainer(ctx, *container, *archive)
+			}
 			return m.Export(ctx, *archive)
+		case "verify":
+			return m.VerifyExport(ctx, *archive)
 		case "install", "import":
 			c.Image = *image
 			if c.Volume == "" {

@@ -19,6 +19,7 @@ type exportManifest struct {
 	CreatedAt time.Time         `json:"createdAt"`
 	Image     string            `json:"image"`
 	Files     map[string]string `json:"files"`
+	Mounts    []DataMount       `json:"mounts,omitempty"`
 }
 
 func (m *Manager) Export(ctx context.Context, output string) (err error) {
@@ -54,6 +55,9 @@ func (m *Manager) Export(ctx context.Context, output string) (err error) {
 	}
 	defer os.RemoveAll(stage)
 	manifest := exportManifest{Format: 1, CreatedAt: time.Now().UTC(), Image: c.Image, Files: map[string]string{}}
+	if len(c.DataMounts) > 0 {
+		manifest.Format, manifest.Mounts = 2, c.DataMounts
+	}
 	digests, err := m.Run(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", c.ImageID)
 	if err != nil {
 		return err
@@ -134,7 +138,7 @@ func (m *Manager) noPendingTransfer() error {
 	if c, err := m.Load(); err == nil && c.ImportArchive != "" {
 		return errors.New("an interrupted import exists; run dispatch recover first")
 	}
-	for _, name := range []string{"upgrade.json", "export.json"} {
+	for _, name := range []string{"upgrade.json", "export.json", "container-export.json"} {
 		if _, err := os.Lstat(m.path(name)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("an interrupted operation exists; run dispatch recover first")
 		}
@@ -173,6 +177,10 @@ func (m *Manager) Import(ctx context.Context, input string, c Config, pull bool)
 	if err = verifyExportDatabase(ctx, seed); err != nil {
 		return err
 	}
+	if err = validateArchiveMounts(seed, meta.Mounts); err != nil {
+		return err
+	}
+	c.DataMounts = meta.Mounts
 	if c.Image == "" {
 		c.Image = meta.Image
 	}
