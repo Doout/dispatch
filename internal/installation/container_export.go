@@ -88,6 +88,7 @@ func validateArchiveMounts(archive string, mounts []DataMount) error {
 type containerMount struct {
 	Type, Name, Source, Destination string
 	RW                              bool
+	Subpath                         string `json:"-"`
 }
 type exportContainer struct {
 	ID, Image string
@@ -98,7 +99,13 @@ type exportContainer struct {
 	State struct {
 		Running, Paused bool
 	}
-	Mounts          []containerMount
+	Mounts     []containerMount
+	HostConfig struct {
+		Mounts []struct {
+			Target        string
+			VolumeOptions *struct{ Subpath string }
+		}
+	}
 	NetworkSettings struct {
 		Ports map[string][]struct{ HostIP, HostPort string }
 	}
@@ -117,7 +124,15 @@ func (m *Manager) inspectExportContainer(ctx context.Context, id string) (export
 	if err = json.Unmarshal([]byte(raw), &containers); err != nil || len(containers) != 1 || len(containers[0].ID) != 64 {
 		return c, errors.New("could not read controller container metadata")
 	}
-	return containers[0], nil
+	c = containers[0]
+	for i := range c.Mounts {
+		for _, options := range c.HostConfig.Mounts {
+			if options.Target == c.Mounts[i].Destination && options.VolumeOptions != nil {
+				c.Mounts[i].Subpath = options.VolumeOptions.Subpath
+			}
+		}
+	}
+	return c, nil
 }
 
 func exportContainerConfig(c exportContainer) (Config, containerMount, []containerMount, []byte, error) {
@@ -139,6 +154,9 @@ func exportContainerConfig(c exportContainer) (Config, containerMount, []contain
 	var data containerMount
 	var extra []containerMount
 	for _, mount := range c.Mounts {
+		if mount.Subpath != "" && (path.IsAbs(mount.Subpath) || path.Clean(mount.Subpath) != mount.Subpath || mount.Subpath == ".." || strings.HasPrefix(mount.Subpath, "../") || strings.ContainsAny(mount.Subpath, ",\r\n\x00")) {
+			return config, data, nil, nil, errors.New("invalid source volume subpath")
+		}
 		if strings.ContainsAny(mount.Source+mount.Name, ",\r\n\x00") || mount.Type != "bind" && mount.Type != "volume" {
 			return config, data, nil, nil, errors.New("unsupported controller mount; use a named volume or configuration directory bind")
 		}
@@ -180,7 +198,11 @@ func readonlyMount(mount containerMount, target string) string {
 	if mount.Type == "volume" {
 		source = mount.Name
 	}
-	return "type=" + mount.Type + ",source=" + source + ",target=" + target + ",readonly"
+	spec := "type=" + mount.Type + ",source=" + source + ",target=" + target + ",readonly"
+	if mount.Type == "volume" && mount.Subpath != "" {
+		spec += ",volume-subpath=" + mount.Subpath
+	}
+	return spec
 }
 
 // ExportContainer snapshots an existing controller without adopting its Compose

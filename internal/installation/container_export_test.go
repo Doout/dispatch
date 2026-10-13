@@ -31,6 +31,7 @@ func TestExistingContainerRejectsUnsupportedDataBeforeStopping(t *testing.T) {
 		func(c *exportContainer) { c.Mounts[2].Destination = "/usr/local/bin" },
 		func(c *exportContainer) { c.Mounts = append(c.Mounts, c.Mounts[2]) },
 		func(c *exportContainer) { c.Mounts[2].Source = "/private,invalid" },
+		func(c *exportContainer) { c.Mounts[0].Subpath = "../other-instance" },
 		func(c *exportContainer) { c.NetworkSettings.Ports = nil },
 	} {
 		c := existingContainerFixture()
@@ -46,6 +47,9 @@ func TestExistingContainerRejectsUnsupportedDataBeforeStopping(t *testing.T) {
 	encoded, err := New(t.TempDir()).composeData(config)
 	if err != nil || bytes.Contains(encoded, []byte("/private/kubeconfigs")) || !bytes.Contains(encoded, []byte(`"subpath": ".dispatch-export-mounts/0"`)) {
 		t.Fatal("restored mount depends on the original host", err)
+	}
+	if spec := readonlyMount(containerMount{Type: "volume", Name: "shared", Subpath: "instance/config"}, "/input"); !strings.Contains(spec, "volume-subpath=instance/config") {
+		t.Fatal("source volume subpath lost")
 	}
 }
 

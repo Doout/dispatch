@@ -23,6 +23,7 @@ func TestComposeDockerInstallationExport(t *testing.T) {
 	defer cancel()
 	name := fmt.Sprintf("compose-export-%d", time.Now().UnixNano())
 	volume := name + "-data"
+	configurationVolume := name + "-config"
 	docker := func(args ...string) string {
 		t.Helper()
 		out, err := Command(ctx, "docker", args...)
@@ -46,14 +47,17 @@ func TestComposeDockerInstallationExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	docker("volume", "create", "--label", "dispatch.test=compose-export", volume)
+	docker("volume", "create", "--label", "dispatch.test=compose-export", configurationVolume)
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
 		Command(cleanup, "docker", "rm", "--force", name)
 		Command(cleanup, "docker", "volume", "rm", volume)
+		Command(cleanup, "docker", "volume", "rm", configurationVolume)
 	})
 	docker("run", "--rm", "--network", "none", "--user", "0", "--entrypoint", "python3", "--volume", volume+":/data", image, "-c", "import base64,secrets,pathlib; p=pathlib.Path('/data/dispatch-master.key'); p.write_bytes(base64.b64encode(secrets.token_bytes(32))); p.chmod(0o600)")
-	docker("run", "--detach", "--name", name, "--label", "com.docker.compose.project="+name, "--user", "0", "--publish", fmt.Sprintf("127.0.0.1:%d:8080", sourcePort), "--volume", volume+":/data", "--volume", "/var/run/docker.sock:/var/run/docker.sock", "--mount", "type=bind,source="+directory+",target=/kubeconfigs,readonly", "--env", "DATABASE_URL=/data/dispatch.db", "--env", "DISPATCH_MASTER_KEY_FILE=/data/dispatch-master.key", "--env", "DISPATCH_ADDR=0.0.0.0:8080", "--env", "DISPATCH_EXECUTOR=docker", "--env", "DISPATCH_DOCKER_SOCKET=/var/run/docker.sock", image)
+	docker("run", "--rm", "--network", "none", "--user", "0", "--entrypoint", "sh", "--volume", configurationVolume+":/config", image, "-c", "mkdir -p /config/nested; printf retained > /config/nested/secondary; printf omitted > /config/parent-only")
+	docker("run", "--detach", "--name", name, "--label", "com.docker.compose.project="+name, "--user", "0", "--publish", fmt.Sprintf("127.0.0.1:%d:8080", sourcePort), "--volume", volume+":/data", "--volume", "/var/run/docker.sock:/var/run/docker.sock", "--mount", "type=bind,source="+directory+",target=/kubeconfigs,readonly", "--mount", "type=volume,source="+configurationVolume+",target=/extra-configs,volume-subpath=nested,readonly", "--env", "DATABASE_URL=/data/dispatch.db", "--env", "DISPATCH_MASTER_KEY_FILE=/data/dispatch-master.key", "--env", "DISPATCH_ADDR=0.0.0.0:8080", "--env", "DISPATCH_EXECUTOR=docker", "--env", "DISPATCH_DOCKER_SOCKET=/var/run/docker.sock", image)
 	m := New(t.TempDir())
 	if err := os.Chmod(m.Dir, 0700); err != nil {
 		t.Fatal(err)
@@ -114,7 +118,7 @@ func TestComposeDockerInstallationExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	installed, err := target.Load()
-	if err != nil || len(installed.DataMounts) != 1 {
+	if err != nil || len(installed.DataMounts) != 2 {
 		t.Fatal("configuration mount not restored", err)
 	}
 	id, err := target.container(ctx, installed)
@@ -126,6 +130,12 @@ func TestComposeDockerInstallationExport(t *testing.T) {
 	}
 	if docker("exec", id, "cat", "/kubeconfigs/cluster") != "private configuration retained" {
 		t.Fatal("mounted configuration lost")
+	}
+	if docker("exec", id, "cat", "/extra-configs/secondary") != "retained" {
+		t.Fatal("source configuration volume subpath lost")
+	}
+	if _, err = Command(ctx, "docker", "exec", id, "test", "-e", "/extra-configs/parent-only"); err == nil {
+		t.Fatal("export copied data outside the mounted configuration subpath")
 	}
 	if _, err = Command(ctx, "docker", "exec", id, "sh", "-c", "echo changed >> /kubeconfigs/cluster"); err == nil {
 		t.Fatal("read-only configuration became writable")
