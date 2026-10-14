@@ -132,6 +132,20 @@ it("offers Doodship and instance providers without local password forms", async 
   expect(await screen.findByRole("button",{name:"Sign in with Company GitHub"})).toBeTruthy();
 });
 
+it("offers Doodship login without an error when the instance has no local providers", async () => {
+  const fetcher = vi.fn().mockResolvedValue(json([]));
+  vi.stubGlobal("fetch", fetcher);
+  render(
+    <HostedTenantContext.Provider value={hostedTenant}>
+      <AuthScreen onAuthenticated={vi.fn()} />
+    </HostedTenantContext.Provider>,
+  );
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+  expect(fetcher.mock.calls[0][0]).toBe("/api/v1/auth/providers");
+  expect(screen.getByRole("link", { name: "Sign in with Doodship" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("offers central account links instead of local password changes", async () => {
   const user = userEvent.setup();
   render(

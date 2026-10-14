@@ -58,6 +58,10 @@ without membership and a local mapping. Remote requests cannot mint local login
 credentials, change user mappings or alter the connection itself. Manage those
 settings directly on the self-hosted installation.
 
+The remote sign-in page uses Doodship login. Providers configured on the
+self-hosted installation are available at that installation's own address;
+they are not offered through the control plane.
+
 The connection carries separate operations for user APIs, GitHub webhooks,
 published applications and a limited set of node enrollment and job APIs. Each
 operation has its own authorization check. It is not a tunnel to arbitrary hosts

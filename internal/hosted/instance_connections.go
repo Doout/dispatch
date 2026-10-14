@@ -212,6 +212,12 @@ func (s *Server) connectedInstance(w http.ResponseWriter, r *http.Request, t ten
 		problem(w, 403, "Remote access is disabled. Open the instance at its configured address.")
 		return
 	}
+	if r.URL.Path == "/api/v1/auth/providers" && r.Method == http.MethodGet {
+		// Remote console access uses Doodship identities and approved local user
+		// mappings. Installation-specific login providers belong to its own URL.
+		respond(w, http.StatusOK, []any{})
+		return
+	}
 	if r.URL.Path == "/api/v1/instance-connection" || strings.HasPrefix(r.URL.Path, "/api/v1/instance-connection/") {
 		problem(w, 403, "Manage the connection from the self-hosted installation.")
 		return
