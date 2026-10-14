@@ -3,6 +3,7 @@ package hosted
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -64,5 +65,39 @@ func TestOwnerDeletesInstanceDuringWorkOSOutage(t *testing.T) {
 	}
 	if w = f.request(t, f.server.Config.RootDomain, http.MethodGet, "/api/v1/account", owner, nil); w.Code != 200 {
 		t.Fatal("account lost access", w.Code)
+	}
+}
+
+func TestInstanceListRemainsAvailableDuringDeletion(t *testing.T) {
+	f := newHostedFixture(t)
+	ctx := context.Background()
+	owner := f.session(t, "owner-a", tenancy.AudiencePlatform)
+	instances := []tenancy.Tenant{}
+	for i := 0; i < 20; i++ {
+		instance, err := f.catalog.CreateOwnConnectedTenant(ctx, "owner-a", fmt.Sprintf("example-%d", i), "Example")
+		if err != nil {
+			t.Fatal(err)
+		}
+		instances = append(instances, instance)
+	}
+	done := make(chan int, 1)
+	go func() {
+		for i := 0; i < 30; i++ {
+			w := f.request(t, f.server.Config.RootDomain, http.MethodGet, "/api/v1/account/tenants", owner, nil)
+			if w.Code != 200 {
+				done <- w.Code
+				return
+			}
+		}
+		done <- 200
+	}()
+	for _, instance := range instances {
+		w := f.request(t, f.server.Config.RootDomain, http.MethodDelete, "/api/v1/tenants/"+instance.ID, owner, map[string]string{"slug": instance.Slug})
+		if w.Code != 204 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	if code := <-done; code != 200 {
+		t.Fatalf("list failed during deletion: %d", code)
 	}
 }

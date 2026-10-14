@@ -212,6 +212,9 @@ func (s *Server) memberships(w http.ResponseWriter, r *http.Request) {
 	items := []entry{}
 	for _, membership := range memberships {
 		tenant, err := s.Catalog.Tenant(r.Context(), membership.TenantID)
+		if errors.Is(err, tenancy.ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			catalogError(w, err)
 			return
