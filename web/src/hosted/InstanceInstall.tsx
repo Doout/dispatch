@@ -23,7 +23,7 @@ export function installCommand(
   const url = new URL("/install.sh", enrollment.platformURL).href;
   const quotedURL = "'" + url.replace(/'/g, "'\\''") + "'";
   // Fetch the whole script before executing it. Keep connection secrets on stdin.
-  return `installer="$(curl -fsSL --proto '=https' --proto-redir '=https' ${quotedURL})" && sh -c "$installer" <<'DOODSHIP_CONNECTION'
+  return `installer="$(curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --retry 2 --retry-max-time 90 --max-filesize 65536 ${quotedURL})" && test -n "$installer" && sh -c "$installer" -- <<'DOODSHIP_CONNECTION'
 ${connection}
 DOODSHIP_CONNECTION`;
 }

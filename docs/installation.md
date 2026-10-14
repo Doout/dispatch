@@ -4,7 +4,7 @@ The managed installer runs the controller in Docker on Linux (amd64 or arm64). I
 
 ## Connect a new server to Doodship
 
-In Doodship, create an instance and open its connection page. Choose **Set up server** and copy the install command. Run it on your Linux server. Docker and access to its local socket are the only host requirements.
+In Doodship, create an instance and open its connection page. Choose **Set up server** and copy the install command. Run it on your Linux server. Use Linux amd64 or arm64 with access to a local Docker engine at `/var/run/docker.sock`. The installer needs 2 GiB free in Docker storage and 512 MiB free on your home filesystem. Builds and application data need additional space. Docker Desktop and remote engines are not supported.
 
 Setup uses the existing Docker installer. It creates the controller, a local owner account, and an outbound connection to Doodship. The owner who generated the token is linked to that local account. Remote access is an explicit option in the connection page. Turn it off and provide your installation's own address to keep browser access on your LAN or VPN. Webhook forwarding still uses the outbound connection.
 
@@ -22,11 +22,19 @@ The installed CLI finds its configuration directory automatically. Upgrades repl
 
 Setup enables daily automatic updates through a separate Docker updater. Both services restart after a host reboot. No systemd, cron, or host service is installed. Automatic upgrades use backups, health checks, and rollback. They can interrupt running jobs. Disable them with `auto-upgrade disable`, or pass `--auto-update=false` in the setup command.
 
-The command downloads `/install.sh` from your control plane using curl. It executes the script only after the download succeeds and passes connection JSON on standard input. The script checks Linux architecture and access to the local Docker engine before creating files. It then runs the installer container, which writes `$HOME/.doodship/compose.json` and starts the controller and updater. You do not need to download or copy a Compose file.
+The command downloads `/install.sh` from your control plane using curl. It executes the script after a successful download and passes connection JSON on standard input. Downloads have time and size limits, with two retries for temporary failures.
+
+The script checks host tools, Linux and Docker architectures, directory ownership and available disk space. It pulls a fresh image, pins its image ID, and tests the image's Docker client and Compose against the local engine. A private temporary copy of the CLI checks host library compatibility. The script removes that copy on success or failure.
+
+The installer image supplies Compose. Setup writes `$HOME/.doodship/compose.json` and starts the controller and updater. You do not need to download a Compose file.
 
 The one-use token passes through standard input. It is not stored in the download URL, Docker arguments, or container environment. The copied command does contain it, so keep the command private. After enrollment, the controller stores the replacement connection credential privately in its data volume.
 
-If connection or updater setup fails, run setup again with a current token and the same directory and name. Setup resumes its own installation, preserves the local owner, and skips enrollment when that instance is already connected. It refuses to adopt an unrelated installation. Existing installations should use **Settings → Connections → Doodship** instead.
+If connection or updater setup fails, run setup again with a current token and the same directory and name. Setup resumes its own installation, preserves the local owner, and skips enrollment when that instance is already connected. It can recreate a missing controller container while preserving its database and connection. It rejects unrelated containers, edited Compose configuration, and a missing data volume from a completed installation. An interrupted export or upgrade needs `dispatch recover` first. Existing installations should use **Settings → Connections → Doodship** instead.
+
+To change the default port, add `--port 8081` after `sh -c "$installer" --` in the copied command, before its heredoc. Use `--name example` to select another Compose project. `--pull=false` uses a local image, and `DOODSHIP_IMAGE` selects another controller image. Digest-pinned images require `--auto-update=false`. The script owns its installation directory, socket and host ownership settings; those cannot be changed with CLI flags.
+
+The script contains named stages for options, tools, platform, Docker, storage, image checks and setup. Add host prerequisites there. Keep account creation, data ownership, recovery and update logic in `internal/installation` so the script and CLI use the same rules. Connection JSON goes only to the final command; probes never read it.
 
 Setup follows `ghcr.io/doout/dispatch:main`. Successful CI on the current `main` commit publishes amd64 and arm64 images before advancing this tag. The `stable` channel remains tied to versioned releases. Change channels with `dispatch upgrade --image ghcr.io/doout/dispatch:stable` when that release contains the setup support you need.
 
