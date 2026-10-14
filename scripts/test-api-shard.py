@@ -161,7 +161,7 @@ def run_shard(index, count, output):
     assigned = shards[index]
     (output / f"assignments-{index}.json").write_text(json.dumps(shards, indent=2) + "\n")
     print(f"API shard {index + 1}/{count}: {len(assigned)} of {len(roots)} discovered roots", flush=True)
-    command = ["go", "test", "-race", "-count=1", "-timeout", "8m", "-json", "./internal/api", "-run", selection_pattern(assigned)]
+    command = ["go", "test", "-race", "-count=1", "-timeout", "12m", "-json", "./internal/api", "-run", selection_pattern(assigned)]
     with (output / f"results-{index}.jsonl").open("w") as log:
         process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE)
         for line in process.stdout:

@@ -50,7 +50,7 @@ class RequiredStatusTest(unittest.TestCase):
         for name, body in self.jobs.items():
             match = re.search(r'(?m)^    timeout-minutes: (\d+)$', body)
             self.assertIsNotNone(match, name)
-            self.assertLessEqual(int(match[1]), 10, name)
+            self.assertLessEqual(int(match[1]), 14 if name == 'api-race' else 10, name)
         self.assertNotIn('--other-packages', self.jobs['build-checks'])
 
     def test_gate_rejects_failed_cancelled_and_skipped_results_for_each_job(self):

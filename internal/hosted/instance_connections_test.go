@@ -85,9 +85,27 @@ func TestConnectedInstanceNeverOpensCentralRuntime(t *testing.T) {
 	if w.Code != 403 {
 		t.Fatalf("remote disabled: %d", w.Code)
 	}
+	w = f.request(t, host, "GET", "/api/v1/auth/providers", "", nil)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("remote login offered while disabled: %d", w.Code)
+	}
 	w = f.request(t, f.server.Config.RootDomain, "PUT", "/api/v1/instance-connections/policy", enrolled.Credential, map[string]any{"directURL": local.URL, "remoteAccess": true})
 	if w.Code != 204 {
 		t.Fatalf("policy: %d %s", w.Code, w.Body.String())
+	}
+	w = f.request(t, host, "GET", "/api/v1/auth/providers", "", nil)
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Fatalf("public remote login providers: %d %s", w.Code, w.Body.String())
+	}
+	for _, path := range []string{"/api/v1/auth/providers/local/start", "/api/v1/auth/providers"} {
+		w = f.request(t, host, "POST", path, "", map[string]string{})
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("anonymous login operation %s: %d %s", path, w.Code, w.Body.String())
+		}
+	}
+	w = f.request(t, host, "GET", "/api/v1/overview", "", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous instance data: %d", w.Code)
 	}
 	token := f.session(t, "owner-a", tenancy.TenantAudience(tenant.ID))
 	w = f.request(t, host, "GET", "/api/v1/overview", token, nil)

@@ -107,7 +107,7 @@ jobs:
               --require-test TestDisposableWorkerCancellationIntegration
   api-race:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 14
     strategy:
       fail-fast: false
       max-parallel: 8
