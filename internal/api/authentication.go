@@ -184,7 +184,7 @@ func unauthorized(w http.ResponseWriter, setupRequired bool) {
 		problem(w, http.StatusUnauthorized, "Administrator setup required", "Create the first administrator account before using Dispatch.")
 		return
 	}
-	problem(w, http.StatusUnauthorized, "Authentication required", "Enter the administrator username and password.")
+	problem(w, http.StatusUnauthorized, "Authentication required", "Sign in to continue.")
 }
 
 func (a *API) validPassword(ctx context.Context, username, password string) (valid, setupRequired bool, err error) {
