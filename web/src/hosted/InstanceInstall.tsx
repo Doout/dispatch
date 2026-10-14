@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DownloadSimple, Copy, Check } from "@phosphor-icons/react";
+import { Copy, Check } from "@phosphor-icons/react";
 
 export type Enrollment = {
   enrollmentToken: string;
@@ -7,65 +7,25 @@ export type Enrollment = {
   platformURL: string;
   subject: string;
 };
-const image = "ghcr.io/doout/dispatch:main";
-
-export function installationFiles(
+export function installCommand(
   enrollment: Enrollment,
   instanceID: string,
   remoteAccess: boolean,
   directURL: string,
 ) {
-  const connection = JSON.stringify(
-    {
-      controlPlaneURL: enrollment.platformURL,
-      enrollmentToken: enrollment.enrollmentToken,
-      instanceID,
-      directURL: directURL.trim(),
-      remoteAccess,
-    },
-    null,
-    2,
-  );
-  const docker = `mkdir -p "$HOME/.doodship" && chmod 700 "$HOME/.doodship" &&
-docker run --rm -i --user 0 --network host \\
-  --mount "type=bind,src=$HOME/.doodship,dst=$HOME/.doodship" \\
-  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \\
-  ${image} setup --dir "$HOME/.doodship" --name doodship \\
-  --image ${image} --host-uid "$(id -u)" --host-gid "$(id -g)" --connection-stdin <<'DOODSHIP_CONNECTION'
+  const connection = JSON.stringify({
+    controlPlaneURL: enrollment.platformURL,
+    enrollmentToken: enrollment.enrollmentToken,
+    instanceID,
+    ...(remoteAccess ? {} : { directURL: directURL.trim() }),
+    remoteAccess,
+  });
+  const url = new URL("/install.sh", enrollment.platformURL).href;
+  const quotedURL = "'" + url.replace(/'/g, "'\\''") + "'";
+  // Fetch the whole script before executing it. Keep connection secrets on stdin.
+  return `installer="$(curl -fsSL --proto '=https' --proto-redir '=https' ${quotedURL})" && sh -c "$installer" <<'DOODSHIP_CONNECTION'
 ${connection}
 DOODSHIP_CONNECTION`;
-  const compose = `services:
-  setup:
-    image: ${image}
-    user: "0"
-    network_mode: host
-    volumes:
-      - type: bind
-        source: \${HOME}/.doodship
-        target: \${HOME}/.doodship
-      - type: bind
-        source: /var/run/docker.sock
-        target: /var/run/docker.sock
-    command:
-      - setup
-      - --dir
-      - \${HOME}/.doodship
-      - --name
-      - doodship
-      - --image
-      - ${image}
-      - --host-uid
-      - "\${DOODSHIP_UID:-0}"
-      - --host-gid
-      - "\${DOODSHIP_GID:-0}"
-      - --connection-stdin
-`;
-  const composeCommand = `mkdir -p "$HOME/.doodship" && chmod 700 "$HOME/.doodship" &&
-DOODSHIP_UID="$(id -u)" DOODSHIP_GID="$(id -g)" docker compose -f doodship-setup.yaml run --rm -T setup <<'DOODSHIP_CONNECTION'
-${connection}
-DOODSHIP_CONNECTION`;
-  // Keep connection secrets out of the downloaded Compose file.
-  return { docker, compose, composeCommand };
 }
 
 export function InstanceInstall({
@@ -77,11 +37,11 @@ export function InstanceInstall({
   instanceID: string;
   onError: (message: string) => void;
 }) {
-  const [method, setMethod] = useState("docker");
+  const [method, setMethod] = useState("install");
   const [remoteAccess, setRemoteAccess] = useState(true);
   const [directURL, setDirectURL] = useState("");
   const [copied, setCopied] = useState("");
-  const files = installationFiles(
+  const command = installCommand(
     enrollment,
     instanceID,
     remoteAccess,
@@ -94,16 +54,6 @@ export function InstanceInstall({
     } catch {
       onError("Copy failed. Select the command and copy it manually.");
     }
-  };
-  const download = () => {
-    const url = URL.createObjectURL(
-      new Blob([files.compose], { type: "application/yaml" }),
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "doodship-setup.yaml";
-    link.click();
-    URL.revokeObjectURL(url);
   };
   const expired = Date.now() >= new Date(enrollment.expiresAt).getTime();
   let validAddress = false;
@@ -120,15 +70,12 @@ export function InstanceInstall({
     /* The address is incomplete while typing. */
   }
   const ready = remoteAccess || validAddress;
-  const command = method === "compose" ? files.composeCommand : files.docker;
   return (
     <section className="hosted-panel hosted-connection-instructions">
       <h2>Set up your server</h2>
       <p>
-        Run this on a Linux server with Docker. Setup installs the CLI and
-        configuration in <code>$HOME/.doodship</code>, starts your server, and
-        enables daily updates. Your database, encryption key, and job data stay
-        in its Docker volume.
+        Run the command on your Linux server. Docker must be installed and
+        available to your user.
       </p>
       <div
         className="hosted-install-methods"
@@ -136,8 +83,7 @@ export function InstanceInstall({
         aria-label="Setup method"
       >
         {[
-          ["docker", "Docker command"],
-          ["compose", "Docker Compose"],
+          ["install", "New installation"],
           ["existing", "Existing installation"],
         ].map(([value, label]) => (
           <button
@@ -207,8 +153,8 @@ export function InstanceInstall({
               Allow members to open this server through Doodship
             </label>
             <p>
-              Connections start from your server. Webhook forwarding works with
-              remote access turned off.
+              Your server connects to Doodship. No public port is needed.
+              Webhooks still work when remote access is off.
             </p>
             {!remoteAccess && (
               <label>
@@ -222,17 +168,6 @@ export function InstanceInstall({
                 <small>Members open this address using their LAN or VPN.</small>
               </label>
             )}
-            {method === "compose" && (
-              <button className="quiet-button" onClick={download}>
-                <DownloadSimple size={16} aria-hidden="true" />
-                Download Compose file
-              </button>
-            )}
-            <p>
-              {method === "compose"
-                ? "Save doodship-setup.yaml on your server, then run:"
-                : "Run in your server's terminal:"}
-            </p>
             <pre className="hosted-install-command">
               <code>{command}</code>
             </pre>
@@ -249,13 +184,13 @@ export function InstanceInstall({
               {copied === "command" ? "Copied" : "Copy install command"}
             </button>
             <p>
-              Setup links your Doodship account to the local owner. The recovery
-              login is saved in <code>$HOME/.doodship/local-owner.json</code>.
+              Installs in <code>$HOME/.doodship</code> and enables daily Docker
+              updates. Updates may interrupt running jobs. Your data stays on
+              this server.
             </p>
             <p>
-              Requires Linux amd64 or arm64 and Docker access. No systemd
-              service or public port is needed. Daily updates may briefly
-              interrupt jobs.
+              Your account gets owner access. The recovery login is in
+              <code> $HOME/.doodship/local-owner.json</code>.
             </p>
           </>
         )}
@@ -263,7 +198,7 @@ export function InstanceInstall({
       <p role={expired ? "alert" : undefined}>
         {expired
           ? "This token expired. Generate another token to install."
-          : `Expires ${new Date(enrollment.expiresAt).toLocaleTimeString()}. This command contains a one-use token. Keep it private.`}
+          : `Expires ${new Date(enrollment.expiresAt).toLocaleTimeString()}. One-use token. Keep this command private.`}
       </p>
     </section>
   );

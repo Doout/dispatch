@@ -32,8 +32,11 @@ func TestConnectedDockerSetup(t *testing.T) {
 	defer cancel()
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	name := "setup-" + suffix
-	m := New(t.TempDir())
-	os.Chmod(m.Dir, 0700)
+	home := t.TempDir()
+	m := New(filepath.Join(home, ".doodship"))
+	if err := os.Mkdir(m.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	m.Out = io.Discard
 	network := name + "-net"
 	plane := name + "-plane"
@@ -108,12 +111,16 @@ func TestConnectedDockerSetup(t *testing.T) {
 		}
 		m.Run(cleanup, "docker", "image", "rm", trustedImage)
 	})
-	// Run the shipped CLI in a one-shot container, with the same host paths as UI setup.
+	// Run the public curl bootstrap, which starts the shipped CLI in a one-shot container.
 	payload, _ := json.Marshal(ConnectionInput{ControlPlaneURL: cpURL, InstanceID: "instance", EnrollmentToken: "disposable-once", RemoteAccess: true})
 	inputFile := m.path("test-input.json")
 	os.WriteFile(inputFile, payload, 0600)
-	command := []string{"run", "--rm", "--user", "0", "--network", "host", "--volume", m.Dir + ":" + m.Dir, "--volume", "/var/run/docker.sock:/var/run/docker.sock", "--entrypoint", "sh", trustedImage, "-c", `exec dispatch setup --dir "$1" --name "$2" --port "$3" --image "$4" --pull=false --proxy-network "$7" --hostname setup-fixture.invalid --host-uid "$5" --host-gid "$6" --connection-stdin < "$1/test-input.json"`, "setup", m.Dir, name, fmt.Sprint(port), trustedImage, fmt.Sprint(os.Getuid()), fmt.Sprint(os.Getgid()), network}
-	if _, err = m.Run(ctx, "docker", command...); err != nil {
+	bootstrap, err := filepath.Abs("../../web/public/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := []string{"HOME=" + home, "DOODSHIP_IMAGE=" + trustedImage, "sh", "-c", `exec sh "$1" --name "$2" --port "$3" --pull=false --proxy-network "$4" --hostname setup-fixture.invalid < "$5/test-input.json"`, "setup", bootstrap, name, fmt.Sprint(port), network, m.Dir}
+	if _, err = m.Run(ctx, "env", command...); err != nil {
 		t.Fatal(err)
 	}
 	os.Remove(inputFile)
@@ -128,7 +135,7 @@ func TestConnectedDockerSetup(t *testing.T) {
 	}
 	// Resuming uses persisted credentials, not a second enrollment.
 	os.WriteFile(inputFile, payload, 0600)
-	if _, err = m.Run(ctx, "docker", command...); err != nil {
+	if _, err = m.Run(ctx, "env", command...); err != nil {
 		t.Fatal(err)
 	}
 	os.Remove(inputFile)

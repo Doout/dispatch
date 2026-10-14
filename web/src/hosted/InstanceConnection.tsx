@@ -108,18 +108,15 @@ export function InstanceConnection({
             <>
               <p>
                 {status.remoteAccess
-                  ? "Remote access is enabled by your server."
-                  : "Remote access is disabled. Members open your server's own address."}
+                  ? "Members can open this server through Doodship."
+                  : "Members open this server at its own address."}
               </p>
               {status.instanceUrl && (
                 <p className="hosted-connection-address">
                   {status.instanceUrl}
                 </p>
               )}
-              <p>
-                Webhooks use the outbound connection even when remote access is
-                disabled.
-              </p>
+              <p>Doodship forwards webhooks over this connection.</p>
             </>
           )}
           {membership.role === "owner" && (
