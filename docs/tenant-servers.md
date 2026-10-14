@@ -17,16 +17,18 @@ image; the connector runs inside the self-hosted controller.
 1. Sign in to Doodship and create an instance. Creation records its name,
    membership and WorkOS organization. It does not create an operational database
    or run an instance backend on the control plane.
-2. As an instance owner, choose **Connect server**, then **Create connection
-   token**. The token expires after ten minutes, works once and is only shown in
-   that response. Creating another token invalidates the previous unused token.
+2. As an instance owner, choose **Connect server**, then **Set up server**.
+   Copy the install command for a new server, or choose **Existing installation**
+   to use the connection token. The token expires after ten minutes and works
+   once. Creating another token invalidates the previous unused token.
 3. Sign in to your self-hosted installation as a local owner. Open **Settings →
-   Doodship connection → Manage connection**. Enter the control plane address and
+   Connections → Doodship**. Enter the control plane address and
    connection token, then connect.
 4. Set the instance's own address if members should open it on their LAN or VPN.
    The control plane uses that address as a browser navigation target. It never
    fetches it or appends a managed sign-in token.
-5. Remote user access is off by default. To enable it, link each Doodship account
+5. Remote user access requires an approved local user mapping. The installer
+   enables it for the owner by default. To add other users, link each Doodship account
    ID to an existing active local user and enable **Allow remote user access**.
    Account IDs are available in Doodship's Account page. Each user keeps their
    local permissions. Emails and claimed platform roles do not grant access.
@@ -93,7 +95,8 @@ connector itself uses WebSocket.
 
 ## Disconnect and reconnect
 
-An instance owner can disconnect from Doodship, or a local owner can disconnect
+In **My instances**, open the instance's actions menu and choose **Disconnect
+server**. The connection page has the same action. A local owner can disconnect
 from the installation's Settings page. Disconnect cancels active requests and log
 streams. Doodship revokes the installation credential, increments its connection
 generation and revokes instance sessions. An old credential cannot reconnect.
@@ -110,6 +113,23 @@ When moving an installation with export/import, stop the old installation before
 starting the restored copy. The connection file belongs to the installation
 backup. Running both copies with the same credential would repeatedly replace
 their outbound connection.
+
+## Delete an instance
+
+In **My instances**, open the instance's actions menu and choose **Delete
+instance**. Type its name to confirm. Deletion is available to instance owners,
+including when no server is connected or the server is offline.
+
+Deletion removes the instance, memberships, connection tokens, sessions,
+application addresses and usage records from Doodship. It also closes the outbound
+connection. Your server, databases, local accounts and running jobs stay intact.
+You can reuse the name for a new instance, but connecting the same server requires
+a new token and local owner approval.
+
+WorkOS organization and DNS provider cleanup retry in the background if a
+provider is unavailable. The old credentials stop working as soon as deletion
+commits. Existing embedded backends do not expose this action, since their
+operational data needs a separate removal process.
 
 ## Control plane data and limits
 

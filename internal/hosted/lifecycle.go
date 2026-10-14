@@ -18,8 +18,9 @@ func (s *Server) Prepare(ctx context.Context) error {
 
 func (s *Server) ReconcileTenants(ctx context.Context) error {
 	s.dnsMu.Lock()
-	joined := s.syncTenantDNS(ctx, platformOwner)
+	joined := s.syncTenantDNS(ctx, "")
 	s.dnsMu.Unlock()
+	joined = errors.Join(joined, s.reconcileOrganizationDeletions(ctx))
 	tenants, err := s.Catalog.ListTenants(ctx)
 	if err != nil {
 		return err

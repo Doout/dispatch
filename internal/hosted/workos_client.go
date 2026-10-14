@@ -63,6 +63,7 @@ type workOSService interface {
 	SessionActive(context.Context, string, string) error
 	RevokeSession(context.Context, string) error
 	EnsureOrganization(context.Context, string, string) (string, error)
+	DeleteOrganization(context.Context, string, string) error
 	SyncMembers(context.Context, string, map[string]bool) error
 	AdmissionAllowed(context.Context, workOSIdentity) error
 }
@@ -214,4 +215,23 @@ func (c *workOSClient) SyncMembers(ctx context.Context, organization string, wan
 		}
 	}
 	return nil
+}
+
+func (c *workOSClient) DeleteOrganization(ctx context.Context, id, external string) error {
+	if id == "" {
+		org, err := c.client.Organizations().GetByExternalID(ctx, external)
+		if err != nil {
+			return organizationDeletionError(err)
+		}
+		id = org.ID
+	}
+	return organizationDeletionError(c.client.Organizations().Delete(ctx, id))
+}
+
+func organizationDeletionError(err error) error {
+	var apiErr *workos.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return err
 }

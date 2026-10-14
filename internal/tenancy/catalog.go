@@ -128,6 +128,7 @@ var catalogSchema = []string{
 	`CREATE TABLE IF NOT EXISTS tenancy_login_attempts (token_hash TEXT PRIMARY KEY, browser_hash TEXT NOT NULL, data TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS tenancy_login_origins (token_hash TEXT PRIMARY KEY, provider TEXT NOT NULL, subject TEXT NOT NULL, session_id TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS tenant_workos_organizations (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id), organization_id TEXT NOT NULL UNIQUE, sync_digest TEXT NOT NULL DEFAULT '')`,
+	`CREATE TABLE IF NOT EXISTS instance_organization_deletions (tenant_id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, external_id TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS tenant_join_requests (tenant_id TEXT NOT NULL REFERENCES tenants(id), user_id TEXT NOT NULL REFERENCES tenancy_users(id), created_at BIGINT NOT NULL, PRIMARY KEY(tenant_id,user_id))`,
 	`CREATE INDEX IF NOT EXISTS tenant_join_requests_user ON tenant_join_requests(user_id)`,
 

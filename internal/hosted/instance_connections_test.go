@@ -224,6 +224,12 @@ func (w *pausedInstanceUpgrade) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func TestDisconnectRejectsSocketPausedDuringUpgrade(t *testing.T) {
+	testInstanceRemovalDuringUpgrade(t, false)
+}
+func TestDeleteRejectsSocketPausedDuringUpgrade(t *testing.T) {
+	testInstanceRemovalDuringUpgrade(t, true)
+}
+func testInstanceRemovalDuringUpgrade(t *testing.T, deleting bool) {
 	f := newHostedFixture(t)
 	f.server.Config.BackendMode = tenancy.BackendConnected
 	tenant := f.tenant(t, "connected", "owner-a")
@@ -268,7 +274,13 @@ func TestDisconnectRejectsSocketPausedDuringUpgrade(t *testing.T) {
 		t.Fatal("socket did not reach upgrade")
 	}
 	owner := f.session(t, "owner-a", tenancy.AudiencePlatform)
-	w := f.request(t, f.server.Config.RootDomain, "DELETE", "/api/v1/tenants/"+tenant.ID+"/connection", owner, nil)
+	path := "/api/v1/tenants/" + tenant.ID + "/connection"
+	var body any
+	if deleting {
+		path = "/api/v1/tenants/" + tenant.ID
+		body = map[string]string{"slug": tenant.Slug}
+	}
+	w := f.request(t, f.server.Config.RootDomain, "DELETE", path, owner, body)
 	if w.Code != 204 {
 		unblock()
 		t.Fatal(w.Code, w.Body.String())

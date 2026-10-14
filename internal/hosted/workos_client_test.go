@@ -15,6 +15,54 @@ import (
 	workos "github.com/workos/workos-go/v10"
 )
 
+func TestWorkOSOrganizationDeletionRetriesAndAcceptsMissingOrganizations(t *testing.T) {
+	status := 204
+	lookup := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Error("missing API key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/organizations/external_id/") {
+			lookup = true
+			if status == 404 {
+				w.WriteHeader(404)
+				_, _ = w.Write([]byte(`{"message":"Not found"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"org_example","name":"Example"}`))
+			return
+		}
+		if r.Method != "DELETE" || r.URL.Path != "/organizations/org_example" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(status)
+		if status != 204 {
+			_, _ = w.Write([]byte(`{"message":"Unavailable"}`))
+		}
+	}))
+	defer server.Close()
+	client := &workOSClient{client: workos.NewClient("test-key", workos.WithBaseURL(server.URL), workos.WithMaxRetries(0))}
+	ctx := context.Background()
+	if err := client.DeleteOrganization(ctx, "org_example", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteOrganization(ctx, "", "doodship.test:instance"); err != nil || !lookup {
+		t.Fatal("external recovery failed", err)
+	}
+	status = 503
+	if err := client.DeleteOrganization(ctx, "org_example", ""); err == nil {
+		t.Fatal("provider error acknowledged")
+	}
+	status = 404
+	if err := client.DeleteOrganization(ctx, "org_example", ""); err != nil {
+		t.Fatal("deleted org not idempotent", err)
+	}
+	if err := client.DeleteOrganization(ctx, "", "doodship.test:instance"); err != nil {
+		t.Fatal("missing external org not idempotent", err)
+	}
+}
+
 func TestWorkOSSDKCodeExchangeAndSessionValidation(t *testing.T) {
 	verified := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

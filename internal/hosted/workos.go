@@ -277,6 +277,12 @@ func (s *Server) syncWorkOSOrganization(ctx context.Context, tenant tenancy.Tena
 	// between its creation and the catalog write.
 	s.workosMu.Lock()
 	defer s.workosMu.Unlock()
+	// Reconciliation may have listed this instance before its owner deleted it.
+	if _, err := s.Catalog.Tenant(ctx, tenant.ID); errors.Is(err, tenancy.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
 	id, err := s.Catalog.WorkOSOrganization(ctx, tenant.ID)
 	if errors.Is(err, tenancy.ErrNotFound) {
 		id, err = s.workos.EnsureOrganization(ctx, s.Config.RootDomain+":"+tenant.ID, tenant.Name)

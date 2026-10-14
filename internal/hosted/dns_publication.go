@@ -41,7 +41,13 @@ func (s *Server) syncTenantDNS(ctx context.Context, tenant string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
-		changes, err := s.Catalog.PendingTenantDNSChanges(ctx, tenant, 1000)
+		var changes []tenancy.DNSChange
+		var err error
+		if tenant == "" {
+			changes, err = s.Catalog.PendingDNSChanges(ctx, 1000)
+		} else {
+			changes, err = s.Catalog.PendingTenantDNSChanges(ctx, tenant, 1000)
+		}
 		if err != nil {
 			return err
 		}
