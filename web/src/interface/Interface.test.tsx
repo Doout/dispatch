@@ -40,27 +40,24 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 
-it("starts in the current interface and lets members switch without controller access", async () => {
+it("starts in the new interface and lets members switch without controller access", async () => {
   const user = userEvent.setup();
   render(<DispatchApp />);
-  await screen.findByRole("heading", { name: "Current deployment list" });
-  expect(primary().getByRole("link", { name: "Deployments" })).toBeTruthy();
-  expect(primary().queryByRole("link", { name: "Workloads" })).toBeNull();
-  expect(pages.workloads).not.toHaveBeenCalled();
+  await screen.findByRole("heading", { name: "Workloads runs" });
+  expect(primary().getByRole("link", { name: "Workloads" })).toBeTruthy();
   await user.click(primary().getByRole("link", { name: "Settings" }));
   const toggle = await screen.findByRole("switch", { name: "New interface" });
-  expect((toggle as HTMLInputElement).checked).toBe(false);
+  expect((toggle as HTMLInputElement).checked).toBe(true);
   expect(screen.getByText("Owner access required")).toBeTruthy();
   expect(screen.queryByRole("switch", { name: "Operations" })).toBeNull();
   expect(client.request).not.toHaveBeenCalled();
   await user.click(toggle);
-  expect(primary().getByRole("link", { name: "Workloads" })).toBeTruthy();
-  expect(screen.getByRole("navigation", { name: "Settings pages" })).toBeTruthy();
-  expect(localStorage.getItem(interfacePreferenceKey("interface-member"))).toBe("new");
-  expect(client.request).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("switch", { name: "New interface" }));
   expect(primary().getByRole("link", { name: "Deployments" })).toBeTruthy();
   expect(localStorage.getItem(interfacePreferenceKey("interface-member"))).toBe("current");
+  expect(client.request).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("switch", { name: "New interface" }));
+  expect(primary().getByRole("link", { name: "Workloads" })).toBeTruthy();
+  expect(localStorage.getItem(interfacePreferenceKey("interface-member"))).toBe("new");
 });
 
 it("restores the selected interface after reload and isolates account changes", async () => {
@@ -69,19 +66,20 @@ it("restores the selected interface after reload and isolates account changes", 
   await user.click(await screen.findByRole("switch", { name: "New interface" }));
   first.unmount();
   render(<DispatchApp />);
-  await screen.findByRole("navigation", { name: "Settings pages" });
-  expect((screen.getByRole("switch", { name: "New interface" }) as HTMLInputElement).checked).toBe(true);
+  await screen.findByRole("switch", { name: "New interface" });
+  expect((screen.getByRole("switch", { name: "New interface" }) as HTMLInputElement).checked).toBe(false);
   const stream = vi.mocked(subscribeOverview).mock.calls.at(-1)![0];
   act(() => stream(overview("other-member")));
-  expect(primary().getByRole("link", { name: "Deployments" })).toBeTruthy();
-  expect((screen.getByRole("switch", { name: "New interface" }) as HTMLInputElement).checked).toBe(false);
-  expect(localStorage.getItem(interfacePreferenceKey("other-member"))).toBeNull();
-  act(() => stream(overview()));
   expect(primary().getByRole("link", { name: "Workloads" })).toBeTruthy();
   expect((screen.getByRole("switch", { name: "New interface" }) as HTMLInputElement).checked).toBe(true);
+  expect(localStorage.getItem(interfacePreferenceKey("other-member"))).toBeNull();
+  act(() => stream(overview()));
+  expect(primary().getByRole("link", { name: "Deployments" })).toBeTruthy();
+  expect((screen.getByRole("switch", { name: "New interface" }) as HTMLInputElement).checked).toBe(false);
 });
 
 it.each(["/workloads/parallel", "/infrastructure/machines", "/recovery/workload-backups", "/automation/receipts"])("gates direct route %s before mounting resource readers", async route => {
+  localStorage.setItem(interfacePreferenceKey("interface-member"), "current");
   path(route);
   render(<DispatchApp />);
   await screen.findByText("This page is part of the new interface. Enable it in Settings to continue.");
@@ -98,9 +96,8 @@ it.each([
   ["/infrastructure/machines", "Machines"],
   ["/recovery/workload-backups", "Workload backups"],
   ["/automation/receipts", "Receipts"],
-])("opens saved direct route %s when the account has opted in", async (route, heading) => {
+])("opens saved direct route %s by default", async (route, heading) => {
   vi.mocked(client.api.overview).mockResolvedValue({ ...overview(), controllerSettings: { operationsEnabled: false, uiFeatures: enabledFeatures } });
-  localStorage.setItem(interfacePreferenceKey("interface-member"), "new");
   path(route);
   render(<DispatchApp />);
   await screen.findByRole("heading", { name: heading });
@@ -110,6 +107,7 @@ it.each([
 });
 
 it("keeps controller feature settings separate from a member's interface preference", async () => {
+  localStorage.setItem(interfacePreferenceKey("interface-owner"), "current");
   path("/settings");
   vi.mocked(client.api.overview).mockResolvedValue(overview("interface-owner", true));
   render(<DispatchApp />);
@@ -128,6 +126,7 @@ it("keeps controller feature settings separate from a member's interface prefere
 
 
 it("requests automation credentials only after opting in and opening their page", async () => {
+  localStorage.setItem(interfacePreferenceKey("credentials-owner"), "current");
   path("/automation/credentials");
   vi.mocked(client.api.overview).mockResolvedValue({ ...overview("credentials-owner", true), controllerSettings: { operationsEnabled: false, uiFeatures: { automationCredentials: true } } });
   vi.mocked(client.request).mockImplementation(async <T,>(url: string) => (url === "/api/v1/settings" ? { operationsEnabled: false } : []) as T);
