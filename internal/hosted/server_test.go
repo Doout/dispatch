@@ -119,6 +119,17 @@ func (f *hostedFixture) tenant(t *testing.T, slug, owner string) tenancy.Tenant 
 	return tenant
 }
 
+func TestHostedPublicInstaller(t *testing.T) {
+	f := newHostedFixture(t)
+	w := f.request(t, f.server.Config.RootDomain, http.MethodGet, "/install.sh", "", nil)
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), "#!/bin/sh\n") || !strings.Contains(w.Body.String(), "--connection-stdin") {
+		t.Fatalf("installer unavailable: %d", w.Code)
+	}
+	if strings.Contains(w.Header().Get("Content-Type"), "text/html") || f.opens.Load() != 0 {
+		t.Fatal("installer request fell through to the application")
+	}
+}
+
 func TestHostedPlatformMetadataDoesNotGrantTenantAuthority(t *testing.T) {
 	f := newHostedFixture(t)
 	a := f.tenant(t, "alpha", "owner-a")
