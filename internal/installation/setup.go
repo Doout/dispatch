@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -90,8 +89,28 @@ func (m *Manager) Setup(ctx context.Context, c Config, input ConnectionInput, pu
 	if err := validateConnection(input); err != nil {
 		return err
 	}
+	if err := validate(c); err != nil {
+		return err
+	}
 	if net.ParseIP(c.Bind) == nil || !net.ParseIP(c.Bind).IsLoopback() {
 		return errors.New("setup must bind to a loopback address; configure a reverse proxy after connecting")
+	}
+	installed, loadErr := m.Load()
+	newInstallation := loadErr != nil
+	if newInstallation {
+		if _, err := os.Lstat(m.path("installation.json")); !errors.Is(err, os.ErrNotExist) {
+			return loadErr
+		}
+		if err := checkSetupPort(c); err != nil {
+			return err
+		}
+		// Check conflicts before saving an owner. Install checks again before creating resources.
+		if err := m.preflight(ctx, c.Socket); err != nil {
+			return err
+		}
+		if err := m.checkNewResources(ctx, c); err != nil {
+			return err
+		}
 	}
 	var owner setupOwner
 	raw, err := os.ReadFile(m.path("local-owner.json"))
@@ -120,11 +139,7 @@ func (m *Manager) Setup(ctx context.Context, c Config, input ConnectionInput, pu
 	}
 
 	defer func() { resultErr = errors.Join(resultErr, m.ownSetupFiles(owner)) }()
-	installed, err := m.Load()
-	if err != nil {
-		if _, e := os.Stat(m.path("installation.json")); !errors.Is(e, os.ErrNotExist) {
-			return err
-		}
+	if newInstallation {
 		if err = m.Install(ctx, c, "", pull); err != nil {
 			return err
 		}
@@ -136,16 +151,8 @@ func (m *Manager) Setup(ctx context.Context, c Config, input ConnectionInput, pu
 		if installed.Name != owner.Name || installed.Volume != owner.Volume || (owner.InstallationID != "" && installed.ID != owner.InstallationID) {
 			return errors.New("setup installation identity changed")
 		}
-		if err = m.preflight(ctx, installed.Socket); err != nil {
+		if err = m.resumeSetup(ctx, installed, owner); err != nil {
 			return err
-		}
-		if err = m.checkManaged(ctx, installed); err != nil {
-			return err
-		}
-		if err = m.waitHealthy(ctx, installed); err != nil {
-			if err = m.Recover(ctx); err != nil {
-				return err
-			}
 		}
 	}
 	owner.InstallationID = installed.ID
@@ -246,6 +253,10 @@ func (m *Manager) syncCLI(ctx context.Context, c Config) error {
 	if err := os.MkdirAll(m.path("bin"), 0700); err != nil {
 		return err
 	}
+	info, err := os.Lstat(m.path("bin"))
+	if err != nil || !info.IsDir() {
+		return errors.New("CLI directory must be a real directory")
+	}
 	id, err := m.container(ctx, c)
 	if err != nil {
 		return err
@@ -259,15 +270,36 @@ func (m *Manager) syncCLI(ctx context.Context, c Config) error {
 	if _, err = m.Run(ctx, "docker", "cp", id+":/usr/local/bin/dispatch", temp.Name()); err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(temp.Name())
+	info, err = os.Lstat(temp.Name())
 	if err != nil {
 		return err
 	}
-	if len(raw) == 0 {
-		return errors.New("controller CLI is empty")
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return errors.New("controller CLI must be a nonempty regular file")
 	}
-	if err = writeFile(filepath.Join(m.Dir, "bin", "dispatch"), raw, 0755); err != nil {
+	if err = os.Chmod(temp.Name(), 0755); err != nil {
 		return err
+	}
+	file, err := os.Open(temp.Name())
+	if err != nil {
+		return err
+	}
+	err = file.Sync()
+	closeErr := file.Close()
+	if err != nil || closeErr != nil {
+		return errors.Join(err, closeErr)
+	}
+	if err = os.Rename(temp.Name(), m.path("bin/dispatch")); err != nil {
+		return err
+	}
+	directory, err := os.Open(m.path("bin"))
+	if err != nil {
+		return err
+	}
+	err = directory.Sync()
+	closeErr = directory.Close()
+	if err != nil || closeErr != nil {
+		return errors.Join(err, closeErr)
 	}
 	var owner setupOwner
 	if raw, e := os.ReadFile(m.path("local-owner.json")); e == nil && json.Unmarshal(raw, &owner) == nil {

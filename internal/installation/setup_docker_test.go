@@ -133,6 +133,18 @@ func TestConnectedDockerSetup(t *testing.T) {
 	if !connected {
 		t.Fatal("outbound WebSocket did not connect")
 	}
+	// Losing the controller container must not lose its database, grant or owner.
+	installedBefore, err := m.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerBefore, err := m.container(ctx, installedBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.Run(ctx, "docker", "rm", "-f", controllerBefore); err != nil {
+		t.Fatal(err)
+	}
 	// Resuming uses persisted credentials, not a second enrollment.
 	os.WriteFile(inputFile, payload, 0600)
 	if _, err = m.Run(ctx, "env", command...); err != nil {

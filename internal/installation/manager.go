@@ -24,6 +24,8 @@ import (
 const DefaultImage = "ghcr.io/doout/dispatch:stable"
 const managedLabel = "io.dispatch.installation"
 
+var errControllerMissing = errors.New("managed controller container is missing")
+
 type Config struct {
 	ImportArchive string      `json:"importArchive,omitempty"`
 	Schema        int         `json:"schema"`
@@ -143,8 +145,24 @@ func (m *Manager) Load() (Config, error) {
 	return c, nil
 }
 func (m *Manager) preflight(ctx context.Context, socket string) error {
-	if host := os.Getenv("DOCKER_HOST"); host != "" && !strings.HasPrefix(host, "unix://") {
-		return errors.New("the installer requires a local Docker engine")
+	var host string
+	var err error
+	switch {
+	case os.Getenv("DOCKER_CONTEXT") != "":
+		host, err = m.Run(ctx, "docker", "context", "inspect", os.Getenv("DOCKER_CONTEXT"), "--format", `{{(index .Endpoints "docker").Host}}`)
+	case os.Getenv("DOCKER_HOST") != "":
+		host = os.Getenv("DOCKER_HOST")
+	default:
+		host, err = m.Run(ctx, "docker", "context", "inspect", "--format", `{{(index .Endpoints "docker").Host}}`)
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(host, "unix://") {
+		return errors.New("the selected Docker context is remote; use a local Docker engine")
+	}
+	if filepath.Clean(strings.TrimPrefix(host, "unix://")) != filepath.Clean(socket) {
+		return errors.New("selected Docker engine does not match the installation socket; set DOCKER_HOST to unix://" + socket)
 	}
 	if _, err := m.Run(ctx, "docker", "info", "--format", "{{.ServerVersion}}"); err != nil {
 		return err
@@ -157,19 +175,6 @@ func (m *Manager) preflight(ctx context.Context, socket string) error {
 	fmt.Sscanf(strings.TrimPrefix(version, "v"), "%d.%d", &major, &minor)
 	if major < 2 || major == 2 && minor < 30 {
 		return fmt.Errorf("Docker Compose 2.30 or newer is required (found %s)", version)
-	}
-	host, err := m.Run(ctx, "docker", "context", "inspect", "--format", `{{(index .Endpoints "docker").Host}}`)
-	if err != nil {
-		return err
-	}
-	if os.Getenv("DOCKER_HOST") != "" {
-		host = os.Getenv("DOCKER_HOST")
-	}
-	if !strings.HasPrefix(host, "unix://") {
-		return errors.New("the selected Docker context is remote; use a local Docker engine")
-	}
-	if filepath.Clean(strings.TrimPrefix(host, "unix://")) != filepath.Clean(socket) {
-		return errors.New("selected Docker engine does not match the installation socket; set DOCKER_HOST to unix://" + socket)
 	}
 	return nil
 }
@@ -300,7 +305,10 @@ func (m *Manager) container(ctx context.Context, c Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if id == "" || strings.Contains(id, "\n") {
+	if id == "" {
+		return "", errControllerMissing
+	}
+	if strings.Contains(id, "\n") {
 		return "", errors.New("expected one managed controller container")
 	}
 	label, err := m.Run(ctx, "docker", "inspect", "--format", `{{index .Config.Labels "`+managedLabel+`"}}`, id)
@@ -369,21 +377,7 @@ func (m *Manager) Install(ctx context.Context, c Config, envFile string, pull bo
 	return m.install(ctx, c, envFile, pull, "")
 }
 
-func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bool, seed string) error {
-	if err := validate(c); err != nil {
-		return err
-	}
-	if _, err := os.Stat(m.path("installation.json")); !errors.Is(err, os.ErrNotExist) {
-		return errors.New("installation already exists; use dispatch upgrade or dispatch recover")
-	}
-	for _, name := range []string{"compose.json", "dispatch.env", "upgrade.json", "export.json", "container-export.json"} {
-		if _, err := os.Lstat(m.path(name)); !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("refusing to overwrite %s", m.path(name))
-		}
-	}
-	if err := m.preflight(ctx, c.Socket); err != nil {
-		return err
-	}
+func (m *Manager) checkNewResources(ctx context.Context, c Config) error {
 	ids, err := m.Run(ctx, "docker", "ps", "-a", "--filter", "label=com.docker.compose.project="+c.Name, "--format", "{{.ID}}")
 	if err != nil {
 		return err
@@ -405,12 +399,35 @@ func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bo
 			return err
 		}
 	}
+	return nil
+}
+
+func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bool, seed string) error {
+	if err := validate(c); err != nil {
+		return err
+	}
+	if _, err := os.Stat(m.path("installation.json")); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("installation already exists; use dispatch upgrade or dispatch recover")
+	}
+	for _, name := range []string{"compose.json", "dispatch.env", "upgrade.json", "export.json", "container-export.json"} {
+		if _, err := os.Lstat(m.path(name)); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("refusing to overwrite %s", m.path(name))
+		}
+	}
+	if err := m.preflight(ctx, c.Socket); err != nil {
+		return err
+	}
+	if err := m.checkNewResources(ctx, c); err != nil {
+		return err
+	}
+
 	env := []byte("# Optional controller settings. Values are literal; do not add shell quotes.\n")
 	if envFile != "" {
-		env, err = os.ReadFile(envFile)
+		value, err := os.ReadFile(envFile)
 		if err != nil {
 			return err
 		}
+		env = value
 	}
 	gid, err := socketGroup(c.Socket)
 	if err != nil {
@@ -459,10 +476,7 @@ func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bo
 	}
 	return nil
 }
-func (m *Manager) checkManaged(ctx context.Context, c Config) error {
-	if err := m.verifyVolume(ctx, c); err != nil {
-		return err
-	}
+func (m *Manager) checkCompose(c Config) error {
 	expected, err := m.composeData(c)
 	if err != nil {
 		return err
@@ -472,7 +486,17 @@ func (m *Manager) checkManaged(ctx context.Context, c Config) error {
 		return err
 	}
 	if !bytes.Equal(actual, expected) {
-		return errors.New("managed compose.json was modified; restore it before upgrading (put controller settings in dispatch.env)")
+		return errors.New("managed compose.json was modified; restore it before continuing and put controller settings in dispatch.env")
+	}
+	return nil
+}
+
+func (m *Manager) checkManaged(ctx context.Context, c Config) error {
+	if err := m.verifyVolume(ctx, c); err != nil {
+		return err
+	}
+	if err := m.checkCompose(c); err != nil {
+		return err
 	}
 	id, err := m.container(ctx, c)
 	if err != nil {
