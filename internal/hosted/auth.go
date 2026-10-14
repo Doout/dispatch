@@ -208,6 +208,7 @@ func (s *Server) memberships(w http.ResponseWriter, r *http.Request) {
 		Role       string                    `json:"role"`
 		URL        string                    `json:"url"`
 		Connection *instanceConnectionStatus `json:"connection,omitempty"`
+		CanDelete  bool                      `json:"canDelete"`
 	}
 	items := []entry{}
 	for _, membership := range memberships {
@@ -220,9 +221,11 @@ func (s *Server) memberships(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item := entry{Tenant: tenant, Role: membership.Role, URL: s.Config.TenantOrigin(tenant.Slug) + "/api/v1/hosted/auth/start"}
+		item.CanDelete = membership.Role == tenancy.RoleOwner && s.inactiveInstanceRemovalAllowed(tenant.ID)
 		if connection, e := s.Catalog.InstanceConnection(r.Context(), tenant.ID); e == nil && connection.BackendMode == tenancy.BackendConnected {
 			status := s.connectionStatus(connection)
 			item.Connection = &status
+			item.CanDelete = membership.Role == tenancy.RoleOwner
 			if !connection.RemoteAccess {
 				item.URL = connection.DirectURL
 			}

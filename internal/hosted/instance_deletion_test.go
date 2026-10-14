@@ -2,6 +2,7 @@ package hosted
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,6 +10,44 @@ import (
 
 	"github.com/doout/dispatch/internal/tenancy"
 )
+
+func TestInactiveInstanceRemovalRequiresDisabledBackend(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		t.Run(fmt.Sprintf("active=%t", active), func(t *testing.T) {
+			f := newHostedFixture(t)
+			instance := f.tenant(t, "old-instance", "owner-a")
+			owner := f.session(t, "owner-a", tenancy.AudiencePlatform)
+			path := "/api/v1/tenants/" + instance.ID
+			if w := f.request(t, f.server.Config.RootDomain, http.MethodDelete, path, owner, map[string]string{"slug": instance.Slug}); w.Code != 403 {
+				t.Fatal("embedded backend removal allowed", w.Code)
+			}
+			f.server.Config.BackendMode = tenancy.BackendConnected
+			if active {
+				f.server.runtimes[instance.ID] = &TenantRuntime{}
+			}
+			w := f.request(t, f.server.Config.RootDomain, http.MethodGet, "/api/v1/account/tenants", owner, nil)
+			var listing struct {
+				Memberships []struct {
+					CanDelete bool `json:"canDelete"`
+				} `json:"memberships"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil || len(listing.Memberships) != 1 || listing.Memberships[0].CanDelete == active {
+				t.Fatal("incorrect removal capability", w.Body.String(), err)
+			}
+			w = f.request(t, f.server.Config.RootDomain, http.MethodDelete, path, owner, map[string]string{"slug": instance.Slug})
+			expected := 204
+			if active {
+				expected = 403
+			}
+			if w.Code != expected {
+				t.Fatal("remove", w.Code, w.Body.String())
+			}
+			if f.opens.Load() != 0 {
+				t.Fatal("removal opened operational data")
+			}
+		})
+	}
+}
 
 func TestOwnerDeletesInstanceDuringWorkOSOutage(t *testing.T) {
 	f, remote := workOSFixture(t)

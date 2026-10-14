@@ -163,6 +163,36 @@ it("does not offer deletion of a legacy embedded backend", () => {
   expect(screen.queryByRole("button")).toBeNull();
 });
 
+it("offers removal of inactive records when the server allows it", async () => {
+  const user = userEvent.setup();
+  const onSelect = vi.fn();
+  render(
+    <InstanceActionsMenu
+      membership={{ ...membership, connection: undefined, canDelete: true }}
+      onSelect={onSelect}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Actions for Example" }));
+  expect(
+    screen.queryByRole("menuitem", { name: "Disconnect server" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("menuitem", { name: "Delete instance" }));
+  expect(onSelect).toHaveBeenCalledWith("delete");
+});
+
+it("explains that stored data stays available for recovery", () => {
+  render(
+    <InstanceActionDialog
+      membership={{ ...membership, connection: undefined, canDelete: true }}
+      action="delete"
+      onClose={vi.fn()}
+      onCompleted={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("dialog")).not.toBeNull();
+  expect(screen.getByText(/stored data is kept for recovery/)).not.toBeNull();
+});
+
 it("lets owners disconnect and delete from the instance list", async () => {
   let state: Membership["connection"] = membership.connection;
   let deleted = false;

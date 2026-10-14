@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/doout/dispatch/internal/tenancy"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -29,7 +30,11 @@ func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	// reconciliation list. The catalog transaction serializes membership writes.
 	s.workosMu.Lock()
 	s.dnsMu.Lock()
-	connection, err := s.Catalog.DeleteConnectedInstance(r.Context(), u.ID, id, in.Slug, externalID)
+	remove := s.Catalog.DeleteConnectedInstance
+	if s.inactiveInstanceRemovalAllowed(id) {
+		remove = s.Catalog.DeleteInactiveInstance
+	}
+	connection, err := remove(r.Context(), u.ID, id, in.Slug, externalID)
 	s.dnsMu.Unlock()
 	s.workosMu.Unlock()
 	if err != nil {
@@ -38,6 +43,15 @@ func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	s.disconnectInstanceStreams(connectionKey(connection))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) inactiveInstanceRemovalAllowed(id string) bool {
+	if s.Config.BackendMode != tenancy.BackendConnected {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.closed && s.runtimes[id] == nil && s.initializing[id] == nil
 }
 
 func (s *Server) reconcileOrganizationDeletions(ctx context.Context) error {

@@ -2,12 +2,63 @@ package tenancy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestRemoveInactiveInstanceKeepsRecoveryMetadata(t *testing.T) {
+	for _, pg := range []bool{false, true} {
+		for _, missingConnection := range []bool{false, true} {
+			t.Run(fmt.Sprintf("postgres=%t/missing-connection=%t", pg, missingConnection), func(t *testing.T) {
+				c := testCatalog(t, pg)
+				seedUsers(t, c)
+				ctx := context.Background()
+				instance := seedTenant(t, c, "old-instance")
+				instance, err := c.Tenant(ctx, instance.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if missingConnection {
+					if _, err := c.db.ExecContext(ctx, c.q(`DELETE FROM instance_connections WHERE tenant_id=?`), instance.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := c.DeleteInactiveInstance(ctx, "platform", instance.ID, instance.Slug, ""); !errors.Is(err, ErrDenied) {
+					t.Fatal("platform admin removed foreign instance", err)
+				}
+				if _, err := c.DeleteConnectedInstance(ctx, "owner", instance.ID, instance.Slug, ""); !errors.Is(err, ErrDenied) {
+					t.Fatal("ordinary removal accepted embedded data", err)
+				}
+				session, err := c.CreateSession(ctx, "owner", TenantAudience(instance.ID), time.Hour)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = c.DeleteInactiveInstance(ctx, "owner", instance.ID, instance.Slug, ""); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = c.Tenant(ctx, instance.ID); !errors.Is(err, ErrNotFound) {
+					t.Fatal("instance remains visible", err)
+				}
+				if _, err = c.AuthenticateSession(ctx, session, TenantAudience(instance.ID)); err == nil {
+					t.Fatal("removed session accepted")
+				}
+				var raw, owner string
+				if err = c.db.QueryRowContext(ctx, c.q(`SELECT metadata_json,owner_id FROM retired_instance_data WHERE tenant_id=?`), instance.ID).Scan(&raw, &owner); err != nil {
+					t.Fatal(err)
+				}
+				var saved Tenant
+				if err = json.Unmarshal([]byte(raw), &saved); err != nil || saved != instance || owner != "owner" {
+					t.Fatal("recovery identity lost", saved, owner, err)
+				}
+			})
+		}
+	}
+}
 
 func TestDeleteConnectedInstanceRevokesAccessAndMetadata(t *testing.T) {
 	for _, pg := range []bool{false, true} {

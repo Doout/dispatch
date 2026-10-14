@@ -3,12 +3,23 @@ package tenancy
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 )
 
 // DeleteConnectedInstance removes control-plane metadata only. It never opens
 // the installation's operational database or contacts its server.
 func (c *Catalog) DeleteConnectedInstance(ctx context.Context, actor, id, slug, externalID string) (InstanceConnection, error) {
+	return c.deleteInstance(ctx, actor, id, slug, externalID, false)
+}
+
+// DeleteInactiveInstance also removes older metadata when the hosted server has
+// disabled embedded backends. The caller must ensure no runtime is running.
+func (c *Catalog) DeleteInactiveInstance(ctx context.Context, actor, id, slug, externalID string) (InstanceConnection, error) {
+	return c.deleteInstance(ctx, actor, id, slug, externalID, true)
+}
+
+func (c *Catalog) deleteInstance(ctx context.Context, actor, id, slug, externalID string, allowInactive bool) (InstanceConnection, error) {
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return InstanceConnection{}, err
@@ -29,7 +40,26 @@ func (c *Catalog) DeleteConnectedInstance(ctx context.Context, actor, id, slug, 
 	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO instance_name_reservations(slug,user_id) SELECT ?,user_id FROM tenant_memberships WHERE tenant_id=? AND role='owner' AND state='active' ON CONFLICT DO NOTHING`), tenant.Slug, id); err != nil {
 		return InstanceConnection{}, err
 	}
-	connection, err := c.revokeInstance(ctx, tx, id, -1)
+	connection, err := scanConnection(tx.QueryRowContext(ctx, c.q(c.locking(`SELECT `+connectionColumns+` FROM instance_connections WHERE tenant_id=?`)), id))
+	if errors.Is(err, ErrNotFound) {
+		connection = InstanceConnection{TenantID: id, BackendMode: BackendEmbedded}
+	} else if err != nil {
+		return connection, err
+	}
+	if connection.BackendMode == BackendConnected {
+		connection, err = c.revokeInstance(ctx, tx, id, -1)
+	} else if allowInactive {
+		var metadata []byte
+		metadata, err = json.Marshal(tenant)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, c.q(`INSERT INTO retired_instance_data(tenant_id,metadata_json,owner_id,retired_at) VALUES(?,?,?,?)`), id, string(metadata), actor, millis(c.now()))
+		}
+		if err == nil {
+			err = c.revokeInstanceTokens(ctx, tx, id)
+		}
+	} else {
+		return connection, ErrDenied
+	}
 	if err != nil {
 		return connection, err
 	}
