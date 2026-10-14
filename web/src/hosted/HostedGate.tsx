@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { setToken } from "../api/transport";
 import type { PublicAuthProvider } from "../api";
 import { Mark } from "../components/PageStates";
@@ -83,7 +89,17 @@ export function HostedGate({ children }: { children: ReactNode }) {
   if (configuration.mode === "platform")
     return <PlatformApp configuration={configuration} />;
   return (
-    <HostedTenantContext.Provider value={configuration}>
+    <HostedTenantContext.Provider
+      value={{
+        ...configuration,
+        refreshAuthentication: async () => {
+          const value = await detectHosted();
+          if (value?.mode !== "tenant")
+            throw new Error("Instance sign-in is unavailable. Try again.");
+          setConfiguration(value);
+        },
+      }}
+    >
       {children}
     </HostedTenantContext.Provider>
   );
@@ -92,22 +108,71 @@ export function HostedGate({ children }: { children: ReactNode }) {
 export function TenantSignIn({
   loginUrl,
   name,
+  nativeSignInAvailable = false,
+  onAuthenticated,
 }: {
   loginUrl: string;
   name: string;
+  nativeSignInAvailable?: boolean;
+  onAuthenticated: () => void | Promise<void>;
 }) {
   const [providers, setProviders] = useState<PublicAuthProvider[]>([]);
   const [error, setError] = useState(
     () => new URLSearchParams(window.location.search).get("auth_error") ?? "",
   );
   const [busy, setBusy] = useState(false);
+  const [passwordForm, setPasswordForm] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const nativeExchange = useRef<Promise<void> | null>(null);
+  const authenticated = useRef(onAuthenticated);
+  authenticated.current = onAuthenticated;
+  useEffect(() => {
+    let mounted = true;
+    const query = new URLSearchParams(window.location.search);
+    const code = query.get("auth_code");
+    if (!nativeExchange.current && code && nativeSignInAvailable) {
+      query.delete("auth_code");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${query.size ? `?${query}` : ""}${window.location.hash}`,
+      );
+      nativeExchange.current = import("../api").then(async ({ api }) => {
+        await api.exchangeOAuth(code);
+      });
+    }
+    if (nativeExchange.current) {
+      setBusy(true);
+      void nativeExchange.current
+        .then(async () => {
+          if (mounted) await authenticated.current();
+        })
+        .catch((cause) => {
+          if (mounted) setError((cause as Error).message);
+        })
+        .finally(() => {
+          if (mounted) setBusy(false);
+        });
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [nativeSignInAvailable]);
   useEffect(() => {
     let mounted = true;
     void import("../api")
-      .then(({ api }) => mounted ? api.authProviders() : [])
-      .then((providers) => { if (mounted) setProviders(providers); })
-      .catch(() => { if (mounted) setError("Sign-in methods could not be loaded. Try again."); });
-    return () => { mounted = false; };
+      .then(({ api }) => (mounted ? api.authProviders() : []))
+      .then((providers) => {
+        if (mounted) setProviders(providers);
+      })
+      .catch(() => {
+        if (mounted)
+          setError("Sign-in methods could not be loaded. Try again.");
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
   const signIn = async (id: string) => {
     setBusy(true);
@@ -121,8 +186,23 @@ export function TenantSignIn({
       setBusy(false);
     }
   };
+  const passwordSignIn = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const { api } = await import("../api");
+      await api.login(username.trim(), password);
+      setPassword("");
+      await authenticated.current();
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <main className="hosted-auth">
+    <main className="hosted-auth hosted-instance-auth">
       <Mark />
       <h1>Sign in to {name}</h1>
       <a className="primary-button" href={loginUrl}>
@@ -138,6 +218,55 @@ export function TenantSignIn({
           Sign in with {provider.name}
         </button>
       ))}
+      {nativeSignInAvailable &&
+        (!passwordForm ? (
+          <button
+            type="button"
+            className="quiet-button"
+            disabled={busy}
+            onClick={() => setPasswordForm(true)}
+          >
+            Use instance password
+          </button>
+        ) : (
+          <form onSubmit={(event) => void passwordSignIn(event)}>
+            <label>
+              Username or email
+              <input
+                autoComplete="username"
+                required
+                value={username}
+                disabled={busy}
+                onChange={(event) => setUsername(event.target.value)}
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                disabled={busy}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+            <button className="primary-button" disabled={busy}>
+              {busy ? "Signing in..." : "Sign in"}
+            </button>
+            <button
+              className="quiet-button"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setPasswordForm(false);
+                setPassword("");
+              }}
+            >
+              Back
+            </button>
+          </form>
+        ))}
       {error && (
         <p role="alert" className="form-error">
           {error}

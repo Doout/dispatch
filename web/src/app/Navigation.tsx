@@ -206,7 +206,8 @@ export function AccountMenu({
   onLogout: () => void;
 }) {
   const name = identity.displayName || identity.username;
-  const hosted = useHostedTenant();
+  const configuration = useHostedTenant();
+  const hosted = configuration?.authentication === "instance" ? null : configuration;
   const secondary =
     identity.username !== name
       ? identity.username

@@ -13,6 +13,7 @@ import {
 } from "@phosphor-icons/react";
 import { AccountAuthLink, AccountProfile, api } from "./api";
 import { useDialogFocus } from "./useDialogFocus";
+import { useHostedTenant } from "./hosted/context";
 
 function providerHost(value: string) {
   try {
@@ -23,7 +24,10 @@ function providerHost(value: string) {
 }
 
 function profileInitials(value: string) {
-  const parts = value.trim().split(/[\s_-]+/).filter(Boolean);
+  const parts = value
+    .trim()
+    .split(/[\s_-]+/)
+    .filter(Boolean);
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
@@ -68,6 +72,8 @@ export function AccountProfileDialog({
   const [busyID, setBusyID] = useState("");
   const [error, setError] = useState(initialError);
   const isSelf = !userID;
+  const hosted = useHostedTenant();
+  const canChangeLinks = isSelf && !readOnly && !hosted;
 
   useEffect(() => {
     const request = userID ? api.userProfile(userID) : api.accountProfile();
@@ -81,10 +87,7 @@ export function AccountProfileDialog({
     setBusyID(item.provider.id);
     setError("");
     try {
-      const result = await api.startOAuthLink(
-        item.provider.id,
-        linkReturnTo(),
-      );
+      const result = await api.startOAuthLink(item.provider.id, linkReturnTo());
       window.location.assign(result.authorizationUrl);
     } catch (cause) {
       setError((cause as Error).message);
@@ -187,7 +190,9 @@ export function AccountProfileDialog({
                     <ShieldCheck size={18} />
                     <h3>Sign-in methods</h3>
                   </div>
-                  <span>{linked.length + (profile.user.passwordConfigured ? 1 : 0)}</span>
+                  <span>
+                    {linked.length + (profile.user.passwordConfigured ? 1 : 0)}
+                  </span>
                 </header>
                 <div className="account-profile-list">
                   {profile.user.passwordConfigured && (
@@ -196,8 +201,16 @@ export function AccountProfileDialog({
                         <Key size={18} />
                       </span>
                       <div>
-                        <strong>{profile.managed ? "Controller credentials" : "Password"}</strong>
-                        <small>{profile.managed ? "Managed on this controller" : "Local account"}</small>
+                        <strong>
+                          {profile.managed
+                            ? "Controller credentials"
+                            : "Password"}
+                        </strong>
+                        <small>
+                          {profile.managed
+                            ? "Managed on this controller"
+                            : "Local account"}
+                        </small>
                       </div>
                       <span className="access-state active">Active</span>
                     </article>
@@ -213,14 +226,16 @@ export function AccountProfileDialog({
                           {item.identity?.email || item.identity?.login}
                         </small>
                       </div>
-                      {isSelf && !readOnly ? (
+                      {canChangeLinks ? (
                         <button
                           type="button"
                           className="quiet-button"
                           disabled={busyID === item.provider.id}
                           onClick={() => void unlink(item)}
                         >
-                          {busyID === item.provider.id ? "Removing..." : "Remove"}
+                          {busyID === item.provider.id
+                            ? "Removing..."
+                            : "Remove"}
                         </button>
                       ) : (
                         <span className="access-state active">Linked</span>
@@ -228,10 +243,12 @@ export function AccountProfileDialog({
                     </article>
                   ))}
                   {!profile.user.passwordConfigured && linked.length === 0 && (
-                    <div className="account-profile-empty">No sign-in methods</div>
+                    <div className="account-profile-empty">
+                      No sign-in methods
+                    </div>
                   )}
                 </div>
-                {isSelf && !readOnly && available.length > 0 && (
+                {canChangeLinks && available.length > 0 && (
                   <div className="account-profile-available">
                     {available.map((item) => (
                       <button
@@ -250,6 +267,12 @@ export function AccountProfileDialog({
                       </button>
                     ))}
                   </div>
+                )}
+                {isSelf && hosted && (
+                  <p className="muted">
+                    To link or remove sign-in methods, open this installation at
+                    its own address.
+                  </p>
                 )}
               </section>
 
@@ -299,7 +322,9 @@ export function AccountProfileDialog({
                         className="account-profile-access-row"
                         key={`${grant.projectId}-${grant.source}-${index}`}
                       >
-                        <strong>{grant.projectName || "Unknown project"}</strong>
+                        <strong>
+                          {grant.projectName || "Unknown project"}
+                        </strong>
                         <small>
                           {roleLabel(grant.role)}
                           {grant.source === "team" && grant.sourceName
@@ -331,15 +356,15 @@ export function AccountProfileDialog({
               !readOnly &&
               !profile.managed &&
               onChangePassword && (
-              <button
-                type="button"
-                className="quiet-button"
-                onClick={onChangePassword}
-              >
-                <Key size={15} />
-                Change password
-              </button>
-            )}
+                <button
+                  type="button"
+                  className="quiet-button"
+                  onClick={onChangePassword}
+                >
+                  <Key size={15} />
+                  Change password
+                </button>
+              )}
             {profile && !isSelf && onEdit && (
               <button type="button" className="quiet-button" onClick={onEdit}>
                 <PencilSimple size={15} />

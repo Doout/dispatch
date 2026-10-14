@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,6 +45,7 @@ func (b *Broker) ServeConnection(w http.ResponseWriter, r *http.Request, key str
 		},
 		Handler: func(ws *websocket.Conn) {
 			s := newSession(r.Context(), ws)
+			s.nativeSignIn = r.Header.Get(nativeSignInHeader) == "1"
 			stopClose := context.AfterFunc(s.ctx, func() { _ = ws.Close() })
 			defer stopClose()
 			b.mu.Lock()
@@ -87,6 +89,13 @@ func (b *Broker) Connected(key string) bool {
 	return s != nil && s.ctx.Err() == nil
 }
 
+func (b *Broker) NativeSignInAvailable(key string) bool {
+	b.mu.RLock()
+	s := b.sessions[key]
+	b.mu.RUnlock()
+	return s != nil && s.nativeSignIn && s.ctx.Err() == nil
+}
+
 func (b *Broker) Disconnect(key string) {
 	b.mu.Lock()
 	s := b.sessions[key]
@@ -112,8 +121,12 @@ func (b *Broker) Proxy(w http.ResponseWriter, r *http.Request, key string, ident
 }
 
 func (b *Broker) ProxyOperation(w http.ResponseWriter, r *http.Request, key string, op Operation, identity Identity) {
-	if op != OperationUser && op != OperationWebhook && op != OperationWorkload && op != OperationNetwork {
+	if op != OperationUser && op != OperationWebhook && op != OperationWorkload && op != OperationNetwork && op != OperationNative {
 		http.Error(w, "invalid instance operation", 400)
+		return
+	}
+	if op == OperationNative && !NativeRequestAllowed(r) {
+		http.Error(w, "native request is not allowed", 403)
 		return
 	}
 	if op == OperationUser && identity.UserID == "" {
@@ -147,6 +160,10 @@ func (b *Broker) ProxyOperation(w http.ResponseWriter, r *http.Request, key stri
 	b.mu.RUnlock()
 	if s == nil {
 		http.Error(w, "instance is offline", 503)
+		return
+	}
+	if op == OperationNative && !s.nativeSignIn {
+		http.Error(w, "update the installation to enable instance sign-in", 503)
 		return
 	}
 	var nonce [16]byte
@@ -249,7 +266,13 @@ func (b *Broker) ProxyOperation(w http.ResponseWriter, r *http.Request, key stri
 					return
 				}
 				for name, values := range cleanOperationHeaders(f.Header, op) {
-					w.Header()[name] = values
+					if strings.EqualFold(name, "Set-Cookie") {
+						for _, value := range values {
+							w.Header().Add(name, value)
+						}
+					} else {
+						w.Header()[name] = values
+					}
 				}
 				w.WriteHeader(f.Status)
 				started = true

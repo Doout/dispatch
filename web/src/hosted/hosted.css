@@ -661,6 +661,30 @@
   font-size: 24px;
   line-height: 1.3;
 }
+.hosted-instance-auth > :is(a, button) {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-top: 12px;
+}
+.hosted-instance-auth form {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+.hosted-instance-auth label {
+  display: grid;
+  gap: 8px;
+}
+.hosted-instance-auth input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--hosted-rule-strong);
+  border-radius: 8px;
+  background: var(--hosted-paper);
+  color: var(--hosted-ink);
+}
 .hosted-text-link {
   display: inline-flex;
   align-items: center;

@@ -82,6 +82,8 @@ type Manager struct {
 type requestIdentity struct {
 	identity core.Identity
 	revision uint64
+	native   bool
+	origin   string
 }
 type requestKey struct{}
 

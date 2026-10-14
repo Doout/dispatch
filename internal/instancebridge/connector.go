@@ -97,6 +97,7 @@ func (c *Connector) Connect(ctx context.Context) error {
 		return err
 	}
 	cfg.Header.Set("Authorization", "Bearer "+c.config.Credential)
+	cfg.Header.Set(nativeSignInHeader, "1")
 	cfg.Protocol = []string{protocolVersion}
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	ws, err := cfg.DialContext(dialCtx)
@@ -141,8 +142,12 @@ func (c *Connector) accept(s *session, f frame) {
 			}
 			w.finish()
 		}()
-		if f.ID == "" || (f.Operation != OperationUser && f.Operation != OperationWebhook && f.Operation != OperationWorkload && f.Operation != OperationNetwork) {
+		if f.ID == "" || (f.Operation != OperationUser && f.Operation != OperationWebhook && f.Operation != OperationWorkload && f.Operation != OperationNetwork && f.Operation != OperationNative) {
 			http.Error(w, "invalid instance operation", 400)
+			return
+		}
+		if f.Operation == OperationNative && !c.config.RemoteAccess {
+			http.Error(w, "remote user access is disabled", 403)
 			return
 		}
 		if f.Operation != OperationUser {
@@ -173,6 +178,10 @@ func (c *Connector) accept(s *session, f frame) {
 		r.Header = cleanOperationHeaders(f.Header, f.Operation)
 		r.Host = f.Host
 		r.RemoteAddr = "instance-bridge"
+		if f.Operation == OperationNative && !NativeRequestAllowed(r) {
+			http.Error(w, "native request is not allowed", 403)
+			return
+		}
 		if f.Operation == OperationNetwork && !NetworkRequestAllowed(r) {
 			http.Error(w, "network operation is not allowed", 403)
 			return

@@ -21,6 +21,7 @@ const (
 	OperationWebhook  Operation = "webhook"
 	OperationWorkload Operation = "workload"
 	OperationNetwork  Operation = "network"
+	OperationNative   Operation = "native-user"
 	protocolVersion             = "doodship-instance-v1"
 	chunkSize                   = 16 << 10
 	maxFrameSize                = 64 << 10
@@ -70,13 +71,14 @@ type stream struct {
 }
 
 type session struct {
-	ws        *websocket.Conn
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mu        sync.Mutex
-	streams   map[string]*stream
-	out       chan frame
-	onRequest func(frame)
+	nativeSignIn bool
+	ws           *websocket.Conn
+	ctx          context.Context
+	cancel       context.CancelFunc
+	mu           sync.Mutex
+	streams      map[string]*stream
+	out          chan frame
+	onRequest    func(frame)
 }
 
 func newSession(ctx context.Context, ws *websocket.Conn) *session {
@@ -266,9 +268,12 @@ func cleanOperationHeaders(src http.Header, op Operation) http.Header {
 			delete(h, name)
 			continue
 		}
-		if (op != OperationWorkload && op != OperationNetwork && lower == "authorization") || (op != OperationWorkload && (lower == "cookie" || lower == "set-cookie")) || lower == "connection" || lower == "upgrade" || lower == "proxy-authorization" || lower == "proxy-authenticate" || lower == "keep-alive" || lower == "transfer-encoding" || lower == "trailer" || lower == "te" || lower == "forwarded" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "x-dispatch-") || strings.HasPrefix(lower, "x-doodship-") || strings.HasPrefix(lower, "x-remote-") {
+		if (op != OperationWorkload && op != OperationNetwork && lower == "authorization") || (op != OperationWorkload && op != OperationNative && (lower == "cookie" || lower == "set-cookie")) || lower == "connection" || lower == "upgrade" || lower == "proxy-authorization" || lower == "proxy-authenticate" || lower == "keep-alive" || lower == "transfer-encoding" || lower == "trailer" || lower == "te" || lower == "forwarded" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "x-dispatch-") || strings.HasPrefix(lower, "x-doodship-") || strings.HasPrefix(lower, "x-remote-") {
 			delete(h, name)
 		}
+	}
+	if op == OperationNative {
+		filterNativeCookies(h)
 	}
 	if op == OperationWorkload {
 		cookieReq := &http.Request{Header: h}
