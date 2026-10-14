@@ -123,8 +123,9 @@ including when no server is connected or the server is offline.
 Deletion removes the instance, memberships, connection tokens, sessions,
 application addresses and usage records from Doodship. It also closes the outbound
 connection. Your server, databases, local accounts and running jobs stay intact.
-You can reuse the name for a new instance, but connecting the same server requires
-a new token and local owner approval.
+The name stays reserved for its former owners, so another account cannot receive
+webhooks still using the old address. An owner can reuse the name for a new
+instance. Connecting the same server requires a new token and local owner approval.
 
 WorkOS organization and DNS provider cleanup retry in the background if a
 provider is unavailable. The old credentials stop working as soon as deletion

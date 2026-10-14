@@ -24,6 +24,11 @@ func (c *Catalog) DeleteConnectedInstance(ctx context.Context, actor, id, slug, 
 	if slug != tenant.Slug {
 		return InstanceConnection{}, ErrInvalid
 	}
+	// Old webhook senders may still use this address after deletion. Keep its
+	// name with its owners so another account cannot receive those requests.
+	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO instance_name_reservations(slug,user_id) SELECT ?,user_id FROM tenant_memberships WHERE tenant_id=? AND role='owner' AND state='active' ON CONFLICT DO NOTHING`), tenant.Slug, id); err != nil {
+		return InstanceConnection{}, err
+	}
 	connection, err := c.revokeInstance(ctx, tx, id, -1)
 	if err != nil {
 		return connection, err

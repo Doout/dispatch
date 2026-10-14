@@ -111,6 +111,12 @@ func TestDeleteConnectedInstanceRevokesAccessAndMetadata(t *testing.T) {
 			if err != nil || !change.Delete || change.Generation <= record.Generation {
 				t.Fatal("DNS deletion lost", change, err)
 			}
+			if _, err = c.CreateOwnConnectedTenant(ctx, "outsider", instance.Slug, instance.Name); !errors.Is(err, ErrConflict) {
+				t.Fatal("deleted webhook address can be taken by another account", err)
+			}
+			if _, err = c.CreateTenant(ctx, CreateTenantInput{CreatorID: "platform", InitialOwnerID: "outsider", Slug: instance.Slug, Name: instance.Name, BackendMode: BackendConnected}); !errors.Is(err, ErrConflict) {
+				t.Fatal("platform admin reassigned deleted address", err)
+			}
 			if _, err = c.CreateOwnConnectedTenant(ctx, "owner", instance.Slug, instance.Name); err != nil {
 				t.Fatal("name cannot be reused", err)
 			}
@@ -202,6 +208,10 @@ func TestFailedInstanceDeletionRollsBackRevocation(t *testing.T) {
 	}
 	if _, err = c.Membership(ctx, instance.ID, "owner"); err != nil {
 		t.Fatal("failed transaction removed membership", err)
+	}
+	var reservations int
+	if err = c.db.QueryRowContext(ctx, c.q(`SELECT count(*) FROM instance_name_reservations WHERE slug=?`), instance.Slug).Scan(&reservations); err != nil || reservations != 0 {
+		t.Fatal("failed transaction reserved name", reservations, err)
 	}
 	pending, err := c.PendingOrganizationDeletions(ctx)
 	if err != nil || len(pending) != 0 {
