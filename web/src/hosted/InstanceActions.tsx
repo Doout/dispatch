@@ -22,7 +22,8 @@ export function InstanceActionsMenu({
   };
   if (
     membership.role !== "owner" ||
-    membership.connection?.backendMode !== "connected"
+    (!membership.canDelete &&
+      membership.connection?.backendMode !== "connected")
   )
     return null;
   return (
@@ -49,11 +50,12 @@ export function InstanceActionsMenu({
             }
           }}
         >
-          {membership.connection.state !== "not_connected" && (
-            <DropdownMenu.Item onSelect={() => select("disconnect")}>
-              <Plug size={17} aria-hidden="true" /> Disconnect server
-            </DropdownMenu.Item>
-          )}
+          {membership.connection?.backendMode === "connected" &&
+            membership.connection.state !== "not_connected" && (
+              <DropdownMenu.Item onSelect={() => select("disconnect")}>
+                <Plug size={17} aria-hidden="true" /> Disconnect server
+              </DropdownMenu.Item>
+            )}
           <DropdownMenu.Item
             className="hosted-instance-delete"
             onSelect={() => select("delete")}
@@ -87,7 +89,8 @@ export function InstanceActionDialog({
   const deleting = action === "delete";
   const allowed =
     membership.role === "owner" &&
-    membership.connection?.backendMode === "connected";
+    (membership.connection?.backendMode === "connected" ||
+      (deleting && membership.canDelete));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (
@@ -143,7 +146,9 @@ export function InstanceActionDialog({
           <div className="dialog-body hosted-form">
             <p id="instance-action-description">
               {deleting
-                ? "This removes the instance and its member access from Doodship. Its address and webhooks will stop working. Your server, data and running jobs stay intact."
+                ? membership.connection?.backendMode === "connected"
+                  ? "This removes the instance and its member access from Doodship. Its address and webhooks will stop working. Your server, data and running jobs stay intact."
+                  : "This removes the instance and its member access from Doodship. Its stored data is kept for recovery."
                 : "This stops access through Doodship and webhook forwarding. Your server, local accounts and running jobs stay available. You can reconnect later."}
             </p>
             {deleting && (

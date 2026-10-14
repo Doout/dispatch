@@ -198,19 +198,23 @@ func (c *Catalog) revokeInstance(ctx context.Context, tx *sql.Tx, id string, gen
 	if err != nil {
 		return v, err
 	}
-	if _, err = tx.ExecContext(ctx, c.q(`DELETE FROM instance_enrollments WHERE tenant_id=?`), id); err != nil {
-		return v, err
+	return v, c.revokeInstanceTokens(ctx, tx, id)
+}
+
+func (c *Catalog) revokeInstanceTokens(ctx context.Context, tx *sql.Tx, id string) error {
+	if _, err := tx.ExecContext(ctx, c.q(`DELETE FROM instance_enrollments WHERE tenant_id=?`), id); err != nil {
+		return err
 	}
-	if _, err = tx.ExecContext(ctx, c.q(`DELETE FROM tenant_handoffs WHERE tenant_id=?`), id); err != nil {
-		return v, err
+	if _, err := tx.ExecContext(ctx, c.q(`DELETE FROM tenant_handoffs WHERE tenant_id=?`), id); err != nil {
+		return err
 	}
-	if _, err = tx.ExecContext(ctx, c.q(`DELETE FROM tenancy_login_origins WHERE token_hash IN (SELECT token_hash FROM tenancy_sessions WHERE audience=?)`), TenantAudience(id)); err != nil {
-		return v, err
+	if _, err := tx.ExecContext(ctx, c.q(`DELETE FROM tenancy_login_origins WHERE token_hash IN (SELECT token_hash FROM tenancy_sessions WHERE audience=?)`), TenantAudience(id)); err != nil {
+		return err
 	}
-	if _, err = tx.ExecContext(ctx, c.q(`DELETE FROM tenancy_sessions WHERE audience=?`), TenantAudience(id)); err != nil {
-		return v, err
+	if _, err := tx.ExecContext(ctx, c.q(`DELETE FROM tenancy_sessions WHERE audience=?`), TenantAudience(id)); err != nil {
+		return err
 	}
-	return v, nil
+	return nil
 }
 
 // ActiveInstanceGrants is one bounded catalog read for the connection watchdog.

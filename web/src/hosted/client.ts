@@ -19,6 +19,7 @@ export type Membership = {
   role: "owner" | "admin" | "member";
   url: string;
   connection?: InstanceConnectionStatus;
+  canDelete?: boolean;
 };
 export type InstanceConnectionStatus = {
   state: "not_connected" | "offline" | "connected";

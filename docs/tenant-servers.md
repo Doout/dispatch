@@ -129,8 +129,9 @@ instance. Connecting the same server requires a new token and local owner approv
 
 WorkOS organization and DNS provider cleanup retry in the background if a
 provider is unavailable. The old credentials stop working as soon as deletion
-commits. Existing embedded backends do not expose this action, since their
-operational data needs a separate removal process.
+commits. When embedded backends are disabled, owners can also remove older
+inactive instance records. Their stored data and recovery metadata stay on the
+server. Active embedded backends do not expose this action.
 
 ## Control plane data and limits
 
