@@ -196,7 +196,12 @@ export function TenantSignIn({
       setPassword("");
       await authenticated.current();
     } catch (cause) {
-      setError((cause as Error).message);
+      const failure = cause as Error & { status?: number };
+      setError(
+        failure.status === 401
+          ? "Incorrect username or password."
+          : failure.message,
+      );
     } finally {
       setBusy(false);
     }
