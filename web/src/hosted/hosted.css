@@ -1,7 +1,8 @@
 .hosted-shell,
 .hosted-public,
 .hosted-auth-page,
-.hosted-auth {
+.hosted-auth,
+.hosted-instance-menu {
   --hosted-bg: #f6f8fb;
   --hosted-paper: #fff;
   --hosted-ink: #182638;
@@ -978,7 +979,8 @@
   .hosted-shell,
   .hosted-public,
   .hosted-auth-page,
-  .hosted-auth {
+  .hosted-auth,
+  .hosted-instance-menu {
     --hosted-bg: #121a28;
     --hosted-paper: #192334;
     --hosted-ink: #e6edf8;
@@ -1241,4 +1243,63 @@
 .hosted-install-options small {
   color: var(--hosted-muted);
   font-weight: 400;
+}
+
+.hosted-instance-actions { padding-inline: 8px; }
+.hosted-instance-menu {
+  z-index: 90;
+  min-width: 190px;
+  padding: 5px;
+  background: var(--hosted-paper);
+  border: 1px solid var(--hosted-rule-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+.hosted-instance-menu [role="menuitem"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+.hosted-instance-menu [data-highlighted] { background: var(--hosted-blue-soft); }
+.hosted-instance-menu .hosted-instance-delete { color: var(--hosted-red); }
+.hosted-instance-menu .hosted-instance-delete[data-highlighted] { background: var(--hosted-red-soft); }
+.hosted-instance-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 40%);
+}
+.hosted-instance-dialog {
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  background: var(--hosted-paper);
+  border: 1px solid var(--hosted-rule-strong);
+  border-radius: 12px;
+}
+.hosted-instance-dialog > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--hosted-rule);
+}
+.hosted-instance-dialog h2 { margin: 0; font-size: 20px; overflow-wrap: anywhere; }
+.hosted-instance-dialog .dialog-body { padding: 24px; }
+.hosted-instance-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--hosted-rule);
 }

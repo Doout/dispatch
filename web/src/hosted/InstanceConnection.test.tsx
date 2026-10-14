@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -134,6 +135,43 @@ it("confirms disconnection and removes the displayed token", async () => {
   );
   await user.click(screen.getByRole("button", { name: "Disconnect" }));
   await screen.findByRole("heading", { name: "No server connected" });
+});
+
+it("deletes an unconnected instance from its connection page", async () => {
+  const fetcher = vi.fn(async (_path: string, options: RequestInit) =>
+    options.method === "DELETE"
+      ? new Response(null, { status: 204 })
+      : json(membership.connection),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const onClose = vi.fn(),
+    onChanged = vi.fn().mockResolvedValue(undefined);
+  render(
+    <InstanceConnection
+      membership={membership}
+      onClose={onClose}
+      onChanged={onChanged}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Delete instance" }),
+  );
+  await user.type(screen.getByLabelText(/Type example/), "example");
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Delete instance",
+    }),
+  );
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  expect(onChanged).toHaveBeenCalledOnce();
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/v1/tenants/instance",
+    expect.objectContaining({
+      method: "DELETE",
+      body: JSON.stringify({ slug: "example" }),
+    }),
+  );
 });
 
 it("opens the owner's direct address without attaching a managed login handoff", async () => {

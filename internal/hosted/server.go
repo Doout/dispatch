@@ -298,6 +298,7 @@ func (s *Server) platformRoutes() http.Handler {
 	r.Get("/api/v1/platform/tenants/{id}", s.tenantMetadata)
 	r.Get("/api/v1/platform/tenants/{id}/usage", s.tenantUsage)
 	r.Get("/api/v1/tenants/{id}/join-requests", s.listJoinRequests)
+	r.Delete("/api/v1/tenants/{id}", s.deleteInstance)
 	r.Get("/api/v1/tenants/{id}/members", s.listMembers)
 	r.Post("/api/v1/tenants/{id}/members", s.addMember)
 	r.Put("/api/v1/tenants/{id}/members/{userId}", s.setMember)

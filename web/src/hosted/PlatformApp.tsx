@@ -32,6 +32,11 @@ import { TenantDirectory } from "./TenantDirectory";
 import { CreateTenant } from "./CreateTenant";
 import { JoinTenant } from "./JoinTenant";
 import { InstanceConnection } from "./InstanceConnection";
+import {
+  InstanceActionDialog,
+  InstanceActionsMenu,
+  type InstanceAction,
+} from "./InstanceActions";
 import { instanceNeedsRefresh, useSetupRefresh } from "./useSetupRefresh";
 
 type View = "mine" | "catalog" | "account";
@@ -56,6 +61,10 @@ export function PlatformApp({
     [invitations, setInvitations] = useState<Tenant[]>([]);
   const [selectedMembers, setSelectedMembers] = useState("");
   const [selectedConnection, setSelectedConnection] = useState("");
+  const [instanceAction, setInstanceAction] = useState<{
+    membership: Membership;
+    action: InstanceAction;
+  } | null>(null);
   const [tenantAction, setTenantAction] = useState<"create" | "join" | null>(
     null,
   );
@@ -328,7 +337,7 @@ export function PlatformApp({
             key={connectionMembership.tenant.id}
             membership={connectionMembership}
             onClose={() => setSelectedConnection("")}
-            onChanged={loadMemberships}
+            onChanged={refreshSetup}
           />
         )}
         {activeView === "mine" && !tenantAction && !connectionMembership && (
@@ -537,6 +546,12 @@ export function PlatformApp({
                                     />
                                   </a>
                                 )}
+                              <InstanceActionsMenu
+                                membership={membership}
+                                onSelect={(action) =>
+                                  setInstanceAction({ membership, action })
+                                }
+                              />
                             </div>
                           </td>
                         </tr>
@@ -624,6 +639,14 @@ export function PlatformApp({
           />
         )}
       </main>
+      {instanceAction && (
+        <InstanceActionDialog
+          membership={instanceAction.membership}
+          action={instanceAction.action}
+          onClose={() => setInstanceAction(null)}
+          onCompleted={refreshSetup}
+        />
+      )}
     </div>
   );
 }

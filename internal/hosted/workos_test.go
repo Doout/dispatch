@@ -14,6 +14,7 @@ import (
 )
 
 type fakeWorkOS struct {
+	deletionError     error
 	admissionError    error
 	organizationError error
 	organization      string
@@ -56,6 +57,18 @@ func (f *fakeWorkOS) EnsureOrganization(_ context.Context, external, name string
 	return f.organizations[external], nil
 }
 func (f *fakeWorkOS) AdmissionAllowed(context.Context, workOSIdentity) error { return f.admissionError }
+func (f *fakeWorkOS) DeleteOrganization(_ context.Context, id, external string) error {
+	if f.deletionError != nil {
+		return f.deletionError
+	}
+	for key, organization := range f.organizations {
+		if organization == id || key == external {
+			delete(f.organizations, key)
+			delete(f.members, organization)
+		}
+	}
+	return nil
+}
 func (f *fakeWorkOS) SyncMembers(_ context.Context, org string, members map[string]bool) error {
 	if f.members == nil {
 		f.members = map[string]map[string]bool{}

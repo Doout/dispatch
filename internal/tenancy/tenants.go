@@ -77,6 +77,13 @@ func (c *Catalog) createTenant(ctx context.Context, in CreateTenantInput, own bo
 	if creator.State != StateActive || (!own && !creator.PlatformAdmin) || (own && (!creator.EmailVerified || in.InitialOwnerID != creator.ID || in.InvitationEmail != "")) {
 		return Tenant{}, ErrDenied
 	}
+	var reserved, owned int
+	if err = tx.QueryRowContext(ctx, c.q(`SELECT COUNT(*),COALESCE(SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END),0) FROM instance_name_reservations WHERE slug=?`), in.InitialOwnerID, in.Slug).Scan(&reserved, &owned); err != nil {
+		return Tenant{}, err
+	}
+	if reserved > 0 && owned == 0 {
+		return Tenant{}, ErrConflict
+	}
 	if in.InitialOwnerID != "" {
 		owner, err := scanUser(tx.QueryRowContext(ctx, c.q(`SELECT `+userColumns+` FROM tenancy_users WHERE id=?`), in.InitialOwnerID))
 		if err != nil {
@@ -93,6 +100,9 @@ func (c *Catalog) createTenant(ctx context.Context, in CreateTenantInput, own bo
 	}
 	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO tenants(id,slug,name,state,created_at) VALUES(?,?,?,?,?)`), tenant.ID, tenant.Slug, tenant.Name, tenant.State, millis(now)); err != nil {
 		return Tenant{}, conflict(err)
+	}
+	if _, err = tx.ExecContext(ctx, c.q(`DELETE FROM instance_name_reservations WHERE slug=?`), tenant.Slug); err != nil {
+		return Tenant{}, err
 	}
 	if _, err = tx.ExecContext(ctx, c.q(`INSERT INTO instance_connections(tenant_id,mode) VALUES(?,?)`), tenant.ID, in.BackendMode); err != nil {
 		return Tenant{}, err
