@@ -27,9 +27,10 @@ image; the connector runs inside the self-hosted controller.
 4. Set the instance's own address if members should open it on their LAN or VPN.
    The control plane uses that address as a browser navigation target. It never
    fetches it or appends a managed sign-in token.
-5. Remote user access requires an approved local user mapping. The installer
-   enables it for the owner by default. To add other users, link each Doodship account
-   ID to an existing active local user and enable **Allow remote user access**.
+5. Enable **Allow remote user access** to offer sign-in at the Doodship address.
+   Doodship accounts require an approved local user mapping. The installer
+   adds one for the owner by default. To add other Doodship users, link each account
+   ID to an existing active local user.
    Account IDs are available in Doodship's Account page. Each user keeps their
    local permissions. Emails and claimed platform roles do not grant access.
 
@@ -48,19 +49,31 @@ An existing grant cannot be replaced by another enrollment without revocation.
 | Owner's setting | Member access | Webhooks and node traffic |
 | --- | --- | --- |
 | Remote access off | Open the installation's own URL | Forwarded through the outbound connection |
-| Remote access on | Use Doodship's UI with an approved local user mapping | Forwarded through the outbound connection |
+| Remote access on | Sign in through Doodship or the installation's own login methods | Forwarded through the outbound connection |
 | Disconnected | Local access continues; Doodship access stops | Unavailable until a fresh connection is approved |
 
-The control plane checks the instance session and current membership. The
-self-hosted installation checks the owner-approved account mapping and the local
-user's current permissions. Platform administrators have no operational access
-without membership and a local mapping. Remote requests cannot mint local login
-credentials, change user mappings or alter the connection itself. Manage those
-settings directly on the self-hosted installation.
+The sign-in page offers Doodship login and the providers configured on the
+self-hosted installation. It also accepts the installation's own username and
+password. With remote access enabled, either method stays at the instance's
+Doodship address. With remote access disabled, the browser opens the
+installation's configured address instead.
 
-The remote sign-in page uses Doodship login. Providers configured on the
-self-hosted installation are available at that installation's own address;
-they are not offered through the control plane.
+Doodship login requires current instance membership and an owner-approved local
+account mapping. Installation login uses that installation's accounts and
+permissions, without creating or linking a Doodship account. Platform
+administrator roles do not grant local access through either method.
+
+Installation login creates a secure, HTTP-only cookie scoped to the instance
+hostname. Its session remains in the self-hosted database. OAuth state and its
+one-use exchange are bound to the browser and that hostname. Configure each
+provider to accept `https://INSTANCE.doodship.com/api/v1/auth/callback` as a
+callback when using remote login. Its existing callback at the installation's
+own address continues to work for direct access.
+
+Remote users cannot modify the connection grant, user mappings or provider
+configuration. Manage those settings directly on the self-hosted installation.
+Older controllers keep Doodship login until upgraded to a version that supports
+installation login. Disconnection stops access through Doodship for both methods.
 
 The connection carries separate operations for user APIs, GitHub webhooks,
 published applications and a limited set of node enrollment and job APIs. Each

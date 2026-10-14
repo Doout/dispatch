@@ -81,6 +81,19 @@ func (m *Manager) authorize(ctx context.Context, revision uint64, operation inst
 	if !live {
 		return errors.New("connection has been revoked")
 	}
+	if operation == instancebridge.OperationNative {
+		m.mu.RLock()
+		remote := m.current.RemoteAccess
+		origin := m.publicOriginLocked()
+		m.mu.RUnlock()
+		if !remote || origin == "" || r.Host != strings.TrimPrefix(origin, "https://") || !instancebridge.NativeRequestAllowed(r) {
+			return errors.New("instance sign-in is not allowed")
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("Origin") != origin {
+			return errors.New("instance request origin does not match")
+		}
+		return nil
+	}
 	if operation == instancebridge.OperationWebhook {
 		if !allowedWebhook(r) {
 			return errors.New("webhook route is not allowed")
@@ -118,6 +131,31 @@ func (m *Manager) wrap(next http.Handler, revision uint64) http.Handler {
 		m.mu.Unlock()
 		if operation == instancebridge.OperationWebhook || operation == instancebridge.OperationNetwork {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if operation == instancebridge.OperationNative {
+			m.mu.RLock()
+			origin := m.publicOriginLocked()
+			m.mu.RUnlock()
+			ctx, cancel := context.WithCancel(r.Context())
+			defer cancel()
+			ctx = context.WithValue(ctx, requestKey{}, requestIdentity{revision: revision, native: true, origin: origin})
+			go func() {
+				ticker := time.NewTicker(time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if !m.NativeRequest(r.WithContext(ctx)) {
+							cancel()
+							return
+						}
+					}
+				}
+			}()
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		if operation == instancebridge.OperationWorkload {
@@ -158,7 +196,7 @@ func (m *Manager) wrap(next http.Handler, revision uint64) http.Handler {
 // connection. A browser header, cookie, or bearer token cannot create it.
 func (m *Manager) Identity(r *http.Request) (core.Identity, bool) {
 	value, ok := r.Context().Value(requestKey{}).(requestIdentity)
-	if !ok || r.Context().Err() != nil {
+	if !ok || value.native || r.Context().Err() != nil {
 		return core.Identity{}, false
 	}
 	m.mu.RLock()
@@ -169,6 +207,31 @@ func (m *Manager) Identity(r *http.Request) (core.Identity, bool) {
 		valid = err == nil && user.State == core.UserStateActive && user.SystemRole == value.identity.SystemRole
 	}
 	return value.identity, valid
+}
+
+func (m *Manager) publicOriginLocked() string {
+	if m.current.InstanceSlug == "" || m.current.RootDomain == "" {
+		return ""
+	}
+	return "https://" + m.current.InstanceSlug + "." + m.current.RootDomain
+}
+
+func (m *Manager) NativeRequest(r *http.Request) bool {
+	v, ok := r.Context().Value(requestKey{}).(requestIdentity)
+	if !ok || !v.native || r.Context().Err() != nil {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.current.Configured && m.current.RemoteAccess && v.revision == m.revision && v.origin == m.publicOriginLocked()
+}
+
+func (m *Manager) NativeOrigin(r *http.Request) string {
+	if !m.NativeRequest(r) {
+		return ""
+	}
+	v, _ := r.Context().Value(requestKey{}).(requestIdentity)
+	return v.origin
 }
 
 // IsRemote identifies trusted transport requests, including revoked requests.

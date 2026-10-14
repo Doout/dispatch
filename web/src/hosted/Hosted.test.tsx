@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { api } from "../api";
 import { AuthScreen } from "../app/AuthScreen";
 import { AccountMenu } from "../app/Navigation";
 import { HostedGate } from "./HostedGate";
@@ -118,7 +119,18 @@ it("clears legacy credentials and consumes an instance callback once", async () 
 });
 
 it("offers Doodship and instance providers without local password forms", async () => {
-  const fetcher = vi.fn().mockResolvedValue(json([{id:"github",name:"Company GitHub",type:"github",baseUrl:"https://github.com"}]));
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(
+      json([
+        {
+          id: "github",
+          name: "Company GitHub",
+          type: "github",
+          baseUrl: "https://github.com",
+        },
+      ]),
+    );
   vi.stubGlobal("fetch", fetcher);
   render(
     <HostedTenantContext.Provider value={hostedTenant}>
@@ -126,10 +138,14 @@ it("offers Doodship and instance providers without local password forms", async 
     </HostedTenantContext.Provider>,
   );
   expect(
-    screen.getByRole("link", { name: "Sign in with Doodship" }).getAttribute("href"),
+    screen
+      .getByRole("link", { name: "Sign in with Doodship" })
+      .getAttribute("href"),
   ).toBe(`${hostedTenant.origin}/api/v1/hosted/auth/start`);
   expect(screen.queryByLabelText("Password")).toBeNull();
-  expect(await screen.findByRole("button",{name:"Sign in with Company GitHub"})).toBeTruthy();
+  expect(
+    await screen.findByRole("button", { name: "Sign in with Company GitHub" }),
+  ).toBeTruthy();
 });
 
 it("offers Doodship login without an error when the instance has no local providers", async () => {
@@ -142,7 +158,9 @@ it("offers Doodship login without an error when the instance has no local provid
   );
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/auth/providers");
-  expect(screen.getByRole("link", { name: "Sign in with Doodship" })).toBeTruthy();
+  expect(
+    screen.getByRole("link", { name: "Sign in with Doodship" }),
+  ).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -189,7 +207,9 @@ it("gives a platform administrator metadata and usage without instance controls"
   });
   vi.stubGlobal("fetch", fetcher);
   render(<PlatformApp configuration={platform} />);
-  await screen.findByText("Create an instance for your team or ask to join an existing one.");
+  await screen.findByText(
+    "Create an instance for your team or ask to join an existing one.",
+  );
   await user.click(screen.getByRole("button", { name: "Instance directory" }));
   await screen.findByRole("button", { name: "View usage" });
   expect(screen.queryByRole("link", { name: "Open instance" })).toBeNull();
@@ -239,18 +259,16 @@ it("requires the email recipient to choose a password before verification", asyn
 it("does not present missing usage as measured zero", async () => {
   vi.stubGlobal(
     "fetch",
-    vi
-      .fn()
-      .mockResolvedValue(
-        json([
-          {
-            measured: ["builds"],
-            builds: 0,
-            periodStart: "2026-10-08",
-            periodEnd: "2026-10-09",
-          },
-        ]),
-      ),
+    vi.fn().mockResolvedValue(
+      json([
+        {
+          measured: ["builds"],
+          builds: 0,
+          periodStart: "2026-10-08",
+          periodEnd: "2026-10-09",
+        },
+      ]),
+    ),
   );
   render(<UsagePanel tenant={tenant} onClose={vi.fn()} />);
   await waitFor(() =>
@@ -300,4 +318,99 @@ it("retries instance sign-in after a failed handoff", async () => {
   await waitFor(() => expect(handoffs).toBe(2));
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByText("Opening your instance...")).not.toBeNull();
+});
+
+it("signs in with an instance password and refreshes the active account", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, "authProviders").mockResolvedValue([]);
+  const login = vi.spyOn(api, "login").mockResolvedValue({ token: "" });
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  const authenticated = vi.fn();
+  render(
+    <HostedTenantContext.Provider
+      value={{
+        ...hostedTenant,
+        nativeSignInAvailable: true,
+        refreshAuthentication: refresh,
+      }}
+    >
+      <AuthScreen onAuthenticated={authenticated} />
+    </HostedTenantContext.Provider>,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Use instance password" }),
+  );
+  await user.type(
+    screen.getByLabelText("Username or email"),
+    "member@example.test",
+  );
+  await user.type(screen.getByLabelText("Password"), "local-password");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() => expect(authenticated).toHaveBeenCalledTimes(1));
+  expect(login).toHaveBeenCalledWith("member@example.test", "local-password");
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(sessionStorage.getItem("dispatch-admin-token")).toBeNull();
+});
+
+it("exchanges native OAuth once without storing a bearer token", async () => {
+  window.history.replaceState({}, "", "/deployments?auth_code=native-code");
+  vi.spyOn(api, "authProviders").mockResolvedValue([]);
+  const exchange = vi
+    .spyOn(api, "exchangeOAuth")
+    .mockResolvedValue({ token: "" });
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  const authenticated = vi.fn();
+  render(
+    <StrictMode>
+      <HostedTenantContext.Provider
+        value={{
+          ...hostedTenant,
+          nativeSignInAvailable: true,
+          refreshAuthentication: refresh,
+        }}
+      >
+        <AuthScreen onAuthenticated={authenticated} />
+      </HostedTenantContext.Provider>
+    </StrictMode>,
+  );
+  await waitFor(() => expect(authenticated).toHaveBeenCalledTimes(1));
+  expect(exchange).toHaveBeenCalledExactlyOnceWith("native-code");
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(window.location.search).toBe("");
+  expect(window.location.pathname).toBe("/deployments");
+  expect(sessionStorage.getItem("dispatch-admin-token")).toBeNull();
+});
+
+it("shows the installation account menu for native sign-in", async () => {
+  const user = userEvent.setup();
+  const profile = vi.fn();
+  render(
+    <HostedTenantContext.Provider
+      value={{ ...hostedTenant, authentication: "instance" }}
+    >
+      <AccountMenu
+        identity={{
+          id: "local-member",
+          username: "member",
+          displayName: "Member",
+          systemRole: "member",
+          permissions: [],
+        }}
+        onOpenProfile={profile}
+        onChangePassword={vi.fn()}
+        onLogout={vi.fn()}
+      />
+    </HostedTenantContext.Provider>,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Open account menu for Member" }),
+  );
+  expect(
+    screen.queryByRole("menuitem", { name: "Account settings" }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("menuitem", { name: "Change password" }),
+  ).toBeTruthy();
+  await user.click(screen.getByRole("menuitem", { name: "My profile" }));
+  expect(profile).toHaveBeenCalledTimes(1);
 });

@@ -18,22 +18,26 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/instancebridge"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
 )
 
 type oauthState struct {
-	ProviderID string
-	Verifier   string
-	LinkUserID string
-	ReturnTo   string
-	ExpiresAt  time.Time
+	NativeOrigin string
+	ProviderID   string
+	Verifier     string
+	LinkUserID   string
+	ReturnTo     string
+	ExpiresAt    time.Time
 }
 
 type oauthCode struct {
-	Token     string
-	ExpiresAt time.Time
+	NativeOrigin string
+	Browser      string
+	Token        string
+	ExpiresAt    time.Time
 }
 
 type authDiscovery struct {
@@ -94,8 +98,13 @@ func (a *API) beginOAuth(w http.ResponseWriter, r *http.Request, linkUserID, ret
 	a.oauthMu.Lock()
 	a.cleanOAuthLocked(now)
 	a.oauthStates[state] = oauthState{ProviderID: provider.ID, Verifier: verifier, LinkUserID: linkUserID, ReturnTo: safeOAuthReturnTo(returnTo), ExpiresAt: now.Add(10 * time.Minute)}
+	if a.nativeInstanceRequest(r) {
+		item := a.oauthStates[state]
+		item.NativeOrigin = a.publicOrigin(r)
+		a.oauthStates[state] = item
+	}
 	a.oauthMu.Unlock()
-	if a.auth.Hosted != nil {
+	if a.auth.Hosted != nil || a.nativeInstanceRequest(r) {
 		http.SetCookie(w, &http.Cookie{Name: "__Host-dispatch-oauth", Value: state, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
 	}
 	values := url.Values{
@@ -133,6 +142,17 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 	if !ok || time.Now().After(state.ExpiresAt) || r.URL.Query().Get("code") == "" {
 		a.redirectOAuthError(w, r, "Sign-in request expired. Try again.")
 		return
+	}
+	if (state.NativeOrigin != "" || a.nativeInstanceRequest(r)) && (!a.nativeInstanceRequest(r) || state.NativeOrigin != a.publicOrigin(r)) {
+		a.redirectOAuthError(w, r, "Start sign-in again.")
+		return
+	}
+	if a.nativeInstanceRequest(r) {
+		cookie, err := r.Cookie(instancebridge.NativeOAuthCookie)
+		if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(stateValue)) != 1 {
+			a.redirectOAuthError(w, r, "Start sign-in again.")
+			return
+		}
 	}
 	if a.auth.Hosted != nil {
 		cookie, err := r.Cookie("__Host-dispatch-oauth")
@@ -247,6 +267,11 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 	a.oauthMu.Lock()
 	a.cleanOAuthLocked(now)
 	a.oauthCodes[handoff] = oauthCode{Token: token, ExpiresAt: now.Add(time.Minute)}
+	if a.nativeInstanceRequest(r) {
+		item := a.oauthCodes[handoff]
+		item.NativeOrigin, item.Browser = a.publicOrigin(r), stateValue
+		a.oauthCodes[handoff] = item
+	}
 	a.oauthMu.Unlock()
 	home := a.publicOrigin(r) + "/?auth_code=" + url.QueryEscape(handoff)
 	http.Redirect(w, r, home, http.StatusSeeOther)
@@ -261,14 +286,28 @@ func (a *API) exchangeOAuthCode(w http.ResponseWriter, r *http.Request) {
 	}
 	a.oauthMu.Lock()
 	item, ok := a.oauthCodes[input.Code]
+	if item.NativeOrigin != "" {
+		cookie, err := r.Cookie(instancebridge.NativeOAuthCookie)
+		if !a.nativeInstanceRequest(r) || item.NativeOrigin != a.publicOrigin(r) || err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(item.Browser)) != 1 {
+			a.oauthMu.Unlock()
+			problem(w, http.StatusUnauthorized, "Sign-in expired", "Start the sign-in flow again.")
+			return
+		}
+	} else if a.nativeInstanceRequest(r) {
+		a.oauthMu.Unlock()
+		problem(w, http.StatusUnauthorized, "Sign-in expired", "Start the sign-in flow again.")
+		return
+	}
 	delete(a.oauthCodes, input.Code)
 	a.oauthMu.Unlock()
 	if !ok || time.Now().After(item.ExpiresAt) {
 		problem(w, http.StatusUnauthorized, "Sign-in expired", "Start the sign-in flow again.")
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]string{"token": item.Token})
+	if a.nativeInstanceRequest(r) {
+		http.SetCookie(w, &http.Cookie{Name: instancebridge.NativeOAuthCookie, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	}
+	a.respondLoginSession(w, r, item.Token)
 }
 
 func (a *API) cleanOAuthLocked(now time.Time) {
@@ -285,6 +324,9 @@ func (a *API) cleanOAuthLocked(now time.Time) {
 }
 
 func (a *API) publicOrigin(r *http.Request) string {
+	if a.nativeInstanceRequest(r) {
+		return a.eventConfig.InstanceConnection.NativeOrigin(r)
+	}
 	if a.auth.PublicURL != "" {
 		return strings.TrimRight(a.auth.PublicURL, "/")
 	}

@@ -213,14 +213,25 @@ func (s *Server) connectedInstance(w http.ResponseWriter, r *http.Request, t ten
 		return
 	}
 	if r.URL.Path == "/api/v1/auth/providers" && r.Method == http.MethodGet {
-		// Remote console access uses Doodship identities and approved local user
-		// mappings. Installation-specific login providers belong to its own URL.
+		if s.Bridge.NativeSignInAvailable(connectionKey(v)) {
+			s.proxyNativeInstance(w, r, v)
+			return
+		}
+		// Older installations keep Doodship login until their connector supports
+		// self-hosted authentication. Never open a central operational database.
 		respond(w, http.StatusOK, []any{})
 		return
 	}
 	if r.URL.Path == "/api/v1/instance-connection" || strings.HasPrefix(r.URL.Path, "/api/v1/instance-connection/") {
 		problem(w, 403, "Manage the connection from the self-hosted installation.")
 		return
+	}
+	if s.Bridge.NativeSignInAvailable(connectionKey(v)) {
+		cookie, err := r.Cookie(instancebridge.NativeSessionCookie)
+		if instancebridge.NativeAuthenticationRequestAllowed(r) || err == nil && cookie.Value != "" {
+			s.proxyNativeInstance(w, r, v)
+			return
+		}
 	}
 	token := requestToken(r, tenantCookie)
 	u, err := s.authenticateSession(r.Context(), token, tenancy.TenantAudience(t.ID))
@@ -254,6 +265,28 @@ func (s *Server) connectedInstance(w http.ResponseWriter, r *http.Request, t ten
 		}
 	}()
 	s.Bridge.Proxy(w, r.WithContext(ctx), connectionKey(v), instancebridge.Identity{UserID: u.ID, Name: u.Name, Email: u.Email, Role: m.Role})
+}
+
+func (s *Server) proxyNativeInstance(w http.ResponseWriter, r *http.Request, v tenancy.InstanceConnection) {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				current, err := s.Catalog.InstanceConnection(ctx, v.TenantID)
+				if err != nil || current.Generation != v.Generation || current.CredentialHash == "" || !current.RemoteAccess || current.BackendMode != tenancy.BackendConnected {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	s.Bridge.ProxyOperation(w, r.WithContext(ctx), connectionKey(v), instancebridge.OperationNative, instancebridge.Identity{})
 }
 
 func (s *Server) publishInstanceRoute(w http.ResponseWriter, r *http.Request) {

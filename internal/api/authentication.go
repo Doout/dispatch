@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/instancebridge"
 	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
@@ -25,7 +26,7 @@ func (a *API) authorize(next http.Handler) http.Handler {
 				unauthorized(w, false)
 				return
 			}
-			actor, valid := a.eventConfig.InstanceConnection.Identity(r)
+			actor, valid := a.bearerIdentity(r)
 			if !valid {
 				unauthorized(w, false)
 				return
@@ -122,6 +123,9 @@ func (a *API) authorizedContext(w http.ResponseWriter, r *http.Request, actor co
 
 func (a *API) bearerIdentity(r *http.Request) (core.Identity, bool) {
 	if instanceconnection.IsRemote(r) {
+		if a.nativeInstanceRequest(r) {
+			return a.nativeInstanceIdentity(r)
+		}
 		if a.eventConfig.InstanceConnection == nil {
 			return core.Identity{}, false
 		}
@@ -248,12 +252,19 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+	a.respondLoginSession(w, r, token)
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	provided, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if a.nativeInstanceRequest(r) {
+		cookie, err := r.Cookie(instancebridge.NativeSessionCookie)
+		ok = err == nil
+		if ok {
+			provided = cookie.Value
+		}
+		http.SetCookie(w, &http.Cookie{Name: instancebridge.NativeSessionCookie, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	}
 	if ok && provided != "" {
 		if err := a.store.DeleteSession(r.Context(), sessionHash(provided)); err != nil {
 			a.internal(w, err)

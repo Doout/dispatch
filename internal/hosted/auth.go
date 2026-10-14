@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doout/dispatch/internal/instancebridge"
 	"github.com/doout/dispatch/internal/tenancy"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
@@ -294,6 +295,7 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 func (s *Server) tenantAuth(w http.ResponseWriter, r *http.Request, tenant tenancy.Tenant) {
 	switch {
 	case r.URL.Path == "/api/v1/hosted/auth/start" && r.Method == http.MethodGet:
+		setSession(w, instancebridge.NativeSessionCookie, "", -1)
 		var entropy [32]byte
 		if _, err := rand.Read(entropy[:]); err != nil {
 			problem(w, http.StatusInternalServerError, "Sign-in could not start.")
@@ -348,6 +350,17 @@ func (s *Server) tenantAuth(w http.ResponseWriter, r *http.Request, tenant tenan
 			}
 		}
 		setSession(w, tenantCookie, "", -1)
+		if cookie, err := r.Cookie(instancebridge.NativeSessionCookie); err == nil && cookie.Value != "" {
+			setSession(w, instancebridge.NativeSessionCookie, "", -1)
+			if connection, err := s.Catalog.InstanceConnection(r.Context(), tenant.ID); err == nil && connection.RemoteAccess && s.Bridge.NativeSignInAvailable(connectionKey(connection)) {
+				request := r.Clone(r.Context())
+				copyURL := *r.URL
+				copyURL.Path, copyURL.RawPath, copyURL.RawQuery = "/api/v1/auth/logout", "", ""
+				request.URL = &copyURL
+				s.proxyNativeInstance(w, request, connection)
+				return
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.NotFound(w, r)

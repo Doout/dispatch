@@ -45,6 +45,7 @@ func (a *API) publicRoutes(r chi.Router) {
 	r.With(a.limitPublicAuth).Get("/auth/status", a.authStatus)
 	r.With(a.limitPublicAuth).Post("/auth/setup", a.setupAdmin)
 	r.Post("/auth/login", a.login)
+	r.Post("/auth/logout", a.instanceOrAuthorizedLogout)
 	r.With(a.limitPublicAuth).Get("/auth/providers", a.publicAuthProviders)
 	r.With(a.limitPublicAuth).Post("/auth/discover", a.discoverAuth)
 	r.With(a.limitPublicAuth).Post("/auth/providers/{id}/start", a.startOAuth)

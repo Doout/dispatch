@@ -7,7 +7,7 @@ import { TenantSignIn } from "../hosted/HostedGate";
 
 export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
   const hosted = useHostedTenant();
-  if (hosted) return <TenantSignIn name={hosted.tenant.name} loginUrl={`${hosted.origin}/api/v1/hosted/auth/start`} />;
+  if (hosted) return <TenantSignIn name={hosted.tenant.name} loginUrl={`${hosted.origin}/api/v1/hosted/auth/start`} nativeSignInAvailable={hosted.nativeSignInAvailable} onAuthenticated={async () => { await hosted.refreshAuthentication?.(); onAuthenticated(); }} />;
   return <LocalAuthScreen onAuthenticated={onAuthenticated} />;
 }
 

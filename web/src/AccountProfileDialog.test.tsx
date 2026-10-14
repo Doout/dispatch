@@ -3,6 +3,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { HostedTenantContext } from "./hosted/context";
 import { AccountProfileDialog } from "./AccountProfileDialog";
 import { api, type AccountProfile } from "./api";
 
@@ -126,4 +127,34 @@ describe("account profile", () => {
       screen.queryByRole("button", { name: "Change password" }),
     ).toBeNull();
   });
+});
+
+it("requires the installation's own address to change provider links", async () => {
+  vi.spyOn(api, "accountProfile").mockResolvedValue(profile);
+  render(
+    <HostedTenantContext.Provider
+      value={{
+        mode: "tenant",
+        origin: "https://agentops.example.test",
+        loginUrl: "https://example.test",
+        authentication: "instance",
+        tenant: {
+          id: "instance",
+          slug: "agentops",
+          name: "AgentOps",
+          state: "active",
+          createdAt: "2026-10-14T00:00:00Z",
+        },
+      }}
+    >
+      <AccountProfileDialog onClose={vi.fn()} onChangePassword={vi.fn()} />
+    </HostedTenantContext.Provider>,
+  );
+  await screen.findByText("Alex Morgan");
+  expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Link Public GitHub" }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  expect(screen.getByText(/To link or remove sign-in methods/)).toBeTruthy();
 });
