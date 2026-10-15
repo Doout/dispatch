@@ -94,7 +94,7 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 			payload["path"] = r.URL.Path
 			f.reviews = append(f.reviews, payload)
 			fmt.Fprint(w, `{"id":99}`)
-		case strings.Contains(r.URL.Path, "/pulls/"):
+		case strings.Contains(r.URL.Path, "/pulls/") || strings.Contains(r.URL.Path, "/git/ref/heads/"):
 			if f.lookupFailure {
 				w.WriteHeader(http.StatusBadGateway)
 				return
@@ -113,6 +113,10 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 			repo := "example/service"
 			if strings.Contains(r.URL.Path, "/ui/") {
 				repo = "example/ui"
+			}
+			if strings.Contains(r.URL.Path, "/git/ref/heads/") {
+				writeGitBranchFixture(w, "feature", sha)
+				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "draft": f.draft, "head": map[string]any{"sha": sha, "ref": "feature", "repo": map[string]any{"id": 101, "full_name": repo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"id": 101, "full_name": repo}}})
 		default:

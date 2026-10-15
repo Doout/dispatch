@@ -1821,6 +1821,8 @@ func TestSignedPullRequestWebhookCreatesAndClosesPreview(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "/pulls/") {
 			_, _ = io.WriteString(w, `{"state":"open","head":{"ref":"feature/cart","sha":"abc123","repo":{"id":1,"full_name":"acme/checkout"}},"base":{"ref":"main","repo":{"id":1,"full_name":"acme/checkout"}}}`)
+		} else if strings.Contains(r.URL.Path, "/git/ref/heads/") {
+			writeGitBranchFixture(w, "feature/cart", "abc123")
 		} else {
 			_, _ = io.WriteString(w, `{"id":900}`)
 		}

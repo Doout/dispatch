@@ -26,15 +26,17 @@ import (
 )
 
 type panelGitHubFixture struct {
-	mu          sync.Mutex
-	comments    map[string]events.GitHubComment
-	permissions map[string]string
-	editors     map[string]string
-	posts       int
-	next        int
-	closed      map[string]bool
-	open        bool
-	created     time.Time
+	mu            sync.Mutex
+	branchHeads   map[string]string
+	branchFailure bool
+	comments      map[string]events.GitHubComment
+	permissions   map[string]string
+	editors       map[string]string
+	posts         int
+	next          int
+	closed        map[string]bool
+	open          bool
+	created       time.Time
 }
 
 func (f *panelGitHubFixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
@@ -67,7 +69,7 @@ func (f *panelGitHubFixture) serve(t *testing.T, w http.ResponseWriter, r *http.
 			items = append(items, events.GitHubPullRequest{Number: 42, CreatedAt: f.created})
 		}
 		_ = json.NewEncoder(w).Encode(items)
-	case strings.Contains(path, "/pulls/"):
+	case strings.Contains(path, "/pulls/") || strings.Contains(path, "/git/ref/heads/"):
 		state := "open"
 		parts := strings.Split(path, "/")
 		repo := parts[2] + "/" + parts[3]
@@ -77,6 +79,17 @@ func (f *panelGitHubFixture) serve(t *testing.T, w http.ResponseWriter, r *http.
 		sha := strings.Repeat("a", 40)
 		if strings.Contains(path, "/ui/") {
 			sha = strings.Repeat("b", 40)
+		}
+		if strings.Contains(path, "/git/ref/heads/") {
+			if f.branchFailure {
+				http.Error(w, "maintenance", 503)
+				return
+			}
+			if current := f.branchHeads[repo]; current != "" {
+				sha = current
+			}
+			writeGitBranchFixture(w, "feature", sha)
+			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "head": map[string]any{"ref": "feature", "sha": sha, "repo": map[string]any{"id": 101, "full_name": repo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"id": 101, "full_name": repo}}})
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/issues/comments"):

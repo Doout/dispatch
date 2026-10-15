@@ -22,6 +22,7 @@ type PullRequestHead struct {
 	Draft bool   `json:"draft"`
 	Head  struct {
 		SHA  string                 `json:"sha"`
+		Ref  string                 `json:"ref"`
 		Repo *PullRequestRepository `json:"repo"`
 	} `json:"head"`
 	Base struct {
@@ -47,7 +48,17 @@ func (m *Manager) PullRequestHead(ctx context.Context, id, repository string, nu
 		return head, err
 	}
 	endpoint := fmt.Sprintf("%s/repos/%s/pulls/%d", strings.TrimRight(connection.APIURL, "/"), repo, number)
-	err = m.request(ctx, http.MethodGet, endpoint, token, nil, &head, connection.PrivateNetworkID)
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &head, connection.PrivateNetworkID); err != nil {
+		return head, err
+	}
+	// GitHub Enterprise can return an old head SHA after the branch has moved.
+	// Retain PR state and origin metadata, but pin open PRs to the actual branch.
+	if head.State == "open" {
+		if head.Head.Ref == "" || head.Head.Repo == nil || head.Head.Repo.FullName == "" {
+			return head, errors.New("pull request head branch is unavailable")
+		}
+		head.Head.SHA, err = m.RepositoryBranchHead(ctx, id, head.Head.Repo.FullName, head.Head.Ref)
+	}
 	return head, err
 }
 
