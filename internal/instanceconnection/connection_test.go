@@ -361,3 +361,30 @@ func TestEnrollmentRejectsUnexpectedInstanceBeforeSavingGrant(t *testing.T) {
 		t.Fatal("saved grant for unexpected instance")
 	}
 }
+
+func TestRemoteOriginUsesOnlyTheLiveEnrolledHost(t *testing.T) {
+	m := testManager(t, nil)
+	m.current.Configured = true
+	m.current.RemoteAccess = true
+	m.current.InstanceSlug = "agentops"
+	m.current.RootDomain = "doodship.test"
+	request := httptest.NewRequest("GET", "https://agentops.doodship.test/api/v1/access", nil)
+	request.Header.Set("X-Forwarded-Host", "attacker.test")
+	if got := m.RemoteOrigin(request); got != "" {
+		t.Fatal("untrusted browser acquired a remote origin", got)
+	}
+	value := requestIdentity{identity: core.Identity{ID: "local-member", SystemRole: core.UserRoleMember}, revision: m.revision}
+	request = request.WithContext(context.WithValue(request.Context(), requestKey{}, value))
+	if got := m.RemoteOrigin(request); got != "https://agentops.doodship.test" {
+		t.Fatal("enrolled origin missing", got)
+	}
+	request.Host = "other.doodship.test"
+	if got := m.RemoteOrigin(request); got != "" {
+		t.Fatal("foreign host acquired a remote origin", got)
+	}
+	request.Host = "agentops.doodship.test"
+	m.revision++
+	if got := m.RemoteOrigin(request); got != "" {
+		t.Fatal("revoked request retained a remote origin", got)
+	}
+}

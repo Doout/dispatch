@@ -237,6 +237,27 @@ func (m *Manager) NativeOrigin(r *http.Request) string {
 	return v.origin
 }
 
+// RemoteOrigin returns the enrolled public address only for a live remote user.
+func (m *Manager) RemoteOrigin(r *http.Request) string {
+	if m.NativeRequest(r) {
+		return m.NativeOrigin(r)
+	}
+	if _, valid := m.Identity(r); !valid {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, _ := r.Context().Value(requestKey{}).(requestIdentity)
+	if !m.current.Configured || !m.current.RemoteAccess || value.revision != m.revision || r.Context().Err() != nil {
+		return ""
+	}
+	origin := m.publicOriginLocked()
+	if origin == "" || r.Host != strings.TrimPrefix(origin, "https://") {
+		return ""
+	}
+	return origin
+}
+
 // IsRemote identifies trusted transport requests, including revoked requests.
 func IsRemote(r *http.Request) bool {
 	_, ok := r.Context().Value(requestKey{}).(requestIdentity)
