@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/doout/dispatch/internal/sourceerror"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/sourceerror"
 )
 
 type GitHubNotifier struct {
@@ -123,42 +125,6 @@ type GitHubResolver struct {
 var ErrPullRequestNotFound = errors.New("pull request not found")
 
 func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository string, number int) (SourceRevision, error) {
-	owner, name, ok := strings.Cut(NormalizeRepository(repository), "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return SourceRevision{}, fmt.Errorf("invalid repository %q", repository)
-	}
-	baseURL := strings.TrimRight(r.BaseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://api.github.com"
-	}
-	endpoint := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", baseURL, url.PathEscape(owner), url.PathEscape(name), number)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return SourceRevision{}, err
-	}
-	request.Header.Set("Accept", "application/vnd.github+json")
-	token, err := githubRepositoryToken(ctx, repository, r.Token, r.TokenSource, r.RepositoryTokenSource)
-	if err != nil {
-		return SourceRevision{}, err
-	}
-	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
-	}
-	client := r.Client
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return SourceRevision{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		if response.StatusCode == http.StatusNotFound {
-			return SourceRevision{}, ErrPullRequestNotFound
-		}
-		return SourceRevision{}, sourceerror.FromResponse(response)
-	}
 	var payload struct {
 		State string `json:"state"`
 		Head  struct {
@@ -177,33 +143,65 @@ func (r GitHubResolver) ResolvePullRequest(ctx context.Context, repository strin
 			} `json:"repo"`
 		} `json:"base"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := r.get(ctx, repository, fmt.Sprintf("pulls/%d", number), &payload); err != nil {
+		var response *sourceerror.HTTPError
+		if errors.As(err, &response) && response.StatusCode == http.StatusNotFound {
+			return SourceRevision{}, ErrPullRequestNotFound
+		}
 		return SourceRevision{}, err
 	}
 	if payload.Head.Ref == "" || payload.Head.SHA == "" {
 		return SourceRevision{}, errors.New("pull request source revision is incomplete")
 	}
+	if payload.State == "open" {
+		if payload.Head.Repo.FullName == "" {
+			return SourceRevision{}, errors.New("pull request head repository is unavailable")
+		}
+		var reference githubapp.BranchReference
+		if err := r.get(ctx, payload.Head.Repo.FullName, "git/ref/heads/"+url.PathEscape(payload.Head.Ref), &reference); err != nil {
+			return SourceRevision{}, fmt.Errorf("resolve PR head branch %s: %w", payload.Head.Ref, err)
+		}
+		sha, err := reference.Commit(payload.Head.Ref)
+		if err != nil {
+			return SourceRevision{}, err
+		}
+		payload.Head.SHA = sha
+	}
 	return SourceRevision{RepositoryID: payload.Base.Repo.ID, Repository: payload.Base.Repo.FullName, HeadRepositoryID: payload.Head.Repo.ID, HeadRepository: payload.Head.Repo.FullName, HeadRef: payload.Head.Ref, HeadSHA: payload.Head.SHA, BaseRef: payload.Base.Ref, Open: payload.State == "open"}, nil
 }
 
 func (r GitHubResolver) ResolveBranch(ctx context.Context, repository, branch string) (SourceRevision, error) {
+	var payload struct {
+		SHA string `json:"sha"`
+	}
+	if err := r.get(ctx, repository, "commits/"+url.PathEscape(branch), &payload); err != nil {
+		return SourceRevision{}, err
+	}
+	if payload.SHA == "" {
+		return SourceRevision{}, errors.New("branch revision is incomplete")
+	}
+	return SourceRevision{HeadRef: branch, HeadSHA: payload.SHA, Open: true}, nil
+}
+
+func (r GitHubResolver) get(ctx context.Context, repository, path string, output any) error {
 	owner, name, ok := strings.Cut(NormalizeRepository(repository), "/")
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return SourceRevision{}, fmt.Errorf("invalid repository %q", repository)
+		return fmt.Errorf("invalid repository %q", repository)
 	}
 	baseURL := strings.TrimRight(r.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = "https://api.github.com"
 	}
-	endpoint := fmt.Sprintf("%s/repos/%s/%s/commits/%s", baseURL, url.PathEscape(owner), url.PathEscape(name), url.PathEscape(branch))
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/%s", baseURL, url.PathEscape(owner), url.PathEscape(name), path)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return SourceRevision{}, err
+		return err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("Cache-Control", "no-cache")
 	token, err := githubRepositoryToken(ctx, repository, r.Token, r.TokenSource, r.RepositoryTokenSource)
 	if err != nil {
-		return SourceRevision{}, err
+		return err
 	}
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
@@ -214,22 +212,13 @@ func (r GitHubResolver) ResolveBranch(ctx context.Context, repository, branch st
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return SourceRevision{}, err
+		return err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return SourceRevision{}, sourceerror.FromResponse(response)
+		return sourceerror.FromResponse(response)
 	}
-	var payload struct {
-		SHA string `json:"sha"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return SourceRevision{}, err
-	}
-	if payload.SHA == "" {
-		return SourceRevision{}, errors.New("branch revision is incomplete")
-	}
-	return SourceRevision{HeadRef: branch, HeadSHA: payload.SHA, Open: true}, nil
+	return json.NewDecoder(response.Body).Decode(output)
 }
 
 func githubToken(ctx context.Context, static string, source func(context.Context) (string, error)) (string, error) {

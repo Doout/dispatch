@@ -378,6 +378,10 @@ func TestPRCloseKeepsPreviewUntilLinkedPullRequestsClose(t *testing.T) {
 			_, _ = io.WriteString(w, `{"state":"closed","head":{"sha":"abc","ref":"feature"}}`)
 			return
 		}
+		if r.URL.Path == "/repos/example/ui/git/ref/heads/feature" {
+			writeGitBranchFixture(w, "feature", strings.Repeat("b", 40))
+			return
+		}
 		if r.URL.Path != "/repos/example/ui/pulls/21" {
 			t.Errorf("unexpected GitHub endpoint %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -388,7 +392,7 @@ func TestPRCloseKeepsPreviewUntilLinkedPullRequestsClose(t *testing.T) {
 			state = "open"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"number":21,"state":"`+state+`","head":{"ref":"feature","sha":"`+strings.Repeat("b", 40)+`"},"base":{"ref":"main"}}`)
+		_, _ = io.WriteString(w, `{"number":21,"state":"`+state+`","head":{"ref":"feature","sha":"`+strings.Repeat("b", 40)+`","repo":{"full_name":"example/ui"}},"base":{"ref":"main"}}`)
 	}))
 	defer github.Close()
 	resolver := events.GitHubResolver{BaseURL: github.URL}

@@ -6,6 +6,8 @@ PR previews deploy on an explicit comment by default. Automatic deployment and l
 
 Webhook and polling deliveries use durable comment receipts and one active template binding for each GitHub App, repository, PR, and command. A delayed commit event resolves the current PR head before selecting sources. Replaying a command from a removed binding cannot create a replacement. A newer comment may create a new instance. A completed expired instance keeps its binding and can be renewed by a new comment.
 
+For open PRs, polling and comment commands read the exact head branch reference in its source repository. The branch commit takes precedence over GitHub's cached PR head SHA, including after force-pushes. Linked PRs use the same lookup. This does not depend on a webhook or a change to the PR's `updated_at` timestamp. Branch lookup failures remain retryable and do not start a run from the cached SHA. Closed PRs keep their recorded commit, so deleting the branch does not block cleanup.
+
 Closure rechecks the primary PR and every linked PR. Closing one PR keeps the preview while another remains open. A delayed closure received after a reopen cannot remove the current preview. GitHub lookup failures keep the preview until the next successful reconciliation.
 
 Helm values submitted with `/preview values` belong to that preview's deployment.

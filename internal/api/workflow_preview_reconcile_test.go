@@ -124,11 +124,16 @@ func TestPreviewClosureResolvesReopensAndEveryLinkedPR(t *testing.T) {
 	trigger.LinkedPullRequests = map[string]int{"ui": 9}
 	primary, linked := "closed", "open"
 	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/git/ref/heads/") {
+			writeGitBranchFixture(w, "feature", "abc")
+			return
+		}
 		state := primary
 		if r.URL.Path == "/repos/example/ui/pulls/9" {
 			state = linked
 		}
-		fmt.Fprintf(w, `{"state":%q,"head":{"sha":"abc","ref":"feature"}}`, state)
+		parts := strings.Split(r.URL.Path, "/")
+		fmt.Fprintf(w, `{"state":%q,"head":{"sha":"abc","ref":"feature","repo":{"full_name":%q}}}`, state, parts[2]+"/"+parts[3])
 	}))
 	defer github.Close()
 	resolver := events.GitHubResolver{BaseURL: github.URL}

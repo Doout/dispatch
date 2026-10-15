@@ -131,6 +131,7 @@ func (a *API) resolvePreviewSource(ctx context.Context, appID, repository string
 	}
 	head := githubapp.PullRequestHead{}
 	head.Head.SHA = pr.HeadSHA
+	head.Head.Ref = pr.HeadRef
 	head.Head.Repo = &githubapp.PullRequestRepository{ID: pr.HeadRepositoryID, FullName: pr.HeadRepository}
 	head.Base.Repo = &githubapp.PullRequestRepository{ID: pr.RepositoryID, FullName: pr.Repository}
 	if pr.Open {

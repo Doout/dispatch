@@ -191,6 +191,8 @@ func TestPreviewPollStartsOnceAndClosesWithoutWebhooks(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/issues/comments"):
 			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 501, "body": "/preview", "issue_url": "https://example.test/repos/acme/service/issues/17", "author_association": "MEMBER", "created_at": now.Format(time.RFC3339), "user": map[string]string{"login": "operator"}}})
+		case strings.Contains(r.URL.Path, "/git/ref/heads/"):
+			writeGitBranchFixture(w, "feature", strings.Repeat("a", 40))
 		case strings.HasSuffix(r.URL.Path, "/pulls/17"):
 			if failLookup.Load() {
 				http.Error(w, "unavailable", 503)

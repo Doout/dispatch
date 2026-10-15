@@ -55,8 +55,10 @@ func TestImportWorkflowPreviewDocumentFromPRHead(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":73,"app_id":42}`))
 		case "/app/installations/73/access_tokens":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC()})
+		case "/repos/example/service/git/ref/heads/feature":
+			writeGitBranchFixture(w, "feature", "deadbeef")
 		case "/repos/example/service/pulls/42":
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": "open", "head": map[string]string{"ref": "feature", "sha": "deadbeef"}, "base": map[string]string{"ref": "main"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "open", "head": map[string]any{"ref": "feature", "sha": "deadbeef", "repo": map[string]string{"full_name": "example/service"}}, "base": map[string]string{"ref": "main"}})
 		case "/repos/example/service/git/trees/deadbeef":
 			if r.URL.Query().Get("recursive") != "1" {
 				t.Error("repository tree request was not recursive")

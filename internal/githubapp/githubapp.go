@@ -775,6 +775,9 @@ func (m *Manager) request(ctx context.Context, method, endpoint, token string, b
 		return err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
+	if method == http.MethodGet {
+		request.Header.Set("Cache-Control", "no-cache")
+	}
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
