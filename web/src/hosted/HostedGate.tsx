@@ -65,7 +65,7 @@ export function HostedGate({ children }: { children: ReactNode }) {
   }, [attempt]);
   if (error)
     return (
-      <main className="hosted-auth">
+      <main className="hosted-auth-page instance-signin-state">
         <Mark />
         <h1>Unable to open Doodship</h1>
         <p role="alert">{error}</p>
@@ -83,7 +83,7 @@ export function HostedGate({ children }: { children: ReactNode }) {
     );
   if (configuration === undefined)
     return (
-      <main className="hosted-auth" aria-busy="true">
+      <main className="hosted-auth-page instance-signin-state" aria-busy="true">
         <Mark />
         <p role="status">Opening Doodship...</p>
       </main>

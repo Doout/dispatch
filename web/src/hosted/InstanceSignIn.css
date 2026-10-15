@@ -1,3 +1,28 @@
+.hosted-auth-page.instance-signin-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px;
+  text-align: center;
+}
+
+.instance-signin-state > * {
+  max-width: 440px;
+  margin: 0;
+}
+
+.instance-signin-state .brand-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.instance-signin-state h1 {
+  font-size: 28px;
+  line-height: 1.3;
+}
+
 .hosted-auth-page.instance-signin {
   --instance-input-border: #8292a6;
   display: grid;
