@@ -1,0 +1,192 @@
+.hosted-auth-page.instance-signin-state {
+  scrollbar-gutter: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px;
+  text-align: center;
+}
+
+.instance-signin-state > * {
+  max-width: 440px;
+  margin: 0;
+}
+
+.instance-signin-state .brand-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.instance-signin-state h1 {
+  font-size: 28px;
+  line-height: 1.3;
+}
+
+.hosted-auth-page.instance-signin {
+  --instance-input-border: #8292a6;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  scrollbar-gutter: auto;
+}
+
+.instance-signin-aside {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: clamp(28px, 4vw, 64px);
+  border-right: 1px solid var(--hosted-rule);
+}
+
+.instance-signin-art {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  place-items: center;
+  padding: 48px 0 84px;
+}
+
+.instance-signin-art img {
+  display: block;
+  width: min(100%, 420px);
+  height: auto;
+  max-height: min(420px, calc(100dvh - 160px));
+  object-fit: contain;
+}
+
+.instance-signin-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: clamp(32px, 6vw, 96px);
+  background: var(--hosted-paper);
+}
+
+.instance-signin-mobile-brand {
+  display: none;
+}
+
+.instance-signin-form {
+  width: min(100%, 440px);
+  margin-inline: auto;
+}
+
+.instance-signin-form h1 {
+  margin: 0 0 32px;
+  font-size: clamp(28px, 2.5vw, 36px);
+  line-height: 1.25;
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+
+.instance-signin-methods,
+.instance-signin-form form {
+  display: grid;
+  gap: 16px;
+}
+
+.instance-signin-form :is(.primary-button, .quiet-button) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 50px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.instance-signin-password {
+  margin-top: 16px;
+}
+
+.instance-signin-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 24px 0 8px;
+  color: var(--hosted-muted);
+  font-size: 13px;
+}
+
+.instance-signin-divider::before,
+.instance-signin-divider::after {
+  height: 1px;
+  flex: 1;
+  background: var(--hosted-rule);
+  content: "";
+}
+
+.instance-signin-form label {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.instance-signin-form input {
+  width: 100%;
+  min-height: 50px;
+  padding: 12px 14px;
+  border: 1px solid var(--instance-input-border);
+  border-radius: 8px;
+  color: var(--hosted-ink);
+  background: var(--hosted-paper);
+  font-size: 16px;
+}
+
+.instance-signin-back {
+  justify-self: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--hosted-muted);
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.instance-signin-back:hover:not(:disabled) {
+  color: var(--hosted-ink);
+}
+
+.instance-signin-form .form-error {
+  margin: 20px 0 0;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-color-scheme: dark) {
+  .instance-signin {
+    --instance-input-border: #6f8096;
+    color-scheme: dark;
+  }
+}
+
+@media (max-width: 767px) {
+  .hosted-auth-page.instance-signin {
+    display: flex;
+    flex-direction: column;
+    background: var(--hosted-paper);
+  }
+
+  .instance-signin-aside {
+    display: none;
+  }
+
+  .instance-signin-content {
+    flex: 1;
+    justify-content: flex-start;
+    padding: 28px 24px 48px;
+  }
+
+  .instance-signin-mobile-brand {
+    display: block;
+    width: min(100%, 440px);
+    margin: 0 auto 64px;
+  }
+}

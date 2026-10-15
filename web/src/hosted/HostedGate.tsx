@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type FormEvent,
@@ -15,6 +16,8 @@ import {
 } from "./client";
 import { HostedTenantContext } from "./context";
 import { PlatformApp } from "./PlatformApp";
+import { HostedBrand } from "./HostedChrome";
+import "./InstanceSignIn.css";
 import "./hosted.css";
 
 export function HostedGate({ children }: { children: ReactNode }) {
@@ -62,7 +65,7 @@ export function HostedGate({ children }: { children: ReactNode }) {
   }, [attempt]);
   if (error)
     return (
-      <main className="hosted-auth">
+      <main className="hosted-auth-page instance-signin-state">
         <Mark />
         <h1>Unable to open Doodship</h1>
         <p role="alert">{error}</p>
@@ -80,7 +83,7 @@ export function HostedGate({ children }: { children: ReactNode }) {
     );
   if (configuration === undefined)
     return (
-      <main className="hosted-auth" aria-busy="true">
+      <main className="hosted-auth-page instance-signin-state" aria-busy="true">
         <Mark />
         <p role="status">Opening Doodship...</p>
       </main>
@@ -116,6 +119,7 @@ export function TenantSignIn({
   nativeSignInAvailable?: boolean;
   onAuthenticated: () => void | Promise<void>;
 }) {
+  const titleId = useId();
   const [providers, setProviders] = useState<PublicAuthProvider[]>([]);
   const [error, setError] = useState(
     () => new URLSearchParams(window.location.search).get("auth_error") ?? "",
@@ -207,76 +211,100 @@ export function TenantSignIn({
     }
   };
   return (
-    <main className="hosted-auth hosted-instance-auth">
-      <Mark />
-      <h1>Sign in to {name}</h1>
-      <a className="primary-button" href={loginUrl}>
-        Sign in with Doodship
-      </a>
-      {providers.map((provider) => (
-        <button
-          key={provider.id}
-          className="quiet-button"
-          disabled={busy}
-          onClick={() => void signIn(provider.id)}
-        >
-          Sign in with {provider.name}
-        </button>
-      ))}
-      {nativeSignInAvailable &&
-        (!passwordForm ? (
-          <button
-            type="button"
-            className="quiet-button"
-            disabled={busy}
-            onClick={() => setPasswordForm(true)}
-          >
-            Use instance password
-          </button>
-        ) : (
-          <form onSubmit={(event) => void passwordSignIn(event)}>
-            <label>
-              Username or email
-              <input
-                autoComplete="username"
-                required
-                value={username}
+    <main className="hosted-auth-page instance-signin">
+      <aside className="instance-signin-aside" aria-label="Doodship">
+        <HostedBrand />
+        <div className="instance-signin-art" aria-hidden="true">
+          <img
+            src="/brand/doodship-courier-512.webp"
+            srcSet="/brand/doodship-courier-256.webp 256w, /brand/doodship-courier-512.webp 512w"
+            sizes="(max-width: 767px) 0px, 32vw"
+            width={512}
+            height={512}
+            alt=""
+          />
+        </div>
+      </aside>
+      <div className="instance-signin-content">
+        <div className="instance-signin-mobile-brand">
+          <HostedBrand />
+        </div>
+        <section className="instance-signin-form" aria-labelledby={titleId}>
+          <h1 id={titleId}>Sign in to {name}</h1>
+          <div className="instance-signin-methods">
+            <a className="primary-button" href={loginUrl}>
+              Sign in with Doodship
+            </a>
+            {providers.map((provider) => (
+              <button
+                key={provider.id}
+                className="quiet-button"
                 disabled={busy}
-                onChange={(event) => setUsername(event.target.value)}
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
+                onClick={() => void signIn(provider.id)}
+              >
+                Sign in with {provider.name}
+              </button>
+            ))}
+          </div>
+          {nativeSignInAvailable &&
+            (!passwordForm ? (
+              <button
+                type="button"
+                className="quiet-button instance-signin-password"
                 disabled={busy}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </label>
-            <button className="primary-button" disabled={busy}>
-              {busy ? "Signing in..." : "Sign in"}
-            </button>
-            <button
-              className="quiet-button"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setPasswordForm(false);
-                setPassword("");
-              }}
-            >
-              Back
-            </button>
-          </form>
-        ))}
-      {error && (
-        <p role="alert" className="form-error">
-          {error}
-        </p>
-      )}
+                onClick={() => setPasswordForm(true)}
+              >
+                Use instance password
+              </button>
+            ) : (
+              <form onSubmit={(event) => void passwordSignIn(event)}>
+                <div className="instance-signin-divider" aria-hidden="true">
+                  or
+                </div>
+                <label>
+                  Username or email
+                  <input
+                    autoComplete="username"
+                    required
+                    value={username}
+                    disabled={busy}
+                    onChange={(event) => setUsername(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    disabled={busy}
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                </label>
+                <button className="primary-button" disabled={busy}>
+                  {busy ? "Signing in..." : "Sign in"}
+                </button>
+                <button
+                  className="instance-signin-back"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setPasswordForm(false);
+                    setPassword("");
+                  }}
+                >
+                  Back
+                </button>
+              </form>
+            ))}
+          {error && (
+            <p role="alert" className="form-error">
+              {error}
+            </p>
+          )}
+        </section>
+      </div>
     </main>
   );
 }
