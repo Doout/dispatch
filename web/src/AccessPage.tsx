@@ -30,12 +30,17 @@ import { SignInMethods } from "./SignInMethods";
 import { AccountProfileDialog } from "./AccountProfileDialog";
 import { accountURL, useHostedTenant } from "./hosted/context";
 import { ProjectAccess as HostedProjectAccess } from "./hosted/ProjectAccess";
+import "./AccessPage.css";
 
 type Section = "users" | "teams" | "signin";
 type Editor =
-  { kind: "user"; item?: User } | { kind: "team"; item?: Team } | null;
+  | { kind: "user"; item?: User }
+  | { kind: "team"; item?: Team }
+  | null;
 type DeleteTarget =
-  { kind: "user"; item: User } | { kind: "team"; item: Team } | null;
+  | { kind: "user"; item: User }
+  | { kind: "team"; item: Team }
+  | null;
 type ProjectExpiries = Record<string, string>;
 type ProjectRoles = Record<string, RoleAssignment["role"] | "">;
 
@@ -90,16 +95,308 @@ export function AccessPage({
   onImpersonate?: (user: User) => void;
 }) {
   const hosted = useHostedTenant();
-  return hosted ? <HostedAccessPage /> : <LocalAccessPage identityID={identityID} onChangePassword={onChangePassword} onImpersonate={onImpersonate} />;
+  return hosted ? (
+    <HostedAccessPage
+      identityID={identityID}
+      onChangePassword={onChangePassword}
+    />
+  ) : (
+    <LocalAccessPage
+      identityID={identityID}
+      onChangePassword={onChangePassword}
+      onImpersonate={onImpersonate}
+    />
+  );
 }
 
-function HostedAccessPage() {
+function HostedAccessPage({
+  identityID,
+  onChangePassword,
+}: {
+  identityID?: string;
+  onChangePassword?: () => void;
+}) {
   const hosted = useHostedTenant()!;
-  const [access, setAccess] = useState<AccessOverview | null>(null), [error, setError] = useState("");
-  const [editor, setEditor] = useState<Editor>(null), [deleting, setDeleting] = useState<DeleteTarget>(null), [projectUser, setProjectUser] = useState<User | null>(null);
-  const load = useCallback(async () => { try { setAccess(await api.access()); setError(""); } catch (cause) { setError((cause as Error).message); } }, []);
-  useEffect(() => { void load(); }, [load]);
-  return <div className="page-layout access-page"><PageHeader view="access" /><div className="hosted-access-notice"><span>Manage instance membership from your account.</span><a className="quiet-button" href={accountURL(hosted, "mine")}>My instances</a></div>{error && <p role="alert" className="form-error">{error}<button className="quiet-button" onClick={() => void load()}>Retry</button></p>}{!access && !error && <p role="status">Loading access...</p>}{access && <><section className="hosted-panel"><h2>Sign-in methods</h2><p>Members can link a method from their profile. New accounts require instance owner approval.</p><SignInMethods providers={access.providers} onChanged={() => void load()} /></section><section className="hosted-panel"><h2>Project access</h2><div className="hosted-table-wrap"><table className="hosted-table"><thead><tr><th>Member</th><th>Direct access</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{access.users.filter(user => user.state === "active").map(user => <tr key={user.id}><td>{user.displayName}</td><td>{user.systemRole === "owner" ? "All projects" : <GrantList access={access} grants={access.assignments.filter(grant => grant.principalType === "user" && grant.principalId === user.id)} />}</td><td>{user.systemRole !== "owner" && <button className="quiet-button" onClick={() => setProjectUser(user)}>Edit project access</button>}</td></tr>)}</tbody></table></div></section><section className="hosted-panel"><header className="hosted-panel-header"><h2>Teams</h2><button className="primary-button" onClick={() => setEditor({ kind: "team" })}>Add team</button></header><TeamsTable access={access} onEdit={team => setEditor({ kind: "team", item: team })} onDelete={team => setDeleting({ kind: "team", item: team })} /></section></>}{editor && access && <AccessEditor access={access} editor={editor} onChangePassword={() => {}} onClose={() => setEditor(null)} onSaved={async () => { setEditor(null); await load(); }} />}{deleting && <AccessDeleteDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={async () => { setDeleting(null); await load(); }} />}{projectUser && access && <HostedProjectAccess access={access} user={projectUser} onClose={() => setProjectUser(null)} onSaved={load} />}</div>;
+  const [access, setAccess] = useState<AccessOverview | null>(null);
+  const [error, setError] = useState("");
+  const [editor, setEditor] = useState<Editor>(null);
+  const [deleting, setDeleting] = useState<DeleteTarget>(null);
+  const [projectUser, setProjectUser] = useState<User | null>(null);
+  const [mergeSource, setMergeSource] = useState<User | null>(null);
+  const [viewingUser, setViewingUser] = useState<User | null>(null);
+  const [approving, setApproving] = useState("");
+  const load = useCallback(async () => {
+    try {
+      setAccess(await api.access());
+      setError("");
+    } catch (cause) {
+      setError((cause as Error).message);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const canManageLocal = access?.localAccountsAvailable === true;
+  const localAccountCount = access?.users.filter(user => user.passwordConfigured).length ?? 0;
+  const needsUpdate =
+    hosted.backendMode === "connected" && !canManageLocal;
+  const approve = async (user: User) => {
+    setApproving(user.id);
+    setError("");
+    try {
+      await api.updateUser(user.id, {
+        username: user.username,
+        displayName: user.displayName,
+        email: user.email ?? "",
+        systemRole: user.systemRole,
+        state: "active",
+      });
+      await load();
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setApproving("");
+    }
+  };
+  const saved = async () => {
+    setEditor(null);
+    await load();
+  };
+  return (
+    <div className="page-layout access-page connected-access-page">
+      <PageHeader
+        view="access"
+        trailing={
+          (canManageLocal || needsUpdate) && (
+            <button
+              disabled={!canManageLocal}
+              className="primary-button"
+              onClick={() => setEditor({ kind: "user" })}
+            >
+              <UserPlus size={16} aria-hidden="true" />
+              Add local user
+            </button>
+          )
+        }
+      />
+      {error && (
+        <p role="alert" className="form-error">
+          {error}
+          <button className="quiet-button" onClick={() => void load()}>
+            Retry
+          </button>
+        </p>
+      )}
+      {!access && !error && <p role="status">Loading access...</p>}
+      {access && (
+        <div className="access-panels">
+          <section
+            className="access-panel"
+            aria-labelledby="access-members-title"
+          >
+            <header className="access-panel-header">
+              <div>
+                <h2 id="access-members-title">Members</h2>
+                <p>Accounts, roles, and project access on this installation.</p>
+              </div>
+              <span className="access-panel-count">{access.users.length}</span>
+            </header>
+            {needsUpdate && (
+              <p className="access-update-notice">
+                Update the self-hosted installation to manage local accounts and
+                sign-in methods here.
+              </p>
+            )}
+            {canManageLocal ? (
+              <UsersTable
+                access={access}
+                identityID={identityID}
+                approving={approving}
+                onApprove={(user) => void approve(user)}
+                onView={setViewingUser}
+                onEdit={(user) => setEditor({ kind: "user", item: user })}
+                onMerge={setMergeSource}
+                onDelete={(user) => setDeleting({ kind: "user", item: user })}
+                pendingOnly={false}
+                onShowAll={() => {}}
+              />
+            ) : (
+              <div className="access-table-wrap">
+                <table className="access-table">
+                  <thead>
+                    <tr>
+                      <th>Member</th>
+                      <th>Direct access</th>
+                      <th>
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {access.users
+                      .filter((user) => user.state === "active")
+                      .map((user) => (
+                        <tr key={user.id}>
+                          <td>
+                            <strong>{user.displayName}</strong>
+                            <small>{user.username}</small>
+                          </td>
+                          <td>
+                            {user.systemRole === "owner" ? (
+                              "All projects"
+                            ) : (
+                              <GrantList
+                                access={access}
+                                grants={access.assignments.filter(
+                                  (grant) =>
+                                    grant.principalType === "user" &&
+                                    grant.principalId === user.id,
+                                )}
+                              />
+                            )}
+                          </td>
+                          <td>
+                            {!needsUpdate && user.systemRole !== "owner" && (
+                              <button
+                                className="quiet-button"
+                                onClick={() => setProjectUser(user)}
+                              >
+                                Edit project access
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+          <section
+            className="access-panel"
+            aria-labelledby="access-signin-title"
+          >
+            <header className="access-panel-header">
+              <div>
+                <h2 id="access-signin-title">Sign-in methods</h2>
+                <p>Choose how people sign in to this installation.</p>
+              </div>
+            </header>
+            {(canManageLocal || needsUpdate) && (
+              <div className="access-password-method">
+                <span className="access-method-icon">
+                  <Key size={22} aria-hidden="true" />
+                </span>
+                <div>
+                  <strong>Local accounts</strong>
+                  <p>Username or email and password.</p>
+                </div>
+                <span className="access-method-count">
+                  {localAccountCount} {localAccountCount === 1 ? "account" : "accounts"}
+                </span>
+              </div>
+            )}
+            <SignInMethods
+              providers={access.providers}
+              readOnly={needsUpdate}
+              onChanged={() => void load()}
+            />
+          </section>
+          <section
+            className="access-panel"
+            aria-labelledby="access-teams-title"
+          >
+            <header className="access-panel-header">
+              <div>
+                <h2 id="access-teams-title">Teams</h2>
+                <p>Give a group of members the same project access.</p>
+              </div>
+              {!needsUpdate && (
+                <button
+                  className="quiet-button"
+                  onClick={() => setEditor({ kind: "team" })}
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  Add team
+                </button>
+              )}
+            </header>
+            <TeamsTable
+              access={access}
+              readOnly={needsUpdate}
+              onEdit={(team) => setEditor({ kind: "team", item: team })}
+              onDelete={(team) => setDeleting({ kind: "team", item: team })}
+            />
+          </section>
+          <section
+            className="access-cloud-membership"
+            aria-label="Doodship membership"
+          >
+            <div>
+              <strong>Doodship members</strong>
+              <p>Manage Doodship membership from your account.</p>
+            </div>
+            <a className="quiet-button" href={accountURL(hosted, "mine")}>
+              My instances
+            </a>
+          </section>
+        </div>
+      )}
+      {editor && access && (
+        <AccessEditor
+          access={access}
+          editor={editor}
+          identityID={onChangePassword ? identityID : undefined}
+          onChangePassword={() => {
+            setEditor(null);
+            onChangePassword?.();
+          }}
+          onClose={() => setEditor(null)}
+          onSaved={() => void saved()}
+        />
+      )}
+      {deleting && (
+        <AccessDeleteDialog
+          target={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={async () => {
+            setDeleting(null);
+            await load();
+          }}
+        />
+      )}
+      {mergeSource && access && (
+        <UserMergeDialog
+          access={access}
+          source={mergeSource}
+          preferredTargetID={identityID}
+          onClose={() => setMergeSource(null)}
+          onMerged={async () => {
+            setMergeSource(null);
+            await load();
+          }}
+        />
+      )}
+      {viewingUser && (
+        <AccountProfileDialog
+          userID={viewingUser.id}
+          onEdit={() => {
+            setViewingUser(null);
+            setEditor({ kind: "user", item: viewingUser });
+          }}
+          onClose={() => setViewingUser(null)}
+        />
+      )}
+      {projectUser && access && (
+        <HostedProjectAccess
+          access={access}
+          user={projectUser}
+          onClose={() => setProjectUser(null)}
+          onSaved={load}
+        />
+      )}
+    </div>
+  );
 }
 
 function LocalAccessPage({
@@ -802,7 +1099,7 @@ function UsersTable({
             <thead>
               <tr>
                 <th>User</th>
-                <th>Controller role</th>
+                <th>Instance role</th>
                 <th>Teams</th>
                 <th>Direct access</th>
                 <th>Status</th>
@@ -828,13 +1125,13 @@ function UsersTable({
                         onClick={() => onView(user)}
                       >
                         <strong>{user.displayName}</strong>
-                        <small>
-                          {user.username}
-                          {user.email ? ` - ${user.email}` : ""}
-                        </small>
                       </button>
+                      <small>
+                        {user.username}
+                        {user.email ? ` - ${user.email}` : ""}
+                      </small>
                     </td>
-                    <td data-label="Controller role">
+                    <td data-label="Instance role">
                       {user.systemRole === "owner" ? (
                         <span className="access-role owner">Owner</span>
                       ) : (
@@ -1057,10 +1354,12 @@ function UserMergeDialog({
 
 function TeamsTable({
   access,
+  readOnly = false,
   onEdit,
   onDelete,
 }: {
   access: AccessOverview;
+  readOnly?: boolean;
   onEdit: (team: Team) => void;
   onDelete: (team: Team) => void;
 }) {
@@ -1107,21 +1406,25 @@ function TeamsTable({
                 </td>
                 <td data-label="Actions">
                   <div className="access-row-actions">
-                    <button
-                      aria-label={`Edit ${team.name}`}
-                      title="Edit"
-                      onClick={() => onEdit(team)}
-                    >
-                      <PencilSimple size={16} />
-                    </button>
-                    <button
-                      className="danger"
-                      aria-label={`Remove ${team.name}`}
-                      title="Remove"
-                      onClick={() => onDelete(team)}
-                    >
-                      <Trash size={16} />
-                    </button>
+                    {!readOnly && (
+                      <>
+                        <button
+                          aria-label={`Edit ${team.name}`}
+                          title="Edit"
+                          onClick={() => onEdit(team)}
+                        >
+                          <PencilSimple size={16} />
+                        </button>
+                        <button
+                          className="danger"
+                          aria-label={`Remove ${team.name}`}
+                          title="Remove"
+                          onClick={() => onDelete(team)}
+                        >
+                          <Trash size={16} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -1420,7 +1723,7 @@ function UserEditor({
         </label>
       )}
       <label>
-        <span>Controller role</span>
+        <span>Instance role</span>
         <select
           value={systemRole}
           onChange={(event) =>

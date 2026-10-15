@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -120,7 +121,7 @@ func TestInstanceNativeAuthenticationOverOutboundConnection(t *testing.T) {
 			t.Fatalf("static/claimed owner authorized %s: %d", p, w.Code)
 		}
 	}
-	for _, p := range []string{"/api/v1/auth/setup", "/api/v1/auth/providers", "/api/v1/instance-connection", "/api/v1/service-accounts"} {
+	for _, p := range []string{"/api/v1/auth/setup", "/api/v1/instance-connection", "/api/v1/service-accounts"} {
 		if w := call("POST", p, "{}"); w.Code != 403 {
 			t.Fatalf("anonymous management %s: %d", p, w.Code)
 		}
@@ -209,6 +210,49 @@ func TestInstanceNativeAuthenticationOverOutboundConnection(t *testing.T) {
 	}
 	if w := call("GET", "/api/v1/access", "", session); w.Code != 403 {
 		t.Fatal("member promoted to owner", w.Code)
+	}
+	for _, route := range []string{"/api/v1/users", "/api/v1/teams", "/api/v1/role-assignments", "/api/v1/auth/providers"} {
+		if w := call("POST", route, "{}"); w.Code != 401 {
+			t.Fatalf("anonymous access management %s: %d", route, w.Code)
+		}
+		if w := call("POST", route, "{}", session); w.Code != 403 {
+			t.Fatalf("member access management %s: %d", route, w.Code)
+		}
+	}
+	owner := core.User{ID: "local-owner", Username: "owner", DisplayName: "Owner", PasswordHash: string(hash), State: core.UserStateActive, SystemRole: core.UserRoleOwner, CreatedAt: now, UpdatedAt: now}
+	if err := a.store.CreateUser(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	ownerLogin := call("POST", "/api/v1/auth/login", `{"username":"owner","password":"local-password"}`)
+	if ownerLogin.Code != 200 {
+		t.Fatalf("owner login: %d %s", ownerLogin.Code, ownerLogin.Body.String())
+	}
+	ownerSession := cookie(ownerLogin, instancebridge.NativeSessionCookie)
+	if w := call("GET", "/api/v1/access", "", ownerSession); w.Code != 200 || !strings.Contains(w.Body.String(), `"localAccountsAvailable":true`) {
+		t.Fatalf("access capabilities: %d %s", w.Code, w.Body.String())
+	}
+	for i, callbackSession := range []*http.Cookie{nil, session, ownerSession} {
+		state := fmt.Sprintf("manifest-owner-%d", i)
+		actorID := owner.ID
+		if i == 2 {
+			actorID = "different-owner"
+		}
+		a.authManifestStates[state] = authProviderManifestState{ActorID: actorID, ExpiresAt: time.Now().Add(time.Hour)}
+		var cookies []*http.Cookie
+		if callbackSession != nil {
+			cookies = append(cookies, callbackSession)
+		}
+		w := call("GET", "/api/v1/auth/providers/manifest/callback?state="+state+"&code=setup", "", cookies...)
+		if w.Code != 303 || !strings.Contains(w.Header().Get("Location"), "authProviderStatus=error") {
+			t.Fatalf("manifest callback accepted a missing, member, or foreign owner session: %d", w.Code)
+		}
+	}
+	created := call("POST", "/api/v1/users", `{"username":"teammate","displayName":"Teammate","password":"teammate-password","systemRole":"member","state":"active"}`, ownerSession)
+	if created.Code != 201 || strings.Contains(created.Body.String(), "teammate-password") {
+		t.Fatalf("owner create local user: %d %s", created.Code, created.Body.String())
+	}
+	if w := call("POST", "/api/v1/auth/login", `{"username":"teammate","password":"teammate-password"}`); w.Code != 200 {
+		t.Fatalf("created local user cannot sign in: %d %s", w.Code, w.Body.String())
 	}
 	member.State = core.UserStateDisabled
 	if err := a.store.UpdateUser(ctx, member); err != nil {

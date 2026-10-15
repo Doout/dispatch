@@ -1,0 +1,156 @@
+.connected-access-page .access-panels {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+
+.connected-access-page .access-panel {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-surface);
+  background: var(--paper);
+}
+
+.access-panel .access-users-view {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.access-panel .muted-cell {
+  color: var(--muted);
+}
+
+.access-panel .access-table-wrap {
+  min-width: 0;
+}
+
+.access-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.access-panel-header h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.access-panel-header p,
+.access-password-method p,
+.access-cloud-membership p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.access-panel-count {
+  color: var(--muted);
+  font: 600 13px var(--mono);
+}
+
+.access-password-method {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.access-method-icon {
+  display: grid;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.access-password-method strong,
+.access-cloud-membership strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.access-method-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.access-panel .signin-empty,
+.access-panel .access-empty {
+  min-height: 100px;
+  padding: 20px 24px;
+}
+
+.access-panel .signin-toolbar {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.access-cloud-membership {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 8px 0;
+}
+
+.access-update-notice {
+  margin: 0;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--muted-strong);
+  background: var(--surface-subtle);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  .access-panel-header,
+  .access-password-method {
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .access-panel-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .access-password-method {
+    flex-wrap: wrap;
+  }
+
+  .access-method-count {
+    width: 100%;
+    margin: 0 0 0 56px;
+  }
+
+  .access-cloud-membership {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .access-panel .signin-empty,
+  .access-panel .access-empty {
+    padding: 16px;
+  }
+
+  .access-panel .access-empty {
+    border: 0;
+    border-radius: 0;
+  }
+}

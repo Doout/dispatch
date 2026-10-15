@@ -673,7 +673,7 @@ func (a *API) accessOverview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, core.AccessOverview{Users: users, Teams: teams, Members: members, Assignments: assignments, Roles: core.ProjectRoles(), Projects: projects, Providers: providers, Identities: identities})
+	writeJSON(w, http.StatusOK, core.AccessOverview{LocalAccountsAvailable: a.auth.Hosted == nil, Users: users, Teams: teams, Members: members, Assignments: assignments, Roles: core.ProjectRoles(), Projects: projects, Providers: providers, Identities: identities})
 }
 
 type userRequest struct {

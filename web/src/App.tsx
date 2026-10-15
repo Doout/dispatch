@@ -749,7 +749,7 @@ export default function DispatchApp() {
             overview.identity?.systemRole === "owner" && (
               <AccessPage
                 identityID={overview.identity.id}
-                onChangePassword={hosted ? undefined : () => setChangingPassword(true)}
+                onChangePassword={hosted && hosted.authentication !== "instance" ? undefined : () => setChangingPassword(true)}
                 onImpersonate={hosted ? undefined : (user) => void startImpersonating(user)}
               />
             )}
@@ -805,7 +805,7 @@ export default function DispatchApp() {
           }}
         />
       )}
-      {changingPassword && !hosted && (
+      {changingPassword && (!hosted || hosted.authentication === "instance") && (
         <ChangePasswordDialog onClose={() => setChangingPassword(false)} onChanged={() => void logout()} />
       )}
       {viewingAccountProfile && (

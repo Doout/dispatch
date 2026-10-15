@@ -324,8 +324,10 @@ func (a *API) cleanOAuthLocked(now time.Time) {
 }
 
 func (a *API) publicOrigin(r *http.Request) string {
-	if a.nativeInstanceRequest(r) {
-		return a.eventConfig.InstanceConnection.NativeOrigin(r)
+	if a.eventConfig.InstanceConnection != nil {
+		if origin := a.eventConfig.InstanceConnection.RemoteOrigin(r); origin != "" {
+			return origin
+		}
 	}
 	if a.auth.PublicURL != "" {
 		return strings.TrimRight(a.auth.PublicURL, "/")

@@ -60,7 +60,10 @@ func allowedUser(r *http.Request) bool {
 	if !strings.HasPrefix(p, "/api/v1/") {
 		return false
 	}
-	// Remote users cannot mint local credentials or modify their own connection grant.
+	if instancebridge.AccessManagementRequestAllowed(r) {
+		return true
+	}
+	// Connection grants, machine credentials, and login sessions stay local.
 	for _, prefix := range []string{"/api/v1/instance-connection", "/api/v1/automation", "/api/v1/service-accounts", "/api/v1/edge/", "/api/v1/bootstrap/", "/api/v1/auth/providers"} {
 		if strings.HasPrefix(p, prefix) {
 			return false
@@ -232,6 +235,27 @@ func (m *Manager) NativeOrigin(r *http.Request) string {
 	}
 	v, _ := r.Context().Value(requestKey{}).(requestIdentity)
 	return v.origin
+}
+
+// RemoteOrigin returns the enrolled public address only for a live remote user.
+func (m *Manager) RemoteOrigin(r *http.Request) string {
+	if m.NativeRequest(r) {
+		return m.NativeOrigin(r)
+	}
+	if _, valid := m.Identity(r); !valid {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, _ := r.Context().Value(requestKey{}).(requestIdentity)
+	if !m.current.Configured || !m.current.RemoteAccess || value.revision != m.revision || r.Context().Err() != nil {
+		return ""
+	}
+	origin := m.publicOriginLocked()
+	if origin == "" || r.Host != strings.TrimPrefix(origin, "https://") {
+		return ""
+	}
+	return origin
 }
 
 // IsRemote identifies trusted transport requests, including revoked requests.

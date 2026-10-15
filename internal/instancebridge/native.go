@@ -40,7 +40,7 @@ func NativeAuthenticationRequestAllowed(r *http.Request) bool {
 }
 
 func NativeRequestAllowed(r *http.Request) bool {
-	if NativeAuthenticationRequestAllowed(r) {
+	if NativeAuthenticationRequestAllowed(r) || AccessManagementRequestAllowed(r) {
 		return true
 	}
 	if !safeNativePath(r) {

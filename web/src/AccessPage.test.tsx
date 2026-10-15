@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccessPage } from "./AccessPage";
+import { HostedTenantContext } from "./hosted/context";
 import { api, type AccessOverview } from "./api";
 
 const access: AccessOverview = {
@@ -432,4 +433,75 @@ it("preserves a grant expiry when changing roles and removes it only when cleare
  render(<AccessPage/>);await screen.findByText("Controller owner");await user.click(screen.getByRole("button",{name:/Teams/}));await user.click(screen.getByRole("button",{name:"Edit Platform"}));
  const input=screen.getByLabelText("Checkout access expiry") as HTMLInputElement;expect(input.value).toContain("2030-01-02");await user.selectOptions(screen.getByLabelText("Checkout role"),"viewer");await user.click(screen.getByRole("button",{name:"Save team"}));await waitFor(()=>expect(save).toHaveBeenCalled());expect(save.mock.calls[0][0]).not.toHaveProperty("expiresAt");
  await screen.findByRole("button",{name:"Edit Platform"});await user.click(screen.getByRole("button",{name:"Edit Platform"}));await user.clear(screen.getByLabelText("Checkout access expiry"));await user.click(screen.getByRole("button",{name:"Save team"}));await waitFor(()=>expect(save).toHaveBeenCalledTimes(2));expect(save.mock.calls[1][0].expiresAt).toBeNull();
+});
+
+describe("connected instance access", () => {
+  const hosted = {
+    mode: "tenant" as const,
+    origin: "https://agentops.doodship.test",
+    loginUrl: "https://doodship.test",
+    backendMode: "connected" as const,
+    tenant: { id: "instance", slug: "agentops", name: "AgentOps", state: "active", createdAt: "2026-10-01T00:00:00Z" },
+  };
+  const renderConnected = () => render(
+    <HostedTenantContext.Provider value={hosted}>
+      <AccessPage identityID="owner-1" />
+    </HostedTenantContext.Provider>,
+  );
+
+  it("creates a local account with project access from the connected page", async () => {
+    const user = userEvent.setup();
+    const created = { ...access.users[1], id: "new-local", username: "teammate", displayName: "Local teammate", passwordConfigured: true };
+    vi.spyOn(api, "access")
+      .mockResolvedValueOnce({ ...access, localAccountsAvailable: true })
+      .mockResolvedValue({ ...access, localAccountsAvailable: true, users: [...access.users, created] });
+    const create = vi.spyOn(api, "createUser").mockResolvedValue(created);
+    const grant = vi.spyOn(api, "upsertRoleAssignment").mockResolvedValue(access.assignments[0]);
+    renderConnected();
+
+    await screen.findByRole("region", { name: "Members" });
+    expect(screen.getByRole("region", { name: "Sign-in methods" })).not.toBeNull();
+    expect(screen.getByRole("region", { name: "Teams" })).not.toBeNull();
+    expect(screen.getByText("Local accounts")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add local user" }));
+    const dialog = screen.getByRole("dialog", { name: "Add local user" });
+    await user.type(within(dialog).getByLabelText("Display name"), "Local teammate");
+    await user.type(within(dialog).getByLabelText("Username"), "teammate");
+    await user.type(within(dialog).getByLabelText("Password"), "teammate-password");
+    await user.selectOptions(within(dialog).getByLabelText("Checkout role"), "viewer");
+    await user.click(within(dialog).getByRole("button", { name: "Save user" }));
+    await screen.findByText("Local teammate");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ username: "teammate", password: "teammate-password", systemRole: "member", state: "active" }));
+    expect(grant).toHaveBeenCalledWith(expect.objectContaining({ principalType: "user", principalId: created.id, projectId: "project-1", role: "viewer" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("explains the required controller update without offering failing actions", async () => {
+    vi.spyOn(api, "access").mockResolvedValue(access);
+    renderConnected();
+    await screen.findByText(/Update the self-hosted installation/);
+    expect((screen.getByRole("button", { name: "Add local user" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Local accounts")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Add method" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add team" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Platform" })).toBeNull();
+    expect(screen.getByRole("link", { name: "My instances" }).getAttribute("href")).toBe("https://doodship.test/?view=mine");
+  });
+
+  it("keeps the account form open when creation fails", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "access").mockResolvedValue({ ...access, localAccountsAvailable: true });
+    vi.spyOn(api, "createUser").mockRejectedValue(new Error("Username already used."));
+    renderConnected();
+    await screen.findByText("Controller owner");
+    await user.click(screen.getByRole("button", { name: "Add local user" }));
+    const dialog = screen.getByRole("dialog", { name: "Add local user" });
+    await user.type(within(dialog).getByLabelText("Display name"), "Alex");
+    await user.type(within(dialog).getByLabelText("Username"), "alex");
+    await user.type(within(dialog).getByLabelText("Password"), "alex-password");
+    await user.click(within(dialog).getByRole("button", { name: "Save user" }));
+    expect(await within(dialog).findByRole("alert")).not.toBeNull();
+    expect((within(dialog).getByLabelText("Username") as HTMLInputElement).value).toBe("alex");
+    expect((within(dialog).getByRole("button", { name: "Save user" }) as HTMLButtonElement).disabled).toBe(false);
+  });
 });

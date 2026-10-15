@@ -110,9 +110,10 @@ func TestNativeInstanceSignInRoutesAndLogout(t *testing.T) {
 	w := request("GET", "/api/v1/hosted", "native-session")
 	var metadata struct {
 		Native         bool   `json:"nativeSignInAvailable"`
+		BackendMode    string `json:"backendMode"`
 		Authentication string `json:"authentication"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &metadata); err != nil || !metadata.Native || metadata.Authentication != "instance" {
+	if err := json.Unmarshal(w.Body.Bytes(), &metadata); err != nil || !metadata.Native || metadata.Authentication != "instance" || metadata.BackendMode != tenancy.BackendConnected {
 		t.Fatal("native metadata missing")
 	}
 	w = request("POST", "/api/v1/hosted/auth/logout", "native-session")
