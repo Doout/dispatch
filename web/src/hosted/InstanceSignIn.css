@@ -1,4 +1,5 @@
 .hosted-auth-page.instance-signin-state {
+  scrollbar-gutter: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
