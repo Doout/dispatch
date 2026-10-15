@@ -30,6 +30,8 @@ For a Docker installation, start with the [installation guide](installation.md).
 | `HELM_REPOSITORY_PASSWORD` | none | HTTPS Helm repository password |
 | `DISPATCH_HOOK_*` | none | Variables passed to hooks by explicit prefix |
 
+The automatically registered `local-docker` server is both a deployment target and a Docker builder. Jobs with `builder: docker` use the shared builder pool, including one local build slot. Local builds use `DISPATCH_DOCKER_SOCKET` and do not require SSH credentials. Without the socket, the local server is unavailable and cannot receive builds.
+
 ## Relay variables
 
 | Variable | Default | Purpose |
@@ -86,4 +88,3 @@ Kubernetes targets accept pasted, uploaded, or controller-mounted kubeconfig fil
 OpenShift setup accepts a non-interactive `oc login` command or username and password. Dispatch parses the login data and calls the OpenShift API. It does not execute `oc`. Setup creates a `dispatch-controller` service account in `dispatch-system`, grants `cluster-admin`, and stores only the managed service-account kubeconfig.
 
 The managed OpenShift credential has cluster-wide privileges. Protect Dispatch storage and owner accounts as cluster-administrator credentials.
-

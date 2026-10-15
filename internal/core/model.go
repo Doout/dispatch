@@ -45,6 +45,22 @@ func IsDeploymentRuntime(runtime string) bool {
 	return runtime == ServerRuntimeDocker || IsKubernetesRuntime(runtime)
 }
 
+// IsLocalDocker identifies the automatically registered Docker socket.
+func (s Server) IsLocalDocker() bool {
+	return s.Runtime == ServerRuntimeDocker && s.Address == "local" && s.AgentMode == "local" && s.AgentNodeID == ""
+}
+
+// DockerBuilderCapacity is zero for servers that cannot run Docker builds.
+func (s Server) DockerBuilderCapacity() int {
+	if s.IsLocalDocker() {
+		return 1
+	}
+	if s.Runtime == ServerRuntimeBuilder && s.Builder != nil {
+		return s.Builder.MaxConcurrent
+	}
+	return 0
+}
+
 // BuilderServerConfig connects workflow Docker clients to a dedicated daemon.
 // The SSH key remains in the secret store; the host key pins the remote host.
 type BuilderServerConfig struct {

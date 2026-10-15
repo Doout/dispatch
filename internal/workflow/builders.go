@@ -34,7 +34,7 @@ func (s *Service) acquireDockerBuilder(ctx context.Context, cacheKeys ...string)
 		}
 		builders := make([]core.Server, 0)
 		for _, server := range servers {
-			if server.Runtime == core.ServerRuntimeBuilder && server.State == "ready" && server.Builder != nil && server.Builder.MaxConcurrent > 0 {
+			if server.State == "ready" && server.DockerBuilderCapacity() > 0 {
 				builders = append(builders, server)
 			}
 		}
@@ -55,8 +55,8 @@ func (s *Service) acquireDockerBuilder(ctx context.Context, cacheKeys ...string)
 		bestCache := ""
 		for _, builder := range builders {
 			current := s.builderSlots[builder.ID]
-			if current == nil || cap(current) != builder.Builder.MaxConcurrent && len(current) == 0 {
-				current = make(chan struct{}, builder.Builder.MaxConcurrent)
+			if current == nil || cap(current) != builder.DockerBuilderCapacity() && len(current) == 0 {
+				current = make(chan struct{}, builder.DockerBuilderCapacity())
 				s.builderSlots[builder.ID] = current
 			}
 			load := float64(len(current)) / float64(cap(current))
@@ -93,6 +93,13 @@ func (s *Service) acquireDockerBuilder(ctx context.Context, cacheKeys ...string)
 }
 
 func (s *Service) dockerBuilderEnvironment(ctx context.Context, builder core.Server) ([]string, func(), error) {
+	if builder.IsLocalDocker() {
+		socket := s.LocalDockerSocket
+		if socket == "" {
+			socket = "/var/run/docker.sock"
+		}
+		return []string{"DOCKER_HOST=unix://" + socket, "DOCKER_CONTEXT=", "DOCKER_TLS_VERIFY=", "DOCKER_CERT_PATH="}, func() {}, nil
+	}
 	if s.Secrets == nil {
 		return nil, nil, errors.New("secret resolution is not configured")
 	}

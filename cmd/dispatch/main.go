@@ -152,7 +152,7 @@ func run(logger *slog.Logger) error {
 	}, logger, api.EventConfig{InstanceConnection: instanceConnection, Bootstrap: bootstraps, WebhookSecret: cfg.WebhookSecret, DefaultCommand: cfg.PreviewCommand,
 		GitHubAPIURL: cfg.GitHubAPIURL, GitHubToken: cfg.GitHubToken, Vault: vault, GitHubApps: githubApps, SecretResolver: secretResolver,
 		WorkloadBackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "workload-backups"), BackupDirectory: filepath.Join(filepath.Dir(cfg.MasterKeyFile), "backups"), MasterKeyFile: cfg.MasterKeyFile, DatabaseURL: cfg.DatabaseURL,
-		Edge: edgeBroker, RepositoryCache: cfg.RepositoryCache, Analytics: history})
+		Edge: edgeBroker, DockerSocket: cfg.DockerSocket, RepositoryCache: cfg.RepositoryCache, Analytics: history})
 	if instanceConnection != nil {
 		instanceConnection.Start(shutdownCtx, controller)
 	}

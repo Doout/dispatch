@@ -19,6 +19,15 @@ import { PageHeader } from "../PageHeader";
 import { StatusLabel, TableIconAction } from "../ResourceTable";
 import { ResourceSummary } from "../components/PageStates";
 
+function isLocalDocker(server: Server) {
+  return (
+    server.runtime === "docker" &&
+    server.address === "local" &&
+    server.agentMode === "local" &&
+    !server.agentNodeId
+  );
+}
+
 export function ServersPage({
   overview,
   canManage = true,
@@ -44,7 +53,7 @@ export function ServersPage({
     (server) => server.runtime !== "relay" && server.runtime !== "builder",
   );
   const builders = overview.servers.filter(
-    (server) => server.runtime === "builder",
+    (server) => server.runtime === "builder" || isLocalDocker(server),
   );
   const relays = overview.servers.filter(
     (server) => server.runtime === "relay",
@@ -179,28 +188,83 @@ export function ServersPage({
         <div className="section-title">
           <div>
             <h2>Docker builders</h2>
-            <p>Workflow jobs with <code>builder: docker</code> use this pool.</p>
+            <p>
+              Workflow jobs with <code>builder: docker</code> use this pool.
+            </p>
           </div>
         </div>
         {builders.length ? (
           <div className="resource-table-wrap">
             <table className="resource-table server-table">
-              <thead><tr><th>Server</th><th>Docker connection</th><th>Capacity</th><th>Status</th><th className="actions-head"><span className="sr-only">Actions</span></th></tr></thead>
-              <tbody>{builders.map((server) => (
-                <tr key={server.id}>
-                  <td data-label="Server"><strong>{server.name}</strong></td>
-                  <td data-label="Docker connection"><span className="connection">{server.address}</span></td>
-                  <td data-label="Capacity">{server.builder?.maxConcurrent ?? 1} jobs</td>
-                  <td data-label="Status"><StatusLabel state={server.state} /></td>
-                  <td className="row-actions"><div className="table-icon-actions">{canManage && <>
-                    <TableIconAction label={`Edit ${server.name}`} tooltip="Edit" onClick={() => onEdit(server)}><PencilSimple size={16} /></TableIconAction>
-                    <TableIconAction label={`Delete ${server.name}`} tooltip="Delete" danger onClick={() => onDelete(server)}><Trash size={16} /></TableIconAction>
-                  </>}</div></td>
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Docker connection</th>
+                  <th>Capacity</th>
+                  <th>Status</th>
+                  <th className="actions-head">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
-              ))}</tbody>
+              </thead>
+              <tbody>
+                {builders.map((server) => (
+                  <tr key={server.id}>
+                    <td data-label="Server">
+                      <strong>{server.name}</strong>
+                      {isLocalDocker(server) && (
+                        <small className="managed-label">
+                          <LockSimple size={12} />
+                          Managed
+                        </small>
+                      )}
+                    </td>
+                    <td data-label="Docker connection">
+                      <span className="connection">
+                        {isLocalDocker(server)
+                          ? "Local Docker socket"
+                          : server.address}
+                      </span>
+                    </td>
+                    <td data-label="Capacity">
+                      {isLocalDocker(server)
+                        ? "1 job"
+                        : `${server.builder?.maxConcurrent ?? 1} ${(server.builder?.maxConcurrent ?? 1) === 1 ? "job" : "jobs"}`}
+                    </td>
+                    <td data-label="Status">
+                      <StatusLabel state={server.state} />
+                    </td>
+                    <td className="row-actions">
+                      <div className="table-icon-actions">
+                        {canManage && !isLocalDocker(server) && (
+                          <>
+                            <TableIconAction
+                              label={`Edit ${server.name}`}
+                              tooltip="Edit"
+                              onClick={() => onEdit(server)}
+                            >
+                              <PencilSimple size={16} />
+                            </TableIconAction>
+                            <TableIconAction
+                              label={`Delete ${server.name}`}
+                              tooltip="Delete"
+                              danger
+                              onClick={() => onDelete(server)}
+                            >
+                              <Trash size={16} />
+                            </TableIconAction>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
             </table>
           </div>
-        ) : <div className="section-empty">No Docker builders.</div>}
+        ) : (
+          <div className="section-empty">No Docker builders.</div>
+        )}
       </section>
       {canManage && <section className="server-section relay-section">
         <div className="section-title">

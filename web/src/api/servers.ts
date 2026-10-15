@@ -46,6 +46,7 @@ export type Server = {
   runtime: "docker" | "kubernetes" | "openshift" | "builder" | "relay";
   state: string;
   agentMode: string;
+  agentNodeId?: string;
   kubernetes?: KubernetesServerConfig;
   relay?: RelayServerConfig;
   builder?: { sshSecretId: string; hostKey: string; maxConcurrent: number };
