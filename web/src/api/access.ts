@@ -142,6 +142,7 @@ export type AuthDiscovery = {
 };
 
 export type AccessOverview = {
+  localAccountsAvailable?: boolean;
   users: User[];
   teams: Team[];
   members: TeamMember[];

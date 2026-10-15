@@ -47,6 +47,7 @@ export type HostedPlatform = {
   backendMode?: "connected" | "embedded";
 };
 export type HostedTenant = {
+  backendMode?: "connected" | "embedded";
   nativeSignInAvailable?: boolean;
   authentication?: "doodship" | "instance";
   refreshAuthentication?: () => Promise<void>;

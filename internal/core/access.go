@@ -98,14 +98,15 @@ type RoleDefinition struct {
 }
 
 type AccessOverview struct {
-	Users       []User             `json:"users"`
-	Teams       []Team             `json:"teams"`
-	Members     []TeamMember       `json:"members"`
-	Assignments []RoleAssignment   `json:"assignments"`
-	Roles       []RoleDefinition   `json:"roles"`
-	Projects    []Project          `json:"projects"`
-	Providers   []AuthProvider     `json:"providers"`
-	Identities  []ExternalIdentity `json:"identities"`
+	LocalAccountsAvailable bool               `json:"localAccountsAvailable"`
+	Users                  []User             `json:"users"`
+	Teams                  []Team             `json:"teams"`
+	Members                []TeamMember       `json:"members"`
+	Assignments            []RoleAssignment   `json:"assignments"`
+	Roles                  []RoleDefinition   `json:"roles"`
+	Projects               []Project          `json:"projects"`
+	Providers              []AuthProvider     `json:"providers"`
+	Identities             []ExternalIdentity `json:"identities"`
 }
 
 func ProjectRoles() []RoleDefinition {

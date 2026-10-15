@@ -60,7 +60,10 @@ func allowedUser(r *http.Request) bool {
 	if !strings.HasPrefix(p, "/api/v1/") {
 		return false
 	}
-	// Remote users cannot mint local credentials or modify their own connection grant.
+	if instancebridge.AccessManagementRequestAllowed(r) {
+		return true
+	}
+	// Connection grants, machine credentials, and login sessions stay local.
 	for _, prefix := range []string{"/api/v1/instance-connection", "/api/v1/automation", "/api/v1/service-accounts", "/api/v1/edge/", "/api/v1/bootstrap/", "/api/v1/auth/providers"} {
 		if strings.HasPrefix(p, prefix) {
 			return false

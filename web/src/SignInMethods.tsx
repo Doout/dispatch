@@ -18,9 +18,11 @@ import { useDialogFocus } from "./useDialogFocus";
 
 export function SignInMethods({
   providers,
+  readOnly = false,
   onChanged,
 }: {
   providers: AuthProvider[];
+  readOnly?: boolean;
   onChanged: () => void;
 }) {
   const [editor, setEditor] = useState<AuthProvider | null | undefined>(
@@ -47,12 +49,14 @@ export function SignInMethods({
         <GithubLogo size={24} />
         <div>
           <strong>No external sign-in methods</strong>
-          <span>Add a GitHub sign-in method.</span>
+          <span>Connect GitHub or GitHub Enterprise.</span>
         </div>
-        <button className="quiet-button" onClick={() => setEditor(null)}>
-          <Plus size={15} />
-          Add method
-        </button>
+        {!readOnly && (
+          <button className="quiet-button" onClick={() => setEditor(null)}>
+            <Plus size={15} />
+            Add method
+          </button>
+        )}
         {editor !== undefined && (
           <ProviderEditor
             provider={editor}
@@ -73,10 +77,12 @@ export function SignInMethods({
             {error}
           </span>
         )}
-        <button className="quiet-button" onClick={() => setEditor(null)}>
-          <Plus size={15} />
-          Add method
-        </button>
+        {!readOnly && (
+          <button className="quiet-button" onClick={() => setEditor(null)}>
+            <Plus size={15} />
+            Add method
+          </button>
+        )}
       </div>
       <div className="access-table-wrap">
         <table className="access-table signin-table">
@@ -115,29 +121,33 @@ export function SignInMethods({
                 </td>
                 <td>
                   <div className="access-row-actions">
-                    <button
-                      aria-label={`Check ${provider.name}`}
-                      title="Check GitHub host"
-                      disabled={checking === provider.id}
-                      onClick={() => void checkHost(provider)}
-                    >
-                      <ArrowClockwise size={16} />
-                    </button>
-                    <button
-                      aria-label={`Edit ${provider.name}`}
-                      title="Edit"
-                      onClick={() => setEditor(provider)}
-                    >
-                      <PencilSimple size={16} />
-                    </button>
-                    <button
-                      className="danger"
-                      aria-label={`Remove ${provider.name}`}
-                      title="Remove"
-                      onClick={() => setRemoving(provider)}
-                    >
-                      <Trash size={16} />
-                    </button>
+                    {!readOnly && (
+                      <>
+                        <button
+                          aria-label={`Check ${provider.name}`}
+                          title="Check GitHub host"
+                          disabled={checking === provider.id}
+                          onClick={() => void checkHost(provider)}
+                        >
+                          <ArrowClockwise size={16} />
+                        </button>
+                        <button
+                          aria-label={`Edit ${provider.name}`}
+                          title="Edit"
+                          onClick={() => setEditor(provider)}
+                        >
+                          <PencilSimple size={16} />
+                        </button>
+                        <button
+                          className="danger"
+                          aria-label={`Remove ${provider.name}`}
+                          title="Remove"
+                          onClick={() => setRemoving(provider)}
+                        >
+                          <Trash size={16} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>

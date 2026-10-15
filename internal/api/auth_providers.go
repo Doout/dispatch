@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
@@ -219,6 +220,13 @@ func (a *API) completeAuthProviderManifest(w http.ResponseWriter, r *http.Reques
 		actor, err := a.auth.Hosted.Authenticate(r)
 		if err != nil || actor.ID != pending.ActorID || actor.SystemRole != core.UserRoleOwner {
 			redirect("error", "Sign in as the tenant owner to finish setup.")
+			return
+		}
+	}
+	if instanceconnection.IsRemote(r) {
+		actor, valid := a.bearerIdentity(r)
+		if !valid || actor.ID != pending.ActorID || actor.SystemRole != core.UserRoleOwner {
+			redirect("error", "Sign in as the installation owner to finish setup.")
 			return
 		}
 	}

@@ -151,14 +151,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/v1/hosted" && r.Method == http.MethodGet {
 		native := false
+		backendMode := s.Config.BackendMode
 		if connection, err := s.Catalog.InstanceConnection(r.Context(), tenant.ID); err == nil {
+			backendMode = connection.BackendMode
 			native = connection.BackendMode == tenancy.BackendConnected && connection.RemoteAccess && s.Bridge.NativeSignInAvailable(connectionKey(connection))
 		}
 		source := "doodship"
 		if cookie, err := r.Cookie(instancebridge.NativeSessionCookie); native && err == nil && cookie.Value != "" {
 			source = "instance"
 		}
-		respond(w, http.StatusOK, map[string]any{"mode": "tenant", "tenant": tenant, "loginUrl": s.Config.Origin(), "origin": s.Config.TenantOrigin(slug), "nativeSignInAvailable": native, "authentication": source})
+		respond(w, http.StatusOK, map[string]any{"mode": "tenant", "tenant": tenant, "loginUrl": s.Config.Origin(), "origin": s.Config.TenantOrigin(slug), "nativeSignInAvailable": native, "backendMode": backendMode, "authentication": source})
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/hosted/auth/") {

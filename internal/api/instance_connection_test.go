@@ -29,6 +29,9 @@ func TestInstanceConnectionOwnerSetupAndRemoteAuthentication(t *testing.T) {
 	if err = controller.store.CreateUser(context.Background(), core.User{ID: "local-member", Username: "local-member", DisplayName: "Local Member", State: core.UserStateActive, SystemRole: core.UserRoleMember, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
+	if err = controller.store.CreateUser(context.Background(), core.User{ID: "local-owner", Username: "local-owner", DisplayName: "Local Owner", State: core.UserStateActive, SystemRole: core.UserRoleOwner, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest("GET", "/api/v1/instance-connection", nil)
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, req)
@@ -65,7 +68,7 @@ func TestInstanceConnectionOwnerSetupAndRemoteAuthentication(t *testing.T) {
 		}
 	}))
 	defer cp.Close()
-	if _, err = manager.Configure(context.Background(), instanceconnection.Setup{ControlPlaneURL: cp.URL, EnrollmentToken: "once", RemoteAccess: true, UserMappings: []instanceconnection.UserMapping{{Subject: "cp-member", UserID: "local-member"}}}); err != nil {
+	if _, err = manager.Configure(context.Background(), instanceconnection.Setup{ControlPlaneURL: cp.URL, EnrollmentToken: "once", RemoteAccess: true, UserMappings: []instanceconnection.UserMapping{{Subject: "cp-member", UserID: "local-member"}, {Subject: "cp-owner", UserID: "local-owner"}}}); err != nil {
 		t.Fatal(err)
 	}
 	manager.Start(context.Background(), handler)
@@ -85,6 +88,18 @@ func TestInstanceConnectionOwnerSetupAndRemoteAuthentication(t *testing.T) {
 	broker.Proxy(remoteOwner, httptest.NewRequest("GET", "/api/v1/access", nil), "instance:1", instancebridge.Identity{UserID: "cp-member", Role: "owner"})
 	if remoteOwner.Code != 403 {
 		t.Fatalf("CP role promoted local member %d", remoteOwner.Code)
+	}
+	for _, route := range []string{"/api/v1/users", "/api/v1/teams", "/api/v1/role-assignments", "/api/v1/auth/providers"} {
+		response := httptest.NewRecorder()
+		broker.Proxy(response, httptest.NewRequest("POST", route, strings.NewReader("{}")), "instance:1", instancebridge.Identity{UserID: "cp-member", Role: "owner"})
+		if response.Code != 403 {
+			t.Fatalf("cloud role promoted local member on %s: %d", route, response.Code)
+		}
+	}
+	created := httptest.NewRecorder()
+	broker.Proxy(created, httptest.NewRequest("POST", "/api/v1/users", strings.NewReader(`{"username":"remote-created","password":"remote-created-password","displayName":"Created by local owner"}`)), "instance:1", instancebridge.Identity{UserID: "cp-owner", Role: "member"})
+	if created.Code != 201 {
+		t.Fatalf("mapped local owner cannot create user: %d %s", created.Code, created.Body.String())
 	}
 	for _, target := range []string{"/api/v1/instance-connection", "/api/v1/auth/login", "/api/v1/automation-accounts"} {
 		response := httptest.NewRecorder()
