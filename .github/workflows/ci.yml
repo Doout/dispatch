@@ -47,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      DISPATCH_TEST_LOCAL_BUILDER: '1'
       DISPATCH_RUNTIME_INTEGRATION: '1'
       DISPATCH_ROUTING_DOCKER_INTEGRATION: '1'
       DISPATCH_PROVIDER_CONTAINER_INTEGRATION: '1'
@@ -58,8 +59,8 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -race -count=1 -timeout 8m -json ./internal/deploy ./internal/agentruntime ./internal/api \
-            -run '^(TestManagedDockerTraefikPromotionAndRestartIntegration|TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration|TestRemoteManagedRouteCandidateIntegration|TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration|TestTemporaryEnvironmentDockerRestartExpiryIntegration|TestPackagedMockProviderCLIAndMCPAcceptanceIntegration|TestWorkloadBackupSeparateDaemonsSourceLossIntegration)$' \
+          go test -race -count=1 -timeout 8m -json ./internal/deploy ./internal/agentruntime ./internal/api ./internal/workflow \
+            -run '^(TestManagedDockerTraefikPromotionAndRestartIntegration|TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration|TestRemoteManagedRouteCandidateIntegration|TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration|TestTemporaryEnvironmentDockerRestartExpiryIntegration|TestPackagedMockProviderCLIAndMCPAcceptanceIntegration|TestWorkloadBackupSeparateDaemonsSourceLossIntegration|TestLocalDockerBuilderIntegration)$' \
             | python3 scripts/check-test-results.py \
               --require-test TestManagedDockerTraefikPromotionAndRestartIntegration \
               --require-test TestWorkloadBackupPostgresIsolatedVerificationAndRestoreIntegration \
@@ -67,7 +68,8 @@ jobs:
               --require-test TestWorkloadBackupAgentRestartAndIsolatedVerificationIntegration \
               --require-test TestTemporaryEnvironmentDockerRestartExpiryIntegration \
               --require-test TestPackagedMockProviderCLIAndMCPAcceptanceIntegration \
-              --require-test TestWorkloadBackupSeparateDaemonsSourceLossIntegration
+              --require-test TestWorkloadBackupSeparateDaemonsSourceLossIntegration \
+              --require-test TestLocalDockerBuilderIntegration
   installation-portability:
     runs-on: ubuntu-latest
     timeout-minutes: 10

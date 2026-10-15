@@ -51,6 +51,7 @@ type EventConfig struct {
 	SecretResolver          *secretvalue.Resolver
 	Edge                    *edge.Broker
 	RepositoryCache         string
+	DockerSocket            string
 	Analytics               analytics.Reader
 }
 
@@ -162,6 +163,7 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	a.observations = observe.New(data, a.drift, deployments, eventConfig.Vault)
 	deployments.OnFinished = a.observations.DeploymentFinished
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
+	a.workflows.LocalDockerSocket = eventConfig.DockerSocket
 	a.workflows.PreparePreviewServices = a.prepareNeonPreviewServices
 	a.workflows.RemoteDockerServices = (deploy.RemoteExecutor{Local: deploy.DockerExecutor{}, Broker: a.runtimeBroker()}).Provision
 	a.workflows.ResolvePreviewSource = a.resolvePreviewSource

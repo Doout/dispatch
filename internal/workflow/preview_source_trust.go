@@ -310,9 +310,11 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 			return nil, nil, err
 		}
 		for _, server := range servers {
-			if server.Runtime == core.ServerRuntimeBuilder && server.State == "ready" && server.Builder != nil && server.Builder.MaxConcurrent > 0 {
+			if server.State == "ready" && server.DockerBuilderCapacity() > 0 {
 				scopes = append(scopes, previewServerScope("builder", server))
-				refs[server.Builder.SSHSecretID] = true
+				if !server.IsLocalDocker() {
+					refs[server.Builder.SSHSecretID] = true
+				}
 			}
 		}
 	}
