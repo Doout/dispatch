@@ -124,7 +124,7 @@ func TestEnrolledWorkflowWorkerStreamsAndCompletesEncryptedJob(t *testing.T) {
 		t.Fatalf("shared typed runtime poll: %v %v", job, err)
 	}
 	registered, err := a.store.GetPrivateNetwork(ctx, node.ID)
-	if err != nil || registered.Details["runtimeVersion"] != remoteruntime.APIVersion || registered.Details["workerVersion"] != workflowrunner.Version {
+	if err != nil || registered.Details["runtimeVersion"] != remoteruntime.APIVersion || registered.Details["workerVersion"] != workflowrunner.Version || registered.Details["workerLogs"] != workflowrunner.LogVersion {
 		t.Fatal("worker lost negotiated runtime capabilities", err)
 	}
 	// Durable local receipts contain encrypted output, not secret values.
