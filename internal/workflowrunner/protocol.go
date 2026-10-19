@@ -14,6 +14,7 @@ import (
 )
 
 const Version = "dispatch.workflow-worker/v1"
+const LogVersion = "dispatch.workflow-logs/v1"
 const MaxPayload = 4 << 20
 const MaxLog = 1 << 20
 const LeaseDuration = 45 * time.Second
@@ -29,6 +30,7 @@ type Source struct {
 }
 
 type Workflow struct {
+	LogID            string            `json:"logId,omitempty"`
 	ServiceRunID     string            `json:"serviceRunId,omitempty"`
 	TemplateDigest   string            `json:"templateDigest,omitempty"`
 	ParentRevisionID string            `json:"parentRevisionId,omitempty"`
@@ -100,6 +102,9 @@ type Request struct {
 }
 
 type Result struct {
+	LogSize           *int64                          `json:"logSize,omitempty"`
+	LogIncomplete     bool                            `json:"logIncomplete,omitempty"`
+	LogCaptured       bool                            `json:"logCaptured,omitempty"`
 	Storage           []core.StorageObservation       `json:"storage"`
 	ServiceInspection *core.ServiceResourceInspection `json:"serviceInspection,omitempty"`
 	TargetEvidence    *core.KubernetesTargetEvidence  `json:"targetEvidence,omitempty"`
@@ -114,6 +119,8 @@ type Result struct {
 }
 
 type Progress struct {
+	LogChunk   string `json:"logChunk,omitempty"`
+	LogOffset  int64  `json:"logOffset,omitempty"`
 	LeaseToken string `json:"leaseToken"`
 	Log        string `json:"log,omitempty"`
 	Phase      string `json:"phase,omitempty"`
@@ -193,6 +200,9 @@ func (r Request) Validate() error {
 		if len(r.Workflow.Job) == 0 || !json.Valid(r.Workflow.Job) || len(r.Workflow.Sources) > 32 {
 			return errors.New("invalid workflow job")
 		}
+		if r.Workflow.LogID != "" && !identifier.MatchString(r.Workflow.LogID) {
+			return errors.New("invalid workflow log identity")
+		}
 		if r.Mode == "managed" && len(r.Workflow.Sources) != 0 {
 			return errors.New("managed jobs cannot access repositories; select a tenant worker")
 		}
@@ -238,7 +248,7 @@ func (p ServiceProvision) Action() string {
 	return p.Operation
 }
 
-func (r Request) Redact(text string) string {
+func (r Request) LogSecrets() []string {
 	secrets := []string{}
 	if p := r.StorageOperation; p != nil {
 		secrets = append(secrets, p.Kubeconfig)
@@ -269,6 +279,11 @@ func (r Request) Redact(text string) string {
 			secrets = append(secrets, value)
 		}
 	}
+	return secrets
+}
+
+func (r Request) Redact(text string) string {
+	secrets := r.LogSecrets()
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	for _, secret := range secrets {
 		if secret != "" {

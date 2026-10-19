@@ -39,10 +39,11 @@ type cachedToken struct {
 }
 
 type Manager struct {
-	Store  Store
-	Vault  *secretcrypto.Vault
-	Client *http.Client
-	Edge   *edge.Broker
+	logOIDC logOIDCVerifier
+	Store   Store
+	Vault   *secretcrypto.Vault
+	Client  *http.Client
+	Edge    *edge.Broker
 
 	mu           sync.Mutex
 	tokens       map[string]cachedToken
@@ -129,6 +130,9 @@ func RequiredRepositoryPermissions() map[string]string {
 		permissions[name] = level
 	}
 	permissions["metadata"] = "read"
+	// Check reporting works without Actions. Log collection additionally needs
+	// this grant; existing Apps can approve it when they enable GitHub logs.
+	permissions["actions"] = "write"
 	return permissions
 }
 

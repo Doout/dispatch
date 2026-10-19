@@ -1,0 +1,129 @@
+name: Doodship logs
+run-name: Doodship ${{ inputs.report_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      report_id:
+        description: Doodship check ID
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+
+jobs:
+  logs:
+    # For GitHub Enterprise Server, use a self-hosted runner with Python 3.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Build and deployment logs
+        env:
+          # Set this repository variable to the installation's HTTPS address.
+          DOODSHIP_URL: ${{ vars.DOODSHIP_URL }}
+          REPORT_ID: ${{ inputs.report_id }}
+        shell: bash
+        run: |
+          python3 -u - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          import uuid
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          http = urllib.request.build_opener(NoRedirect)
+          origin = os.environ.get("DOODSHIP_URL", "").rstrip("/")
+          parsed = urllib.parse.urlsplit(origin)
+          report = os.environ["REPORT_ID"]
+          if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+                  or parsed.password or parsed.query or parsed.fragment
+                  or parsed.path not in ("", "/")
+                  or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", report)):
+              sys.exit("Set DOODSHIP_URL to the installation's HTTPS address.")
+          endpoint = origin + "/api/v1/github-checks/" + report + "/logs"
+          audience = "doodship:check:" + report
+          token = None
+          token_until = 0
+
+          def get_json(url, bearer):
+              request = urllib.request.Request(url, headers={
+                  "Authorization": "Bearer " + bearer,
+                  "Accept": "application/json",
+              })
+              with http.open(request, timeout=30) as response:
+                  return json.load(response)
+
+          def read(query=""):
+              global token, token_until
+              for attempt in range(12):
+                  try:
+                      if time.monotonic() >= token_until:
+                          oidc_url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+                          oidc_url += ("&" if "?" in oidc_url else "?")
+                          oidc_url += urllib.parse.urlencode({"audience": audience})
+                          token = get_json(oidc_url, os.environ[
+                              "ACTIONS_ID_TOKEN_REQUEST_TOKEN"])["value"]
+                          token_until = time.monotonic() + 180
+                      return get_json(endpoint + query, token)
+                  except urllib.error.HTTPError as error:
+                      if error.code == 401:
+                          token_until = 0
+                      elif error.code not in (425, 429, 500, 502, 503, 504):
+                          sys.exit("Log delivery was rejected. HTTP " + str(error.code))
+                  except (OSError, ValueError, KeyError):
+                      pass
+                  time.sleep(min(2 ** attempt, 15))
+              sys.exit("Log delivery is unavailable. Rerun this job after restoring the connection.")
+
+          # Build output must never execute GitHub workflow commands.
+          boundary = uuid.uuid4().hex
+          print("::stop-commands::" + boundary, flush=True)
+          offsets = {}
+          last_stream = None
+          incomplete = False
+          deadline = time.monotonic() + 55 * 60
+          try:
+              while time.monotonic() < deadline:
+                  index = read()
+                  drained = True
+                  for stream in index["streams"]:
+                      stream_id = stream["id"]
+                      for _ in range(100):
+                          offset = offsets.get(stream_id, 0)
+                          page = read("?" + urllib.parse.urlencode({
+                              "stream": stream_id, "offset": offset,
+                          }))
+                          incomplete |= page["incomplete"]
+                          if page["text"]:
+                              if last_stream != stream_id:
+                                  print("\n=== " + stream["name"] + " ===", flush=True)
+                                  last_stream = stream_id
+                              print(page["text"], end="", flush=True)
+                          if page["next"] < offset:
+                              sys.exit("The log cursor moved backwards.")
+                          offsets[stream_id] = page["next"]
+                          if page["complete"]:
+                              break
+                          if page["next"] == offset:
+                              drained = False
+                              break
+                      else:
+                          drained = False
+                  if index["complete"] and drained:
+                      if incomplete:
+                          sys.exit("Log delivery is incomplete. Check archive capacity and worker support.")
+                      sys.exit(0 if index["state"] == "succeeded" else 1)
+                  time.sleep(3)
+              sys.exit("The workflow is still running. Rerun this log job to continue.")
+          finally:
+              print("\n::" + boundary + "::", flush=True)
+          PY

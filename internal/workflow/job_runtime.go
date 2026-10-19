@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/runlog"
 	"github.com/doout/dispatch/internal/serviceconn"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
@@ -82,6 +83,8 @@ type jobRuntime struct {
 	inputs          map[string]string
 	worktrees       []*cachedWorktree
 	workerSources   map[string]workerSource
+	logArchive      *runlog.Writer
+	fullLogID       string
 }
 
 func (r *jobRuntime) checkExecutionTrust(ctx context.Context) error {
@@ -164,10 +167,31 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 		}
 	}
 	started := time.Now().UTC()
+	r.fullLogID = ""
 	result := core.WorkflowJobResult{ID: ulid.Make().String(), ResourceID: resource.ID, RevisionID: r.revision.ID, JobName: name,
 		Fingerprint: fingerprint, State: "running", Sources: jobSources, Outputs: map[string]string{}, CreatedAt: started, StartedAt: &started}
 	if err := r.service.Store.CreateWorkflowJobResult(ctx, result); err != nil {
 		return nil, err
+	}
+	if r.service.LogDirectory != "" {
+		reports, reportErr := r.service.Store.ListWorkflowChecks(ctx, r.revision.ID)
+		if reportErr == nil {
+			for _, report := range reports {
+				if report.Logs == nil {
+					continue
+				}
+				r.fullLogID = result.ID
+				if r.service.RemoteJobs != nil {
+					break
+				}
+				values := make([]string, 0, len(secrets))
+				for _, value := range secrets {
+					values = append(values, value)
+				}
+				r.logArchive, _ = runlog.Open(r.service.LogDirectory, result.ID, values...)
+				break
+			}
+		}
 	}
 	outputs, logText, err := r.runJobCommand(ctx, job, secrets, func(logText string) {
 		result.Log = logText
@@ -175,6 +199,13 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 			r.service.Logger.Warn("Persist build logs", "job", result.ID, "error", err)
 		}
 	})
+	if r.logArchive != nil {
+		if err != nil {
+			_, _ = r.logArchive.Write([]byte("\n" + err.Error() + "\n"))
+		}
+		_ = r.logArchive.Close()
+		r.logArchive = nil
+	}
 	finished := time.Now().UTC()
 	result.Log, result.FinishedAt = logText, &finished
 	if err != nil {
@@ -199,7 +230,11 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 	prelude := ""
 	aliases := jobSourceAliases(job)
 	for _, alias := range aliases {
-		prelude += "Preparing source " + alias + "...\n"
+		line := "Preparing source " + alias + "...\n"
+		prelude += line
+		if r.logArchive != nil {
+			_, _ = r.logArchive.Write([]byte(line))
+		}
 		progress(prelude)
 		if _, err := r.checkout(ctx, alias); err != nil {
 			return nil, prelude, err
@@ -235,6 +270,9 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 	}
 	if job.Builder == "docker" {
 		prelude += "Waiting for an available Docker builder...\n"
+		if r.logArchive != nil {
+			_, _ = r.logArchive.Write([]byte("Waiting for an available Docker builder...\n"))
+		}
 		progress(prelude)
 		builder, release, err := r.service.acquireDockerBuilder(ctx, r.builderCacheKey(job))
 		if err != nil {
@@ -251,6 +289,9 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 		defer cleanup()
 		environment = append(environment, builderEnv...)
 		prelude += "Using Docker builder " + builder.Name + "\n"
+		if r.logArchive != nil {
+			_, _ = r.logArchive.Write([]byte("Using Docker builder " + builder.Name + "\n"))
+		}
 	}
 	if err := r.checkExecutionTrust(ctx); err != nil {
 		return nil, prelude, err
@@ -270,7 +311,12 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmd.WaitDelay = 2 * time.Second
-	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, environment, &logs, &logs
+	var sink io.Writer = &logs
+	if r.logArchive != nil {
+		_, _ = r.logArchive.Write([]byte("Running command...\n"))
+		sink = io.MultiWriter(&logs, r.logArchive)
+	}
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = cwd, environment, sink, sink
 	done := make(chan struct{})
 	flushed := make(chan struct{})
 	go func() {
@@ -283,6 +329,9 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 			case <-done:
 				return
 			case <-ticker.C:
+				if r.logArchive != nil {
+					r.logArchive.Flush()
+				}
 				current := redactJobLog(logs.String(), secrets)
 				if current != previous {
 					progress(current)

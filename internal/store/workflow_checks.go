@@ -13,6 +13,8 @@ import (
 
 type WorkflowCheckStore interface {
 	ListWorkflowChecks(context.Context, string) ([]core.WorkflowCheckReport, error)
+	GetWorkflowCheck(context.Context, string) (core.WorkflowCheckReport, error)
+	SaveWorkflowCheckProgress(context.Context, core.WorkflowCheckReport, time.Time) error
 	ClaimWorkflowCheck(context.Context, time.Time, time.Duration) (core.WorkflowCheckReport, error)
 	BeginWorkflowCheckCreate(context.Context, core.WorkflowCheckReport, time.Time) error
 	FinishWorkflowCheck(context.Context, core.WorkflowCheckReport, time.Time) error
@@ -34,6 +36,16 @@ func (s *SQLStore) createWorkflowChecks(ctx context.Context, tx eventActivityWri
 }
 
 const workflowCheckSelect = `SELECT id,revision_id,resource_id,external_id,payload,app_id,api_url,create_state,digest,complete,next_attempt_at,lease_token,lease_until FROM workflow_check_reports`
+
+func (s *SQLStore) GetWorkflowCheck(ctx context.Context, id string) (core.WorkflowCheckReport, error) {
+	return scanWorkflowCheck(s.db.QueryRowContext(ctx, s.q(workflowCheckSelect+` WHERE id=?`), id))
+}
+
+// Keep the lease while recording an intent before an external side effect.
+func (s *SQLStore) SaveWorkflowCheckProgress(ctx context.Context, r core.WorkflowCheckReport, now time.Time) error {
+	result, err := s.db.ExecContext(ctx, s.q(`UPDATE workflow_check_reports SET payload=? WHERE id=? AND lease_token=? AND lease_until>? AND complete=FALSE`), jsonText(r), r.ID, r.LeaseToken, stamp(now))
+	return changed(result, err)
+}
 
 func scanWorkflowCheck(row scanner) (core.WorkflowCheckReport, error) {
 	var r core.WorkflowCheckReport

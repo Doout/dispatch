@@ -13,6 +13,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/runlog"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workflowrunner"
 )
@@ -77,6 +78,7 @@ func (r *jobRuntime) runRemoteJob(ctx context.Context, job JobSpec, secrets map[
 		mode = "tenant"
 	}
 	request := workflowrunner.Request{Version: workflowrunner.Version, ProjectID: r.source.ProjectID, ResourceID: r.revision.ResourceID, RevisionID: r.revision.ID, Mode: mode, Workflow: &workflowrunner.Workflow{Job: raw, Sources: sources, Inputs: r.inputs, Secrets: secrets}}
+	request.Workflow.LogID = r.fullLogID
 	if r.serviceTemplate != nil {
 		request.Workflow.ServiceRunID = r.serviceRunID
 		digest := sha256.Sum256([]byte(r.serviceTemplate.Document))
@@ -166,6 +168,9 @@ func ExecuteWorkerJob(ctx context.Context, request workflowrunner.Request, works
 		revision.Sources[alias] = source.Revision
 	}
 	runtime := jobRuntime{root: workspace, revision: revision, paths: map[string]string{}, inputs: request.Workflow.Inputs, workerSources: request.Workflow.Sources}
+	if request.Workflow.LogID != "" {
+		runtime.logArchive = runlog.Stream(func(text string) error { return workflowrunner.PublishLogChunk(ctx, text) }, request.LogSecrets()...)
+	}
 	defer runtime.close()
 	output, logs, err := runtime.runJobCommand(ctx, job, request.Workflow.Secrets, func(log string) {
 		if progress != nil {
@@ -173,6 +178,13 @@ func ExecuteWorkerJob(ctx context.Context, request workflowrunner.Request, works
 		}
 	})
 	result := workflowrunner.Result{State: "succeeded", Log: request.Redact(logs), Outputs: output}
+	if runtime.logArchive != nil {
+		if err != nil {
+			_, _ = runtime.logArchive.Write([]byte("\n" + err.Error() + "\n"))
+		}
+		result.LogIncomplete = runtime.logArchive.Close() != nil
+		result.LogCaptured = !result.LogIncomplete
+	}
 	if err != nil {
 		failed := failure(err)
 		result.State, result.Error = failed.State, failed.Error

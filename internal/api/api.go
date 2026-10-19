@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -164,6 +165,9 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	deployments.OnFinished = a.observations.DeploymentFinished
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
 	a.workflows.LocalDockerSocket = eventConfig.DockerSocket
+	if eventConfig.MasterKeyFile != "" {
+		a.workflows.LogDirectory = filepath.Join(filepath.Dir(eventConfig.MasterKeyFile), "github-logs")
+	}
 	a.workflows.PreparePreviewServices = a.prepareNeonPreviewServices
 	a.workflows.RemoteDockerServices = (deploy.RemoteExecutor{Local: deploy.DockerExecutor{}, Broker: a.runtimeBroker()}).Provision
 	a.workflows.ResolvePreviewSource = a.resolvePreviewSource

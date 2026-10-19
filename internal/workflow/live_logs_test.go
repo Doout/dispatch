@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/runlog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,43 @@ func TestJobLogsAvailableBeforeExit(t *testing.T) {
 	}
 	if !seen || !strings.Contains(log, "done") || !strings.Contains(log, "[redacted]") {
 		t.Fatalf("missing live/final log: %q", log)
+	}
+}
+
+func TestFullJobArchiveContinuesAfterTheLocalViewerLimit(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "logs")
+	archive, err := runlog.Open(directory, "job", "private-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &jobRuntime{root: root, paths: map[string]string{"service": root}, revision: core.WorkflowRevision{Sources: map[string]core.WorkflowSourceRevision{"service": {Alias: "service"}}}, logArchive: archive}
+	job := JobSpec{RunFrom: "service", Run: `i=0; while [ "$i" -lt 25000 ]; do printf 'building image layer with more than forty characters for testing\n'; i=$((i+1)); done; printf '%s\n' "$TOKEN"`}
+	_, preview, err := runtime.runJobCommand(context.Background(), job, map[string]string{"TOKEN": "private-value"}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(preview, "[log truncated]") {
+		t.Fatal("test did not exceed the local viewer limit")
+	}
+	var full strings.Builder
+	var offset int64
+	for {
+		text, next, incomplete, err := runlog.Read(directory, "job", offset)
+		if err != nil || incomplete {
+			t.Fatalf("full log failed: %v", err)
+		}
+		full.WriteString(text)
+		if next == offset {
+			break
+		}
+		offset = next
+	}
+	if strings.Count(full.String(), "building image layer") != 25000 || strings.Contains(full.String(), "private-value") || !strings.Contains(full.String(), "[redacted]") {
+		t.Fatal("full command output missing or unsafe")
 	}
 }
 

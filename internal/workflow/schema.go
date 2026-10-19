@@ -461,6 +461,18 @@ func validateApplication(document ApplicationDocument) error {
 	}
 	if document.Spec.Reporting != nil {
 		policy := document.Spec.Reporting
+		if logs := policy.GitHubLogs; logs != nil {
+			if !regexp.MustCompile(`^[A-Za-z0-9_-]+\.ya?ml$`).MatchString(logs.Workflow) || logs.Ref == "" || len(logs.Ref) > 200 || strings.ContainsAny(logs.Ref, " \t\r\n~^:?*[\\") || strings.Contains(logs.Ref, "..") || strings.HasPrefix(logs.Ref, "/") || strings.HasSuffix(logs.Ref, "/") {
+				return errors.New("spec.reporting.githubLogs requires a workflow filename and a branch name in ref")
+			}
+			seen := map[string]bool{}
+			for _, alias := range logs.Sources {
+				if _, ok := document.Spec.Sources[alias]; !ok || seen[alias] {
+					return errors.New("spec.reporting.githubLogs.sources must contain distinct source aliases from spec.sources")
+				}
+				seen[alias] = true
+			}
+		}
 		if policy.StatusContext != "" && (len(policy.StatusContext) > 100 || strings.ContainsAny(policy.StatusContext, "\r\n") || strings.TrimSpace(policy.StatusContext) != policy.StatusContext || strings.EqualFold(policy.StatusContext, "Dispatch/deployment")) {
 			return errors.New("spec.reporting.statusContext must be 1-100 characters and separate from Dispatch/deployment")
 		}

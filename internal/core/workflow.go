@@ -151,9 +151,18 @@ type WorkflowPullRequest struct {
 const WorkflowInterruptedMessage = "Controller restarted while this work was in progress. Inspect the existing deployment and external side effects, then explicitly retry the workflow. No work was replayed."
 
 type WorkflowReporting struct {
-	StatusContext   string `json:"statusContext,omitempty" yaml:"statusContext,omitempty"`
-	ReviewOnSuccess string `json:"reviewOnSuccess,omitempty" yaml:"reviewOnSuccess,omitempty"`
-	ReviewOnFailure string `json:"reviewOnFailure,omitempty" yaml:"reviewOnFailure,omitempty"`
+	GitHubLogs      *GitHubLogWorkflow `json:"githubLogs,omitempty" yaml:"githubLogs,omitempty"`
+	StatusContext   string             `json:"statusContext,omitempty" yaml:"statusContext,omitempty"`
+	ReviewOnSuccess string             `json:"reviewOnSuccess,omitempty" yaml:"reviewOnSuccess,omitempty"`
+	ReviewOnFailure string             `json:"reviewOnFailure,omitempty" yaml:"reviewOnFailure,omitempty"`
+}
+
+// GitHubLogWorkflow runs a log collector in the source repository. It never
+// executes the application's build or deployment commands.
+type GitHubLogWorkflow struct {
+	Workflow string   `json:"workflow" yaml:"workflow"`
+	Ref      string   `json:"ref" yaml:"ref"`
+	Sources  []string `json:"sources,omitempty" yaml:"sources,omitempty"`
 }
 
 type WorkflowFeedbackTarget struct {

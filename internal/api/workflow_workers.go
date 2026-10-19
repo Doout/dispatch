@@ -20,6 +20,7 @@ func (a *API) ConfigureWorkflowRunner(b *workflowrunner.Broker) {
 	a.workflows.RemoteJobs = b
 	a.workflows.RequireRemote = true
 	if b != nil {
+		b.LogDirectory = a.workflows.LogDirectory
 		previous := b.Authorize
 		b.Authorize = func(ctx context.Context, request workflowrunner.Request) error {
 			if request.Workflow != nil {
@@ -58,7 +59,10 @@ func (a *API) MountWorkflowRunnerRoutes(r chi.Router, b *workflowrunner.Broker) 
 			problem(w, 422, "Worker configuration mismatch", "The worker must advertise its assigned protocol and execution mode.")
 			return "", 0, "", false
 		}
-		details := map[string]string{"workerDocker": "false", "workerVersion": workflowrunner.Version, "workerCheckedAt": time.Now().UTC().Format(time.RFC3339Nano)}
+		details := map[string]string{"workerDocker": "false", "workerVersion": workflowrunner.Version, "workerLogs": "", "workerCheckedAt": time.Now().UTC().Format(time.RFC3339Nano)}
+		if r.Header.Get("X-Dispatch-Worker-Logs") == workflowrunner.LogVersion {
+			details["workerLogs"] = workflowrunner.LogVersion
+		}
 		if mode == "tenant" && r.Header.Get("X-Dispatch-Worker-Docker") == "true" {
 			details["workerDocker"] = "true"
 		}
@@ -114,7 +118,7 @@ func (a *API) MountWorkflowRunnerRoutes(r chi.Router, b *workflowrunner.Broker) 
 			problem(w, 409, "Worker lease changed", "Stop this operation before accepting another job.")
 			return
 		}
-		writeJSON(w, 200, map[string]bool{"cancelRequested": cancel})
+		writeJSON(w, 200, map[string]any{"cancelRequested": cancel, "logOffset": b.LogOffset(r.Context(), node, chi.URLParam(r, "jobId"))})
 	})
 	r.Post("/edge/nodes/{id}/workflow/jobs/{jobId}/complete", func(w http.ResponseWriter, r *http.Request) {
 		node, _, _, ok := authenticate(w, r)

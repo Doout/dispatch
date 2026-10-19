@@ -12,14 +12,16 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/runlog"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
 
 type Broker struct {
-	Store     store.WorkflowWorkerStore
-	Vault     *secretcrypto.Vault
-	Authorize func(context.Context, Request) error
+	LogDirectory string
+	Store        store.WorkflowWorkerStore
+	Vault        *secretcrypto.Vault
+	Authorize    func(context.Context, Request) error
 }
 
 func (b *Broker) authorize(ctx context.Context, r Request) error {
@@ -35,6 +37,9 @@ func NodeMode(node core.PrivateNetwork) string { return node.Config["workflowMod
 func nodeAllows(node core.PrivateNetwork, r Request) bool {
 	needsDocker := false
 	if r.Workflow != nil {
+		if r.Workflow.LogID != "" && node.Details["workerLogs"] != LogVersion {
+			return false
+		}
 		var job struct {
 			Builder string `json:"builder"`
 		}
@@ -119,6 +124,14 @@ func (b *Broker) Run(ctx context.Context, r Request, progress func(string)) (Res
 		}
 	}
 	if len(available) == 0 {
+		if r.Workflow != nil && r.Workflow.LogID != "" {
+			// Keep older enrolled workers usable. Their execution still runs;
+			// the GitHub collector reports that full log delivery is unavailable.
+			copy := *r.Workflow
+			copy.LogID = ""
+			r.Workflow = &copy
+			return b.Run(ctx, r, progress)
+		}
 		return Result{}, errors.New("no enrolled workflow worker is available for this project and execution mode")
 	}
 	selection := sha256.Sum256([]byte(id))
@@ -262,7 +275,12 @@ func (b *Broker) Renew(ctx context.Context, node, id string, p Progress) (bool, 
 	if err != nil {
 		return false, err
 	}
-	return b.Store.RenewWorkflowWorkerJob(ctx, node, id, p.LeaseToken, log, time.Now().UTC())
+	cancel, err := b.Store.RenewWorkflowWorkerJob(ctx, node, id, p.LeaseToken, log, time.Now().UTC())
+	if err == nil && !cancel && r.Workflow != nil && r.Workflow.LogID != "" && p.LogChunk != "" {
+		// Log delivery must never cancel execution when the archive is full.
+		_ = runlog.Receive(b.LogDirectory, r.Workflow.LogID, p.LogOffset, p.LogChunk, r.LogSecrets()...)
+	}
+	return cancel, err
 }
 func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) error {
 	j, err := b.Store.GetWorkflowWorkerJob(ctx, id)
@@ -286,5 +304,24 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	if err != nil {
 		return err
 	}
-	return b.Store.CompleteWorkflowWorkerJob(ctx, node, id, c.LeaseToken, c.Result.State, result, time.Now().UTC())
+	if err := b.Store.CompleteWorkflowWorkerJob(ctx, node, id, c.LeaseToken, c.Result.State, result, time.Now().UTC()); err != nil {
+		return err
+	}
+	if r.Workflow != nil && r.Workflow.LogID != "" && c.Result.LogSize != nil && !c.Result.LogIncomplete {
+		_ = runlog.Finish(b.LogDirectory, r.Workflow.LogID, *c.Result.LogSize)
+	}
+	return nil
+}
+
+func (b *Broker) LogOffset(ctx context.Context, node, id string) *int64 {
+	j, err := b.Store.GetWorkflowWorkerJob(ctx, id)
+	if err != nil || j.NodeID != node {
+		return nil
+	}
+	r, err := b.request(ctx, j)
+	if err != nil || r.Workflow == nil || r.Workflow.LogID == "" {
+		return nil
+	}
+	value := runlog.Position(b.LogDirectory, r.Workflow.LogID)
+	return &value
 }

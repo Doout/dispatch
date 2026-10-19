@@ -434,6 +434,7 @@ func TestProtocolVersionIsRequired(t *testing.T) {
 
 func TestNetworkRoutesAreNarrowAndPreserveOnlyNodeCredentials(t *testing.T) {
 	allowed := []struct{ method, path string }{
+		{"GET", "/api/v1/github-checks/report-1/logs"},
 		{"POST", "/api/v1/edge/nodes/node-1/enroll"},
 		{"POST", "/api/v1/edge/nodes/node-1/challenge"},
 		{"POST", "/api/v1/edge/nodes/node-1/session"},
@@ -451,7 +452,7 @@ func TestNetworkRoutesAreNarrowAndPreserveOnlyNodeCredentials(t *testing.T) {
 			t.Fatalf("incorrect method accepted: %s", tc.path)
 		}
 	}
-	for _, path := range []string{"/api/v1/edge/nodes", "/api/v1/account/login", "/api/v1/edge/nodes/node-1/workflow/jobs/next", "/api/v1/edge/nodes/node-1/jobs/job-1/cancel", "/api/v1/edge/nodes/node-1/runtime/jobs/job-1/complete/extra", "/api/v1/edge/nodes/%6eode-1/session", "/api/v1/edge/nodes/../session", "/api/v1/edge/nodes//session"} {
+	for _, path := range []string{"/api/v1/github-checks/report/logs/extra", "/api/v1/github-checks/%72eport/logs", "/api/v1/github-checks/../logs", "/api/v1/edge/nodes", "/api/v1/account/login", "/api/v1/edge/nodes/node-1/workflow/jobs/next", "/api/v1/edge/nodes/node-1/jobs/job-1/cancel", "/api/v1/edge/nodes/node-1/runtime/jobs/job-1/complete/extra", "/api/v1/edge/nodes/%6eode-1/session", "/api/v1/edge/nodes/../session", "/api/v1/edge/nodes//session"} {
 		if NetworkRequestAllowed(httptest.NewRequest("POST", path, nil)) {
 			t.Fatal("network route escaped allowlist: " + path)
 		}

@@ -5,13 +5,18 @@ import (
 	"strings"
 )
 
-// NetworkRequestAllowed identifies only routes which authenticate a node's own
-// enrollment or session credential. It grants no access to human login routes.
+// NetworkRequestAllowed identifies routes which authenticate a node credential
+// or GitHub workflow identity. It grants no access to human login routes.
 func NetworkRequestAllowed(r *http.Request) bool {
 	if r == nil || r.URL == nil || r.URL.EscapedPath() != r.URL.Path {
 		return false
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	// Log collectors authenticate with GitHub OIDC at the installation. They
+	// use the existing outbound connection even when browser access is off.
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "github-checks" && routeID(parts[3]) && parts[4] == "logs" {
+		return r.Method == http.MethodGet
+	}
 	if len(parts) < 6 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "edge" || parts[3] != "nodes" || !routeID(parts[4]) {
 		return false
 	}

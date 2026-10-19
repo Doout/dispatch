@@ -17,12 +17,13 @@ import (
 )
 
 type Client struct {
-	HTTP       *http.Client
-	Identity   edgeclient.Identity
-	Enrollment string
-	Mode       string
-	Docker     bool
-	session    edgeclient.Session
+	HTTP         *http.Client
+	Identity     edgeclient.Identity
+	Enrollment   string
+	Mode         string
+	Docker       bool
+	session      edgeclient.Session
+	lastLogPrune time.Time
 }
 
 func (c *Client) Token(ctx context.Context) (string, error) {
@@ -59,6 +60,7 @@ func (c *Client) request(ctx context.Context, method, path string, input, output
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Dispatch-Worker-Version", Version)
+	request.Header.Set("X-Dispatch-Worker-Logs", LogVersion)
 	request.Header.Set("X-Dispatch-Worker-Mode", c.Mode)
 	if c.Docker {
 		request.Header.Set("X-Dispatch-Worker-Docker", "true")
@@ -83,6 +85,10 @@ func (c *Client) request(ctx context.Context, method, path string, input, output
 	return true, nil
 }
 func (c *Client) Poll(ctx context.Context, w *Worker) (bool, error) {
+	if time.Since(c.lastLogPrune) > time.Hour {
+		w.pruneLogs()
+		c.lastLogPrune = time.Now()
+	}
 	var job LeasedJob
 	found, err := c.request(ctx, http.MethodGet, "next", nil, &job)
 	if err != nil || !found {
@@ -100,12 +106,52 @@ func (c *Client) Poll(ctx context.Context, w *Worker) (bool, error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var leaseErr error
+	var logOffset int64
+	heartbeat := func(current string) (bool, error) {
+		text, next := w.logPage(job.ID, logOffset)
+		var reply struct {
+			CancelRequested bool   `json:"cancelRequested"`
+			LogOffset       *int64 `json:"logOffset"`
+		}
+		_, err := c.request(ctx, http.MethodPost, url.PathEscape(job.ID)+"/heartbeat", Progress{LeaseToken: job.LeaseToken, Log: current, LogChunk: text, LogOffset: logOffset}, &reply)
+		if err == nil && (reply.LogOffset == nil || *reply.LogOffset >= next) {
+			logOffset = next
+		}
+		return reply.CancelRequested, err
+	}
 	stopped := ctx.Done()
 	for {
 		select {
 		case outcome := <-result:
 			if leaseErr != nil {
 				return true, leaseErr
+			}
+			if outcome.LogSize != nil {
+				stalled := 0
+				for logOffset < *outcome.LogSize {
+					previous := logOffset
+					stop, uploadErr := heartbeat(outcome.Log)
+					if uploadErr != nil {
+						return true, uploadErr
+					}
+					if logOffset == previous {
+						stalled++
+					} else {
+						stalled = 0
+					}
+					if stop || stalled >= 3 {
+						outcome.LogIncomplete = true
+						break
+					}
+					if stalled > 0 {
+						select {
+						case <-ctx.Done():
+							outcome.LogIncomplete = true
+							stalled = 3
+						case <-time.After(time.Second):
+						}
+					}
+				}
 			}
 			var accepted struct {
 				Accepted bool `json:"accepted"`
@@ -119,14 +165,12 @@ func (c *Client) Poll(ctx context.Context, w *Worker) (bool, error) {
 			mu.Lock()
 			current := log
 			mu.Unlock()
-			var reply struct {
-				CancelRequested bool `json:"cancelRequested"`
-			}
-			_, err = c.request(ctx, http.MethodPost, url.PathEscape(job.ID)+"/heartbeat", Progress{LeaseToken: job.LeaseToken, Log: current}, &reply)
+			stop, heartbeatErr := heartbeat(current)
+			err = heartbeatErr
 			if err != nil {
 				leaseErr = err
 				cancel()
-			} else if reply.CancelRequested {
+			} else if stop {
 				cancel()
 			}
 		case <-stopped:

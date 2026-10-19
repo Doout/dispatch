@@ -44,7 +44,7 @@ spec:
 		"ui":           {Repository: "example/ui", CommitSHA: strings.Repeat("b", 40)},
 	}, PullRequests: []core.WorkflowPullRequest{{GitHubAppID: linked.ID, Repository: "example/ui", CommitSHA: strings.Repeat("b", 40), Number: 2}}}
 	reports, err := service.workflowCheckReports(ctx, resource, source, revision, false)
-	if err != nil || len(reports) != 4 {
+	if err != nil || len(reports) != 6 {
 		t.Fatalf("deduped plans: %+v %v", reports, err)
 	}
 	for _, r := range reports {
@@ -74,7 +74,7 @@ spec:
 		t.Fatal(err)
 	}
 	saved, err := data.ListWorkflowChecks(ctx, revision.ID)
-	if err != nil || len(saved) != 4 {
+	if err != nil || len(saved) != 6 {
 		t.Fatalf("plans not atomic %+v %v", saved, err)
 	}
 	first, err := data.ClaimWorkflowCheck(ctx, now, time.Minute)
@@ -121,5 +121,59 @@ spec:
 	next, err := service.workflowCheckReports(ctx, resource, source, revision, false)
 	if err != nil || next[0].ExternalID == reports[0].ExternalID {
 		t.Fatalf("new run reused identity: %+v %v", next, err)
+	}
+}
+
+func TestWorkflowBuildChecksFollowAllConsumedSourcesAndSelectedLogRepositories(t *testing.T) {
+	data, source, resource := workflowRunnerFixture(t, "build-checks")
+	resource.Document = `apiVersion: dispatch/v1alpha1
+kind: Application
+metadata: {name: example}
+spec:
+  reporting:
+    githubLogs: {workflow: doodship-logs.yml, ref: main, sources: [service, ui]}
+  sources:
+    service: {repository: example/service}
+    ui: {repository: example/ui}
+    config: {repository: example/config}
+  jobs:
+    build-service: {runFrom: service, run: ./build.sh}
+    build-ui: {runFrom: config, sources: [ui], run: ./build-ui.sh}
+  finally:
+    cleanup: {runFrom: service, run: ./cleanup.sh}
+  deployments:
+    app:
+      helm: {sourceRef: config}
+  stages:
+    - {name: development, targetRef: server, deploy: [app]}
+`
+	revision := core.WorkflowRevision{ID: "revision", ResourceID: resource.ID, CreatedAt: time.Now().UTC(), Sources: map[string]core.WorkflowSourceRevision{}}
+	for _, alias := range []string{"service", "ui", "config"} {
+		revision.Sources[alias] = core.WorkflowSourceRevision{Repository: "example/" + alias, CommitSHA: strings.Repeat("a", 40)}
+	}
+	items, err := (&Service{Store: data}).workflowCheckReports(context.Background(), resource, source, revision, false)
+	if err != nil || len(items) != 10 {
+		t.Fatalf("check scopes: %d %v", len(items), err)
+	}
+	builds := map[string]bool{}
+	for _, item := range items {
+		if item.Kind == "build" {
+			builds[item.Repository+":"+item.Job] = true
+		}
+		if item.Kind == "deployment" && (item.Logs != nil) != (item.Repository != "example/config") {
+			t.Fatalf("wrong log repository: %+v", item)
+		}
+	}
+	for _, key := range []string{"example/service:build-service", "example/ui:build-ui", "example/config:build-ui", "example/service:finally/cleanup"} {
+		if !builds[key] {
+			t.Fatal("missing build check " + key)
+		}
+	}
+	if len(builds) != 4 {
+		t.Fatal("unrelated repositories received build checks")
+	}
+	bad := strings.Replace(resource.Document, "sources: [service, ui]", "sources: [unknown]", 1)
+	if _, err := Parse(resource.Path, []byte(bad)); err == nil {
+		t.Fatal("accepted unknown log source")
 	}
 }
