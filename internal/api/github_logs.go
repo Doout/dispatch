@@ -22,18 +22,20 @@ func (a *API) reconcileGitHubLogs(ctx context.Context, r *core.WorkflowCheckRepo
 	if r.Logs == nil || r.LogRunID > 0 {
 		return nil
 	}
-	run, err := a.eventConfig.GitHubApps.FindLogWorkflow(ctx, *r)
-	if err == nil {
-		r.LogRunID, r.LogURL = run.ID, safeCheckLink(run.URL)
-		return nil
-	}
-	if !errors.Is(err, githubapp.ErrLogWorkflowNotFound) {
-		return &githubapp.CheckRunError{Message: "GitHub logs are unavailable. Add the log workflow to the configured branch and grant Actions: write to the GitHub App."}
-	}
 	if r.LogDispatch != "" {
-		return &githubapp.CheckRunError{Message: "Waiting for the accepted GitHub log workflow. No duplicate workflow was started."}
+		run, err := a.eventConfig.GitHubApps.FindLogWorkflow(ctx, *r)
+		if err == nil {
+			r.LogRunID, r.LogURL = run.ID, safeCheckLink(run.URL)
+			return nil
+		}
+		if !errors.Is(err, githubapp.ErrLogWorkflowNotFound) {
+			return &githubapp.CheckRunError{Message: "GitHub logs are unavailable. Check the workflow branch and the App's Actions permission."}
+		}
+		return &githubapp.CheckRunError{Message: "Waiting for GitHub to return the log run. Reporting will retry."}
 	}
 	r.LogDispatch = "posting"
+	now := time.Now().UTC()
+	r.LogRequestedAt = &now
 	if err := a.store.SaveWorkflowCheckProgress(ctx, *r, time.Now().UTC()); err != nil {
 		return err
 	}

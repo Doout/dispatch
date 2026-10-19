@@ -51,6 +51,9 @@ func (m *Manager) FindLogWorkflow(ctx context.Context, r core.WorkflowCheckRepor
 	}
 	for page := 1; page <= 10; page++ {
 		query := url.Values{"event": {"workflow_dispatch"}, "branch": {r.Logs.Ref}, "per_page": {"100"}, "page": {fmt.Sprint(page)}}
+		if r.LogRequestedAt != nil {
+			query.Set("created", r.LogRequestedAt.Add(-5*time.Minute).UTC().Format(time.RFC3339)+".."+r.LogRequestedAt.Add(5*time.Minute).UTC().Format(time.RFC3339))
+		}
 		var result struct {
 			Runs []LogWorkflowRun `json:"workflow_runs"`
 		}

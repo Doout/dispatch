@@ -46,6 +46,9 @@ func newCheckFixture(t *testing.T) *checkFixture {
 		switch {
 		case strings.Contains(r.URL.Path, "/actions/workflows/"):
 			if r.Method == http.MethodGet {
+				if r.URL.Query().Get("created") == "" {
+					t.Error("log recovery searched unbounded workflow history")
+				}
 				runs := f.logRuns
 				if f.logMissing {
 					runs = nil
