@@ -15,6 +15,7 @@ type AdminCredential struct {
 
 type Store interface {
 	WorkflowCheckStore
+	ListWorkflowJobSummaries(context.Context, string) ([]core.WorkflowJobResult, error)
 	RegisterLegacyPreviewApp(context.Context, string, string) error
 	RetryWorkflowPreviewCleanupApp(context.Context, core.WorkflowPreviewCleanup, core.WorkflowPreviewCleanupApp) (core.WorkflowPreviewCleanupApp, error)
 	ListWorkflowPreviewCleanups(context.Context, string) ([]core.WorkflowPreviewCleanup, error)

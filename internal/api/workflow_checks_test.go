@@ -19,13 +19,19 @@ import (
 )
 
 type checkFixture struct {
-	a                               *API
-	revision                        core.WorkflowRevision
-	report                          core.WorkflowCheckReport
-	runs                            []githubapp.CheckRun
-	writes                          []githubapp.CheckRunUpdate
-	posts, patches                  int
-	forbidden, lost, missing, spoof bool
+	a                                 *API
+	revision                          core.WorkflowRevision
+	report                            core.WorkflowCheckReport
+	runs                              []githubapp.CheckRun
+	writes                            []githubapp.CheckRunUpdate
+	posts, patches                    int
+	forbidden, lost, missing, spoof   bool
+	logRuns                           []githubapp.LogWorkflowRun
+	logPosts                          int
+	logLost, logMissing, logForbidden bool
+	defaultBranch                     string
+	repositoryUnavailable             bool
+	repositoryReads                   int
 }
 
 func newCheckFixture(t *testing.T) *checkFixture {
@@ -41,6 +47,45 @@ func newCheckFixture(t *testing.T) *checkFixture {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/repos/example/repo":
+			f.repositoryReads++
+			if f.repositoryUnavailable {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, `{"message":"upstream-private-token"}`)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"full_name": "example/repo", "default_branch": f.defaultBranch})
+		case strings.Contains(r.URL.Path, "/actions/workflows/"):
+			if r.Method == http.MethodGet {
+				if r.URL.Query().Get("created") == "" {
+					t.Error("log recovery searched unbounded workflow history")
+				}
+				runs := f.logRuns
+				if f.logMissing {
+					runs = nil
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": runs})
+				return
+			}
+			f.logPosts++
+			if f.logForbidden {
+				w.WriteHeader(403)
+				fmt.Fprint(w, `{"message":"upstream-private-token"}`)
+				return
+			}
+			var input struct {
+				Ref    string
+				Inputs map[string]string
+			}
+			must(json.NewDecoder(r.Body).Decode(&input))
+			f.logRuns = append(f.logRuns, githubapp.LogWorkflowRun{ID: 99, Title: "Doodship " + input.Inputs["report_id"], Event: "workflow_dispatch", Path: ".github/workflows/doodship-logs.yml", Branch: input.Ref, URL: "https://github.example.test/example/repo/actions/runs/99"})
+			if f.logLost {
+				f.logLost = false
+				w.WriteHeader(502)
+				fmt.Fprint(w, `{"message":"lost-private-token"}`)
+				return
+			}
+			w.WriteHeader(204)
 		case strings.HasSuffix(r.URL.Path, "/installation"):
 			fmt.Fprint(w, `{"id":73,"app_id":42}`)
 		case r.URL.Path == "/app/installations/73/access_tokens":
@@ -122,6 +167,137 @@ func newCheckFixture(t *testing.T) *checkFixture {
 	f.revision = core.WorkflowRevision{ID: "check-run", ResourceID: "check-resource", State: "queued", CreatedAt: now, Checks: []core.WorkflowCheckReport{f.report}}
 	must(f.a.store.CreateWorkflowRevision(ctx, f.revision))
 	return f
+}
+
+func TestWorkflowChecksRecoverLogDispatchWithoutStartingAnotherCollector(t *testing.T) {
+	f := newCheckFixture(t)
+	f.defaultBranch = "release/stable"
+	ctx := context.Background()
+	r, err := f.a.store.ClaimWorkflowCheck(ctx, time.Now().Add(time.Hour), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.GitHubLogs = true
+	if err := f.a.store.FinishWorkflowCheck(ctx, r, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.logLost = true
+	f.logMissing = true
+	first := f.step(t)
+	if first.LogRequestedAt == nil || first.LogRunID != 0 || f.logPosts != 1 || first.CheckID != 101 {
+		t.Fatalf("lost dispatch result: %+v posts=%d", first, f.logPosts)
+	}
+	if first.LogRef != "release/stable" || f.repositoryReads != 1 {
+		t.Fatalf("default branch was not captured: %+v reads=%d", first.LogRef, f.repositoryReads)
+	}
+	// Changing the default branch after dispatch must not change the saved
+	// workflow identity or start a second collector during recovery.
+	f.defaultBranch = "new-default"
+	for i := 0; i < 2; i++ {
+		f.step(t)
+	}
+	if f.logPosts != 1 || f.repositoryReads != 1 {
+		t.Fatal("collector redispatched or identity rediscovered")
+	}
+	f.logMissing = false
+	accepted := f.step(t)
+	if accepted.LogRunID != 99 || accepted.State != "reported" || f.logPosts != 1 || f.writes[len(f.writes)-1].DetailsURL != accepted.LogURL {
+		t.Fatalf("log run not recovered: %+v", accepted)
+	}
+}
+
+func TestWorkflowChecksRetryLogDiscoveryWithoutChangingExecutionResult(t *testing.T) {
+	f := newCheckFixture(t)
+	ctx := context.Background()
+	f.revision.State = "succeeded"
+	if err := f.a.store.UpdateWorkflowRevision(ctx, f.revision); err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.a.store.ClaimWorkflowCheck(ctx, time.Now().Add(time.Hour), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.GitHubLogs = true
+	if err := f.a.store.FinishWorkflowCheck(ctx, r, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.repositoryUnavailable = true
+	failed := f.step(t)
+	if failed.State != "retrying" || failed.LogRequestedAt != nil || f.logPosts != 0 || strings.Contains(failed.Error, "private-token") {
+		t.Fatalf("unsafe discovery failure: %+v posts=%d", failed, f.logPosts)
+	}
+	if len(f.writes) != 1 || f.writes[0].Conclusion != "success" {
+		t.Fatalf("discovery failure changed the execution check: %+v", f.writes)
+	}
+	f.repositoryUnavailable = false
+	f.defaultBranch = "trunk"
+	started := f.step(t)
+	if started.LogRef != "trunk" || started.LogRequestedAt == nil || f.logPosts != 1 {
+		t.Fatalf("discovery did not recover: %+v posts=%d", started, f.logPosts)
+	}
+}
+
+func TestWorkflowChecksRetryRejectedLogDispatchAfterPermissionRepair(t *testing.T) {
+	f := newCheckFixture(t)
+	f.defaultBranch = "trunk"
+	r, err := f.a.store.ClaimWorkflowCheck(context.Background(), time.Now().Add(time.Hour), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.GitHubLogs = true
+	if err := f.a.store.FinishWorkflowCheck(context.Background(), r, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.logForbidden = true
+	rejected := f.step(t)
+	if rejected.LogRequestedAt != nil || rejected.State != "retrying" || f.logPosts != 1 {
+		t.Fatalf("rejected dispatch retained an accepted intent: %+v", rejected)
+	}
+	f.logForbidden = false
+	started := f.step(t)
+	if started.LogRequestedAt == nil || started.LogRef != "trunk" || f.logPosts != 2 {
+		t.Fatalf("permission repair did not start the collector: %+v", started)
+	}
+	accepted := f.step(t)
+	if accepted.LogRunID != 99 || f.logPosts != 2 {
+		t.Fatalf("permission repair started another collector: %+v", accepted)
+	}
+}
+
+func TestWorkflowCheckBuildAndDeploymentStagesKeepTheirOwnResults(t *testing.T) {
+	f := newCheckFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	job := core.WorkflowJobResult{ID: "job", ResourceID: f.report.ResourceID, RevisionID: f.revision.ID, JobName: "build", State: "succeeded", CreatedAt: now, StartedAt: &now, FinishedAt: &now}
+	if err := f.a.store.CreateWorkflowJobResult(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	r := f.report
+	r.Kind = "build"
+	r.Job = "build"
+	f.revision.State = "failed"
+	f.revision.Error = core.WorkflowInterruptedMessage
+	p, err := f.a.workflowCheckPayload(ctx, r, f.revision)
+	if err != nil || p.Conclusion != "success" {
+		t.Fatalf("later failure rewrote successful build: %+v %v", p, err)
+	}
+	r.Job = "not-started"
+	p, err = f.a.workflowCheckPayload(ctx, r, f.revision)
+	if err != nil || p.Status != "completed" {
+		t.Fatalf("unstarted build left pending: %+v %v", p, err)
+	}
+	stage := core.WorkflowStageRun{ID: "deployment-stage", RevisionID: f.revision.ID, StageName: "development", State: "awaiting_approval", CreatedAt: now, StartedAt: &now}
+	if err := f.a.store.CreateWorkflowStageRun(ctx, stage); err != nil {
+		t.Fatal(err)
+	}
+	f.revision.State = "running"
+	f.revision.Error = ""
+	r.Kind = "stage"
+	r.Stage = "development"
+	p, err = f.a.workflowCheckPayload(ctx, r, f.revision)
+	if err != nil || p.Status != "in_progress" || !strings.Contains(p.Output.Summary, "approval") {
+		t.Fatalf("deployment approval missing: %+v %v", p, err)
+	}
 }
 func (f *checkFixture) step(t *testing.T) core.WorkflowCheckReport {
 	t.Helper()

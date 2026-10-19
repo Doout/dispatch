@@ -12,14 +12,16 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/runlog"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/oklog/ulid/v2"
 )
 
 type Broker struct {
-	Store     store.WorkflowWorkerStore
-	Vault     *secretcrypto.Vault
-	Authorize func(context.Context, Request) error
+	LogDirectory string
+	Store        store.WorkflowWorkerStore
+	Vault        *secretcrypto.Vault
+	Authorize    func(context.Context, Request) error
 }
 
 func (b *Broker) authorize(ctx context.Context, r Request) error {
@@ -246,23 +248,33 @@ func (b *Broker) Lease(ctx context.Context, node string, generation int64, mode 
 	}
 	return &LeasedJob{ID: j.ID, Digest: j.Digest, Attempt: j.Attempt, LeaseToken: j.LeaseToken, ExpiresAt: j.ExpiresAt, Request: r}, nil
 }
-func (b *Broker) Renew(ctx context.Context, node, id string, p Progress) (bool, error) {
+func (b *Broker) Renew(ctx context.Context, node, id string, p Progress) (Heartbeat, error) {
 	j, err := b.Store.GetWorkflowWorkerJob(ctx, id)
 	if err != nil || j.NodeID != node {
-		return false, store.ErrWorkerLease
+		return Heartbeat{}, store.ErrWorkerLease
 	}
 	r, err := b.request(ctx, j)
 	if err != nil {
-		return false, err
+		return Heartbeat{}, err
 	}
 	if len(p.Log) > MaxLog {
-		return false, errors.New("worker output exceeds the log limit")
+		return Heartbeat{}, errors.New("worker output exceeds the log limit")
 	}
 	log, err := b.Vault.Encrypt("workflow-worker:"+id+":progress", []byte(r.Redact(p.Log)))
 	if err != nil {
-		return false, err
+		return Heartbeat{}, err
 	}
-	return b.Store.RenewWorkflowWorkerJob(ctx, node, id, p.LeaseToken, log, time.Now().UTC())
+	cancel, err := b.Store.RenewWorkflowWorkerJob(ctx, node, id, p.LeaseToken, log, time.Now().UTC())
+	reply := Heartbeat{CancelRequested: cancel}
+	if id := r.LogID(); err == nil && !cancel && id != "" {
+		if p.LogChunk != "" {
+			// Log delivery must never cancel execution when the archive is full.
+			_ = runlog.Receive(b.LogDirectory, id, p.LogOffset, p.LogChunk, r.LogSecrets()...)
+		}
+		offset := runlog.Position(b.LogDirectory, id)
+		reply.LogOffset = &offset
+	}
+	return reply, err
 }
 func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) error {
 	j, err := b.Store.GetWorkflowWorkerJob(ctx, id)
@@ -286,5 +298,11 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	if err != nil {
 		return err
 	}
-	return b.Store.CompleteWorkflowWorkerJob(ctx, node, id, c.LeaseToken, c.Result.State, result, time.Now().UTC())
+	if err := b.Store.CompleteWorkflowWorkerJob(ctx, node, id, c.LeaseToken, c.Result.State, result, time.Now().UTC()); err != nil {
+		return err
+	}
+	if id := r.LogID(); id != "" && c.Result.LogSize != nil {
+		_ = runlog.Finish(b.LogDirectory, id, *c.Result.LogSize)
+	}
+	return nil
 }

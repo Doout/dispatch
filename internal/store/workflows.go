@@ -541,6 +541,26 @@ func (s *SQLStore) ListWorkflowJobResults(ctx context.Context, revisionID string
 	return items, rows.Err()
 }
 
+// Reporting needs states and timestamps, not the saved logs, outputs or source
+// maps. Keep repeated GitHub polling independent of the build log's size.
+func (s *SQLStore) ListWorkflowJobSummaries(ctx context.Context, revisionID string) ([]core.WorkflowJobResult, error) {
+	query := `SELECT id,resource_id,revision_id,job_name,fingerprint,reused_from_id,state,'{}','{}','',CASE WHEN error=? THEN error ELSE '' END,created_at,started_at,finished_at FROM workflow_job_results WHERE revision_id=? ORDER BY created_at`
+	rows, err := s.db.QueryContext(ctx, s.q(query), core.WorkflowInterruptedMessage, revisionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []core.WorkflowJobResult{}
+	for rows.Next() {
+		item, err := scanWorkflowJobResult(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func scanWorkflowJobResult(row scanner) (core.WorkflowJobResult, error) {
 	var item core.WorkflowJobResult
 	var sources, outputs, created string

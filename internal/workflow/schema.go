@@ -118,6 +118,7 @@ type ServiceTemplateOutputSpec struct {
 }
 
 type ApplicationSpec struct {
+	GitHubLogs      bool                          `json:"githubLogs,omitempty" yaml:"githubLogs,omitempty"`
 	PreviewServices map[string]PreviewServiceSpec `json:"previewServices,omitempty" yaml:"previewServices,omitempty"`
 	MaxParallelJobs int                           `json:"maxParallelJobs,omitempty" yaml:"maxParallelJobs,omitempty"`
 	Reporting       *core.WorkflowReporting       `json:"reporting,omitempty" yaml:"reporting,omitempty"`

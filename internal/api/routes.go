@@ -42,6 +42,7 @@ func (a *API) routes() http.Handler {
 
 // Webhooks, OAuth callbacks, and edge node requests verify their own credentials.
 func (a *API) publicRoutes(r chi.Router) {
+	r.Get("/github-checks/{id}/logs", a.githubWorkflowLogs)
 	r.With(a.limitPublicAuth).Get("/auth/status", a.authStatus)
 	r.With(a.limitPublicAuth).Post("/auth/setup", a.setupAdmin)
 	r.Post("/auth/login", a.login)

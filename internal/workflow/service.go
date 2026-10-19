@@ -26,6 +26,7 @@ import (
 const defaultPollInterval = 5 * 60
 
 type Service struct {
+	LogDirectory           string
 	LocalDockerSocket      string
 	RemoteJobs             workflowrunner.Runner
 	RequireRemote          bool

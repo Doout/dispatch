@@ -100,6 +100,8 @@ type Request struct {
 }
 
 type Result struct {
+	LogSize           *int64                          `json:"logSize,omitempty"`
+	LogCaptured       bool                            `json:"logCaptured,omitempty"`
 	Storage           []core.StorageObservation       `json:"storage"`
 	ServiceInspection *core.ServiceResourceInspection `json:"serviceInspection,omitempty"`
 	TargetEvidence    *core.KubernetesTargetEvidence  `json:"targetEvidence,omitempty"`
@@ -114,9 +116,16 @@ type Result struct {
 }
 
 type Progress struct {
+	LogChunk   string `json:"logChunk,omitempty"`
+	LogOffset  int64  `json:"logOffset,omitempty"`
 	LeaseToken string `json:"leaseToken"`
 	Log        string `json:"log,omitempty"`
 	Phase      string `json:"phase,omitempty"`
+}
+
+type Heartbeat struct {
+	CancelRequested bool   `json:"cancelRequested"`
+	LogOffset       *int64 `json:"logOffset,omitempty"`
 }
 
 type LeasedJob struct {
@@ -193,6 +202,9 @@ func (r Request) Validate() error {
 		if len(r.Workflow.Job) == 0 || !json.Valid(r.Workflow.Job) || len(r.Workflow.Sources) > 32 {
 			return errors.New("invalid workflow job")
 		}
+		if id := r.LogID(); id != "" && !identifier.MatchString(id) {
+			return errors.New("invalid workflow log identity")
+		}
 		if r.Mode == "managed" && len(r.Workflow.Sources) != 0 {
 			return errors.New("managed jobs cannot access repositories; select a tenant worker")
 		}
@@ -238,7 +250,20 @@ func (p ServiceProvision) Action() string {
 	return p.Operation
 }
 
-func (r Request) Redact(text string) string {
+// Older workers preserve the opaque job document when verifying request
+// digests. Keeping optional delivery metadata here avoids a new wire protocol.
+func (r Request) LogID() string {
+	if r.Workflow == nil {
+		return ""
+	}
+	var job struct {
+		LogID string `json:"dispatchLogId"`
+	}
+	_ = json.Unmarshal(r.Workflow.Job, &job)
+	return job.LogID
+}
+
+func (r Request) LogSecrets() []string {
 	secrets := []string{}
 	if p := r.StorageOperation; p != nil {
 		secrets = append(secrets, p.Kubeconfig)
@@ -269,6 +294,11 @@ func (r Request) Redact(text string) string {
 			secrets = append(secrets, value)
 		}
 	}
+	return secrets
+}
+
+func (r Request) Redact(text string) string {
+	secrets := r.LogSecrets()
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	for _, secret := range secrets {
 		if secret != "" {

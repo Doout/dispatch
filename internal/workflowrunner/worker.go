@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/runlog"
 )
 
 type Execute func(context.Context, Request, string, func(string)) Result
@@ -165,7 +167,40 @@ func (w *Worker) Run(ctx context.Context, j LeasedJob, progress func(string)) Re
 		return unknown("worker could not prepare its workspace")
 	}
 	defer os.RemoveAll(workspace)
+	var archive *runlog.Writer
+	if j.Request.LogID() != "" {
+		archive, _ = runlog.Open(filepath.Join(w.directory, "github-logs"), j.ID, j.Request.LogSecrets()...)
+		// Full output uses the existing executor progress channel. Keep its
+		// bounded display separate from the complete archive.
+		display := progress
+		var mu sync.Mutex
+		window := ""
+		progress = func(text string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if archive != nil {
+				_, _ = archive.Write([]byte(text))
+			}
+			if display != nil {
+				window = j.Request.Redact(window + text)
+				display(window)
+			}
+		}
+	}
 	result := w.execute(ctx, j.Request, workspace, progress)
+	result.LogSize = nil
+	if archive != nil {
+		if !result.LogCaptured {
+			archive.Incomplete()
+		}
+		if err := archive.Close(); err == nil {
+			info, err := os.Stat(filepath.Join(w.directory, "github-logs", j.ID+".log"))
+			if err == nil {
+				size := info.Size()
+				result.LogSize = &size
+			}
+		}
+	}
 	result.Log, result.Error = j.Request.Redact(result.Log), j.Request.Redact(result.Error)
 	raw, err = json.Marshal(result)
 	if err != nil {
@@ -183,3 +218,12 @@ func (w *Worker) Run(ctx context.Context, j LeasedJob, progress func(string)) Re
 	}
 	return result
 }
+
+func (w *Worker) logPage(id string, offset int64) (string, int64) {
+	text, next, _, err := runlog.Read(filepath.Join(w.directory, "github-logs"), id, offset)
+	if err != nil {
+		return "", offset
+	}
+	return text, next
+}
+func (w *Worker) pruneLogs() { _ = runlog.Prune(filepath.Join(w.directory, "github-logs"), time.Now()) }

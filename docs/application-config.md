@@ -648,13 +648,41 @@ The GitHub App needs **Commit statuses: write** and **Pull requests: write** for
 
 New Application runs also publish GitHub Check Runs for each distinct resolved source commit. Linked PRs retain the App, repository and SHA captured when the run was accepted. A branch move or later edit to the preview links cannot redirect an existing report. Existing commit statuses, PR comments and reviews keep their separate behavior.
 
-The contexts are `Dispatch/deployment/<application>`, `Dispatch/health/<application>/<stage>/<check>` for configured automatic stage checks, and `Dispatch/qa/<application>` for comment-triggered QA. Reporting reads the saved workflow and child check results; it starts no build, health probe or QA job. An automatic check that never ran is reported as skipped. Cancelled runs report cancellation; interrupted runs require a new execution. Historical runs are not backfilled.
+The contexts are `Dispatch/build/<application>/<job>` for each job, `Dispatch/stage/<application>/<stage>` for deployment stages, `Dispatch/deployment/<application>` for the whole run, `Dispatch/health/<application>/<stage>/<check>` for automatic health checks, and `Dispatch/qa/<application>` for comment-triggered QA. A build check appears on the commits it consumes through `runFrom` and `sources`. Reporting reads saved results and never repeats the build or deployment. Steps that never started are skipped. Historical runs are not backfilled.
 
 The App needs **Checks: write** on the source repositories. The generated manifest requests it. For an existing App, update its repository permissions and accept the installation permission update, or reinstall it, then use **Connections > Verify**. A missing grant appears in **GitHub Check Runs** in run details and does not change deployment success or failure. GitHub documents the installation-token permission and request fields in its [Check Runs API](https://docs.github.com/en/rest/checks/runs?apiVersion=2022-11-28).
 
 Each reporting receipt stores its own external identity and GitHub check ID. Controller restarts retry updates to that same check. If a create response is lost, Dispatch searches the captured App and commit for the accepted external identity before continuing. If it remains absent, the receipt stays pending reconciliation and sends no second create request. A new workflow run receives a new reporting identity, even on the same commit.
 
 Check summaries contain a fixed outcome message, a link to the Dispatch run and the tested preview URL when configured. Job logs, secret values and upstream error bodies stay out of GitHub summaries. Run details show permission and network reporting errors separately from execution results.
+
+#### Full logs in GitHub
+
+GitHub Actions can collect build and deployment logs while the work runs on your server. Build and stage checks link to that Actions run. The collector never checks out code or runs deployment commands.
+
+1. Copy [doodship-logs.yml](../examples/github/doodship-logs.yml) to `.github/workflows/doodship-logs.yml` on each source repository's default branch.
+2. Set the repository variable `DOODSHIP_URL` to the installation's HTTPS address, such as `https://agentops.doodship.com`.
+3. Grant the GitHub App **Actions: write** and approve the installation permission update. Checks still need **Checks: write**. New App manifests request both.
+4. Enable collection in the Application:
+
+```yaml
+spec:
+  githubLogs: true
+```
+
+Dispatch runs `doodship-logs.yml` on each source repository's default branch. It discovers that branch automatically, even when building a different branch. Multiple source aliases pointing to the same repository and commit share one collector for the run. Omit `githubLogs` or set it to `false` to disable collection. Build and deployment checks still report their results.
+
+Discovery failures retry without blocking builds. Once Dispatch starts a collector, it saves the selected branch so a later default-branch change cannot redirect that run's log access.
+
+GitHub Enterprise Server requires a self-hosted Actions runner. Change `runs-on` in the workflow to its labels and make sure it has Python 3 and can reach `DOODSHIP_URL`. GitHub.com can use its hosted runner or your own runner.
+
+The collector authenticates with GitHub's short-lived OIDC token. Access is bound to the captured GitHub App, repository, workflow file, branch, Actions run and reporting receipt. It accepts no Dispatch administrator token. Connected installations use their outbound WebSocket connection, including when remote browser access is disabled. Update both the control plane and the installation to forward this route.
+
+Full build output is kept outside the database in temporary private files. Delivery files expire after 24 hours, with a 1 GiB limit per installation and a 64 MiB limit per job. Lines over 64 KiB are withheld. The regular local viewer keeps its existing 1 MiB limit. Updated workflow workers transfer full logs in acknowledged chunks; update both the worker and its pinned execution image. Older workers still execute jobs, but their collector reports that full log delivery is unavailable.
+
+Before transfer, the filter removes known job credentials and their base64, URL-encoded, hex and JSON-escaped forms. It also filters credential assignments, credentials in URLs, common access-token formats and PEM private keys. Incomplete lines stay private until they can be filtered. These checks do not detect every possible secret transformation.
+
+A GitHub outage or archive-capacity failure does not change the build result. The log job fails visibly if delivery is incomplete. If the local archive is complete, restore the connection and rerun that Actions job within the 24-hour delivery window. Missing or truncated archives require a new execution. GitHub's own retention settings apply to delivered logs. If a workflow dispatch response is lost, reporting finds the run by its saved identity and does not start another collector.
 
 #### Promoting a template through stages
 

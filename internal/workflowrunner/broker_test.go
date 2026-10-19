@@ -3,6 +3,7 @@ package workflowrunner
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/runlog"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -44,9 +46,10 @@ func TestStatefulWorkerOperationReusesReceiptAndRejectsChangedInputs(t *testing.
 	if err = data.EnrollEdgeCredential(ctx, node.ID, "token", "public-key", "session", now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	broker := Broker{Store: data, Vault: vault, Authorize: func(context.Context, Request) error { return nil }}
+	broker := Broker{Store: data, Vault: vault, LogDirectory: filepath.Join(t.TempDir(), "logs"), Authorize: func(context.Context, Request) error { return nil }}
 	request := testRequest()
 	request.Workflow.ServiceRunID = "accepted-service-run"
+	request.Workflow.Job = json.RawMessage(`{"run":"true","dispatchLogId":"log-archive"}`)
 	done := make(chan error, 1)
 	go func() { _, err := broker.Run(ctx, request, nil); done <- err }()
 	var job *LeasedJob
@@ -62,8 +65,29 @@ func TestStatefulWorkerOperationReusesReceiptAndRejectsChangedInputs(t *testing.
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	if err = broker.Complete(ctx, node.ID, job.ID, Completion{LeaseToken: job.LeaseToken, Result: Result{State: "succeeded", Outputs: map[string]string{"password": "saved-password"}}}); err != nil {
+	chunk := "building image\n"
+	if _, err := broker.Renew(ctx, node.ID, job.ID, Progress{LeaseToken: "wrong", LogChunk: chunk}); err == nil {
+		t.Fatal("stale lease appended logs")
+	}
+	if runlog.Position(broker.LogDirectory, request.LogID()) != 0 {
+		t.Fatal("stale lease changed log cursor")
+	}
+	reply, err := broker.Renew(ctx, node.ID, job.ID, Progress{LeaseToken: job.LeaseToken, LogChunk: chunk})
+	if err != nil || reply.CancelRequested || reply.LogOffset == nil || *reply.LogOffset != int64(len(chunk)) {
+		t.Fatalf("accepted chunk not acknowledged: %+v %v", reply, err)
+	}
+	size := int64(len(chunk))
+	if err := broker.Complete(ctx, node.ID, job.ID, Completion{LeaseToken: "wrong", Result: Result{State: "succeeded", LogSize: &size}}); err == nil {
+		t.Fatal("stale lease completed log delivery")
+	}
+	if runlog.Complete(broker.LogDirectory, request.LogID()) {
+		t.Fatal("unaccepted completion marked logs complete")
+	}
+	if err = broker.Complete(ctx, node.ID, job.ID, Completion{LeaseToken: job.LeaseToken, Result: Result{State: "succeeded", LogSize: &size, Outputs: map[string]string{"password": "saved-password"}}}); err != nil {
 		t.Fatal(err)
+	}
+	if !runlog.Complete(broker.LogDirectory, request.LogID()) {
+		t.Fatal("accepted full log transfer missing")
 	}
 	if err = <-done; err != nil {
 		t.Fatal(err)

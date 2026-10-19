@@ -12,6 +12,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/runlog"
 	"github.com/doout/dispatch/internal/store"
 )
 
@@ -19,7 +20,12 @@ import (
 func (a *API) RunWorkflowChecks(ctx context.Context) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+	lastPrune := time.Time{}
 	for {
+		if time.Since(lastPrune) > time.Hour {
+			_ = runlog.Prune(a.workflows.LogDirectory, time.Now())
+			lastPrune = time.Now()
+		}
 		if err := a.ProcessWorkflowChecksOnce(ctx); err != nil && ctx.Err() == nil && a.logger != nil {
 			a.logger.Warn("GitHub check reporting pending")
 		}
@@ -56,6 +62,10 @@ func (a *API) ProcessWorkflowChecksOnce(ctx context.Context) error {
 func (a *API) reportWorkflowCheck(ctx context.Context, r core.WorkflowCheckReport) error {
 	revision, err := a.store.GetWorkflowRevision(ctx, r.RevisionID)
 	var payload githubapp.CheckRunUpdate
+	var logErr error
+	if err == nil {
+		logErr = a.reconcileGitHubLogs(ctx, &r)
+	}
 	if err == nil {
 		payload, err = a.workflowCheckPayload(ctx, r, revision)
 	}
@@ -92,6 +102,9 @@ func (a *API) reportWorkflowCheck(ctx context.Context, r core.WorkflowCheckRepor
 		}
 	}
 	r.NextAttemptAt = time.Now().UTC().Add(5 * time.Second)
+	if err == nil && logErr != nil {
+		err = logErr
+	}
 	if err != nil {
 		r.State = "retrying"
 		r.Error = "Check reporting is temporarily unavailable. Dispatch will retry; the workflow outcome is unchanged."
@@ -105,7 +118,19 @@ func (a *API) reportWorkflowCheck(ctx context.Context, r core.WorkflowCheckRepor
 		r.Status, r.Conclusion = payload.Status, payload.Conclusion
 		r.Error = ""
 		r.State = "reported"
-		r.Complete = payload.Status == "completed"
+		r.Complete = payload.Status == "completed" && (!r.GitHubLogs || r.LogRunID > 0)
+		if r.Complete && (r.Kind == "build" || r.Kind == "stage") {
+			checks, loadErr := a.store.ListWorkflowChecks(ctx, r.RevisionID)
+			if loadErr != nil {
+				return loadErr
+			}
+			for _, check := range checks {
+				if check.Kind == "deployment" && check.Repository == r.Repository && check.CommitSHA == r.CommitSHA && check.GitHubAppID == r.GitHubAppID && check.GitHubLogs && check.LogRunID == 0 {
+					r.Complete = false
+					break
+				}
+			}
+		}
 	}
 	return a.store.FinishWorkflowCheck(ctx, r, time.Now().UTC())
 }
@@ -122,6 +147,41 @@ func (a *API) workflowCheckPayload(ctx context.Context, r core.WorkflowCheckRepo
 	state, started, finished := revision.State, revision.StartedAt, revision.FinishedAt
 	interrupted := revision.Error == core.WorkflowInterruptedMessage
 	skipped := false
+	if r.Kind == "build" || r.Kind == "stage" {
+		state, started, finished = "queued", nil, nil
+		found := false
+		if r.Kind == "build" {
+			jobs, err := a.store.ListWorkflowJobSummaries(ctx, revision.ID)
+			if err != nil {
+				return githubapp.CheckRunUpdate{}, err
+			}
+			for _, job := range jobs {
+				if job.JobName == r.Job {
+					state, started, finished = job.State, job.StartedAt, job.FinishedAt
+					interrupted = job.Error == core.WorkflowInterruptedMessage
+					found = true
+					break
+				}
+			}
+		} else {
+			stages, err := a.store.ListWorkflowStageRuns(ctx, revision.ID)
+			if err != nil {
+				return githubapp.CheckRunUpdate{}, err
+			}
+			for _, stage := range stages {
+				if stage.StageName == r.Stage {
+					state, started, finished = stage.State, stage.StartedAt, stage.FinishedAt
+					interrupted = stage.Error == core.WorkflowInterruptedMessage
+					found = true
+					break
+				}
+			}
+		}
+		if terminalWorkflowState(revision.State) && (!found || !terminalWorkflowState(state)) {
+			state, finished, skipped = revision.State, revision.FinishedAt, started == nil
+			interrupted = revision.Error == core.WorkflowInterruptedMessage
+		}
+	}
 	if r.Kind == "health" {
 		stages, err := a.store.ListWorkflowStageRuns(ctx, revision.ID)
 		if err != nil {
@@ -155,6 +215,10 @@ func (a *API) workflowCheckPayload(ctx context.Context, r core.WorkflowCheckRepo
 		title = "Preview QA"
 	} else if r.Kind == "health" {
 		title = "Configured health check"
+	} else if r.Kind == "build" {
+		title = "Build: " + r.Job
+	} else if r.Kind == "stage" {
+		title = "Deployment: " + r.Stage
 	}
 	summary := "Waiting for the recorded workflow result."
 	switch state {
@@ -183,7 +247,7 @@ func (a *API) workflowCheckPayload(ctx context.Context, r core.WorkflowCheckRepo
 		payload.CompletedAt = finished
 		if skipped {
 			payload.Conclusion = "skipped"
-			summary = "This configured check did not execute before the workflow ended."
+			summary = "This step did not execute before the workflow ended."
 		}
 		if interrupted {
 			payload.Conclusion = "action_required"
@@ -194,6 +258,23 @@ func (a *API) workflowCheckPayload(ctx context.Context, r core.WorkflowCheckRepo
 	// resource output and secret values never enter the GitHub summary.
 	if base := safeCheckLink(strings.TrimRight(a.auth.PublicURL, "/")); base != "" {
 		payload.DetailsURL = base + "/events?run=" + url.QueryEscape(revision.ID)
+	}
+	if r.LogURL != "" {
+		payload.DetailsURL = safeCheckLink(r.LogURL)
+	} else if r.Kind == "build" || r.Kind == "stage" {
+		checks, err := a.store.ListWorkflowChecks(ctx, revision.ID)
+		if err != nil {
+			return githubapp.CheckRunUpdate{}, err
+		}
+		for _, check := range checks {
+			if check.Kind == "deployment" && check.Repository == r.Repository && check.CommitSHA == r.CommitSHA && check.GitHubAppID == r.GitHubAppID && check.LogURL != "" {
+				payload.DetailsURL = safeCheckLink(check.LogURL)
+				break
+			}
+		}
+	}
+	if r.LogURL != "" || strings.Contains(payload.DetailsURL, "/actions/runs/") {
+		summary = strings.ReplaceAll(summary, "Open the Dispatch run for details.", "Open the GitHub run for logs.")
 	}
 	if preview := safeCheckLink(r.PreviewURL); preview != "" {
 		if payload.DetailsURL == "" {
