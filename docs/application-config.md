@@ -660,21 +660,19 @@ Check summaries contain a fixed outcome message, a link to the Dispatch run and 
 
 GitHub Actions can collect build and deployment logs while the work runs on your server. Build and stage checks link to that Actions run. The collector never checks out code or runs deployment commands.
 
-1. Copy [doodship-logs.yml](../examples/github/doodship-logs.yml) to `.github/workflows/doodship-logs.yml` in each repository that should receive logs. Commit it to the repository's default branch and to the branch selected below.
+1. Copy [doodship-logs.yml](../examples/github/doodship-logs.yml) to `.github/workflows/doodship-logs.yml` on each source repository's default branch.
 2. Set the repository variable `DOODSHIP_URL` to the installation's HTTPS address, such as `https://agentops.doodship.com`.
 3. Grant the GitHub App **Actions: write** and approve the installation permission update. Checks still need **Checks: write**. New App manifests request both.
 4. Enable collection in the Application:
 
 ```yaml
 spec:
-  reporting:
-    githubLogs:
-      workflow: doodship-logs.yml
-      ref: main
-      sources: [service, ui]
+  githubLogs: true
 ```
 
-`sources` selects aliases from `spec.sources`. Omit it to collect logs in every captured source repository. One collector runs per selected repository for each Application run. Set `ref` to the branch containing the collector workflow, which can differ from the branch being built.
+Dispatch runs `doodship-logs.yml` on each source repository's default branch. It discovers that branch automatically, even when building a different branch. Multiple source aliases pointing to the same repository and commit share one collector for the run. Omit `githubLogs` or set it to `false` to disable collection. Build and deployment checks still report their results.
+
+Discovery failures retry without blocking builds. Once Dispatch starts a collector, it saves the selected branch so a later default-branch change cannot redirect that run's log access.
 
 GitHub Enterprise Server requires a self-hosted Actions runner. Change `runs-on` in the workflow to its labels and make sure it has Python 3 and can reach `DOODSHIP_URL`. GitHub.com can use its hosted runner or your own runner.
 

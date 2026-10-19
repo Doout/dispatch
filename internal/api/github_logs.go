@@ -33,6 +33,13 @@ func (a *API) reconcileGitHubLogs(ctx context.Context, r *core.WorkflowCheckRepo
 		}
 		return &githubapp.CheckRunError{Message: "Waiting for GitHub to return the log run. Reporting will retry."}
 	}
+	if r.Logs.Ref == "" {
+		workflow, err := a.eventConfig.GitHubApps.ResolveLogWorkflow(ctx, *r)
+		if err != nil {
+			return err
+		}
+		r.Logs = &workflow
+	}
 	r.LogDispatch = "posting"
 	now := time.Now().UTC()
 	r.LogRequestedAt = &now

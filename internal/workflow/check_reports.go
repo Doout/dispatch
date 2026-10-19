@@ -62,15 +62,13 @@ func (s *Service) workflowCheckReports(ctx context.Context, resource core.Workfl
 		kind = "qa"
 	}
 	scopes := []scope{{kind: kind}}
-	var logs *core.GitHubLogWorkflow
+	logs := false
 	if !qa {
 		documents, err := Parse(resource.Path, []byte(resource.Document))
 		// Execution validates the document itself. A malformed document still
 		// gets its aggregate failure reported without adding a new run gate.
 		if err == nil && len(documents) == 1 && documents[0].Spec != nil {
-			if documents[0].Spec.Reporting != nil {
-				logs = documents[0].Spec.Reporting.GitHubLogs
-			}
+			logs = documents[0].Spec.GitHubLogs
 			for _, name := range sortedResourceNames(documents[0].Spec.Jobs) {
 				job := documents[0].Spec.Jobs[name]
 				scopes = append(scopes, scope{kind: "build", job: name, sources: jobSourceAliases(job)})
@@ -131,20 +129,10 @@ func (s *Service) workflowCheckReports(ctx context.Context, resource core.Workfl
 			}
 			id := ulid.Make().String()
 			items = append(items, core.WorkflowCheckReport{ID: id, RevisionID: revision.ID, ResourceID: resource.ID, ProjectID: source.ProjectID, GitHubAppID: t.app, Repository: t.repository, CommitSHA: t.sha, Name: name, Kind: scope.kind, Stage: scope.stage, Check: scope.check, Job: scope.job, PreviewURL: previewURL, ExternalID: "dispatch-check:" + id, AppID: connection.AppID, APIURL: strings.TrimRight(connection.APIURL, "/"), State: "pending", UpdatedAt: revision.CreatedAt})
-			if scope.kind == "deployment" && logs != nil {
-				selected := len(logs.Sources) == 0
-				for _, alias := range logs.Sources {
-					input := revision.Sources[alias]
-					if normalizeRepository(input.Repository) == t.repository && input.CommitSHA == t.sha {
-						selected = true
-						break
-					}
-				}
-				if selected {
-					copy := *logs
-					copy.Sources = append([]string(nil), logs.Sources...)
-					items[len(items)-1].Logs = &copy
-				}
+			if scope.kind == "deployment" && logs {
+				// Resolve the collector branch in the reporting queue. GitHub
+				// availability must not gate acceptance or execution of a run.
+				items[len(items)-1].Logs = &core.GitHubLogWorkflow{}
 			}
 		}
 	}

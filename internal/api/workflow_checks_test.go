@@ -29,6 +29,9 @@ type checkFixture struct {
 	logRuns                           []githubapp.LogWorkflowRun
 	logPosts                          int
 	logLost, logMissing, logForbidden bool
+	defaultBranch                     string
+	repositoryUnavailable             bool
+	repositoryReads                   int
 }
 
 func newCheckFixture(t *testing.T) *checkFixture {
@@ -44,6 +47,14 @@ func newCheckFixture(t *testing.T) *checkFixture {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/repos/example/repo":
+			f.repositoryReads++
+			if f.repositoryUnavailable {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, `{"message":"upstream-private-token"}`)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"full_name": "example/repo", "default_branch": f.defaultBranch})
 		case strings.Contains(r.URL.Path, "/actions/workflows/"):
 			if r.Method == http.MethodGet {
 				if r.URL.Query().Get("created") == "" {
@@ -160,12 +171,13 @@ func newCheckFixture(t *testing.T) *checkFixture {
 
 func TestWorkflowChecksRecoverLogDispatchWithoutStartingAnotherCollector(t *testing.T) {
 	f := newCheckFixture(t)
+	f.defaultBranch = "release/stable"
 	ctx := context.Background()
 	r, err := f.a.store.ClaimWorkflowCheck(ctx, time.Now().Add(time.Hour), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Logs = &core.GitHubLogWorkflow{Workflow: "doodship-logs.yml", Ref: "main"}
+	r.Logs = &core.GitHubLogWorkflow{}
 	if err := f.a.store.FinishWorkflowCheck(ctx, r, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -175,16 +187,53 @@ func TestWorkflowChecksRecoverLogDispatchWithoutStartingAnotherCollector(t *test
 	if first.LogDispatch != "posting" || first.LogRunID != 0 || f.logPosts != 1 || first.CheckID != 101 {
 		t.Fatalf("lost dispatch result: %+v posts=%d", first, f.logPosts)
 	}
+	if first.Logs.Workflow != "doodship-logs.yml" || first.Logs.Ref != "release/stable" || f.repositoryReads != 1 {
+		t.Fatalf("default branch was not captured: %+v reads=%d", first.Logs, f.repositoryReads)
+	}
+	// Changing the default branch after dispatch must not change the saved
+	// workflow identity or start a second collector during recovery.
+	f.defaultBranch = "new-default"
 	for i := 0; i < 2; i++ {
 		f.step(t)
 	}
-	if f.logPosts != 1 {
-		t.Fatal("duplicate log collector started")
+	if f.logPosts != 1 || f.repositoryReads != 1 {
+		t.Fatal("collector redispatched or identity rediscovered")
 	}
 	f.logMissing = false
 	accepted := f.step(t)
 	if accepted.LogRunID != 99 || accepted.State != "reported" || f.logPosts != 1 || f.writes[len(f.writes)-1].DetailsURL != accepted.LogURL {
 		t.Fatalf("log run not recovered: %+v", accepted)
+	}
+}
+
+func TestWorkflowChecksRetryLogDiscoveryWithoutChangingExecutionResult(t *testing.T) {
+	f := newCheckFixture(t)
+	ctx := context.Background()
+	f.revision.State = "succeeded"
+	if err := f.a.store.UpdateWorkflowRevision(ctx, f.revision); err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.a.store.ClaimWorkflowCheck(ctx, time.Now().Add(time.Hour), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Logs = &core.GitHubLogWorkflow{}
+	if err := f.a.store.FinishWorkflowCheck(ctx, r, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.repositoryUnavailable = true
+	failed := f.step(t)
+	if failed.State != "retrying" || failed.LogDispatch != "" || f.logPosts != 0 || strings.Contains(failed.Error, "private-token") {
+		t.Fatalf("unsafe discovery failure: %+v posts=%d", failed, f.logPosts)
+	}
+	if len(f.writes) != 1 || f.writes[0].Conclusion != "success" {
+		t.Fatalf("discovery failure changed the execution check: %+v", f.writes)
+	}
+	f.repositoryUnavailable = false
+	f.defaultBranch = "trunk"
+	started := f.step(t)
+	if started.Logs.Ref != "trunk" || started.LogDispatch != "sent" || f.logPosts != 1 {
+		t.Fatalf("discovery did not recover: %+v posts=%d", started, f.logPosts)
 	}
 }
 

@@ -165,3 +165,37 @@ func TestLogWorkflowDispatchAndRecoveryUseCapturedIdentity(t *testing.T) {
 		t.Fatal("published after identity changed")
 	}
 }
+
+func TestLogWorkflowDiscoveryUsesCapturedRepositoryDefaultBranch(t *testing.T) {
+	connection := core.GitHubAppConnection{ID: "app", AppID: 42, APIURL: "https://api.github.com"}
+	manager := New(testStore{connection: connection}, nil)
+	manager.repositories = map[string]repositoryInstallation{"app:example/repo": {ID: 73, ExpiresAt: time.Now().Add(time.Hour)}}
+	manager.tokens[tokenCacheKey("app", 73)] = cachedToken{value: "installation-secret", expiresAt: time.Now().Add(time.Hour)}
+	report := core.WorkflowCheckReport{ID: "report", GitHubAppID: "app", AppID: 42, APIURL: connection.APIURL, Repository: "example/repo", CommitSHA: strings.Repeat("a", 40), ExternalID: "check:report", Name: "Dispatch/deployment/app", Logs: &core.GitHubLogWorkflow{}}
+	repository, branch := "Example/Repo", "release/stable"
+	reads := 0
+	manager.Client = &http.Client{Transport: logTransport(func(r *http.Request) (*http.Response, error) {
+		reads++
+		if r.Method != http.MethodGet || r.URL.String() != "https://api.github.com/repos/example/repo" || r.Header.Get("Authorization") != "Bearer installation-secret" {
+			t.Fatalf("unscoped discovery: %s %s", r.Method, r.URL)
+		}
+		return logResponse(map[string]string{"full_name": repository, "default_branch": branch}), nil
+	})}
+	resolved, err := manager.ResolveLogWorkflow(context.Background(), report)
+	if err != nil || resolved.Workflow != "doodship-logs.yml" || resolved.Ref != "release/stable" {
+		t.Fatalf("wrong collector identity: %+v %v", resolved, err)
+	}
+	for _, invalid := range []struct{ repository, branch string }{
+		{"example/moved", "main"}, {"example/repo", ""}, {"example/repo", "main\n"},
+	} {
+		repository, branch = invalid.repository, invalid.branch
+		if _, err := manager.ResolveLogWorkflow(context.Background(), report); err == nil {
+			t.Fatalf("accepted changed repository or missing branch: %+v", invalid)
+		}
+	}
+	before := reads
+	report.AppID++
+	if _, err := manager.ResolveLogWorkflow(context.Background(), report); err == nil || reads != before {
+		t.Fatal("discovered collector after the captured App changed")
+	}
+}

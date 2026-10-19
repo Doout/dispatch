@@ -26,6 +26,28 @@ type LogWorkflowRun struct {
 
 var ErrLogWorkflowNotFound = errors.New("GitHub log workflow has not appeared")
 
+// ResolveLogWorkflow selects the standard collector on the repository's default
+// branch, independently of the application branch being built. The reporting
+// queue saves this identity before dispatch so retries keep using the same ref.
+func (m *Manager) ResolveLogWorkflow(ctx context.Context, r core.WorkflowCheckReport) (core.GitHubLogWorkflow, error) {
+	connection, repository, token, err := m.checkRunAccess(ctx, r)
+	if err != nil {
+		return core.GitHubLogWorkflow{}, err
+	}
+	var result struct {
+		FullName      string `json:"full_name"`
+		DefaultBranch string `json:"default_branch"`
+	}
+	endpoint := strings.TrimRight(connection.APIURL, "/") + "/repos/" + repository
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &result, connection.PrivateNetworkID); err != nil {
+		return core.GitHubLogWorkflow{}, m.checkRunRequestFailure(r, err, false)
+	}
+	if !strings.EqualFold(result.FullName, repository) || result.DefaultBranch == "" || strings.TrimSpace(result.DefaultBranch) != result.DefaultBranch || strings.ContainsAny(result.DefaultBranch, "\r\n\x00") {
+		return core.GitHubLogWorkflow{}, &CheckRunError{Message: "GitHub did not return the captured repository's default branch. Log reporting will retry."}
+	}
+	return core.GitHubLogWorkflow{Workflow: "doodship-logs.yml", Ref: result.DefaultBranch}, nil
+}
+
 func (m *Manager) FindLogWorkflow(ctx context.Context, r core.WorkflowCheckReport) (LogWorkflowRun, error) {
 	connection, repository, token, err := m.checkRunAccess(ctx, r)
 	if err != nil {

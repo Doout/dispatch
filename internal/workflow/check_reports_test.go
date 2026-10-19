@@ -124,14 +124,13 @@ spec:
 	}
 }
 
-func TestWorkflowBuildChecksFollowAllConsumedSourcesAndSelectedLogRepositories(t *testing.T) {
+func TestWorkflowBuildChecksFollowConsumedSourcesWithAutomaticLogs(t *testing.T) {
 	data, source, resource := workflowRunnerFixture(t, "build-checks")
 	resource.Document = `apiVersion: dispatch/v1alpha1
 kind: Application
 metadata: {name: example}
 spec:
-  reporting:
-    githubLogs: {workflow: doodship-logs.yml, ref: main, sources: [service, ui]}
+  githubLogs: true
   sources:
     service: {repository: example/service}
     ui: {repository: example/ui}
@@ -160,8 +159,11 @@ spec:
 		if item.Kind == "build" {
 			builds[item.Repository+":"+item.Job] = true
 		}
-		if item.Kind == "deployment" && (item.Logs != nil) != (item.Repository != "example/config") {
-			t.Fatalf("wrong log repository: %+v", item)
+		if (item.Logs != nil) != (item.Kind == "deployment") {
+			t.Fatalf("wrong log scope: %+v", item)
+		}
+		if item.Logs != nil && (item.Logs.Workflow != "" || item.Logs.Ref != "") {
+			t.Fatalf("collector identity resolved before reporting: %+v", item.Logs)
 		}
 	}
 	for _, key := range []string{"example/service:build-service", "example/ui:build-ui", "example/config:build-ui", "example/service:finally/cleanup"} {
@@ -172,8 +174,23 @@ spec:
 	if len(builds) != 4 {
 		t.Fatal("unrelated repositories received build checks")
 	}
-	bad := strings.Replace(resource.Document, "sources: [service, ui]", "sources: [unknown]", 1)
-	if _, err := Parse(resource.Path, []byte(bad)); err == nil {
-		t.Fatal("accepted unknown log source")
+	for _, setting := range []string{"githubLogs: false", ""} {
+		disabled := resource
+		disabled.Document = strings.Replace(resource.Document, "githubLogs: true", setting, 1)
+		items, err := (&Service{Store: data}).workflowCheckReports(context.Background(), disabled, source, revision, false)
+		if err != nil || len(items) != 10 {
+			t.Fatalf("disabled logs changed checks: %d %v", len(items), err)
+		}
+		for _, item := range items {
+			if item.Logs != nil {
+				t.Fatalf("started collector with %q: %+v", setting, item)
+			}
+		}
+	}
+	for _, setting := range []string{"githubLogs: {workflow: other.yml, ref: main}", "reporting:\n    githubLogs: true"} {
+		bad := strings.Replace(resource.Document, "githubLogs: true", setting, 1)
+		if _, err := Parse(resource.Path, []byte(bad)); err == nil {
+			t.Fatalf("accepted unsupported collector configuration: %s", setting)
+		}
 	}
 }
