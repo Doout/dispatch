@@ -14,7 +14,6 @@ import (
 )
 
 const Version = "dispatch.workflow-worker/v1"
-const LogVersion = "dispatch.workflow-logs/v1"
 const MaxPayload = 4 << 20
 const MaxLog = 1 << 20
 const LeaseDuration = 45 * time.Second
@@ -30,7 +29,6 @@ type Source struct {
 }
 
 type Workflow struct {
-	LogID            string            `json:"logId,omitempty"`
 	ServiceRunID     string            `json:"serviceRunId,omitempty"`
 	TemplateDigest   string            `json:"templateDigest,omitempty"`
 	ParentRevisionID string            `json:"parentRevisionId,omitempty"`
@@ -204,7 +202,7 @@ func (r Request) Validate() error {
 		if len(r.Workflow.Job) == 0 || !json.Valid(r.Workflow.Job) || len(r.Workflow.Sources) > 32 {
 			return errors.New("invalid workflow job")
 		}
-		if r.Workflow.LogID != "" && !identifier.MatchString(r.Workflow.LogID) {
+		if id := r.LogID(); id != "" && !identifier.MatchString(id) {
 			return errors.New("invalid workflow log identity")
 		}
 		if r.Mode == "managed" && len(r.Workflow.Sources) != 0 {
@@ -250,6 +248,19 @@ func (p ServiceProvision) Action() string {
 		return "provision"
 	}
 	return p.Operation
+}
+
+// Older workers preserve the opaque job document when verifying request
+// digests. Keeping optional delivery metadata here avoids a new wire protocol.
+func (r Request) LogID() string {
+	if r.Workflow == nil {
+		return ""
+	}
+	var job struct {
+		LogID string `json:"dispatchLogId"`
+	}
+	_ = json.Unmarshal(r.Workflow.Job, &job)
+	return job.LogID
 }
 
 func (r Request) LogSecrets() []string {

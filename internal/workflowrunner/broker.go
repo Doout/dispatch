@@ -37,9 +37,6 @@ func NodeMode(node core.PrivateNetwork) string { return node.Config["workflowMod
 func nodeAllows(node core.PrivateNetwork, r Request) bool {
 	needsDocker := false
 	if r.Workflow != nil {
-		if r.Workflow.LogID != "" && node.Details["workerLogs"] != LogVersion {
-			return false
-		}
 		var job struct {
 			Builder string `json:"builder"`
 		}
@@ -124,14 +121,6 @@ func (b *Broker) Run(ctx context.Context, r Request, progress func(string)) (Res
 		}
 	}
 	if len(available) == 0 {
-		if r.Workflow != nil && r.Workflow.LogID != "" {
-			// Keep older enrolled workers usable. Their execution still runs;
-			// the GitHub collector reports that full log delivery is unavailable.
-			copy := *r.Workflow
-			copy.LogID = ""
-			r.Workflow = &copy
-			return b.Run(ctx, r, progress)
-		}
 		return Result{}, errors.New("no enrolled workflow worker is available for this project and execution mode")
 	}
 	selection := sha256.Sum256([]byte(id))
@@ -277,12 +266,12 @@ func (b *Broker) Renew(ctx context.Context, node, id string, p Progress) (Heartb
 	}
 	cancel, err := b.Store.RenewWorkflowWorkerJob(ctx, node, id, p.LeaseToken, log, time.Now().UTC())
 	reply := Heartbeat{CancelRequested: cancel}
-	if err == nil && !cancel && r.Workflow != nil && r.Workflow.LogID != "" {
+	if id := r.LogID(); err == nil && !cancel && id != "" {
 		if p.LogChunk != "" {
 			// Log delivery must never cancel execution when the archive is full.
-			_ = runlog.Receive(b.LogDirectory, r.Workflow.LogID, p.LogOffset, p.LogChunk, r.LogSecrets()...)
+			_ = runlog.Receive(b.LogDirectory, id, p.LogOffset, p.LogChunk, r.LogSecrets()...)
 		}
-		offset := runlog.Position(b.LogDirectory, r.Workflow.LogID)
+		offset := runlog.Position(b.LogDirectory, id)
 		reply.LogOffset = &offset
 	}
 	return reply, err
@@ -312,8 +301,8 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	if err := b.Store.CompleteWorkflowWorkerJob(ctx, node, id, c.LeaseToken, c.Result.State, result, time.Now().UTC()); err != nil {
 		return err
 	}
-	if r.Workflow != nil && r.Workflow.LogID != "" && c.Result.LogSize != nil {
-		_ = runlog.Finish(b.LogDirectory, r.Workflow.LogID, *c.Result.LogSize)
+	if id := r.LogID(); id != "" && c.Result.LogSize != nil {
+		_ = runlog.Finish(b.LogDirectory, id, *c.Result.LogSize)
 	}
 	return nil
 }

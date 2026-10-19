@@ -60,7 +60,6 @@ func (c *Client) request(ctx context.Context, method, path string, input, output
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Dispatch-Worker-Version", Version)
-	request.Header.Set("X-Dispatch-Worker-Logs", LogVersion)
 	request.Header.Set("X-Dispatch-Worker-Mode", c.Mode)
 	if c.Docker {
 		request.Header.Set("X-Dispatch-Worker-Docker", "true")

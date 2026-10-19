@@ -20,7 +20,7 @@ func (s *SQLStore) UpdateEdgeNodeHealth(ctx context.Context, id, credentialHash 
 	patch := map[string]*string{}
 	for key, value := range details {
 		switch key {
-		case "version", "workerDocker", "workerVersion", "workerLogs", "workerCheckedAt", "agentArtifactSHA256", "runtimeVersion", "runtimeCheckedAt", "runtimeCapabilities", "credentialMode", "keyFingerprint", "sessionExpiresAt":
+		case "version", "workerDocker", "workerVersion", "workerCheckedAt", "agentArtifactSHA256", "runtimeVersion", "runtimeCheckedAt", "runtimeCapabilities", "credentialMode", "keyFingerprint", "sessionExpiresAt":
 			patch[key] = &value
 		default:
 			return errors.New("unsupported edge health field")

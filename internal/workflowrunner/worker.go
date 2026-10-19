@@ -168,10 +168,23 @@ func (w *Worker) Run(ctx context.Context, j LeasedJob, progress func(string)) Re
 	}
 	defer os.RemoveAll(workspace)
 	var archive *runlog.Writer
-	if j.Request.Workflow != nil && j.Request.Workflow.LogID != "" {
+	if j.Request.LogID() != "" {
 		archive, _ = runlog.Open(filepath.Join(w.directory, "github-logs"), j.ID, j.Request.LogSecrets()...)
-		if archive != nil {
-			ctx = WithLogChunks(ctx, func(text string) error { _, err := archive.Write([]byte(text)); archive.Flush(); return err })
+		// Full output uses the existing executor progress channel. Keep its
+		// bounded display separate from the complete archive.
+		display := progress
+		var mu sync.Mutex
+		window := ""
+		progress = func(text string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if archive != nil {
+				_, _ = archive.Write([]byte(text))
+			}
+			if display != nil {
+				window = j.Request.Redact(window + text)
+				display(window)
+			}
 		}
 	}
 	result := w.execute(ctx, j.Request, workspace, progress)

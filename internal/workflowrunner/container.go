@@ -21,7 +21,6 @@ import (
 )
 
 type ExecutionEvent struct {
-	Chunk  *string `json:"chunk,omitempty"`
 	Log    *string `json:"log,omitempty"`
 	Result *Result `json:"result,omitempty"`
 }
@@ -136,9 +135,6 @@ func (e ContainerExecutor) Execute(ctx context.Context, r Request, _ string, pro
 		}
 		if event.Log != nil && progress != nil {
 			progress(r.Redact(*event.Log))
-		}
-		if event.Chunk != nil {
-			_ = PublishLogChunk(ctx, *event.Chunk)
 		}
 		if event.Result != nil {
 			result = event.Result

@@ -3,6 +3,7 @@ package workflowrunner
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +37,6 @@ func TestStatefulWorkerOperationReusesReceiptAndRejectsChangedInputs(t *testing.
 	}
 	now := time.Now().UTC()
 	node := core.PrivateNetwork{ID: "node", Name: "Node", Driver: "dispatch_agent", Config: map[string]string{"workflowMode": "tenant"}, Details: map[string]string{"workerVersion": Version, "workerCheckedAt": now.Format(time.RFC3339Nano)}, CreatedAt: now, UpdatedAt: now}
-	node.Details["workerLogs"] = LogVersion
 	if err = data.CreatePrivateNetwork(ctx, node); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestStatefulWorkerOperationReusesReceiptAndRejectsChangedInputs(t *testing.
 	broker := Broker{Store: data, Vault: vault, LogDirectory: filepath.Join(t.TempDir(), "logs"), Authorize: func(context.Context, Request) error { return nil }}
 	request := testRequest()
 	request.Workflow.ServiceRunID = "accepted-service-run"
-	request.Workflow.LogID = "log-archive"
+	request.Workflow.Job = json.RawMessage(`{"run":"true","dispatchLogId":"log-archive"}`)
 	done := make(chan error, 1)
 	go func() { _, err := broker.Run(ctx, request, nil); done <- err }()
 	var job *LeasedJob
@@ -69,7 +69,7 @@ func TestStatefulWorkerOperationReusesReceiptAndRejectsChangedInputs(t *testing.
 	if _, err := broker.Renew(ctx, node.ID, job.ID, Progress{LeaseToken: "wrong", LogChunk: chunk}); err == nil {
 		t.Fatal("stale lease appended logs")
 	}
-	if runlog.Position(broker.LogDirectory, request.Workflow.LogID) != 0 {
+	if runlog.Position(broker.LogDirectory, request.LogID()) != 0 {
 		t.Fatal("stale lease changed log cursor")
 	}
 	reply, err := broker.Renew(ctx, node.ID, job.ID, Progress{LeaseToken: job.LeaseToken, LogChunk: chunk})
@@ -80,13 +80,13 @@ func TestStatefulWorkerOperationReusesReceiptAndRejectsChangedInputs(t *testing.
 	if err := broker.Complete(ctx, node.ID, job.ID, Completion{LeaseToken: "wrong", Result: Result{State: "succeeded", LogSize: &size}}); err == nil {
 		t.Fatal("stale lease completed log delivery")
 	}
-	if runlog.Complete(broker.LogDirectory, request.Workflow.LogID) {
+	if runlog.Complete(broker.LogDirectory, request.LogID()) {
 		t.Fatal("unaccepted completion marked logs complete")
 	}
 	if err = broker.Complete(ctx, node.ID, job.ID, Completion{LeaseToken: job.LeaseToken, Result: Result{State: "succeeded", LogSize: &size, Outputs: map[string]string{"password": "saved-password"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if !runlog.Complete(broker.LogDirectory, request.Workflow.LogID) {
+	if !runlog.Complete(broker.LogDirectory, request.LogID()) {
 		t.Fatal("accepted full log transfer missing")
 	}
 	if err = <-done; err != nil {

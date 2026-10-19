@@ -59,10 +59,7 @@ func (a *API) MountWorkflowRunnerRoutes(r chi.Router, b *workflowrunner.Broker) 
 			problem(w, 422, "Worker configuration mismatch", "The worker must advertise its assigned protocol and execution mode.")
 			return "", 0, "", false
 		}
-		details := map[string]string{"workerDocker": "false", "workerVersion": workflowrunner.Version, "workerLogs": "", "workerCheckedAt": time.Now().UTC().Format(time.RFC3339Nano)}
-		if r.Header.Get("X-Dispatch-Worker-Logs") == workflowrunner.LogVersion {
-			details["workerLogs"] = workflowrunner.LogVersion
-		}
+		details := map[string]string{"workerDocker": "false", "workerVersion": workflowrunner.Version, "workerCheckedAt": time.Now().UTC().Format(time.RFC3339Nano)}
 		if mode == "tenant" && r.Header.Get("X-Dispatch-Worker-Docker") == "true" {
 			details["workerDocker"] = "true"
 		}

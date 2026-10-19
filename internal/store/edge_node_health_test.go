@@ -51,7 +51,7 @@ func testEdgeNodeHealth(t *testing.T, dsn string) {
 	if err = s.EnrollEdgeCredential(ctx, node.ID, "enrollment", "public-key", "session", now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	patch := map[string]string{"credentialMode": "short_session", "workerVersion": "worker-v1", "workerDocker": "false", "workerLogs": "dispatch.workflow-logs/v1"}
+	patch := map[string]string{"credentialMode": "short_session", "workerVersion": "worker-v1", "workerDocker": "false"}
 	if err = s.UpdateEdgeNodeHealth(ctx, node.ID, "session", patch, now); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func testEdgeNodeHealth(t *testing.T, dsn string) {
 	if saved.Name != node.Name || !reflect.DeepEqual(saved.Config, node.Config) || saved.EncryptedCredentials != node.EncryptedCredentials || saved.TokenHash != node.TokenHash {
 		t.Fatal("health update changed owner-controlled fields")
 	}
-	if saved.State != "ready" || saved.LastVerifiedAt == nil || saved.Details["workerVersion"] != "worker-v1" || saved.Details["workerLogs"] != "dispatch.workflow-logs/v1" || saved.Details["ownerNote"] != "keep" || saved.Details["runtimeVersion"] != "new-runtime" || saved.Details["enrollmentExpiresAt"] != "" {
+	if saved.State != "ready" || saved.LastVerifiedAt == nil || saved.Details["workerVersion"] != "worker-v1" || saved.Details["ownerNote"] != "keep" || saved.Details["runtimeVersion"] != "new-runtime" || saved.Details["enrollmentExpiresAt"] != "" {
 		t.Fatalf("incorrect merged health: %#v", saved.Details)
 	}
 	for _, transition := range []string{"expired", "rotated", "revoked"} {

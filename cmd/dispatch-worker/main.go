@@ -133,14 +133,6 @@ func execute(ctx context.Context, input io.Reader, output io.Writer) error {
 			writeErr = encoder.Encode(workflowrunner.ExecutionEvent{Log: &log})
 		}
 	}
-	ctx = workflowrunner.WithLogChunks(ctx, func(chunk string) error {
-		mu.Lock()
-		defer mu.Unlock()
-		if writeErr == nil {
-			writeErr = encoder.Encode(workflowrunner.ExecutionEvent{Chunk: &chunk})
-		}
-		return writeErr
-	})
 	result := workflowrunnerexec.Execute(ctx, request, workspace, progress)
 	mu.Lock()
 	defer mu.Unlock()

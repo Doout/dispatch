@@ -17,9 +17,9 @@ func TestFullWorkerLogsSurviveReceiptReplayWithoutRepeatingTheBuild(t *testing.T
 	directory := t.TempDir()
 	_ = os.Chmod(directory, 0700)
 	executions := 0
-	worker, err := OpenWorker(directory, "node", func(ctx context.Context, r Request, _ string, _ func(string)) Result {
+	worker, err := OpenWorker(directory, "node", func(ctx context.Context, r Request, _ string, progress func(string)) Result {
 		executions++
-		stream := runlog.Stream(func(text string) error { return PublishLogChunk(ctx, text) }, r.LogSecrets()...)
+		stream := runlog.Stream(func(text string) error { progress(text); return nil }, r.LogSecrets()...)
 		for i := 0; i < 1000; i++ {
 			_, _ = stream.Write([]byte(strings.Repeat("building image ", 100) + "private-value\n"))
 		}
@@ -30,7 +30,7 @@ func TestFullWorkerLogsSurviveReceiptReplayWithoutRepeatingTheBuild(t *testing.T
 	}
 	defer worker.Close()
 	r := testRequest()
-	r.Workflow.LogID = "full-log"
+	r.Workflow.Job = json.RawMessage(`{"run":"true","dispatchLogId":"full-log"}`)
 	r.Workflow.Secrets = map[string]string{"TOKEN": "private-value"}
 	raw, _ := json.Marshal(r)
 	digest := sha256.Sum256(raw)
@@ -75,7 +75,7 @@ func TestOlderExecutionImageCannotMarkMissingLogsComplete(t *testing.T) {
 	}
 	defer worker.Close()
 	r := testRequest()
-	r.Workflow.LogID = "build-log"
+	r.Workflow.Job = json.RawMessage(`{"run":"true","dispatchLogId":"build-log"}`)
 	raw, _ := json.Marshal(r)
 	digest := sha256.Sum256(raw)
 	job := LeasedJob{ID: "operation", Attempt: 1, Request: r, Digest: hex.EncodeToString(digest[:])}

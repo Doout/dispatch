@@ -21,7 +21,7 @@ func TestFullWorkerClientTransfersLargeLogsBeforeAcknowledgingCompletion(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	r := testRequest()
-	r.Workflow.LogID = "build-log"
+	r.Workflow.Job = json.RawMessage(`{"run":"true","dispatchLogId":"build-log"}`)
 	r.Workflow.Secrets = map[string]string{"TOKEN": "private-value"}
 	raw, _ := json.Marshal(r)
 	digest := sha256.Sum256(raw)
@@ -43,18 +43,18 @@ func TestFullWorkerClientTransfersLargeLogsBeforeAcknowledgingCompletion(t *test
 			}
 			if p.LogChunk != "" {
 				chunks++
-				if err := runlog.Receive(controllerLogs, r.Workflow.LogID, p.LogOffset, p.LogChunk, r.LogSecrets()...); err != nil {
+				if err := runlog.Receive(controllerLogs, r.LogID(), p.LogOffset, p.LogChunk, r.LogSecrets()...); err != nil {
 					t.Error(err)
 				}
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"cancelRequested": false, "logOffset": runlog.Position(controllerLogs, r.Workflow.LogID)})
+			_ = json.NewEncoder(w).Encode(map[string]any{"cancelRequested": false, "logOffset": runlog.Position(controllerLogs, r.LogID())})
 		case strings.HasSuffix(request.URL.Path, "/complete"):
 			if err := json.NewDecoder(request.Body).Decode(&completed); err != nil {
 				t.Error(err)
 			}
 			if completed.Result.LogSize == nil {
 				t.Error("completed without a full log receipt")
-			} else if err := runlog.Finish(controllerLogs, r.Workflow.LogID, *completed.Result.LogSize); err != nil {
+			} else if err := runlog.Finish(controllerLogs, r.LogID(), *completed.Result.LogSize); err != nil {
 				t.Error(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]bool{"accepted": true})
@@ -65,8 +65,8 @@ func TestFullWorkerClientTransfersLargeLogsBeforeAcknowledgingCompletion(t *test
 	defer server.Close()
 	directory := t.TempDir()
 	_ = os.Chmod(directory, 0700)
-	worker, err := OpenWorker(directory, "node", func(ctx context.Context, r Request, _ string, _ func(string)) Result {
-		stream := runlog.Stream(func(text string) error { return PublishLogChunk(ctx, text) }, r.LogSecrets()...)
+	worker, err := OpenWorker(directory, "node", func(ctx context.Context, r Request, _ string, progress func(string)) Result {
+		stream := runlog.Stream(func(text string) error { progress(text); return nil }, r.LogSecrets()...)
 		for i := 0; i < 800; i++ {
 			_, _ = stream.Write([]byte(strings.Repeat("building image ", 100) + "private-value\n"))
 		}
@@ -78,13 +78,13 @@ func TestFullWorkerClientTransfersLargeLogsBeforeAcknowledgingCompletion(t *test
 	defer worker.Close()
 	client := Client{HTTP: server.Client(), Identity: edgeclient.Identity{NodeID: "node", Controller: server.URL}, Mode: "tenant", session: edgeclient.Session{Token: "session", ExpiresAt: time.Now().Add(time.Hour)}}
 	found, err := client.Poll(ctx, worker)
-	if err != nil || !found || completed.Result.State != "succeeded" || chunks < 8 || !runlog.Complete(controllerLogs, r.Workflow.LogID) {
+	if err != nil || !found || completed.Result.State != "succeeded" || chunks < 8 || !runlog.Complete(controllerLogs, r.LogID()) {
 		t.Fatalf("full worker transfer failed: %v %d %+v", err, chunks, completed.Result)
 	}
 	var offset int64
 	var full strings.Builder
 	for {
-		text, next, incomplete, err := runlog.Read(controllerLogs, r.Workflow.LogID, offset)
+		text, next, incomplete, err := runlog.Read(controllerLogs, r.LogID(), offset)
 		if err != nil || incomplete {
 			t.Fatal("received log is incomplete")
 		}

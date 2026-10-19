@@ -66,7 +66,10 @@ func (r *jobRuntime) runRemoteJob(ctx context.Context, job JobSpec, secrets map[
 		}
 		sources[alias] = source
 	}
-	raw, err := json.Marshal(job)
+	raw, err := json.Marshal(struct {
+		JobSpec
+		GitHubLogID string `json:"dispatchLogId,omitempty"`
+	}{job, r.fullLogID})
 	if err != nil {
 		return nil, "", err
 	}
@@ -78,7 +81,6 @@ func (r *jobRuntime) runRemoteJob(ctx context.Context, job JobSpec, secrets map[
 		mode = "tenant"
 	}
 	request := workflowrunner.Request{Version: workflowrunner.Version, ProjectID: r.source.ProjectID, ResourceID: r.revision.ResourceID, RevisionID: r.revision.ID, Mode: mode, Workflow: &workflowrunner.Workflow{Job: raw, Sources: sources, Inputs: r.inputs, Secrets: secrets}}
-	request.Workflow.LogID = r.fullLogID
 	if r.serviceTemplate != nil {
 		request.Workflow.ServiceRunID = r.serviceRunID
 		digest := sha256.Sum256([]byte(r.serviceTemplate.Document))
@@ -168,12 +170,12 @@ func ExecuteWorkerJob(ctx context.Context, request workflowrunner.Request, works
 		revision.Sources[alias] = source.Revision
 	}
 	runtime := jobRuntime{root: workspace, revision: revision, paths: map[string]string{}, inputs: request.Workflow.Inputs, workerSources: request.Workflow.Sources}
-	if request.Workflow.LogID != "" {
-		runtime.logArchive = runlog.Stream(func(text string) error { return workflowrunner.PublishLogChunk(ctx, text) }, request.LogSecrets()...)
+	if request.LogID() != "" && progress != nil {
+		runtime.logArchive = runlog.Stream(func(text string) error { progress(text); return nil }, request.LogSecrets()...)
 	}
 	defer runtime.close()
 	output, logs, err := runtime.runJobCommand(ctx, job, request.Workflow.Secrets, func(log string) {
-		if progress != nil {
+		if runtime.logArchive == nil && progress != nil {
 			progress(request.Redact(log))
 		}
 	})
