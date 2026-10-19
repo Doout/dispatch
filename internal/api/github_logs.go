@@ -19,10 +19,10 @@ import (
 )
 
 func (a *API) reconcileGitHubLogs(ctx context.Context, r *core.WorkflowCheckReport) error {
-	if r.Logs == nil || r.LogRunID > 0 {
+	if !r.GitHubLogs || r.LogRunID > 0 {
 		return nil
 	}
-	if r.LogDispatch != "" {
+	if r.LogRequestedAt != nil {
 		run, err := a.eventConfig.GitHubApps.FindLogWorkflow(ctx, *r)
 		if err == nil {
 			r.LogRunID, r.LogURL = run.ID, safeCheckLink(run.URL)
@@ -33,14 +33,13 @@ func (a *API) reconcileGitHubLogs(ctx context.Context, r *core.WorkflowCheckRepo
 		}
 		return &githubapp.CheckRunError{Message: "Waiting for GitHub to return the log run. Reporting will retry."}
 	}
-	if r.Logs.Ref == "" {
-		workflow, err := a.eventConfig.GitHubApps.ResolveLogWorkflow(ctx, *r)
+	if r.LogRef == "" {
+		branch, err := a.eventConfig.GitHubApps.ResolveLogWorkflow(ctx, *r)
 		if err != nil {
 			return err
 		}
-		r.Logs = &workflow
+		r.LogRef = branch
 	}
-	r.LogDispatch = "posting"
 	now := time.Now().UTC()
 	r.LogRequestedAt = &now
 	if err := a.store.SaveWorkflowCheckProgress(ctx, *r, time.Now().UTC()); err != nil {
@@ -49,21 +48,19 @@ func (a *API) reconcileGitHubLogs(ctx context.Context, r *core.WorkflowCheckRepo
 	if err := a.eventConfig.GitHubApps.DispatchLogWorkflow(ctx, *r); err != nil {
 		var failure *githubapp.CheckRunError
 		if errors.As(err, &failure) && !failure.CreateUncertain {
-			r.LogDispatch = ""
+			r.LogRequestedAt = nil
 			return err
 		}
 		// A timeout may follow an accepted dispatch. Keep the intent and search
 		// by report ID instead of starting another billable Actions job.
 		return &githubapp.CheckRunError{Message: "Waiting for GitHub to return the log run. Reporting will retry without starting another run."}
 	}
-	r.LogDispatch = "sent"
 	return nil
 }
 
 type githubLogStream struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	State string `json:"state"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 type githubLogIndex struct {
 	Streams  []githubLogStream `json:"streams"`
@@ -91,7 +88,7 @@ func (a *API) githubWorkflowLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	report, err := a.store.GetWorkflowCheck(r.Context(), chi.URLParam(r, "id"))
-	if err != nil || report.Logs == nil || a.eventConfig.GitHubApps == nil {
+	if err != nil || !report.GitHubLogs || a.eventConfig.GitHubApps == nil {
 		http.Error(w, "GitHub workflow identity required", 401)
 		return
 	}
@@ -136,12 +133,12 @@ func (a *API) githubWorkflowLogs(w http.ResponseWriter, r *http.Request) {
 	index := githubLogIndex{Streams: []githubLogStream{}, Complete: terminalWorkflowState(revision.State), State: revision.State}
 	for _, job := range jobs {
 		if allowed[job.JobName] {
-			index.Streams = append(index.Streams, githubLogStream{"job-" + job.ID, job.JobName, job.State})
+			index.Streams = append(index.Streams, githubLogStream{"job-" + job.ID, job.JobName})
 		}
 	}
 	for _, stage := range stages {
 		for _, id := range stage.DeploymentIDs {
-			index.Streams = append(index.Streams, githubLogStream{"deployment-" + id, "Deployment / " + stage.StageName, stage.State})
+			index.Streams = append(index.Streams, githubLogStream{"deployment-" + id, "Deployment / " + stage.StageName})
 		}
 	}
 	stream := r.URL.Query().Get("stream")

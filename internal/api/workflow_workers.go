@@ -113,12 +113,12 @@ func (a *API) MountWorkflowRunnerRoutes(r chi.Router, b *workflowrunner.Broker) 
 		if !read(w, r, &input) {
 			return
 		}
-		cancel, err := b.Renew(r.Context(), node, chi.URLParam(r, "jobId"), input)
+		reply, err := b.Renew(r.Context(), node, chi.URLParam(r, "jobId"), input)
 		if err != nil {
 			problem(w, 409, "Worker lease changed", "Stop this operation before accepting another job.")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"cancelRequested": cancel, "logOffset": b.LogOffset(r.Context(), node, chi.URLParam(r, "jobId"))})
+		writeJSON(w, 200, reply)
 	})
 	r.Post("/edge/nodes/{id}/workflow/jobs/{jobId}/complete", func(w http.ResponseWriter, r *http.Request) {
 		node, _, _, ok := authenticate(w, r)

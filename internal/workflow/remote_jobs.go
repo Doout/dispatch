@@ -182,8 +182,7 @@ func ExecuteWorkerJob(ctx context.Context, request workflowrunner.Request, works
 		if err != nil {
 			_, _ = runtime.logArchive.Write([]byte("\n" + err.Error() + "\n"))
 		}
-		result.LogIncomplete = runtime.logArchive.Close() != nil
-		result.LogCaptured = !result.LogIncomplete
+		result.LogCaptured = runtime.logArchive.Close() == nil
 	}
 	if err != nil {
 		failed := failure(err)

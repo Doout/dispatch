@@ -125,13 +125,7 @@ func (f *Filter) Line(line string) string {
 	line = tokens.ReplaceAllString(line, "[redacted]")
 	line = urlPassword.ReplaceAllString(line, "$1://[redacted]@")
 	line = credentials.ReplaceAllString(line, "${1}[redacted]")
-	// Remove terminal control characters, including carriage-return overwrites.
-	return strings.Map(func(r rune) rune {
-		if r < 32 && r != '\t' || r == 127 {
-			return -1
-		}
-		return r
-	}, line)
+	return line
 }
 
 func Text(text string, secrets ...string) string {

@@ -259,28 +259,33 @@ func (b *Broker) Lease(ctx context.Context, node string, generation int64, mode 
 	}
 	return &LeasedJob{ID: j.ID, Digest: j.Digest, Attempt: j.Attempt, LeaseToken: j.LeaseToken, ExpiresAt: j.ExpiresAt, Request: r}, nil
 }
-func (b *Broker) Renew(ctx context.Context, node, id string, p Progress) (bool, error) {
+func (b *Broker) Renew(ctx context.Context, node, id string, p Progress) (Heartbeat, error) {
 	j, err := b.Store.GetWorkflowWorkerJob(ctx, id)
 	if err != nil || j.NodeID != node {
-		return false, store.ErrWorkerLease
+		return Heartbeat{}, store.ErrWorkerLease
 	}
 	r, err := b.request(ctx, j)
 	if err != nil {
-		return false, err
+		return Heartbeat{}, err
 	}
 	if len(p.Log) > MaxLog {
-		return false, errors.New("worker output exceeds the log limit")
+		return Heartbeat{}, errors.New("worker output exceeds the log limit")
 	}
 	log, err := b.Vault.Encrypt("workflow-worker:"+id+":progress", []byte(r.Redact(p.Log)))
 	if err != nil {
-		return false, err
+		return Heartbeat{}, err
 	}
 	cancel, err := b.Store.RenewWorkflowWorkerJob(ctx, node, id, p.LeaseToken, log, time.Now().UTC())
-	if err == nil && !cancel && r.Workflow != nil && r.Workflow.LogID != "" && p.LogChunk != "" {
-		// Log delivery must never cancel execution when the archive is full.
-		_ = runlog.Receive(b.LogDirectory, r.Workflow.LogID, p.LogOffset, p.LogChunk, r.LogSecrets()...)
+	reply := Heartbeat{CancelRequested: cancel}
+	if err == nil && !cancel && r.Workflow != nil && r.Workflow.LogID != "" {
+		if p.LogChunk != "" {
+			// Log delivery must never cancel execution when the archive is full.
+			_ = runlog.Receive(b.LogDirectory, r.Workflow.LogID, p.LogOffset, p.LogChunk, r.LogSecrets()...)
+		}
+		offset := runlog.Position(b.LogDirectory, r.Workflow.LogID)
+		reply.LogOffset = &offset
 	}
-	return cancel, err
+	return reply, err
 }
 func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) error {
 	j, err := b.Store.GetWorkflowWorkerJob(ctx, id)
@@ -307,21 +312,8 @@ func (b *Broker) Complete(ctx context.Context, node, id string, c Completion) er
 	if err := b.Store.CompleteWorkflowWorkerJob(ctx, node, id, c.LeaseToken, c.Result.State, result, time.Now().UTC()); err != nil {
 		return err
 	}
-	if r.Workflow != nil && r.Workflow.LogID != "" && c.Result.LogSize != nil && !c.Result.LogIncomplete {
+	if r.Workflow != nil && r.Workflow.LogID != "" && c.Result.LogSize != nil {
 		_ = runlog.Finish(b.LogDirectory, r.Workflow.LogID, *c.Result.LogSize)
 	}
 	return nil
-}
-
-func (b *Broker) LogOffset(ctx context.Context, node, id string) *int64 {
-	j, err := b.Store.GetWorkflowWorkerJob(ctx, id)
-	if err != nil || j.NodeID != node {
-		return nil
-	}
-	r, err := b.request(ctx, j)
-	if err != nil || r.Workflow == nil || r.Workflow.LogID == "" {
-		return nil
-	}
-	value := runlog.Position(b.LogDirectory, r.Workflow.LogID)
-	return &value
 }

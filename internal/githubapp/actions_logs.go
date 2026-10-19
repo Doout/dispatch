@@ -15,24 +15,25 @@ import (
 )
 
 type LogWorkflowRun struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"display_title"`
-	Event     string    `json:"event"`
-	Path      string    `json:"path"`
-	Branch    string    `json:"head_branch"`
-	URL       string    `json:"html_url"`
-	CreatedAt time.Time `json:"created_at"`
+	ID     int64  `json:"id"`
+	Title  string `json:"display_title"`
+	Event  string `json:"event"`
+	Path   string `json:"path"`
+	Branch string `json:"head_branch"`
+	URL    string `json:"html_url"`
 }
+
+const logWorkflowFile = "doodship-logs.yml"
 
 var ErrLogWorkflowNotFound = errors.New("GitHub log workflow has not appeared")
 
 // ResolveLogWorkflow selects the standard collector on the repository's default
 // branch, independently of the application branch being built. The reporting
 // queue saves this identity before dispatch so retries keep using the same ref.
-func (m *Manager) ResolveLogWorkflow(ctx context.Context, r core.WorkflowCheckReport) (core.GitHubLogWorkflow, error) {
+func (m *Manager) ResolveLogWorkflow(ctx context.Context, r core.WorkflowCheckReport) (string, error) {
 	connection, repository, token, err := m.checkRunAccess(ctx, r)
 	if err != nil {
-		return core.GitHubLogWorkflow{}, err
+		return "", err
 	}
 	var result struct {
 		FullName      string `json:"full_name"`
@@ -40,12 +41,12 @@ func (m *Manager) ResolveLogWorkflow(ctx context.Context, r core.WorkflowCheckRe
 	}
 	endpoint := strings.TrimRight(connection.APIURL, "/") + "/repos/" + repository
 	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &result, connection.PrivateNetworkID); err != nil {
-		return core.GitHubLogWorkflow{}, m.checkRunRequestFailure(r, err, false)
+		return "", m.checkRunRequestFailure(r, err, false)
 	}
 	if !strings.EqualFold(result.FullName, repository) || result.DefaultBranch == "" || strings.TrimSpace(result.DefaultBranch) != result.DefaultBranch || strings.ContainsAny(result.DefaultBranch, "\r\n\x00") {
-		return core.GitHubLogWorkflow{}, &CheckRunError{Message: "GitHub did not return the captured repository's default branch. Log reporting will retry."}
+		return "", &CheckRunError{Message: "GitHub did not return the captured repository's default branch. Log reporting will retry."}
 	}
-	return core.GitHubLogWorkflow{Workflow: "doodship-logs.yml", Ref: result.DefaultBranch}, nil
+	return result.DefaultBranch, nil
 }
 
 func (m *Manager) FindLogWorkflow(ctx context.Context, r core.WorkflowCheckReport) (LogWorkflowRun, error) {
@@ -53,33 +54,21 @@ func (m *Manager) FindLogWorkflow(ctx context.Context, r core.WorkflowCheckRepor
 	if err != nil {
 		return LogWorkflowRun{}, err
 	}
-	if r.Logs == nil {
-		return LogWorkflowRun{}, errors.New("GitHub log workflow is not configured")
+	if !r.GitHubLogs || r.LogRef == "" || r.LogRequestedAt == nil {
+		return LogWorkflowRun{}, errors.New("GitHub log workflow has not been dispatched")
 	}
 	base := strings.TrimRight(connection.APIURL, "/") + "/repos/" + repository + "/actions"
 	matches := func(run LogWorkflowRun) bool {
-		path := ".github/workflows/" + r.Logs.Workflow
-		return run.ID > 0 && run.Event == "workflow_dispatch" && run.Title == "Doodship "+r.ID && (run.Path == path || run.Path == path+"@"+r.Logs.Ref || run.Path == path+"@refs/heads/"+r.Logs.Ref) && run.Branch == r.Logs.Ref
-	}
-	if r.LogRunID > 0 {
-		var run LogWorkflowRun
-		if err := m.request(ctx, http.MethodGet, fmt.Sprintf("%s/runs/%d", base, r.LogRunID), token, nil, &run, connection.PrivateNetworkID); err != nil {
-			return run, err
-		}
-		if !matches(run) {
-			return LogWorkflowRun{}, errors.New("GitHub log workflow identity changed")
-		}
-		return run, nil
+		path := ".github/workflows/" + logWorkflowFile
+		return run.ID > 0 && run.Event == "workflow_dispatch" && run.Title == "Doodship "+r.ID && (run.Path == path || run.Path == path+"@"+r.LogRef || run.Path == path+"@refs/heads/"+r.LogRef) && run.Branch == r.LogRef
 	}
 	for page := 1; page <= 10; page++ {
-		query := url.Values{"event": {"workflow_dispatch"}, "branch": {r.Logs.Ref}, "per_page": {"100"}, "page": {fmt.Sprint(page)}}
-		if r.LogRequestedAt != nil {
-			query.Set("created", r.LogRequestedAt.Add(-5*time.Minute).UTC().Format(time.RFC3339)+".."+r.LogRequestedAt.Add(5*time.Minute).UTC().Format(time.RFC3339))
-		}
+		query := url.Values{"event": {"workflow_dispatch"}, "branch": {r.LogRef}, "per_page": {"100"}, "page": {fmt.Sprint(page)}}
+		query.Set("created", r.LogRequestedAt.Add(-5*time.Minute).UTC().Format(time.RFC3339)+".."+r.LogRequestedAt.Add(5*time.Minute).UTC().Format(time.RFC3339))
 		var result struct {
 			Runs []LogWorkflowRun `json:"workflow_runs"`
 		}
-		endpoint := base + "/workflows/" + url.PathEscape(r.Logs.Workflow) + "/runs?" + query.Encode()
+		endpoint := base + "/workflows/" + logWorkflowFile + "/runs?" + query.Encode()
 		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &result, connection.PrivateNetworkID); err != nil {
 			return LogWorkflowRun{}, err
 		}
@@ -100,11 +89,11 @@ func (m *Manager) DispatchLogWorkflow(ctx context.Context, r core.WorkflowCheckR
 	if err != nil {
 		return err
 	}
-	if r.Logs == nil {
+	if !r.GitHubLogs || r.LogRef == "" {
 		return errors.New("GitHub log workflow is not configured")
 	}
-	endpoint := strings.TrimRight(connection.APIURL, "/") + "/repos/" + repository + "/actions/workflows/" + url.PathEscape(r.Logs.Workflow) + "/dispatches"
-	if err := m.request(ctx, http.MethodPost, endpoint, token, map[string]any{"ref": r.Logs.Ref, "inputs": map[string]string{"report_id": r.ID}}, nil, connection.PrivateNetworkID); err != nil {
+	endpoint := strings.TrimRight(connection.APIURL, "/") + "/repos/" + repository + "/actions/workflows/" + logWorkflowFile + "/dispatches"
+	if err := m.request(ctx, http.MethodPost, endpoint, token, map[string]any{"ref": r.LogRef, "inputs": map[string]string{"report_id": r.ID}}, nil, connection.PrivateNetworkID); err != nil {
 		uncertain := true
 		var response *responseError
 		if errors.As(err, &response) && response.StatusCode >= 400 && response.StatusCode < 500 && !response.RateLimited {
@@ -124,7 +113,7 @@ type logOIDCVerifier struct {
 }
 
 func (m *Manager) VerifyLogWorkflowToken(ctx context.Context, r core.WorkflowCheckReport, raw string) error {
-	if r.Logs == nil || r.LogRunID < 1 || len(raw) > 16384 || len(raw) < 128 || strings.Count(raw, ".") != 2 {
+	if !r.GitHubLogs || r.LogRunID < 1 || len(raw) > 16384 || len(raw) < 128 || strings.Count(raw, ".") != 2 {
 		return errors.New("GitHub workflow identity is required")
 	}
 	connection, err := m.Store.GetGitHubApp(ctx, r.GitHubAppID)
@@ -174,7 +163,7 @@ func (m *Manager) VerifyLogWorkflowToken(ctx context.Context, r core.WorkflowChe
 	if err := verified.Claims(&claims); err != nil {
 		return errors.New("GitHub workflow identity is invalid")
 	}
-	expected := claims.Repository + "/.github/workflows/" + r.Logs.Workflow + "@refs/heads/" + r.Logs.Ref
+	expected := claims.Repository + "/.github/workflows/" + logWorkflowFile + "@refs/heads/" + r.LogRef
 	if !strings.EqualFold(claims.Repository, r.Repository) || claims.Workflow != expected || claims.Event != "workflow_dispatch" || claims.RunID != fmt.Sprint(r.LogRunID) || claims.IssuedAt < 1 || time.Unix(claims.IssuedAt, 0).After(time.Now().Add(time.Minute)) || verified.Expiry.Sub(time.Unix(claims.IssuedAt, 0)) > 10*time.Minute {
 		return errors.New("GitHub workflow identity does not match this run")
 	}

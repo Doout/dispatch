@@ -103,7 +103,6 @@ type Request struct {
 
 type Result struct {
 	LogSize           *int64                          `json:"logSize,omitempty"`
-	LogIncomplete     bool                            `json:"logIncomplete,omitempty"`
 	LogCaptured       bool                            `json:"logCaptured,omitempty"`
 	Storage           []core.StorageObservation       `json:"storage"`
 	ServiceInspection *core.ServiceResourceInspection `json:"serviceInspection,omitempty"`
@@ -124,6 +123,11 @@ type Progress struct {
 	LeaseToken string `json:"leaseToken"`
 	Log        string `json:"log,omitempty"`
 	Phase      string `json:"phase,omitempty"`
+}
+
+type Heartbeat struct {
+	CancelRequested bool   `json:"cancelRequested"`
+	LogOffset       *int64 `json:"logOffset,omitempty"`
 }
 
 type LeasedJob struct {

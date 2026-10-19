@@ -177,7 +177,7 @@ func (r *jobRuntime) executeJob(ctx context.Context, resource core.WorkflowResou
 		reports, reportErr := r.service.Store.ListWorkflowChecks(ctx, r.revision.ID)
 		if reportErr == nil {
 			for _, report := range reports {
-				if report.Logs == nil {
+				if !report.GitHubLogs {
 					continue
 				}
 				r.fullLogID = result.ID

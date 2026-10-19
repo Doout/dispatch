@@ -109,10 +109,7 @@ func (c *Client) Poll(ctx context.Context, w *Worker) (bool, error) {
 	var logOffset int64
 	heartbeat := func(current string) (bool, error) {
 		text, next := w.logPage(job.ID, logOffset)
-		var reply struct {
-			CancelRequested bool   `json:"cancelRequested"`
-			LogOffset       *int64 `json:"logOffset"`
-		}
+		var reply Heartbeat
 		_, err := c.request(ctx, http.MethodPost, url.PathEscape(job.ID)+"/heartbeat", Progress{LeaseToken: job.LeaseToken, Log: current, LogChunk: text, LogOffset: logOffset}, &reply)
 		if err == nil && (reply.LogOffset == nil || *reply.LogOffset >= next) {
 			logOffset = next
@@ -126,30 +123,27 @@ func (c *Client) Poll(ctx context.Context, w *Worker) (bool, error) {
 			if leaseErr != nil {
 				return true, leaseErr
 			}
-			if outcome.LogSize != nil {
-				stalled := 0
-				for logOffset < *outcome.LogSize {
-					previous := logOffset
-					stop, uploadErr := heartbeat(outcome.Log)
-					if uploadErr != nil {
-						return true, uploadErr
-					}
-					if logOffset == previous {
-						stalled++
-					} else {
-						stalled = 0
-					}
-					if stop || stalled >= 3 {
-						outcome.LogIncomplete = true
-						break
-					}
-					if stalled > 0 {
-						select {
-						case <-ctx.Done():
-							outcome.LogIncomplete = true
-							stalled = 3
-						case <-time.After(time.Second):
-						}
+			stalled := 0
+			for outcome.LogSize != nil && logOffset < *outcome.LogSize {
+				previous := logOffset
+				stop, uploadErr := heartbeat(outcome.Log)
+				if uploadErr != nil {
+					return true, uploadErr
+				}
+				if logOffset == previous {
+					stalled++
+				} else {
+					stalled = 0
+				}
+				if stop || stalled >= 3 {
+					outcome.LogSize = nil
+					break
+				}
+				if stalled > 0 {
+					select {
+					case <-ctx.Done():
+						return true, ctx.Err()
+					case <-time.After(time.Second):
 					}
 				}
 			}

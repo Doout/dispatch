@@ -1,6 +1,7 @@
 package runlog
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,6 +38,21 @@ func TestLogTransferRetriesAndRejectsGapsSecretsAndChangedPrefixes(t *testing.T)
 	text, _, incomplete, err := Read(directory, "job", 0)
 	if err != nil || incomplete || text != first+second || !Complete(directory, "job") {
 		t.Fatalf("full transfer changed: %q %v", text, err)
+	}
+	// Retrying a saved chunk consumes no additional space, even at the quota.
+	filler, err := os.Create(filepath.Join(directory, "capacity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer filler.Close()
+	if err := filler.Truncate(MaxDirectoryBytes - int64(len(first)+len(second))); err != nil {
+		t.Fatal(err)
+	}
+	if err := Receive(directory, "job", 0, first); err != nil {
+		t.Fatalf("full directory rejected an acknowledged chunk: %v", err)
+	}
+	if err := Receive(directory, "job", int64(len(first)+len(second)), "extra\n"); err == nil {
+		t.Fatal("full directory accepted more output")
 	}
 }
 

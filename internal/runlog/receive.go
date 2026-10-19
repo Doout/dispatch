@@ -20,25 +20,8 @@ func Receive(directory, id string, offset int64, text string, secrets ...string)
 	}
 	quota.Lock()
 	defer quota.Unlock()
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := prepareDirectory(directory); err != nil {
 		return err
-	}
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return errors.New("log directory must be private")
-	}
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		return err
-	}
-	var size int64
-	for _, entry := range entries {
-		if info, err := entry.Info(); err == nil && info.Mode().IsRegular() {
-			size += info.Size()
-		}
-	}
-	if size+int64(quota.active[directory])*MaxBytes+int64(len(text)) > MaxDirectoryBytes {
-		return errors.New("temporary GitHub log storage is full")
 	}
 	path := filepath.Join(directory, id+".log")
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
@@ -46,7 +29,7 @@ func Receive(directory, id string, offset int64, text string, secrets ...string)
 		return err
 	}
 	defer file.Close()
-	info, err = file.Stat()
+	info, err := file.Stat()
 	if err != nil {
 		return err
 	}
@@ -64,6 +47,9 @@ func Receive(directory, id string, offset int64, text string, secrets ...string)
 	}
 	if len(saved) == len(text) {
 		return nil
+	}
+	if err := checkQuota(directory, int64(len(text)-len(saved))); err != nil {
+		return err
 	}
 	if _, err := io.WriteString(io.NewOffsetWriter(file, offset+int64(len(saved))), text[len(saved):]); err != nil {
 		return err

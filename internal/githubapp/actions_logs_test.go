@@ -69,7 +69,7 @@ func TestLogWorkflowIdentityBindsIssuerRepositoryBranchAndRun(t *testing.T) {
 					return nil, errors.New("unexpected")
 				}
 			})}
-			report := core.WorkflowCheckReport{ID: "report", GitHubAppID: "app", AppID: 42, APIURL: host, Repository: "example/repo", Logs: &core.GitHubLogWorkflow{Workflow: "doodship-logs.yml", Ref: "main"}, LogRunID: 73}
+			report := core.WorkflowCheckReport{ID: "report", GitHubAppID: "app", AppID: 42, APIURL: host, Repository: "example/repo", GitHubLogs: true, LogRef: "main", LogRunID: 73}
 			claims := func() map[string]any {
 				return map[string]any{"iss": issuer, "sub": "repo:Example/Repo:ref:refs/heads/main", "aud": "doodship:check:report", "iat": time.Now().Unix(), "exp": time.Now().Add(5 * time.Minute).Unix(), "repository": "Example/Repo", "workflow_ref": "Example/Repo/.github/workflows/doodship-logs.yml@refs/heads/main", "event_name": "workflow_dispatch", "run_id": "73"}
 			}
@@ -111,7 +111,7 @@ func TestLogWorkflowDispatchAndRecoveryUseCapturedIdentity(t *testing.T) {
 	manager := New(testStore{connection: connection}, nil)
 	manager.repositories = map[string]repositoryInstallation{"app:example/repo": {ID: 73, ExpiresAt: time.Now().Add(time.Hour)}}
 	manager.tokens[tokenCacheKey("app", 73)] = cachedToken{value: "installation-secret", expiresAt: time.Now().Add(time.Hour)}
-	report := core.WorkflowCheckReport{ID: "report", GitHubAppID: "app", AppID: 42, APIURL: connection.APIURL, Repository: "example/repo", CommitSHA: strings.Repeat("a", 40), ExternalID: "check:report", Name: "Dispatch/deployment/app", Logs: &core.GitHubLogWorkflow{Workflow: "doodship-logs.yml", Ref: "main"}}
+	report := core.WorkflowCheckReport{ID: "report", GitHubAppID: "app", AppID: 42, APIURL: connection.APIURL, Repository: "example/repo", CommitSHA: strings.Repeat("a", 40), ExternalID: "check:report", Name: "Dispatch/deployment/app", GitHubLogs: true, LogRef: "main"}
 	posts := 0
 	failure := 0
 	manager.Client = &http.Client{Transport: logTransport(func(r *http.Request) (*http.Response, error) {
@@ -143,6 +143,8 @@ func TestLogWorkflowDispatchAndRecoveryUseCapturedIdentity(t *testing.T) {
 	if err := manager.DispatchLogWorkflow(context.Background(), report); err != nil {
 		t.Fatal(err)
 	}
+	now := time.Now().UTC()
+	report.LogRequestedAt = &now
 	run, err := manager.FindLogWorkflow(context.Background(), report)
 	if err != nil || run.ID != 99 {
 		t.Fatalf("lost dispatch result: %+v %v", run, err)
@@ -171,7 +173,7 @@ func TestLogWorkflowDiscoveryUsesCapturedRepositoryDefaultBranch(t *testing.T) {
 	manager := New(testStore{connection: connection}, nil)
 	manager.repositories = map[string]repositoryInstallation{"app:example/repo": {ID: 73, ExpiresAt: time.Now().Add(time.Hour)}}
 	manager.tokens[tokenCacheKey("app", 73)] = cachedToken{value: "installation-secret", expiresAt: time.Now().Add(time.Hour)}
-	report := core.WorkflowCheckReport{ID: "report", GitHubAppID: "app", AppID: 42, APIURL: connection.APIURL, Repository: "example/repo", CommitSHA: strings.Repeat("a", 40), ExternalID: "check:report", Name: "Dispatch/deployment/app", Logs: &core.GitHubLogWorkflow{}}
+	report := core.WorkflowCheckReport{ID: "report", GitHubAppID: "app", AppID: 42, APIURL: connection.APIURL, Repository: "example/repo", CommitSHA: strings.Repeat("a", 40), ExternalID: "check:report", Name: "Dispatch/deployment/app", GitHubLogs: true}
 	repository, branch := "Example/Repo", "release/stable"
 	reads := 0
 	manager.Client = &http.Client{Transport: logTransport(func(r *http.Request) (*http.Response, error) {
@@ -182,7 +184,7 @@ func TestLogWorkflowDiscoveryUsesCapturedRepositoryDefaultBranch(t *testing.T) {
 		return logResponse(map[string]string{"full_name": repository, "default_branch": branch}), nil
 	})}
 	resolved, err := manager.ResolveLogWorkflow(context.Background(), report)
-	if err != nil || resolved.Workflow != "doodship-logs.yml" || resolved.Ref != "release/stable" {
+	if err != nil || resolved != "release/stable" {
 		t.Fatalf("wrong collector identity: %+v %v", resolved, err)
 	}
 	for _, invalid := range []struct{ repository, branch string }{

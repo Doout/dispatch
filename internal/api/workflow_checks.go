@@ -118,14 +118,14 @@ func (a *API) reportWorkflowCheck(ctx context.Context, r core.WorkflowCheckRepor
 		r.Status, r.Conclusion = payload.Status, payload.Conclusion
 		r.Error = ""
 		r.State = "reported"
-		r.Complete = payload.Status == "completed" && (r.Logs == nil || r.LogRunID > 0)
+		r.Complete = payload.Status == "completed" && (!r.GitHubLogs || r.LogRunID > 0)
 		if r.Complete && (r.Kind == "build" || r.Kind == "stage") {
 			checks, loadErr := a.store.ListWorkflowChecks(ctx, r.RevisionID)
 			if loadErr != nil {
 				return loadErr
 			}
 			for _, check := range checks {
-				if check.Kind == "deployment" && check.Repository == r.Repository && check.CommitSHA == r.CommitSHA && check.GitHubAppID == r.GitHubAppID && check.Logs != nil && check.LogRunID == 0 {
+				if check.Kind == "deployment" && check.Repository == r.Repository && check.CommitSHA == r.CommitSHA && check.GitHubAppID == r.GitHubAppID && check.GitHubLogs && check.LogRunID == 0 {
 					r.Complete = false
 					break
 				}

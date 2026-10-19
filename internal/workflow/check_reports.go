@@ -132,7 +132,7 @@ func (s *Service) workflowCheckReports(ctx context.Context, resource core.Workfl
 			if scope.kind == "deployment" && logs {
 				// Resolve the collector branch in the reporting queue. GitHub
 				// availability must not gate acceptance or execution of a run.
-				items[len(items)-1].Logs = &core.GitHubLogWorkflow{}
+				items[len(items)-1].GitHubLogs = true
 			}
 		}
 	}

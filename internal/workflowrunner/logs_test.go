@@ -61,3 +61,26 @@ func TestFullWorkerLogsSurviveReceiptReplayWithoutRepeatingTheBuild(t *testing.T
 		t.Fatal("missing completion receipt")
 	}
 }
+
+func TestOlderExecutionImageCannotMarkMissingLogsComplete(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := OpenWorker(directory, "node", func(context.Context, Request, string, func(string)) Result {
+		return Result{State: "succeeded"}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.Close()
+	r := testRequest()
+	r.Workflow.LogID = "build-log"
+	raw, _ := json.Marshal(r)
+	digest := sha256.Sum256(raw)
+	job := LeasedJob{ID: "operation", Attempt: 1, Request: r, Digest: hex.EncodeToString(digest[:])}
+	result := worker.Run(context.Background(), job, nil)
+	if result.State != "succeeded" || result.LogSize != nil || runlog.Complete(filepath.Join(directory, "github-logs"), job.ID) {
+		t.Fatalf("missing log capture changed the build result or claimed complete logs: %+v", result)
+	}
+}

@@ -177,18 +177,18 @@ func TestWorkflowChecksRecoverLogDispatchWithoutStartingAnotherCollector(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Logs = &core.GitHubLogWorkflow{}
+	r.GitHubLogs = true
 	if err := f.a.store.FinishWorkflowCheck(ctx, r, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	f.logLost = true
 	f.logMissing = true
 	first := f.step(t)
-	if first.LogDispatch != "posting" || first.LogRunID != 0 || f.logPosts != 1 || first.CheckID != 101 {
+	if first.LogRequestedAt == nil || first.LogRunID != 0 || f.logPosts != 1 || first.CheckID != 101 {
 		t.Fatalf("lost dispatch result: %+v posts=%d", first, f.logPosts)
 	}
-	if first.Logs.Workflow != "doodship-logs.yml" || first.Logs.Ref != "release/stable" || f.repositoryReads != 1 {
-		t.Fatalf("default branch was not captured: %+v reads=%d", first.Logs, f.repositoryReads)
+	if first.LogRef != "release/stable" || f.repositoryReads != 1 {
+		t.Fatalf("default branch was not captured: %+v reads=%d", first.LogRef, f.repositoryReads)
 	}
 	// Changing the default branch after dispatch must not change the saved
 	// workflow identity or start a second collector during recovery.
@@ -217,13 +217,13 @@ func TestWorkflowChecksRetryLogDiscoveryWithoutChangingExecutionResult(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Logs = &core.GitHubLogWorkflow{}
+	r.GitHubLogs = true
 	if err := f.a.store.FinishWorkflowCheck(ctx, r, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	f.repositoryUnavailable = true
 	failed := f.step(t)
-	if failed.State != "retrying" || failed.LogDispatch != "" || f.logPosts != 0 || strings.Contains(failed.Error, "private-token") {
+	if failed.State != "retrying" || failed.LogRequestedAt != nil || f.logPosts != 0 || strings.Contains(failed.Error, "private-token") {
 		t.Fatalf("unsafe discovery failure: %+v posts=%d", failed, f.logPosts)
 	}
 	if len(f.writes) != 1 || f.writes[0].Conclusion != "success" {
@@ -232,8 +232,35 @@ func TestWorkflowChecksRetryLogDiscoveryWithoutChangingExecutionResult(t *testin
 	f.repositoryUnavailable = false
 	f.defaultBranch = "trunk"
 	started := f.step(t)
-	if started.Logs.Ref != "trunk" || started.LogDispatch != "sent" || f.logPosts != 1 {
+	if started.LogRef != "trunk" || started.LogRequestedAt == nil || f.logPosts != 1 {
 		t.Fatalf("discovery did not recover: %+v posts=%d", started, f.logPosts)
+	}
+}
+
+func TestWorkflowChecksRetryRejectedLogDispatchAfterPermissionRepair(t *testing.T) {
+	f := newCheckFixture(t)
+	f.defaultBranch = "trunk"
+	r, err := f.a.store.ClaimWorkflowCheck(context.Background(), time.Now().Add(time.Hour), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.GitHubLogs = true
+	if err := f.a.store.FinishWorkflowCheck(context.Background(), r, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.logForbidden = true
+	rejected := f.step(t)
+	if rejected.LogRequestedAt != nil || rejected.State != "retrying" || f.logPosts != 1 {
+		t.Fatalf("rejected dispatch retained an accepted intent: %+v", rejected)
+	}
+	f.logForbidden = false
+	started := f.step(t)
+	if started.LogRequestedAt == nil || started.LogRef != "trunk" || f.logPosts != 2 {
+		t.Fatalf("permission repair did not start the collector: %+v", started)
+	}
+	accepted := f.step(t)
+	if accepted.LogRunID != 99 || f.logPosts != 2 {
+		t.Fatalf("permission repair started another collector: %+v", accepted)
 	}
 }
 

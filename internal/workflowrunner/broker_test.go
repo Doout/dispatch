@@ -69,11 +69,12 @@ func TestStatefulWorkerOperationReusesReceiptAndRejectsChangedInputs(t *testing.
 	if _, err := broker.Renew(ctx, node.ID, job.ID, Progress{LeaseToken: "wrong", LogChunk: chunk}); err == nil {
 		t.Fatal("stale lease appended logs")
 	}
-	if position := broker.LogOffset(ctx, node.ID, job.ID); position == nil || *position != 0 {
+	if runlog.Position(broker.LogDirectory, request.Workflow.LogID) != 0 {
 		t.Fatal("stale lease changed log cursor")
 	}
-	if _, err := broker.Renew(ctx, node.ID, job.ID, Progress{LeaseToken: job.LeaseToken, LogChunk: chunk}); err != nil {
-		t.Fatal(err)
+	reply, err := broker.Renew(ctx, node.ID, job.ID, Progress{LeaseToken: job.LeaseToken, LogChunk: chunk})
+	if err != nil || reply.CancelRequested || reply.LogOffset == nil || *reply.LogOffset != int64(len(chunk)) {
+		t.Fatalf("accepted chunk not acknowledged: %+v %v", reply, err)
 	}
 	size := int64(len(chunk))
 	if err := broker.Complete(ctx, node.ID, job.ID, Completion{LeaseToken: "wrong", Result: Result{State: "succeeded", LogSize: &size}}); err == nil {

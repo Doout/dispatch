@@ -156,13 +156,6 @@ type WorkflowReporting struct {
 	ReviewOnFailure string `json:"reviewOnFailure,omitempty" yaml:"reviewOnFailure,omitempty"`
 }
 
-// GitHubLogWorkflow runs a log collector in the source repository. It never
-// executes the application's build or deployment commands.
-type GitHubLogWorkflow struct {
-	Workflow string `json:"workflow,omitempty"`
-	Ref      string `json:"ref,omitempty"`
-}
-
 type WorkflowFeedbackTarget struct {
 	WorkflowPullRequest
 	Status     string `json:"status,omitempty"`

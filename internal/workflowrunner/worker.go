@@ -175,8 +175,9 @@ func (w *Worker) Run(ctx context.Context, j LeasedJob, progress func(string)) Re
 		}
 	}
 	result := w.execute(ctx, j.Request, workspace, progress)
+	result.LogSize = nil
 	if archive != nil {
-		if result.LogIncomplete || !result.LogCaptured {
+		if !result.LogCaptured {
 			archive.Incomplete()
 		}
 		if err := archive.Close(); err == nil {
@@ -185,8 +186,6 @@ func (w *Worker) Run(ctx context.Context, j LeasedJob, progress func(string)) Re
 				size := info.Size()
 				result.LogSize = &size
 			}
-		} else {
-			result.LogIncomplete = true
 		}
 	}
 	result.Log, result.Error = j.Request.Redact(result.Log), j.Request.Redact(result.Error)

@@ -52,7 +52,7 @@ func TestFullWorkerClientTransfersLargeLogsBeforeAcknowledgingCompletion(t *test
 			if err := json.NewDecoder(request.Body).Decode(&completed); err != nil {
 				t.Error(err)
 			}
-			if completed.Result.LogSize == nil || completed.Result.LogIncomplete {
+			if completed.Result.LogSize == nil {
 				t.Error("completed without a full log receipt")
 			} else if err := runlog.Finish(controllerLogs, r.Workflow.LogID, *completed.Result.LogSize); err != nil {
 				t.Error(err)

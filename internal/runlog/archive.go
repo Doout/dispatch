@@ -44,30 +44,14 @@ func Open(directory, id string, secrets ...string) (*Writer, error) {
 	if directory == "" || !idPattern.MatchString(id) {
 		return nil, errors.New("log archive is not configured")
 	}
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return nil, err
-	}
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("log directory must be private")
-	}
 	quota.Lock()
 	defer quota.Unlock()
-	_ = Prune(directory, time.Now())
-	entries, err := os.ReadDir(directory)
-	if err != nil {
+	if err := prepareDirectory(directory); err != nil {
 		return nil, err
 	}
-	var size int64
-	for _, entry := range entries {
-		if info, err := entry.Info(); err == nil && info.Mode().IsRegular() {
-			size += info.Size()
-		}
-	}
-	// Reserve a whole archive for active jobs. This is intentionally stricter
-	// than the actual bytes written so concurrent jobs cannot fill the volume.
-	if size+int64(quota.active[directory]+1)*MaxBytes > MaxDirectoryBytes {
-		return nil, errors.New("temporary GitHub log storage is full")
+	_ = Prune(directory, time.Now())
+	if err := checkQuota(directory, MaxBytes); err != nil {
+		return nil, err
 	}
 	f, err := os.OpenFile(filepath.Join(directory, id+".log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -75,6 +59,36 @@ func Open(directory, id string, secrets ...string) (*Writer, error) {
 	}
 	quota.active[directory]++
 	return &Writer{file: f, filter: logsafe.New(secrets...), directory: directory}, nil
+}
+
+func prepareDirectory(directory string) error {
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return errors.New("log directory must be private")
+	}
+	return nil
+}
+
+// The caller holds quota's lock. Reserve a whole archive for each active writer
+// so concurrent jobs cannot fill the volume.
+func checkQuota(directory string, additional int64) error {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return err
+	}
+	var size int64
+	for _, entry := range entries {
+		if info, err := entry.Info(); err == nil && info.Mode().IsRegular() {
+			size += info.Size()
+		}
+	}
+	if size+int64(quota.active[directory])*MaxBytes+additional > MaxDirectoryBytes {
+		return errors.New("temporary GitHub log storage is full")
+	}
+	return nil
 }
 
 func (w *Writer) Write(p []byte) (int, error) {
@@ -187,9 +201,6 @@ func (w *Writer) Incomplete() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.err = errors.New("worker output did not include the full log")
-	if w.file != nil {
-		_ = os.WriteFile(w.file.Name()+".failed", []byte("Log delivery is incomplete.\n"), 0600)
-	}
 }
 
 // Read returns complete filtered lines. A cursor is a byte offset into this

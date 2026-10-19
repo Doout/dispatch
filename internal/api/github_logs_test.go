@@ -56,14 +56,14 @@ func TestGitHubLogEndpointScopesFullLogsToTheAcceptedWorkflow(t *testing.T) {
 	r.RevisionID = "full-run"
 	r.ExternalID = "check:full"
 	r.APIURL = connection.APIURL
-	r.Logs = &core.GitHubLogWorkflow{Workflow: "doodship-logs.yml", Ref: "main"}
+	r.GitHubLogs, r.LogRef = true, "main"
 	r.LogRunID = 73
 	build := r
 	build.ID = "build-report"
 	build.ExternalID = "check:build"
 	build.Kind = "build"
 	build.Job = "build"
-	build.Logs = nil
+	build.GitHubLogs = false
 	build.LogRunID = 0
 	foreign := build
 	foreign.ID = "foreign-report"

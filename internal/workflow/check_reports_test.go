@@ -159,11 +159,11 @@ spec:
 		if item.Kind == "build" {
 			builds[item.Repository+":"+item.Job] = true
 		}
-		if (item.Logs != nil) != (item.Kind == "deployment") {
+		if item.GitHubLogs != (item.Kind == "deployment") {
 			t.Fatalf("wrong log scope: %+v", item)
 		}
-		if item.Logs != nil && (item.Logs.Workflow != "" || item.Logs.Ref != "") {
-			t.Fatalf("collector identity resolved before reporting: %+v", item.Logs)
+		if item.GitHubLogs && item.LogRef != "" {
+			t.Fatalf("collector identity resolved before reporting: %+v", item.LogRef)
 		}
 	}
 	for _, key := range []string{"example/service:build-service", "example/ui:build-ui", "example/config:build-ui", "example/service:finally/cleanup"} {
@@ -182,7 +182,7 @@ spec:
 			t.Fatalf("disabled logs changed checks: %d %v", len(items), err)
 		}
 		for _, item := range items {
-			if item.Logs != nil {
+			if item.GitHubLogs {
 				t.Fatalf("started collector with %q: %+v", setting, item)
 			}
 		}
