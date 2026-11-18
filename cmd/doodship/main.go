@@ -20,7 +20,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const usage = "Usage: doodship workflow run --file FILE [--pr NUMBER] [--source alias=checkout] [--target ref=context]"
+const workflowUsage = "Usage: doodship workflow run --file FILE [--pr NUMBER] [--source alias=checkout] [--target ref=context]"
+
+const updateUsage = "Usage: doodship update"
+const usage = workflowUsage + "\n" + updateUsage
 
 type options struct {
 	file, envFile, envExample, instance string
@@ -64,13 +67,27 @@ func run(ctx context.Context, args []string, out, log io.Writer) error {
 		fmt.Fprintln(out, usage)
 		return nil
 	}
+	if len(args) > 0 && args[0] == "update" {
+		if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+			fmt.Fprintln(out, updateUsage+"\nInstall the latest stable release over the running executable.")
+			return nil
+		}
+		if len(args) != 1 {
+			return errors.New(updateUsage)
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		return updateExecutable(ctx, executable, out, log)
+	}
 	if len(args) < 2 || args[0] != "workflow" || args[1] != "run" {
 		return errors.New(usage)
 	}
 	o := options{sources: map[string]string{}, targets: map[string]string{}, vars: map[string]string{}}
 	flags := flag.NewFlagSet("workflow run", flag.ContinueOnError)
 	flags.SetOutput(log)
-	flags.Usage = func() { fmt.Fprintln(log, usage); flags.PrintDefaults() }
+	flags.Usage = func() { fmt.Fprintln(log, workflowUsage); flags.PrintDefaults() }
 	flags.StringVar(&o.file, "file", "", "Workflow YAML file")
 	flags.IntVar(&o.pr, "pr", 0, "PR number for a WorkflowTemplate")
 	flags.StringVar(&o.instance, "instance", "", "Preview instance ID (defaults to the PR number)")
@@ -90,7 +107,7 @@ func run(ctx context.Context, args []string, out, log io.Writer) error {
 		return err
 	}
 	if o.file == "" || flags.NArg() != 0 {
-		return errors.New(usage)
+		return errors.New(workflowUsage)
 	}
 	if o.envExample != "" && !o.listInputs {
 		return errors.New("--write-env-example requires --list-inputs")
