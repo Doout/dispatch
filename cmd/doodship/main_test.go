@@ -37,6 +37,7 @@ func TestOfflineWorkflowRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, filepath.Join(chart, "Chart.yaml"), "apiVersion: v2\nname: hello\nversion: 1.0.0\n", 0600)
+	put(t, filepath.Join(repo, "base.yaml"), "workers: 1\nworkers: 2\n_pipeline: {enabled: true}\n", 0600)
 	put(t, filepath.Join(repo, "marker"), "slot", 0600)
 	gitFixture(t, repo, "add", ".")
 	gitFixture(t, repo, "commit", "-qm", "Slot")
@@ -47,17 +48,24 @@ func TestOfflineWorkflowRun(t *testing.T) {
 	bin := t.TempDir()
 	logPath := filepath.Join(bin, "calls")
 	valuesPath := filepath.Join(bin, "values")
+	basePath := filepath.Join(bin, "base-values")
 	put(t, filepath.Join(bin, "helm"), fmt.Sprintf(`#!/bin/sh
 set -eu
 echo "$*" >> '%s'
 case "$1" in
+  version) printf '%%s\n' "$DOODSHIP_TEST_HELM_VERSION" ;;
   install|upgrade)
     while [ "$#" -gt 0 ]; do
-      if [ "$1" = "-f" ]; then cp "$2" '%s'; fi
+      if [ "$1" = "-f" ]; then
+        case "$2" in
+          */overrides.json) cp "$2" '%s' ;;
+          *) cp "$2" '%s' ;;
+        esac
+      fi
       shift
     done ;;
 esac
-`, logPath, valuesPath), 0700)
+`, logPath, valuesPath, basePath), 0700)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DISPATCH_URL", "http://127.0.0.1:1")
 	t.Setenv("DOODSHIP_TEST_PASSWORD", "")
@@ -66,6 +74,11 @@ esac
 	put(t, envFile, "DOODSHIP_TEST_PASSWORD=fixture-password\n", 0600)
 	for _, kind := range []string{"slot", "preview"} {
 		t.Run(kind, func(t *testing.T) {
+			helmVersion := "v3.21.4"
+			if kind == "preview" {
+				helmVersion = "v4.3.0"
+			}
+			t.Setenv("DOODSHIP_TEST_HELM_VERSION", helmVersion)
 			raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "doodship", kind+".yaml"))
 			if err != nil {
 				t.Fatal(err)
@@ -80,6 +93,7 @@ esac
       secrets:
         TOKEN: {secretRef: DOODSHIP_TEST_PASSWORD}
 ` + yaml[end:]
+			yaml = strings.Replace(yaml, "        chartPath: chart\n", "        chartPath: chart\n        valuesFiles: [{sourceRef: hello, path: base.yaml}]\n", 1)
 			file := filepath.Join(bin, kind+".yaml")
 			put(t, file, yaml, 0600)
 			args := []string{"workflow", "run", "--file", file, "--source", "hello=" + repo, "--target", "local=test-context", "--non-interactive"}
@@ -111,7 +125,14 @@ esac
 			if err != nil || string(b) != fmt.Sprintf(`{"message":"%s"}`, kind) {
 				t.Fatalf("values: %s, %v", b, err)
 			}
+			b, err = os.ReadFile(basePath)
+			if err != nil || string(b) != `{"workers":2}` {
+				t.Fatalf("base values: %s, %v", b, err)
+			}
 			calls, _ := os.ReadFile(logPath)
+			if strings.Contains(string(calls), " --all") != (kind == "slot") {
+				t.Fatalf("unexpected release status flags for %s: %s", helmVersion, calls)
+			}
 			release := "hello-slot"
 			if kind == "preview" {
 				release = "hello-preview-42"
