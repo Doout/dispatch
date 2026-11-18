@@ -212,7 +212,7 @@ jobs:
       - uses: ./.github/actions/setup-go
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
-  build-checks:
+  release-binaries:
     needs: frontend
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -251,6 +251,26 @@ jobs:
             done
           done
           ./doodship-linux-amd64/doodship --help
+      - name: Bundle the executables used by the runtime image
+        run: tar -C release -cf runtime-binaries.tar amd64/dispatch amd64/dispatch-hook arm64/dispatch arm64/dispatch-hook edge relay
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-binaries
+          path: runtime-binaries.tar
+          compression-level: 1
+          retention-days: 1
+          overwrite: true
+  build-checks:
+    needs: release-binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-binaries
+      - name: Restore the release executables
+        run: mkdir -p release && tar -C release -xf runtime-binaries.tar && rm runtime-binaries.tar
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
