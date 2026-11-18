@@ -1,0 +1,27 @@
+apiVersion: dispatch/v1alpha1
+kind: Application
+metadata:
+  name: hello-slot
+spec:
+  sources:
+    hello:
+      repository: example/hello
+      branch: main
+  jobs:
+    build:
+      runFrom: hello
+      run: echo 'message=Hello from the slot' >> "$DISPATCH_OUTPUT_FILE"
+      outputs: [message]
+  deployments:
+    hello:
+      helm:
+        sourceRef: hello
+        chartPath: chart
+        namespace: default
+        releaseName: hello-slot
+        bindings:
+          message: {outputRef: build.message}
+  stages:
+    - name: development
+      targetRef: local
+      deploy: [hello]

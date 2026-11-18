@@ -241,6 +241,16 @@ jobs:
       - run: sh scripts/install_test.sh
       - name: Build release binaries and prime the compiler cache
         run: sh scripts/build-release.sh development
+      - name: Verify downloadable CLI archives
+        working-directory: release
+        run: |
+          sha256sum -c SHA256SUMS
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              tar -tzf "doodship-$os-$arch.tar.gz" doodship LICENSE
+            done
+          done
+          ./doodship-linux-amd64/doodship --help
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6

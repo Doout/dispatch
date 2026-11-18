@@ -17,6 +17,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflowfile"
 	"github.com/oklog/ulid/v2"
 	"gopkg.in/yaml.v3"
 )
@@ -550,58 +551,11 @@ func (s *Service) ApproveStage(ctx context.Context, id string) (core.WorkflowSta
 }
 
 func renderValues(input map[string]any, sources map[string]core.WorkflowSourceRevision, stage StageSpec) (map[string]any, error) {
-	result := map[string]any{}
-	for key, value := range input {
-		rendered, err := renderValue(value, sources, stage)
-		if err != nil {
-			return nil, err
-		}
-		result[key] = rendered
-	}
-	return result, nil
-}
-
-func renderValue(value any, sources map[string]core.WorkflowSourceRevision, stage StageSpec) (any, error) {
-	switch current := value.(type) {
-	case string:
-		return renderRuntime(current, nil, sources, nil, &stage)
-	case map[string]any:
-		return renderValues(current, sources, stage)
-	case []any:
-		result := make([]any, len(current))
-		for index, item := range current {
-			rendered, err := renderValue(item, sources, stage)
-			if err != nil {
-				return nil, err
-			}
-			result[index] = rendered
-		}
-		return result, nil
-	default:
-		return value, nil
-	}
+	return workflowfile.RenderValues(input, sources, stage)
 }
 
 func setNestedValue(values map[string]any, path string, value any) error {
-	parts := strings.Split(path, ".")
-	current := values
-	for index, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			return fmt.Errorf("Helm value path %s is invalid", path)
-		}
-		if index == len(parts)-1 {
-			current[part] = value
-			return nil
-		}
-		next, ok := current[part].(map[string]any)
-		if !ok {
-			next = map[string]any{}
-			current[part] = next
-		}
-		current = next
-	}
-	return nil
+	return workflowfile.SetNestedValue(values, path, value)
 }
 
 func sortedCheckNames(checks map[string]CheckSpec) []string {

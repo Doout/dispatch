@@ -1,0 +1,27 @@
+apiVersion: dispatch/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: hello-preview-{{ instance.id }}
+spec:
+  triggers:
+    pullRequestComment: {sources: [hello], command: /preview}
+  sources:
+    hello: {repository: example/hello, branch: main}
+  jobs:
+    build:
+      runFrom: hello
+      run: echo 'message=Hello from PR {{ instance.id }}' >> "$GITHUB_OUTPUT"
+      outputs: [message]
+  deployments:
+    hello:
+      helm:
+        sourceRef: hello
+        chartPath: chart
+        namespace: default
+        releaseName: hello-preview-{{ instance.id }}
+        bindings:
+          message: {outputRef: build.message}
+  stages:
+    - name: development
+      targetRef: local
+      deploy: [hello]

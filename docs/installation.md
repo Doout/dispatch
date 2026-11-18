@@ -211,7 +211,7 @@ The updater uses the currently installed controller image, which includes the CL
 
 ## Releases
 
-The release workflow runs for stable `vMAJOR.MINOR.PATCH` tags. It requires successful main-branch CI for the exact tagged commit, reuses that run's tested frontend, publishes amd64 and arm64 controller images to GHCR with both the version and `stable` tags, then publishes Linux CLI archives and `SHA256SUMS` as GitHub release assets. The GHCR package must permit public pulls for unauthenticated installation; private installations can use `docker login ghcr.io` first. No release is created merely by building the source locally.
+The release workflow runs for stable `vMAJOR.MINOR.PATCH` tags. It requires successful main-branch CI for the exact tagged commit, reuses that run's tested frontend, publishes amd64 and arm64 controller images to GHCR with both the version and `stable` tags, then publishes Linux controller archives, standalone `doodship` CLI archives for macOS and Linux on amd64 and arm64, and `SHA256SUMS` as GitHub release assets. The GHCR package must permit public pulls for unauthenticated installation; private installations can use `docker login ghcr.io` first. No release is created merely by building the source locally.
 
 Docker documents the raw environment-file format in its [Compose environment guide](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/). The image publishing workflow follows GitHub's [container publishing guide](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images).
 
