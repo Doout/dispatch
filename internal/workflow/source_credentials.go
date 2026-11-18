@@ -14,7 +14,7 @@ import (
 
 func (s *Service) resolveWorkflowSource(ctx context.Context, config core.ConfigSource, templateAppID, alias string, spec SourceSpec) (core.WorkflowSourceRevision, error) {
 	item := core.WorkflowSourceRevision{Alias: alias, Repository: spec.Repository, Branch: sourceRevisionRef(spec), Path: spec.Path}
-	connection, err := s.workflowSourceApp(ctx, config.GitHubAppID, templateAppID, spec.GitHubApp)
+	connection, err := s.workflowSourceApp(ctx, config.GitHubAppID, templateAppID, spec.Connection)
 	if err != nil {
 		return item, err
 	}

@@ -112,7 +112,7 @@ spec:
     gitops:
       repository: example/gitops
       ref: helm-resources
-      githubApp: charts-reader
+      connection: charts-reader
   deployments:
     release:
       helm:
@@ -169,7 +169,7 @@ spec:
 		}
 	}
 	missing := resource
-	missing.Document = strings.Replace(resource.Document, "githubApp: charts-reader", "githubApp: missing-connection", 1)
+	missing.Document = strings.Replace(resource.Document, "connection: charts-reader", "connection: missing-connection", 1)
 	if _, err := service.resolveResourceSources(ctx, config, missing); err == nil || !strings.Contains(err.Error(), "missing-connection") {
 		t.Fatalf("missing override fell back to the default: %v", err)
 	}

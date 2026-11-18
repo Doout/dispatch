@@ -114,7 +114,7 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 		if !ok || normalizeRepository(configured.Repository) != normalizeRepository(pinned.Repository) || pinned.CommitSHA == "" {
 			return deny("Preview source " + alias + " no longer matches the saved configuration.")
 		}
-		if configured.GitHubApp != "" && pinned.GitHubAppID == "" {
+		if configured.Connection != "" && pinned.GitHubAppID == "" {
 			return deny("Preview source " + alias + " is missing its checkout connection. Start a new run.")
 		}
 		if pinned.GitHubAppID != "" {
@@ -315,7 +315,7 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 					scopes = append(scopes, "repository-access:"+connection.ID+":"+connection.UpdatedAt.UTC().Format(time.RFC3339Nano))
 				}
 				for _, spec := range pd[0].Pipeline.Sources {
-					connection, err := s.workflowSourceApp(ctx, pipelineSource.GitHubAppID, "", spec.GitHubApp)
+					connection, err := s.workflowSourceApp(ctx, pipelineSource.GitHubAppID, "", spec.Connection)
 					if err != nil {
 						return nil, nil, err
 					}

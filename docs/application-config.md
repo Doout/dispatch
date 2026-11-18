@@ -167,7 +167,7 @@ Application jobs default to `reuse: onInputMatch`. Matching jobs share successfu
 
 Sources inherit the connection or saved credential that reads the workflow YAML. For a GitHub-managed preview template, that default is the GitHub App that syncs the template file. Inline previews inherit their selected repository access source.
 
-Set `githubApp` on a source to select a different connected GitHub App by its name in **Connections**. The App must be installed for that repository and verified in Dispatch. Use a read-only App to fetch a chart or other dependency. Treat write access to the workflow configuration as permission to select its source connections.
+Set `connection` on a source to select a different connected GitHub App by its name in **Connections**. The App must be installed for that repository and verified in Dispatch. Use a read-only App to fetch a chart or other dependency. Treat write access to the workflow configuration as permission to select its source connections.
 
 ```yaml
 spec:
@@ -178,7 +178,7 @@ spec:
     gitops:
       repository: platform/charts
       ref: helm-resources
-      githubApp: charts-reader
+      connection: charts-reader
 ```
 
 For a source override, a short repository name uses the selected App's GitHub host. An HTTPS URL must match that host. Dispatch records the resolved connection and commit for the run and uses that connection for source checkout and Helm inputs. PR comments, links, and reports use the GitHub App selected on the preview trigger. Offline `doodship` continues to use local checkouts.

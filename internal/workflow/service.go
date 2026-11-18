@@ -151,7 +151,7 @@ func (s *Service) syncSource(ctx context.Context, id string, event *core.Workflo
 			sources = value.document.ServiceTemplate.Sources
 		}
 		for alias, spec := range sources {
-			key := [3]string{spec.Repository, sourceRevisionRef(spec), spec.GitHubApp}
+			key := [3]string{spec.Repository, sourceRevisionRef(spec), spec.Connection}
 			cause, checked := validationErrors[key]
 			if !checked {
 				_, cause = s.resolveWorkflowSource(ctx, source, "", alias, spec)
