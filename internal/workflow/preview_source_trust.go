@@ -93,6 +93,13 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 	if len(revision.Sources) != len(docs[0].Spec.Sources) {
 		return deny("Preview source snapshot is incomplete. Redeploy before running checks.")
 	}
+	var verifier core.GitHubAppConnection
+	if trigger.GitHubAppID != "" {
+		verifier, err = s.Store.GetGitHubApp(ctx, trigger.GitHubAppID)
+		if err != nil {
+			return deny("Source verification connection is unavailable.")
+		}
+	}
 	untrusted := decision.Policy == "approval_required"
 	matched := false
 	aliases := make([]string, 0, len(revision.Sources))
@@ -100,11 +107,22 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 		aliases = append(aliases, alias)
 	}
 	slices.Sort(aliases)
+	var sourceAppScopes []string
 	for _, alias := range aliases {
 		pinned := revision.Sources[alias]
 		configured, ok := docs[0].Spec.Sources[alias]
 		if !ok || normalizeRepository(configured.Repository) != normalizeRepository(pinned.Repository) || pinned.CommitSHA == "" {
 			return deny("Preview source " + alias + " no longer matches the saved configuration.")
+		}
+		if configured.Connection != "" && pinned.GitHubAppID == "" {
+			return deny("Preview source " + alias + " is missing its checkout connection. Start a new run.")
+		}
+		if pinned.GitHubAppID != "" {
+			connection, err := s.pinnedWorkflowSourceApp(ctx, pinned)
+			if err != nil {
+				return deny("Checkout connection for preview source " + alias + " is unavailable or its GitHub host changed.")
+			}
+			sourceAppScopes = append(sourceAppScopes, "source-checkout:"+connection.ID+":"+connection.UpdatedAt.UTC().Format(time.RFC3339Nano))
 		}
 		number := trigger.LinkedPullRequests[alias]
 		if normalizeRepository(pinned.Repository) == normalizeRepository(trigger.Repository) {
@@ -113,6 +131,9 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 		}
 		if number < 1 {
 			continue
+		}
+		if pinned.GitHubAppID != "" && verifier.ID != "" && githubapp.ValidateRepositoryHost(pinned.CloneURL, verifier.WebURL) != nil {
+			return deny("PR source " + alias + " uses a different GitHub host than the preview connection.")
 		}
 		if s.GitHub == nil && s.ResolvePreviewSource == nil {
 			return deny("Cannot verify PR source origins. Restore GitHub access before running code.")
@@ -145,14 +166,11 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 	if err != nil {
 		return deny("Cannot resolve the preview credential scope. Repair its bindings before approval.")
 	}
-	if trigger.GitHubAppID != "" {
-		connection, e := s.Store.GetGitHubApp(ctx, trigger.GitHubAppID)
-		if e != nil {
-			return deny("Source verification connection is unavailable.")
-		}
-		scopes = append(scopes, "source-verifier:"+connection.ID+":"+connection.UpdatedAt.UTC().Format(time.RFC3339Nano))
-		slices.Sort(scopes)
+	scopes = append(scopes, sourceAppScopes...)
+	if verifier.ID != "" {
+		scopes = append(scopes, "source-verifier:"+verifier.ID+":"+verifier.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	}
+	slices.Sort(scopes)
 	decision.CredentialScope, decision.Environments = scopes, environments
 	// Content hash caches are not part of a trust identity; the exact commit is.
 	exact := map[string]core.WorkflowSourceRevision{}
@@ -296,6 +314,15 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 					}
 					scopes = append(scopes, "repository-access:"+connection.ID+":"+connection.UpdatedAt.UTC().Format(time.RFC3339Nano))
 				}
+				for _, spec := range pd[0].Pipeline.Sources {
+					connection, err := s.workflowSourceApp(ctx, pipelineSource.GitHubAppID, "", spec.Connection)
+					if err != nil {
+						return nil, nil, err
+					}
+					if connection.ID != "" {
+						scopes = append(scopes, "source-checkout:"+connection.ID+":"+connection.UpdatedAt.UTC().Format(time.RFC3339Nano))
+					}
+				}
 				collect(pd[0].Pipeline.Jobs)
 				collect(pd[0].Pipeline.Finally)
 			}
@@ -438,6 +465,10 @@ func (s *Service) CheckDeploymentTrust(ctx context.Context, app core.App, commit
 		if normalizeRepository(pinned.Repository) != normalizeRepository(app.SourceRepo) {
 			continue
 		}
+		if pinned.GitHubAppID != "" && (pinned.GitHubAppID != app.SourceCredentialID ||
+			cloneRepositoryHost(pinned.CloneURL) != cloneRepositoryHost(app.SourceRepo)) {
+			continue
+		}
 		// Default same-repository previews may resolve their chart during a direct
 		// deployment. Only explicit source approvals bind the chart to a run's SHA.
 		if decision != nil && decision.Allowed && decision.Policy == "same_repository" && decision.ApprovalID == "" {
@@ -445,7 +476,11 @@ func (s *Service) CheckDeploymentTrust(ctx context.Context, app core.App, commit
 			if err != nil {
 				return err
 			}
-			expected, err := s.repositoryCloneURL(ctx, source, pinned.Repository)
+			source, repository, err := s.workflowSourceAccess(ctx, source, pinned)
+			if err != nil {
+				return err
+			}
+			expected, err := s.repositoryCloneURL(ctx, source, repository)
 			if err != nil {
 				return err
 			}

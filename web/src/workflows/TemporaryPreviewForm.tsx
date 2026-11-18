@@ -4,7 +4,7 @@ import { api, Overview, WorkflowPreviewTrigger, WorkflowPreviewTriggerInput, Wor
 
 export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: { overview: Overview; resource?: WorkflowResource; onCancel: () => void; onSaved: () => Promise<void> }) {
   const sources = (overview.configSources ?? []).filter((item) => item.active);
-  const apps = overview.githubApps.filter((item) => item.state === "ready" && item.installationId);
+  const apps = overview.githubApps.filter((item) => !item.readOnly && item.state === "ready" && item.installationId);
   const [sourceId, setSourceId] = useState(resource?.configSourceId ?? sources[0]?.id ?? "");
   const [document, setDocument] = useState(resource?.document ?? "");
   const [previewId, setPreviewId] = useState("");

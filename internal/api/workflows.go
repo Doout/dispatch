@@ -164,6 +164,12 @@ func (a *API) configSourceFromRequest(r *http.Request, item core.ConfigSource, i
 		if err != nil || connection.State != "ready" {
 			return item, "Choose a ready GitHub App connection."
 		}
+		if connection.ReadOnly {
+			if input.SyncMode == core.ConfigSyncWebhook {
+				return item, "Read-only GitHub Apps support polling only."
+			}
+			input.SyncMode = core.ConfigSyncPoll
+		}
 		if strings.Contains(originalRepository, "://") {
 			if err := githubapp.ValidateRepositoryHost(originalRepository, connection.WebURL); err != nil {
 				return item, err.Error()

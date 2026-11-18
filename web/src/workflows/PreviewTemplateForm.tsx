@@ -6,7 +6,7 @@ import { hasPreviewID, previewIDVariable as placeholder } from "./previewVariabl
 
 export function PreviewTemplateForm({ overview, template, onCancel, onSaved }: { overview: Overview; template?: WorkflowPreviewTemplate; onCancel: () => void; onSaved: () => Promise<void> }) {
   const sources = (overview.configSources ?? []).filter((item) => item.active);
-  const apps = overview.githubApps.filter((item) => item.state === "ready" && item.installationId);
+  const apps = overview.githubApps.filter((item) => !item.readOnly && item.state === "ready" && item.installationId);
   const previews = (overview.workflowResources ?? []).filter((item) => item.temporary);
   const [definitionSource, setDefinitionSource] = useState(template?.gitSource ? "github" : "saved");
   const [gitRepository, setGitRepository] = useState(template?.gitSource?.repository ?? "");

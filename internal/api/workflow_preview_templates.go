@@ -131,6 +131,10 @@ func (a *API) validateWorkflowPreviewTemplate(w http.ResponseWriter, r *http.Req
 		problem(w, http.StatusConflict, "GitHub App unavailable", "Choose an installed GitHub App.")
 		return core.WorkflowPreviewTemplate{}, false
 	}
+	if connection.ReadOnly {
+		problem(w, http.StatusBadRequest, "GitHub App is read-only", "Choose a GitHub App with PR automation access.")
+		return core.WorkflowPreviewTemplate{}, false
+	}
 	if input.GitSource != nil {
 		item.GitSource = &core.WorkflowPreviewTemplateGitSource{Repository: events.NormalizeRepository(input.GitSource.Repository), Branch: strings.TrimSpace(input.GitSource.Branch), Path: strings.TrimSpace(input.GitSource.Path)}
 		if err := validatePreviewTemplateGitSource(item.GitSource); err != nil {

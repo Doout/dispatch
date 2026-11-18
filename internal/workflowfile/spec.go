@@ -8,6 +8,7 @@ type SourceSpec struct {
 	Repository string `json:"repository" yaml:"repository"`
 	Branch     string `json:"branch,omitempty" yaml:"branch,omitempty"`
 	Path       string `json:"path,omitempty" yaml:"path,omitempty"`
+	Connection string `json:"connection,omitempty" yaml:"connection,omitempty"`
 }
 
 type JobSpec struct {

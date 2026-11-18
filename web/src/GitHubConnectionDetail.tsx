@@ -146,6 +146,9 @@ export function GitHubConnectionDetail({ connection, overview, installURL, setti
   const knownOwners = new Set(installationList.map((item) => item.account.toLowerCase()));
   const otherRepositories = (repositories ?? []).filter((item) => !knownOwners.has(repositoryOwner(item)));
   const eventDelivery = !connection.webhookUrl ? "Polling" : connection.relayWebhookId ? "Webhook via relay" : "Direct webhook";
+  const missingAppPermissions = verification?.missingAppPermissions ?? [];
+  const missingInstallationPermissions = verification?.missingInstallationPermissions ?? [];
+  const missingTokenPermissions = verification?.missingTokenPermissions ?? [];
 
   return <div className="github-detail">
     <a className="github-detail-back" href={routePath({ view: "connections" })} onClick={(event) => {
@@ -169,7 +172,7 @@ export function GitHubConnectionDetail({ connection, overview, installURL, setti
       <div><dt>App ID</dt><dd>{connection.appId}</dd></div>
       <div><dt>Accounts</dt><dd>{installations === null ? installationError ? "Unavailable" : "Loading" : installationList.length}</dd></div>
       <div><dt>Accessible repositories</dt><dd>{repositories === null ? repositoryError ? "Unavailable" : "Loading" : repositories.length}</dd></div>
-      <div><dt>Event delivery</dt><dd>{eventDelivery}</dd></div>
+      {connection.readOnly ? <div><dt>Access</dt><dd>Read-only</dd></div> : <div><dt>Event delivery</dt><dd>{eventDelivery}</dd></div>}
     </dl>
 
     <section className="github-detail-section" aria-labelledby="github-installations-heading">
@@ -203,15 +206,15 @@ export function GitHubConnectionDetail({ connection, overview, installURL, setti
     </section>
 
     {verification && <section className="github-detail-section" aria-labelledby="github-verification-heading"><div className="github-detail-section-head"><div><h2 id="github-verification-heading">Permission check</h2><p>Results from the latest GitHub check.</p></div></div><div className="github-verification">
-      <p>{verification.pushSubscribed ? "Push events are enabled." : "Push events are not subscribed. Dispatch can still poll."}</p>
+      {!connection.readOnly && <p>{verification.pushSubscribed ? "Push events are enabled." : "Push events are not subscribed. Dispatch can still poll."}</p>}
       {!verification.appPermissionsAvailable && <p>GitHub did not return App registration permissions.</p>}
-      {verification.missingAppPermissions.map((gap) => <p key={`app-${gap.name}`}>App registration needs {gap.required} for {gap.name}; GitHub grants {gap.granted || "none"}.</p>)}
-      {(!verification.appPermissionsAvailable || verification.missingAppPermissions.length > 0) && <a href={settingsURL} target="_blank" rel="noreferrer">Change App permissions<ArrowSquareOut size={14} /></a>}
+      {missingAppPermissions.map((gap) => <p key={`app-${gap.name}`}>App registration needs {gap.required} for {gap.name}; GitHub grants {gap.granted || "none"}.</p>)}
+      {(!verification.appPermissionsAvailable || missingAppPermissions.length > 0) && <a href={settingsURL} target="_blank" rel="noreferrer">Change App permissions<ArrowSquareOut size={14} /></a>}
       {!verification.installationPermissionsAvailable && <p>GitHub did not return account installation permissions.</p>}
       {!verification.tokenPermissionsAvailable && <p>GitHub did not return installation token permissions.</p>}
-      {verification.missingInstallationPermissions.map((gap) => <p key={`installation-${gap.name}`}>Installation needs {gap.required} for {gap.name}; GitHub grants {gap.granted || "none"}.</p>)}
-      {verification.missingTokenPermissions.map((gap) => <p key={`token-${gap.name}`}>Installation token needs {gap.required} for {gap.name}; GitHub grants {gap.granted || "none"}.</p>)}
-      {(!verification.installationPermissionsAvailable || !verification.tokenPermissionsAvailable || verification.missingInstallationPermissions.length > 0 || verification.missingTokenPermissions.length > 0) && installationSettingsURL && <a href={installationSettingsURL} target="_blank" rel="noreferrer">Approve account access<ArrowSquareOut size={14} /></a>}
+      {missingInstallationPermissions.map((gap) => <p key={`installation-${gap.name}`}>Installation needs {gap.required} for {gap.name}; GitHub grants {gap.granted || "none"}.</p>)}
+      {missingTokenPermissions.map((gap) => <p key={`token-${gap.name}`}>Installation token needs {gap.required} for {gap.name}; GitHub grants {gap.granted || "none"}.</p>)}
+      {(!verification.installationPermissionsAvailable || !verification.tokenPermissionsAvailable || missingInstallationPermissions.length > 0 || missingTokenPermissions.length > 0) && installationSettingsURL && <a href={installationSettingsURL} target="_blank" rel="noreferrer">Approve account access<ArrowSquareOut size={14} /></a>}
       {!missingAccess(verification).length && verification.appPermissionsAvailable && verification.installationPermissionsAvailable && verification.tokenPermissionsAvailable && <p>Required repository permissions are present.</p>}
     </div></section>}
   </div>;

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -415,6 +416,70 @@ func TestGitHubAppManifestIsPublic(t *testing.T) {
 	permissions, ok := result.Manifest["default_permissions"].(map[string]any)
 	if !ok || permissions["contents"] != "read" || permissions["pull_requests"] != "write" || permissions["issues"] != "write" || permissions["statuses"] != "write" {
 		t.Fatalf("GitHub App manifest is missing repository access: %#v", permissions)
+	}
+}
+
+func TestReadOnlyGitHubAppManifestAndCallback(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	github := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v3/app-manifests/setup/conversions" {
+			t.Errorf("unexpected GitHub request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 42, "pem": string(privateKey)})
+	}))
+	defer github.Close()
+	manager := githubapp.New(nil, webhookTestVault(t))
+	manager.Client = github.Client()
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{GitHubApps: manager})
+	defer cleanup()
+	input, err := json.Marshal(startManifestRequest{
+		Name: "Chart reader", WebURL: github.URL, OwnerType: "organization", Owner: "platform", ReadOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/github-apps/manifest", bytes.NewReader(input)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("start manifest: %d %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Action   string         `json:"action"`
+		Manifest map[string]any `json:"manifest"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	permissions, _ := result.Manifest["default_permissions"].(map[string]any)
+	if len(permissions) != 2 || permissions["contents"] != "read" || permissions["metadata"] != "read" ||
+		result.Manifest["hook_attributes"] != nil || result.Manifest["default_events"] != nil {
+		t.Fatalf("unexpected manifest: %#v", result.Manifest)
+	}
+	action, err := url.Parse(result.Action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callback := "/api/v1/github-apps/manifest/callback?code=setup&state=" + url.QueryEscape(action.Query().Get("state"))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, callback, nil))
+	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "githubAppCreated=") {
+		t.Fatalf("complete manifest: %d %s", response.Code, response.Header().Get("Location"))
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodGet, "/api/v1/github-apps", nil))
+	var connections []core.GitHubAppConnection
+	if err := json.NewDecoder(response.Body).Decode(&connections); err != nil {
+		t.Fatal(err)
+	}
+	if len(connections) != 1 || !connections[0].ReadOnly || connections[0].WebhookURL != "" ||
+		!connections[0].PrivateKeyConfigured || connections[0].State != "needs_installation" {
+		t.Fatalf("unexpected connections: %#v", connections)
 	}
 }
 
@@ -832,6 +897,27 @@ func TestGitHubAppCredentialsAreWriteOnly(t *testing.T) {
 	}
 	if connection.WebhookURL != "" || connection.RelayWebhookID != "" || !connection.WebhookSecretConfigured {
 		t.Fatalf("unexpected polling-only GitHub App: %#v", connection)
+	}
+	body, _ = json.Marshal(map[string]any{
+		"name": "Chart reader", "webUrl": "https://github.example.com", "appId": 44,
+		"privateKey": privateKey, "readOnly": true,
+	})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/github-apps", bytes.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("connect read-only GitHub App: %d %s", response.Code, response.Body.String())
+	}
+	if err := json.NewDecoder(response.Body).Decode(&connection); err != nil {
+		t.Fatal(err)
+	}
+	if !connection.ReadOnly || connection.WebhookURL != "" {
+		t.Fatalf("unexpected read-only GitHub App: %#v", connection)
+	}
+	body, _ = json.Marshal(githubAppUpdateRequest{PrivateKey: &privateKey})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, tokenRequest(http.MethodPut, "/api/v1/github-apps/"+connection.ID, bytes.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("rotate read-only App key: %d %s", response.Code, response.Body.String())
 	}
 }
 

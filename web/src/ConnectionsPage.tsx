@@ -86,6 +86,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
 	const [privateNetworkDriver, setPrivateNetworkDriver] = useState<"dispatch_agent" | "laneway_connector">("dispatch_agent");
   const [editing, setEditing] = useState<GitHubAppConnection | null>(null);
   const [method, setMethod] = useState<"manifest" | "manual">("manifest");
+  const [readOnly, setReadOnly] = useState(false);
   const [name, setName] = useState(suggestedGitHubAppName);
   const [webURL, setWebURL] = useState(defaultGitHubWebURL);
   const [apiURL, setAPIURL] = useState(defaultGitHubAPIURL);
@@ -122,6 +123,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
     setCreating(false);
     setEditing(null);
     setMethod("manifest");
+    setReadOnly(false);
     setName(suggestedGitHubAppName());
     setWebURL(defaultGitHubWebURL);
     setAPIURL(defaultGitHubAPIURL);
@@ -142,6 +144,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
     setEditing(connection);
     setCreating(true);
     setMethod("manual");
+    setReadOnly(!!connection.readOnly);
     setName(connection.name);
     setWebURL(connection.webUrl);
     setAPIURL(connection.apiUrl);
@@ -168,9 +171,10 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
     onNotice("");
     setBusyID(editing?.id || "create");
     try {
+      const delivery = readOnly ? "none" : eventDelivery;
       if (method === "manifest" && !editing) {
 		if (!ownerType) throw new Error("Choose the GitHub App owner.");
-		const flow = await api.startGitHubAppManifest({ name, webUrl: webURL, apiUrl: apiURL, ownerType, owner: ownerType === "organization" ? owner : "", eventDelivery, relayServerId: eventDelivery === "relay" ? relayServerID : undefined, privateNetworkId: privateNetworkID || undefined });
+		const flow = await api.startGitHubAppManifest({ name, webUrl: webURL, apiUrl: apiURL, ownerType, owner: ownerType === "organization" ? owner : "", readOnly, eventDelivery: delivery, relayServerId: delivery === "relay" ? relayServerID : undefined, privateNetworkId: privateNetworkID || undefined });
         const form = document.createElement("form");
         form.method = "post";
         form.action = flow.action;
@@ -186,13 +190,14 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
       const body: Record<string, unknown> = {
         name, webUrl: webURL, apiUrl: apiURL, appId: Number(appID), clientId: clientID, slug,
         installationId: editing?.installationId ?? 0,
-		eventDelivery,
+		eventDelivery: delivery,
 			privateNetworkId: privateNetworkID,
       };
-      if (!editing && eventDelivery === "relay") body.relayServerId = relayServerID;
-      if (privateKey || webhookSecret) {
+      if (!editing) body.readOnly = readOnly;
+      if (!editing && delivery === "relay") body.relayServerId = relayServerID;
+      if (privateKey || (!readOnly && webhookSecret)) {
         body.privateKey = privateKey;
-        body.webhookSecret = webhookSecret;
+        if (!readOnly) body.webhookSecret = webhookSecret;
       }
       if (editing) await api.updateGitHubApp(editing.id, body);
       else await api.createGitHubApp(body);
@@ -277,12 +282,13 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
         <div className="connection-grid">
           <label><span>GitHub App name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Dispatch-a1b2c3d4" maxLength={34} required /></label>
           <label><span>GitHub URL</span><input value={webURL} onChange={(event) => changeWebURL(event.target.value)} placeholder="https://github.example.com" required spellCheck={false} /></label>
+          <label><span>App access</span><select value={readOnly ? "read" : "automation"} onChange={(event) => setReadOnly(event.target.value === "read")} disabled={!!editing}><option value="automation">Repositories and PR automation</option><option value="read">Read-only repository access</option></select>{readOnly && <small>Uses Contents: read for repository checkouts.</small>}</label>
 			<label><span>Route</span><select value={privateNetworkID} onChange={(event) => setPrivateNetworkID(event.target.value)}><option value="">Direct</option>{edgeNetworks.map((network) => <option key={network.id} value={network.id}>Edge · {network.name}{network.state === "ready" ? "" : ` (${network.state})`}</option>)}</select></label>
           {method === "manifest" && !editing ? <><label><span>Registration owner</span><select value={ownerType} onChange={(event) => { const value = event.target.value as "" | "personal" | "organization"; setOwnerType(value); if (value !== "organization") setOwner(""); }} required><option value="">Choose an account type</option><option value="personal">My personal account</option><option value="organization">GitHub organization</option></select></label>{ownerType === "organization" && <label><span>Organization login</span><input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="platform-team" required spellCheck={false} /></label>}</> : <>
             <label><span>App ID</span><input inputMode="numeric" value={appID} onChange={(event) => setAppID(event.target.value)} placeholder="123456" required /></label>
           </>}
         </div>
-        {!editing && <section className="connection-delivery" aria-labelledby="event-delivery-title">
+        {!editing && !readOnly && <section className="connection-delivery" aria-labelledby="event-delivery-title">
           <div className="connection-webhook-toggle">
             <span><strong id="event-delivery-title">Event delivery</strong><small>{eventDelivery === "none" ? "Polling only" : "Webhooks enabled"}</small></span>
             <label className="connection-toggle-control"><input type="checkbox" role="switch" aria-label="Webhook events" checked={eventDelivery !== "none"} onChange={(event) => setEventDelivery(event.target.checked ? "direct" : "none")} /><span /></label>
@@ -302,12 +308,12 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
         {(method === "manual" || !!editing) && <div className="connection-credentials">
           <div className="credential-heading"><div><strong>App credentials</strong>{editing && <small>Leave blank to keep the current credentials.</small>}</div><><input ref={privateKeyFile} className="sr-only" type="file" accept=".pem,.key,application/x-pem-file,text/plain" onChange={(event) => void loadPrivateKey(event)} /><button type="button" className="quiet-button" onClick={() => privateKeyFile.current?.click()}><UploadSimple size={15} />Upload PEM</button></></div>
           <div className="connection-grid">
-            {(editing || eventDelivery !== "none") && <label><span>Webhook secret</span><input type="password" value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} placeholder={editing ? "Leave blank to keep the secret" : "At least 16 characters"} required={!editing} autoComplete="new-password" /></label>}
+            {!readOnly && (editing || eventDelivery !== "none") && <label><span>Webhook secret</span><input type="password" value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} placeholder={editing ? "Leave blank to keep the secret" : "At least 16 characters"} required={!editing} autoComplete="new-password" /></label>}
             <label className="private-key-field"><span>Private key</span><textarea value={privateKey} onChange={(event) => setPrivateKey(event.target.value)} placeholder={editing ? "Leave blank to keep the key" : "Paste the RSA private key PEM"} required={!editing} spellCheck={false} /></label>
           </div>
         </div>}
-        {method === "manifest" && !editing && <div className="manifest-summary"><LockSimple size={18} /><p>Repository access: Contents read, Pull requests write for PR comments, Issues write, Commit statuses write. Metadata read is included.</p></div>}
-        <div className="connection-actions"><button type="button" className="quiet-button" onClick={reset}>Cancel</button><button className="primary-button" disabled={!!busyID || !name.trim() || !webURL.trim() || !apiURL.trim() || (!editing && eventDelivery === "relay" && !relayServerID) || (method === "manifest" && !editing && (!ownerType || (ownerType === "organization" && !owner.trim()))) || ((method === "manual" || !!editing) && (!appID || (!editing && (!privateKey.trim() || (eventDelivery !== "none" && !webhookSecret.trim()))))) }>{busyID ? "Working..." : method === "manifest" && !editing ? "Continue to GitHub" : editing ? "Save connection" : "Add connection"}</button></div>
+        {method === "manifest" && !editing && <div className="manifest-summary"><LockSimple size={18} /><p>{readOnly ? "Requests read access to Contents and Metadata." : "Repository access: Contents read, Pull requests write for PR comments, Issues write, Commit statuses write. Metadata read is included."}</p></div>}
+        <div className="connection-actions"><button type="button" className="quiet-button" onClick={reset}>Cancel</button><button className="primary-button" disabled={!!busyID || !name.trim() || !webURL.trim() || !apiURL.trim() || (!editing && !readOnly && eventDelivery === "relay" && !relayServerID) || (method === "manifest" && !editing && (!ownerType || (ownerType === "organization" && !owner.trim()))) || ((method === "manual" || !!editing) && (!appID || (!editing && (!privateKey.trim() || (!readOnly && eventDelivery !== "none" && !webhookSecret.trim()))))) }>{busyID ? "Working..." : method === "manifest" && !editing ? "Continue to GitHub" : editing ? "Save connection" : "Add connection"}</button></div>
       </form>
 	</section> : creatingSecretStore ? <SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={allPrivateNetworks} creating editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} /> : creatingPrivateNetwork ? <PrivateNetworksSection networks={privateNetworks} stores={secretStores} githubApps={overview.githubApps} creating editing={editingPrivateNetwork} initialDriver={privateNetworkDriver} onCreatingChange={setCreatingPrivateNetwork} onEditingChange={setEditingPrivateNetwork} onChanged={onChanged} /> : creatingLanewayNetwork ? <LanewayNetworksSection networks={lanewayNetworks} creating onCreatingChange={setCreatingLanewayNetwork} onChanged={onChanged} /> : hasConnections ? <div className="connections-inventory">
       <section className="connection-provider-group" aria-labelledby="github-connections-title">
@@ -318,7 +324,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
       const choices = installations[connection.id] || [];
       return <section className="connection-row" key={connection.id}>
         <div className="connection-identity"><span className="github-mark"><GithubLogo size={21} weight="fill" /></span><div><strong>{connection.name}</strong><small>{new URL(connection.webUrl).host}{connection.registrationOwner ? " / " + connection.registrationOwner : ""}{connection.privateNetworkId ? ` · via ${edgeNetworks.find((network) => network.id === connection.privateNetworkId)?.name ?? "edge"}` : ""}</small></div></div>
-        <div className="connection-metadata"><div><span>App ID</span><code>{connection.appId}</code></div><div><span>Installations</span><strong>{choices.length ? `${choices.length} connected` : connection.installationId ? "Automatic per repository" : "Not installed"}</strong></div><div><span>Events</span><strong>{!connection.webhookUrl ? "Polling" : connection.relayWebhookId ? "Relay" : "Direct"}</strong></div><div><span>Status</span><StatusLabel state={connection.state} /></div></div>
+        <div className="connection-metadata"><div><span>App ID</span><code>{connection.appId}</code></div><div><span>Installations</span><strong>{choices.length ? `${choices.length} connected` : connection.installationId ? "Automatic per repository" : "Not installed"}</strong></div><div><span>{connection.readOnly ? "Access" : "Events"}</span><strong>{connection.readOnly ? "Read-only" : !connection.webhookUrl ? "Polling" : connection.relayWebhookId ? "Relay" : "Direct"}</strong></div><div><span>Status</span><StatusLabel state={connection.state} /></div></div>
         <div className="connection-row-actions">
           {connection.state === "needs_installation" && installURL && <a className="table-action primary-link" href={installURL}>Install App<ArrowRight size={14} /></a>}
           <a className="table-action primary-link" href={routePath({ view: "connections", connectionID: connection.id })} onClick={(event) => {

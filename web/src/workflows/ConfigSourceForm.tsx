@@ -9,6 +9,7 @@ export function WorkflowConfigSourceForm({ overview, source, onCancel, onSaved }
   const [access, setAccess] = useState(source?.githubAppId ? `github:${source.githubAppId}` : source?.credentialSecretId ? `secret:${source.credentialSecretId}` : readyApps[0] ? `github:${readyApps[0].id}` : credentials[0] ? `secret:${credentials[0].id}` : "");
   const githubAppID = access.startsWith("github:") ? access.slice(7) : "";
   const credentialSecretID = access.startsWith("secret:") ? access.slice(7) : "";
+  const pollingOnly = !!credentialSecretID || readyApps.some((connection) => connection.id === githubAppID && connection.readOnly);
   const [name, setName] = useState(source?.name ?? "");
   const [repository, setRepository] = useState(source?.repository ?? "");
   const [repositoryID, setRepositoryID] = useState(source?.repositoryId ?? 0);
@@ -87,7 +88,7 @@ export function WorkflowConfigSourceForm({ overview, source, onCancel, onSaved }
       repositoryId: githubAppID ? knownIdentity || undefined : undefined,
       branch: branch.trim(),
       path: path.trim(),
-      syncMode: credentialSecretID ? "poll" as const : syncMode,
+      syncMode: pollingOnly ? "poll" as const : syncMode,
       pollIntervalSeconds: pollInterval,
     };
     try {
@@ -124,7 +125,7 @@ export function WorkflowConfigSourceForm({ overview, source, onCancel, onSaved }
         setError("");
       }} required>
         <option value="">Choose access</option>
-        {readyApps.map((connection) => <option key={connection.id} value={`github:${connection.id}`}>{connection.name}</option>)}
+        {readyApps.map((connection) => <option key={connection.id} value={`github:${connection.id}`}>{connection.name}{connection.readOnly ? " (read-only)" : ""}</option>)}
         {credentials.map((secret) => <option key={secret.id} value={`secret:${secret.id}`}>{secret.name}</option>)}
       </select>
     </label>
@@ -154,7 +155,7 @@ export function WorkflowConfigSourceForm({ overview, source, onCancel, onSaved }
     </label>
     <label>
       <span>Updates</span>
-      <select value={credentialSecretID ? "poll" : syncMode} onChange={(event) => setSyncMode(event.target.value as ConfigSource["syncMode"])} disabled={Boolean(credentialSecretID)}>
+      <select value={pollingOnly ? "poll" : syncMode} onChange={(event) => setSyncMode(event.target.value as ConfigSource["syncMode"])} disabled={pollingOnly}>
         <option value="webhook_poll">Webhook and polling</option>
         <option value="webhook">Webhook only</option>
         <option value="poll">Polling only</option>
@@ -162,7 +163,7 @@ export function WorkflowConfigSourceForm({ overview, source, onCancel, onSaved }
     </label>
     <label>
       <span>Poll interval</span>
-      <input type="number" min={30} max={86400} value={pollInterval} onChange={(event) => setPollInterval(Number(event.target.value))} disabled={syncMode === "webhook"} />
+      <input type="number" min={30} max={86400} value={pollInterval} onChange={(event) => setPollInterval(Number(event.target.value))} disabled={!pollingOnly && syncMode === "webhook"} />
       <small>Seconds between repository checks.</small>
     </label>
     {sourceStatus && <div className="wide"><ConfigSourceError source={sourceStatus} />

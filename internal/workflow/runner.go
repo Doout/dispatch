@@ -108,6 +108,9 @@ func (s *Service) publishStatus(ctx context.Context, source core.ConfigSource, r
 	}
 	seen := map[string]bool{}
 	for _, item := range revision.Sources {
+		if item.GitHubAppID != "" && item.GitHubAppID != source.GitHubAppID {
+			continue
+		}
 		key := normalizeRepository(item.Repository) + "@" + item.CommitSHA
 		if seen[key] {
 			continue

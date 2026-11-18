@@ -135,7 +135,7 @@ func (s *Service) syncSource(ctx context.Context, id string, event *core.Workflo
 		return s.sourceError(ctx, source, err)
 	}
 	parsed, fileFailures := s.parsePartialConfiguration(ctx, source, head, files)
-	validationErrors := map[string]error{}
+	validationErrors := map[[3]string]error{}
 	resourceFailures := map[string]string{}
 	for _, value := range parsed {
 		if err := s.validateApplicationServices(ctx, source.ProjectID, value.document); err != nil {
@@ -151,10 +151,10 @@ func (s *Service) syncSource(ctx context.Context, id string, event *core.Workflo
 			sources = value.document.ServiceTemplate.Sources
 		}
 		for alias, spec := range sources {
-			key := spec.Repository + "@" + sourceRevisionRef(spec)
+			key := [3]string{spec.Repository, sourceRevisionRef(spec), spec.Connection}
 			cause, checked := validationErrors[key]
 			if !checked {
-				_, cause = s.repositoryHead(ctx, source, spec.Repository, sourceRevisionRef(spec))
+				_, cause = s.resolveWorkflowSource(ctx, source, "", alias, spec)
 				validationErrors[key] = cause
 			}
 			if cause != nil {
@@ -1023,23 +1023,27 @@ func (s *Service) watchRunCancellation(ctx context.Context, revisionID string, c
 }
 
 func (s *Service) resolveResourceSources(ctx context.Context, source core.ConfigSource, resource core.WorkflowResource) (map[string]core.WorkflowSourceRevision, error) {
-	if err := s.requireRepositoryIdentity(ctx, source); err != nil {
-		return nil, err
-	}
 	documents, err := Parse(resource.Path, []byte(resource.Document))
 	if err != nil || len(documents) != 1 || documents[0].Spec == nil {
 		return nil, errors.New("stored application document is invalid")
 	}
+	templateAppID, err := s.workflowTemplateSourceApp(ctx, resource)
+	if err != nil {
+		return nil, err
+	}
+	if templateAppID == "" {
+		if err := s.requireRepositoryIdentity(ctx, source); err != nil {
+			return nil, err
+		}
+	}
 	inputPaths := applicationInputPaths(*documents[0].Spec)
 	result := map[string]core.WorkflowSourceRevision{}
 	for alias, spec := range documents[0].Spec.Sources {
-		sha, err := s.repositoryHead(ctx, source, spec.Repository, sourceRevisionRef(spec))
+		item, err := s.resolveWorkflowSource(ctx, source, templateAppID, alias, spec)
 		if err != nil {
 			return nil, fmt.Errorf("resolve source %s: %w", alias, err)
 		}
-		result[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: spec.Repository, Branch: sourceRevisionRef(spec), CommitSHA: sha, Path: spec.Path}
 		if paths, ok := inputPaths[alias]; ok {
-			item := result[alias]
 			item.ContentHashes, err = s.hashSourceInputs(ctx, source, item, paths)
 			if errors.Is(err, errSourceInputSymlink) {
 				item.ContentHashes, err = nil, nil
@@ -1047,8 +1051,8 @@ func (s *Service) resolveResourceSources(ctx context.Context, source core.Config
 			if err != nil {
 				return nil, fmt.Errorf("resolve source %s inputs: %w", alias, err)
 			}
-			result[alias] = item
 		}
+		result[alias] = item
 	}
 	return result, nil
 }

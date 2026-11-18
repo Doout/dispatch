@@ -38,6 +38,7 @@ func ApplySourceDefaults(sources map[string]SourceSpec) {
 			source.Branch = "main"
 		}
 		source.Path = strings.Trim(strings.TrimSpace(source.Path), "/")
+		source.Connection = strings.TrimSpace(source.Connection)
 		sources[name] = source
 	}
 }
@@ -72,6 +73,9 @@ func ValidateSources(sources map[string]SourceSpec) error {
 		}
 		if strings.TrimSpace(source.Repository) == "" {
 			return fmt.Errorf("spec.sources.%s.repository is required", alias)
+		}
+		if len(source.Connection) > 80 || strings.ContainsAny(source.Connection, "\r\n\t") {
+			return fmt.Errorf("spec.sources.%s.connection must be a GitHub App connection name", alias)
 		}
 		if source.Branch != "" && source.Ref != "" {
 			return fmt.Errorf("spec.sources.%s must use branch or ref, not both", alias)

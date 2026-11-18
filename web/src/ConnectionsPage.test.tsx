@@ -96,6 +96,26 @@ describe("connections page", () => {
     expect(onAddRelay).toHaveBeenCalledOnce();
   });
 
+  it("creates a read-only GitHub App without event delivery", async () => {
+    const manifest = { default_permissions: { contents: "read", metadata: "read" } };
+    const start = vi.spyOn(api, "startGitHubAppManifest").mockResolvedValue({ action: "https://github.example.com/settings/apps/new", manifest });
+    const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(function (this: HTMLFormElement) {
+      expect(new FormData(this).get("manifest")).toBe(JSON.stringify(manifest));
+      this.remove();
+    });
+    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: /App access/ }), { target: { value: "read" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Registration owner" }), { target: { value: "personal" } });
+    expect(screen.queryByRole("switch", { name: "Webhook events" })).toBeNull();
+    expect(screen.getByText("Requests read access to Contents and Metadata.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to GitHub" }));
+
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true, eventDelivery: "none" }));
+  });
+
   it("uses the GitHub Enterprise installation path", () => {
     const enterpriseOverview: Overview = {
       ...overview,

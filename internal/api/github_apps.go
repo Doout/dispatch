@@ -26,6 +26,7 @@ type githubAppRequest struct {
 	WebURL           string `json:"webUrl"`
 	APIURL           string `json:"apiUrl"`
 	AppID            int64  `json:"appId"`
+	ReadOnly         bool   `json:"readOnly"`
 	ClientID         string `json:"clientId"`
 	Slug             string `json:"slug"`
 	InstallationID   int64  `json:"installationId"`
@@ -59,6 +60,7 @@ type githubAppManifestState struct {
 	WebhookURL            string
 	RelayWebhookID        string
 	PrivateNetworkID      string
+	ReadOnly              bool
 	ExpiresAt             time.Time
 }
 
@@ -98,18 +100,17 @@ func (a *API) createGitHubApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := ulid.Make().String()
-	delivery, err := githubAppEventDelivery(input.EventDelivery, input.RelayServerID)
+	delivery, err := githubAppEventDelivery(input.EventDelivery, input.RelayServerID, input.ReadOnly)
 	if err != nil {
 		problem(w, http.StatusBadRequest, "Invalid event delivery", err.Error())
 		return
 	}
 	if delivery == "none" && strings.TrimSpace(input.WebhookSecret) == "" {
-		secret := make([]byte, 32)
-		if _, err := rand.Read(secret); err != nil {
+		input.WebhookSecret, err = newGitHubAppWebhookSecret()
+		if err != nil {
 			a.internal(w, err)
 			return
 		}
-		input.WebhookSecret = base64.RawURLEncoding.EncodeToString(secret)
 	}
 	privateKey, webhookSecret, err := a.eventConfig.GitHubApps.EncryptCredentials(id, input.PrivateKey, input.WebhookSecret)
 	if err != nil {
@@ -137,6 +138,7 @@ func (a *API) createGitHubApp(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	item := core.GitHubAppConnection{
 		ID: id, Name: input.Name, WebURL: webURL, APIURL: apiURL, AppID: input.AppID,
+		ReadOnly: input.ReadOnly,
 		ClientID: strings.TrimSpace(input.ClientID), Slug: strings.TrimSpace(input.Slug), InstallationID: input.InstallationID,
 		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID,
 		EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret, CreatedAt: now, UpdatedAt: now,
@@ -210,6 +212,14 @@ func (a *API) updateGitHubApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item.LastVerifiedAt = nil
+	}
+	if item.ReadOnly && input.PrivateKey != nil && input.WebhookSecret == nil {
+		secret, err := newGitHubAppWebhookSecret()
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
+		input.WebhookSecret = &secret
 	}
 	if input.PrivateKey != nil || input.WebhookSecret != nil {
 		if input.PrivateKey == nil || input.WebhookSecret == nil || strings.TrimSpace(*input.PrivateKey) == "" || strings.TrimSpace(*input.WebhookSecret) == "" {
@@ -374,6 +384,13 @@ func (a *API) githubRepositoryAccess(ctx context.Context, id string) (map[string
 	if a.eventConfig.GitHubApps == nil {
 		return nil, errors.New("GitHub App repository access is not configured")
 	}
+	connection, err := a.store.GetGitHubApp(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if connection.ReadOnly {
+		return nil, errors.New("choose a GitHub App with PR automation access")
+	}
 	items, err := a.eventConfig.GitHubApps.ListRepositories(ctx, id)
 	if err != nil {
 		return nil, err
@@ -391,6 +408,7 @@ type startManifestRequest struct {
 	APIURL           string `json:"apiUrl"`
 	OwnerType        string `json:"ownerType"`
 	Owner            string `json:"owner"`
+	ReadOnly         bool   `json:"readOnly"`
 	EventDelivery    string `json:"eventDelivery"`
 	RelayServerID    string `json:"relayServerId"`
 	PrivateNetworkID string `json:"privateNetworkId"`
@@ -427,7 +445,7 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Invalid network route", err.Error())
 		return
 	}
-	delivery, err := githubAppEventDelivery(input.EventDelivery, input.RelayServerID)
+	delivery, err := githubAppEventDelivery(input.EventDelivery, input.RelayServerID, input.ReadOnly)
 	if err != nil {
 		problem(w, http.StatusBadRequest, "Invalid event delivery", err.Error())
 		return
@@ -473,7 +491,7 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 		"setup_on_update":          true,
 		"public":                   true,
 		"request_oauth_on_install": false,
-		"default_permissions":      githubapp.RequiredRepositoryPermissions(),
+		"default_permissions":      githubapp.ManifestPermissions(input.ReadOnly),
 	}
 	if delivery != "none" {
 		manifest["hook_attributes"] = map[string]interface{}{"url": webhookURL, "active": true}
@@ -487,13 +505,20 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	a.manifestStates[state] = githubAppManifestState{ConnectionID: connectionID, Name: input.Name, WebURL: webURL,
 		APIURL: apiURL, RegistrationOwner: input.Owner, RegistrationOwnerType: input.OwnerType,
-		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID, ExpiresAt: time.Now().UTC().Add(time.Hour)}
+		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID, ReadOnly: input.ReadOnly,
+		ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	a.manifestMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"action": action, "manifest": manifest})
 }
 
-func githubAppEventDelivery(value, relayServerID string) (string, error) {
+func githubAppEventDelivery(value, relayServerID string, readOnly bool) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
+	if readOnly {
+		if (value != "" && value != "none") || strings.TrimSpace(relayServerID) != "" {
+			return "", errors.New("read-only GitHub Apps do not use webhooks")
+		}
+		return "none", nil
+	}
 	if value == "" {
 		if strings.TrimSpace(relayServerID) != "" {
 			return "relay", nil
@@ -507,6 +532,14 @@ func githubAppEventDelivery(value, relayServerID string) (string, error) {
 		return "", errors.New("choose a relay server")
 	}
 	return value, nil
+}
+
+func newGitHubAppWebhookSecret() (string, error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(secret), nil
 }
 
 func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
@@ -534,12 +567,11 @@ func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) 
 			redirect("error", "GitHub did not return a webhook secret.")
 			return
 		}
-		secret := make([]byte, 32)
-		if _, err := rand.Read(secret); err != nil {
+		conversion.WebhookSecret, err = newGitHubAppWebhookSecret()
+		if err != nil {
 			redirect("error", "Could not prepare the polling connection.")
 			return
 		}
-		conversion.WebhookSecret = base64.RawURLEncoding.EncodeToString(secret)
 	}
 	privateKey, webhookSecret, err := a.eventConfig.GitHubApps.EncryptCredentials(pending.ConnectionID, conversion.PrivateKey, conversion.WebhookSecret)
 	if err != nil {
@@ -553,6 +585,7 @@ func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) 
 	}
 	item := core.GitHubAppConnection{
 		ID: pending.ConnectionID, Name: name, WebURL: pending.WebURL, APIURL: pending.APIURL, AppID: conversion.AppID,
+		ReadOnly: pending.ReadOnly,
 		ClientID: conversion.ClientID, Slug: conversion.Slug, RegistrationOwner: conversion.RegistrationOwner,
 		RegistrationOwnerType: conversion.RegistrationOwnerType, WebhookURL: pending.WebhookURL, RelayWebhookID: pending.RelayWebhookID, PrivateNetworkID: pending.PrivateNetworkID,
 		EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret, State: "needs_installation",

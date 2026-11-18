@@ -124,7 +124,10 @@ var requiredRepositoryPermissions = map[string]string{
 	"statuses":      "write",
 }
 
-func RequiredRepositoryPermissions() map[string]string {
+func ManifestPermissions(readOnly bool) map[string]string {
+	if readOnly {
+		return map[string]string{"contents": "read", "metadata": "read"}
+	}
 	permissions := make(map[string]string, len(requiredRepositoryPermissions)+1)
 	for name, level := range requiredRepositoryPermissions {
 		permissions[name] = level
@@ -136,9 +139,13 @@ func RequiredRepositoryPermissions() map[string]string {
 	return permissions
 }
 
-func missingPermissions(granted map[string]string) []PermissionGap {
+func missingPermissions(granted map[string]string, readOnly bool) []PermissionGap {
+	names := []string{"checks", "contents", "issues", "pull_requests", "statuses"}
+	if readOnly {
+		names = []string{"contents"}
+	}
 	missing := []PermissionGap{}
-	for _, name := range []string{"checks", "contents", "issues", "pull_requests", "statuses"} {
+	for _, name := range names {
 		required, actual := requiredRepositoryPermissions[name], granted[name]
 		if actual == required || actual == "write" && required == "read" {
 			continue
@@ -299,12 +306,16 @@ func (m *Manager) installationToken(ctx context.Context, id string, installation
 		return "", err
 	}
 	endpoint := fmt.Sprintf("%s/app/installations/%d/access_tokens", strings.TrimRight(connection.APIURL, "/"), installation)
+	var body interface{}
+	if connection.ReadOnly {
+		body = map[string]map[string]string{"permissions": {"contents": "read"}}
+	}
 	var response struct {
 		Token       string            `json:"token"`
 		ExpiresAt   time.Time         `json:"expires_at"`
 		Permissions map[string]string `json:"permissions"`
 	}
-	if err := m.request(ctx, http.MethodPost, endpoint, jwt, nil, &response, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodPost, endpoint, jwt, body, &response, connection.PrivateNetworkID); err != nil {
 		return "", fmt.Errorf("create GitHub App installation token: %w", err)
 	}
 	if response.Token == "" {
@@ -345,7 +356,7 @@ func (m *Manager) ListInstallations(ctx context.Context, id string) ([]Installat
 		for _, item := range response {
 			installation := Installation{ID: item.ID, Account: item.Account.Login, Target: item.Target, WebURL: item.HTMLURL, RepositorySelection: item.RepositorySelection, Suspended: item.SuspendedAt != nil}
 			if item.Permissions != nil {
-				installation.MissingPermissions = missingPermissions(item.Permissions)
+				installation.MissingPermissions = missingPermissions(item.Permissions, connection.ReadOnly)
 			}
 			items = append(items, installation)
 		}
@@ -535,6 +546,9 @@ func (m *Manager) SetCommitStatusWithContext(ctx context.Context, id, repository
 	if err != nil {
 		return err
 	}
+	if connection.ReadOnly {
+		return nil
+	}
 	token, err := m.RepositoryToken(ctx, id, repository)
 	if err != nil {
 		return err
@@ -613,7 +627,7 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	result.PushSubscribed = slices.Contains(app.Events, "push")
 	result.AppPermissionsAvailable = app.Permissions != nil
 	if result.AppPermissionsAvailable {
-		result.MissingAppPermissions = missingPermissions(app.Permissions)
+		result.MissingAppPermissions = missingPermissions(app.Permissions, connection.ReadOnly)
 	}
 	installations, err := m.ListInstallations(ctx, id)
 	if err != nil {
@@ -658,7 +672,7 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	result.RepositorySelection = installation.RepositorySelection
 	result.InstallationPermissionsAvailable = installation.Permissions != nil
 	if result.InstallationPermissionsAvailable {
-		result.MissingInstallationPermissions = missingPermissions(installation.Permissions)
+		result.MissingInstallationPermissions = missingPermissions(installation.Permissions, connection.ReadOnly)
 	}
 	token, err := m.installationToken(ctx, id, connection.InstallationID)
 	if err != nil {
@@ -669,7 +683,7 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	m.mu.Unlock()
 	result.TokenPermissionsAvailable = tokenPermissions != nil
 	if result.TokenPermissionsAvailable {
-		result.MissingTokenPermissions = missingPermissions(tokenPermissions)
+		result.MissingTokenPermissions = missingPermissions(tokenPermissions, connection.ReadOnly)
 	}
 	var repositories struct {
 		Total int `json:"total_count"`

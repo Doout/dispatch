@@ -174,7 +174,7 @@ func (c *repositoryCache) contentHashes(ctx context.Context, repositoryURL, cred
 }
 
 func (s *Service) hashSourceInputs(ctx context.Context, config core.ConfigSource, source core.WorkflowSourceRevision, paths []string) (map[string]string, error) {
-	access, err := s.repositoryAccess(ctx, config, source.Repository)
+	access, err := s.workflowRepositoryAccess(ctx, config, source)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +186,8 @@ func (s *Service) hashSourceInputs(ctx context.Context, config core.ConfigSource
 }
 
 func sameSourceInput(a, b core.WorkflowSourceRevision) bool {
-	if a.Repository != b.Repository || a.Branch != b.Branch || a.Path != b.Path || a.Alias != b.Alias {
+	if a.Repository != b.Repository || a.Branch != b.Branch || a.Path != b.Path || a.Alias != b.Alias ||
+		a.GitHubAppID != b.GitHubAppID || a.CloneURL != b.CloneURL {
 		return false
 	}
 	if len(a.ContentHashes) > 0 && len(b.ContentHashes) > 0 {

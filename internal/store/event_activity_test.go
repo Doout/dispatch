@@ -282,9 +282,11 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 		}
 	}
 	must(data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now}))
-	must(data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", CreatedAt: now, UpdatedAt: now}))
 	// Seed the historical schema directly. Current store writes include columns
 	// added after this fixture's pre-063 migration boundary.
+	_, err = data.db.ExecContext(ctx, `INSERT INTO github_apps(id,name,web_url,api_url,app_id,webhook_url,encrypted_private_key,encrypted_webhook_secret,state,created_at,updated_at)
+		VALUES('github','GitHub','','',0,'','','','',?,?)`, stamp(now), stamp(now))
+	must(err)
 	_, err = data.db.ExecContext(ctx, `INSERT INTO config_sources(id,project_id,github_app_id,name,repository,branch,path,sync_mode,poll_interval_seconds,active,state,created_at,updated_at) VALUES('source','project','github','Source','team/ui','main','dispatch','poll',60,TRUE,'ready',?,?)`, stamp(now), stamp(now))
 	must(err)
 	must(data.CreateWorkflowResource(ctx, core.WorkflowResource{ID: "workflow", ConfigSourceID: "source", Name: "Preview", Kind: "Application", Temporary: true, CreatedAt: now, UpdatedAt: now}))
@@ -309,6 +311,11 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 		must(data.CompleteWorkflowPreviewComment(ctx, triggerID, triggerID, revisionID))
 	}
 	must(data.Migrate(ctx))
+	connection, err := data.GetGitHubApp(ctx, "github")
+	must(err)
+	if connection.ReadOnly {
+		t.Fatal("existing GitHub App changed to read-only")
+	}
 	source, err := data.GetConfigSource(ctx, "source")
 	must(err)
 	if source.ProjectID != "project" || source.GitHubAppID != "github" || source.Repository != "team/ui" || source.RepositoryID != 0 || source.RepositoryStatus != nil {

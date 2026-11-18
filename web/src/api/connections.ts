@@ -33,6 +33,7 @@ export type GitHubAppConnection = {
   webUrl: string;
   apiUrl: string;
   appId: number;
+  readOnly?: boolean;
   clientId?: string;
   slug?: string;
   registrationOwner?: string;
@@ -130,6 +131,7 @@ export const connectionsApi = {
     apiUrl?: string;
     ownerType: "personal" | "organization";
     owner?: string;
+    readOnly?: boolean;
     eventDelivery?: "none" | "direct" | "relay";
     relayServerId?: string;
     privateNetworkId?: string;

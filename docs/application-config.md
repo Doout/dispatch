@@ -163,6 +163,26 @@ spec:
 
 Application jobs default to `reuse: onInputMatch`. Matching jobs share successful results across Applications in the same repository configuration. Concurrent requests for identical inputs wait for the first build. This coordination works within one controller; it does not coordinate multiple controller replicas.
 
+### GitHub Apps for source repositories
+
+Sources inherit the connection or saved credential that reads the workflow YAML. For a GitHub-managed preview template, that default is the GitHub App that syncs the template file. Inline previews inherit their selected repository access source.
+
+Set `connection` on a source to select a different connected GitHub App by its name in **Connections**. The App must be installed for that repository and verified in Dispatch. Use a read-only App to fetch a chart or other dependency. Treat write access to the workflow configuration as permission to select its source connections.
+
+```yaml
+spec:
+  sources:
+    service:
+      repository: example/service
+      branch: develop
+    gitops:
+      repository: platform/charts
+      ref: helm-resources
+      connection: charts-reader
+```
+
+For a source override, a short repository name uses the selected App's GitHub host. An HTTPS URL must match that host. Dispatch records the resolved connection and commit for the run and uses that connection for source checkout and Helm inputs. PR comments, links, and reports use the GitHub App selected on the preview trigger. Offline `doodship` continues to use local checkouts.
+
 ### Docker builders
 
 Add a **Docker builder** under **Servers > Add server** to move image builds off the controller. Enter an `ssh://user@host` URL, choose a saved SSH private key, and set the number of concurrent jobs the host can handle. **Check host** fetches its public key and fingerprint; compare the fingerprint with the host before saving. You can also paste a verified public key. The SSH user must be able to access the Docker socket. Add more builder servers to increase capacity.

@@ -1767,3 +1767,6 @@ CREATE INDEX workflow_stage_runs_state ON workflow_stage_runs(state,revision_id)
 -- dispatch:migration 105_history_retention
 ALTER TABLE deployments ADD COLUMN inputs_expired_at TEXT;
 ALTER TABLE deployments ADD COLUMN retention_pinned BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- dispatch:migration 106_github_app_read_only
+ALTER TABLE github_apps ADD COLUMN read_only BOOLEAN NOT NULL DEFAULT FALSE;

@@ -87,7 +87,7 @@ var ErrPreviewCommandRetired = errors.New("preview comment belongs to a removed 
 var ErrPreviewBindingExists = errors.New("preview command is already bound; retry against its existing preview")
 
 func (s *SQLStore) CreateWorkflowResource(ctx context.Context, item core.WorkflowResource) error {
-	trigger, withTrigger := ctx.Value(workflowPreviewTriggerKey{}).(core.WorkflowPreviewTrigger)
+	trigger, withTrigger := WorkflowPreviewTriggerFromContext(ctx)
 	if withTrigger {
 		if !item.Temporary || item.Kind != "Application" || trigger.TemplateID == "" {
 			return errors.New("preview trigger requires a generated application")
