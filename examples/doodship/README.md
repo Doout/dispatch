@@ -1,6 +1,6 @@
 # Run a workflow from your laptop
 
-Download the matching `doodship-{darwin,linux}-{arm64,amd64}.tar.gz` from [GitHub Releases](https://github.com/Doout/dispatch/releases) and check its digest against `SHA256SUMS`. Extract the `doodship` executable to a directory on your PATH.
+Use the [CLI installer](../../README.md#install-the-doodship-cli) for the latest stable release or a specific version. To install manually, download the matching `doodship-{darwin,linux}-{arm64,amd64}.tar.gz` from [GitHub Releases](https://github.com/Doout/dispatch/releases) and check its digest against `SHA256SUMS`. Extract the `doodship` executable to a directory on your PATH.
 
 To build the standalone Linux or macOS CLI from the repository root, use `make doodship`. Copy the resulting `doodship` executable onto your PATH. To install directly with Go, use `go install ./cmd/doodship`.
 

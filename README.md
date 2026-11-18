@@ -21,6 +21,30 @@ Dispatch is under active development. Keep the controller and its agents on a tr
 
 See the [roadmap](docs/roadmap.md) for provider limitations and the checks required before a release.
 
+## Install the doodship CLI
+
+Run slot and PR workflows on macOS or Linux. Install the latest stable release with curl:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install-cli.sh | bash
+```
+
+Or use wget:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install-cli.sh | bash
+```
+
+The installer verifies the release checksum and installs `doodship` in `~/.local/bin`. If that directory is missing from your PATH, add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and run it in your terminal.
+
+To list versions available for your platform (requires jq) or install a specific version:
+
+```sh
+installer=https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install-cli.sh
+curl -fsSL "$installer" | bash -s -- --list-versions
+curl -fsSL "$installer" | bash -s -- --version v0.2.0
+```
+
 ## Install and upgrade
 
 The installer runs Dispatch in Docker on Linux, on amd64 or arm64. Install Docker and Compose 2.30 or newer first, then download the CLI:
