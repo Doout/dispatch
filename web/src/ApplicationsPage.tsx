@@ -89,10 +89,10 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
   const canAddApplication = dockerReady && hasProject && canConfigure;
   const canAddTemplate = (dockerReady || kubernetesReady) && hasProject && canConfigure;
   const canAddHelm = kubernetesReady && hasProject && canConfigure;
-  const canAddGroup = overview.identity?.systemRole === "owner" && helmSources.length > 0 && overview.githubApps.some((connection) => connection.installationId && connection.state !== "needs_installation");
+  const canAddGroup = overview.identity?.systemRole === "owner" && helmSources.length > 0 && overview.githubApps.some((connection) => !connection.readOnly && connection.installationId && connection.state !== "needs_installation");
   const repositoryCredentials = overview.secrets.some((secret) => secret.type === "ssh_private_key" || secret.type === "github_token" || secret.type === "api_token");
   const canAddConfig = overview.identity?.systemRole === "owner" && canConfigure && hasProject && (repositoryCredentials || overview.githubApps.some((connection) => connection.state === "ready"));
-  const canAddTemporaryPreview = overview.identity?.systemRole === "owner" && (overview.configSources ?? []).some((source) => source.active) && overview.githubApps.some((connection) => connection.state === "ready" && connection.installationId);
+  const canAddTemporaryPreview = overview.identity?.systemRole === "owner" && (overview.configSources ?? []).some((source) => source.active) && overview.githubApps.some((connection) => !connection.readOnly && connection.state === "ready" && connection.installationId);
   const editorTitle = creating ? "New application" : creatingTemplate ? "New template" : creatingHelm ? "New Helm source" : configSourceEdit ? configSourceEdit === "new" ? "Import configuration" : "Edit configuration" : previewTemplateEdit ? previewTemplateEdit === "new" ? "New PR preview template" : `Edit ${previewTemplateEdit.name}` : temporaryPreviewEdit ? temporaryPreviewEdit === "new" ? "New one-off PR preview" : `Edit ${temporaryPreviewEdit.name}` : undefined;
   const action = creating
     ? { label: "Cancel", onClick: onToggleCreate, icon: <X size={16} weight="bold" />, tone: "quiet" as const }

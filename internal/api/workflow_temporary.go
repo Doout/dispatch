@@ -385,6 +385,10 @@ func (a *API) validateWorkflowPreviewTrigger(w http.ResponseWriter, r *http.Requ
 		problem(w, http.StatusConflict, "GitHub App unavailable", "Choose an installed GitHub App.")
 		return false
 	}
+	if connection.ReadOnly {
+		problem(w, http.StatusBadRequest, "GitHub App is read-only", "Choose a GitHub App with PR automation access.")
+		return false
+	}
 	documents, err := workflowservice.Parse(resource.Path, []byte(resource.Document))
 	if err != nil || len(documents) != 1 || documents[0].Spec == nil {
 		problem(w, http.StatusConflict, "Temporary workflow invalid", "Stored Application document is invalid.")

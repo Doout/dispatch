@@ -31,7 +31,9 @@ func TestWorkflowPreviewValuesUpgradePreservesLegacyAndFrozenRevisions(t *testin
 			return data.CreateProject(ctx, core.Project{ID: "project", Name: "Project", CreatedAt: now})
 		},
 		func() error {
-			return data.CreateGitHubApp(ctx, core.GitHubAppConnection{ID: "github", Name: "GitHub", State: "ready", CreatedAt: now, UpdatedAt: now})
+			_, err := data.db.ExecContext(ctx, `INSERT INTO github_apps(id,name,web_url,api_url,app_id,webhook_url,encrypted_private_key,encrypted_webhook_secret,state,created_at,updated_at)
+				VALUES('github','GitHub','','',0,'','','','ready',?,?)`, stamp(now), stamp(now))
+			return err
 		},
 		func() error {
 			return data.CreateConfigSource(ctx, core.ConfigSource{ID: "config", ProjectID: "project", GitHubAppID: "github", Name: "Config", Active: true, State: "ready", CreatedAt: now, UpdatedAt: now})

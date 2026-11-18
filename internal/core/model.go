@@ -434,6 +434,7 @@ type GitHubAppConnection struct {
 	WebURL                  string     `json:"webUrl"`
 	APIURL                  string     `json:"apiUrl"`
 	AppID                   int64      `json:"appId"`
+	ReadOnly                bool       `json:"readOnly,omitempty"`
 	ClientID                string     `json:"clientId,omitempty"`
 	Slug                    string     `json:"slug,omitempty"`
 	RegistrationOwner       string     `json:"registrationOwner,omitempty"`

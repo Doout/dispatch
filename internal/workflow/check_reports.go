@@ -94,7 +94,7 @@ func (s *Service) workflowCheckReports(ctx context.Context, resource core.Workfl
 		if err != nil {
 			return nil, err
 		}
-		if connection.AppID < 1 || connection.APIURL == "" {
+		if connection.ReadOnly || connection.AppID < 1 || connection.APIURL == "" {
 			continue
 		}
 		for _, scope := range scopes {

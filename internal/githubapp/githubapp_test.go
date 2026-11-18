@@ -170,6 +170,7 @@ func TestVerifyReportsRegistrationAndInstallationPermissionGaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var readOnlyTokenRequested atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -182,7 +183,20 @@ func TestVerifyReportsRegistrationAndInstallationPermissionGaps(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/app/installations/73":
 			_, _ = w.Write([]byte(`{"id":73,"repository_selection":"selected","permissions":{"contents":"read","issues":"read","pull_requests":"read","statuses":"read"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/73/access_tokens":
-			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC(), "permissions": map[string]string{"contents": "read", "issues": "read", "pull_requests": "read", "statuses": "read"}})
+			permissions := map[string]string{"contents": "read", "issues": "read", "pull_requests": "read", "statuses": "read"}
+			if r.ContentLength > 0 {
+				var request struct {
+					Permissions map[string]string `json:"permissions"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Permissions) != 1 || request.Permissions["contents"] != "read" {
+					t.Errorf("unexpected read-only token request: %#v, %v", request, err)
+					http.Error(w, "invalid permissions", http.StatusBadRequest)
+					return
+				}
+				readOnlyTokenRequested.Store(true)
+				permissions = request.Permissions
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().Add(time.Hour).UTC(), "permissions": permissions})
 		case r.Method == http.MethodGet && r.URL.Path == "/installation/repositories":
 			_, _ = w.Write([]byte(`{"total_count":2,"repositories":[]}`))
 		default:
@@ -196,13 +210,24 @@ func TestVerifyReportsRegistrationAndInstallationPermissionGaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.Store = testStore{connection: core.GitHubAppConnection{ID: "connection-1", APIURL: server.URL, AppID: 42, InstallationID: 73, EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret}}
+	connection := core.GitHubAppConnection{ID: "connection-1", APIURL: server.URL, AppID: 42, InstallationID: 73, EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret}
+	manager.Store = testStore{connection: connection}
 	result, err := manager.Verify(context.Background(), "connection-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.AppPermissionsAvailable || !result.InstallationPermissionsAvailable || !result.TokenPermissionsAvailable || len(result.MissingAppPermissions) != 3 || result.MissingAppPermissions[0].Name != "checks" || result.MissingAppPermissions[1].Name != "issues" || result.MissingAppPermissions[2].Name != "pull_requests" || len(result.MissingInstallationPermissions) != 4 || result.MissingInstallationPermissions[0].Name != "checks" || result.MissingInstallationPermissions[1].Name != "issues" || result.MissingInstallationPermissions[2].Name != "pull_requests" || result.MissingInstallationPermissions[3].Name != "statuses" || len(result.MissingTokenPermissions) != 4 {
 		t.Fatalf("unexpected permission audit: %#v", result)
+	}
+	connection.ReadOnly = true
+	readOnly := New(testStore{connection: connection}, vault)
+	result, err = readOnly.Verify(t.Context(), connection.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readOnlyTokenRequested.Load() || len(result.MissingAppPermissions) != 0 ||
+		len(result.MissingInstallationPermissions) != 0 || len(result.MissingTokenPermissions) != 0 {
+		t.Fatalf("unexpected read-only permission audit: %#v", result)
 	}
 }
 

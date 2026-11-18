@@ -452,11 +452,11 @@ func scanEdgeJob(row scanner) (core.EdgeJob, error) {
 func (s *SQLStore) CreateGitHubApp(ctx context.Context, item core.GitHubAppConnection) error {
 	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO github_apps(
 		id,name,web_url,api_url,app_id,client_id,slug,registration_owner,registration_owner_type,installation_id,installation_account,installation_url,webhook_url,
-		relay_webhook_id,private_network_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.Name, item.WebURL, item.APIURL, item.AppID,
+		relay_webhook_id,private_network_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at,read_only)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.Name, item.WebURL, item.APIURL, item.AppID,
 		item.ClientID, item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL,
 		item.RelayWebhookID, item.PrivateNetworkID, item.EncryptedPrivateKey, item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt),
-		stamp(item.CreatedAt), stamp(item.UpdatedAt))
+		stamp(item.CreatedAt), stamp(item.UpdatedAt), item.ReadOnly)
 	return err
 }
 
@@ -475,7 +475,7 @@ func (s *SQLStore) DeleteGitHubApp(ctx context.Context, id string) error {
 }
 
 const githubAppSelect = `SELECT id,name,web_url,api_url,app_id,client_id,slug,registration_owner,registration_owner_type,installation_id,installation_account,installation_url,webhook_url,
-	relay_webhook_id,private_network_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at FROM github_apps`
+	relay_webhook_id,private_network_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at,read_only FROM github_apps`
 
 func (s *SQLStore) ListGitHubApps(ctx context.Context) ([]core.GitHubAppConnection, error) {
 	rows, err := s.db.QueryContext(ctx, githubAppSelect+` ORDER BY name`)
@@ -508,7 +508,7 @@ func scanGitHubApp(row scanner) (core.GitHubAppConnection, error) {
 	var created, updated string
 	err := row.Scan(&item.ID, &item.Name, &item.WebURL, &item.APIURL, &item.AppID, &item.ClientID, &item.Slug,
 		&item.RegistrationOwner, &item.RegistrationOwnerType, &item.InstallationID, &item.InstallationAccount, &item.InstallationURL, &item.WebhookURL, &item.RelayWebhookID, &item.PrivateNetworkID, &item.EncryptedPrivateKey,
-		&item.EncryptedWebhookSecret, &item.State, &verified, &created, &updated)
+		&item.EncryptedWebhookSecret, &item.State, &verified, &created, &updated, &item.ReadOnly)
 	item.PrivateKeyConfigured = item.EncryptedPrivateKey != ""
 	item.WebhookSecretConfigured = item.EncryptedWebhookSecret != ""
 	item.LastVerifiedAt = parseNullTime(verified)

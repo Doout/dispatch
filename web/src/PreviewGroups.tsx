@@ -11,7 +11,7 @@ const blankComponent = (app?: App, entrypoint = false): PreviewGroupComponent =>
 
 export function PreviewGroupsArea({ overview, onChanged, embedded = false, hideInventory = false, requestedEdit = null, onEditingChange }: Props) {
   const helmApps = overview.apps.filter((app) => app.buildType === "helm" && ["kubernetes", "openshift"].includes(overview.servers.find((server) => server.id === app.serverId)?.runtime ?? ""));
-  const readyConnections = overview.githubApps.filter((connection) => connection.installationId && connection.state !== "needs_installation");
+  const readyConnections = overview.githubApps.filter((connection) => !connection.readOnly && connection.installationId && connection.state !== "needs_installation");
   const [editing, setEditing] = useState<PreviewGroup | "new" | null>(null);
   const [selectedRunID, setSelectedRunID] = useState("");
   const [confirmCleanup, setConfirmCleanup] = useState("");
@@ -77,7 +77,7 @@ export function PreviewGroupsArea({ overview, onChanged, embedded = false, hideI
 }
 
 function PreviewGroupBuilder({ overview, helmApps, group, onCancel, onSaved }: { overview: Overview; helmApps: App[]; group?: PreviewGroup; onCancel: () => void; onSaved: () => Promise<void> }) {
-  const readyConnections = overview.githubApps.filter((connection) => connection.installationId && connection.state !== "needs_installation");
+  const readyConnections = overview.githubApps.filter((connection) => !connection.readOnly && connection.installationId && connection.state !== "needs_installation");
   const [name, setName] = useState(group?.name ?? "");
   const [githubAppID, setGitHubAppID] = useState(group?.githubAppId ?? readyConnections[0]?.id ?? "");
   const [command, setCommand] = useState(group?.command ?? "/preview");
