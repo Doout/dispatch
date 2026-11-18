@@ -441,7 +441,7 @@ func (r *jobRuntime) checkout(ctx context.Context, alias string) (string, error)
 	if !ok {
 		return "", fmt.Errorf("unknown source %s", alias)
 	}
-	access, err := r.service.repositoryAccess(ctx, r.source, revision.Repository)
+	access, err := r.service.workflowRepositoryAccess(ctx, r.source, revision)
 	if err != nil {
 		return "", err
 	}

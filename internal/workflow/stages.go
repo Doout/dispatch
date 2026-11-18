@@ -230,7 +230,11 @@ func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.Workf
 	if err != nil {
 		return prepared, err
 	}
-	repositoryURL, err := s.repositoryCloneURL(ctx, source, chart.Repository)
+	chartSource, chartRepository, err := s.workflowSourceAccess(ctx, source, chart)
+	if err != nil {
+		return prepared, err
+	}
+	repositoryURL, err := s.repositoryCloneURL(ctx, chartSource, chartRepository)
 	if err != nil {
 		return prepared, err
 	}
@@ -245,14 +249,14 @@ func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.Workf
 		expectedAppSpecDigest = app.SpecDigest()
 	}
 	app.ServerID, app.Name, app.SourceRepo, app.Branch = server.ID, "managed-"+resource.Name+"-"+deploymentName+"-"+stage.Name, repositoryURL, chart.Branch
-	if source.GitHubAppID != "" {
-		app.SourceAuthType, app.SourceCredentialID = deploy.SourceAuthGitHubApp, source.GitHubAppID
+	if chartSource.GitHubAppID != "" {
+		app.SourceAuthType, app.SourceCredentialID = deploy.SourceAuthGitHubApp, chartSource.GitHubAppID
 	} else {
-		secret, err := s.Store.GetSecret(ctx, source.CredentialSecretID)
+		secret, err := s.Store.GetSecret(ctx, chartSource.CredentialSecretID)
 		if err != nil {
 			return prepared, err
 		}
-		app.SourceAuthType, app.SourceCredentialID = deploy.SourceAuthGitHubToken, source.CredentialSecretID
+		app.SourceAuthType, app.SourceCredentialID = deploy.SourceAuthGitHubToken, chartSource.CredentialSecretID
 		if secret.Type == core.SecretTypeSSHPrivateKey {
 			app.SourceAuthType = deploy.SourceAuthSSHKey
 		}
@@ -276,7 +280,7 @@ func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.Workf
 	}
 	app.HelmProvenance = core.HelmProvenance{WorkflowResourceID: resource.ID, WorkflowRevisionID: revision.ID, Sources: map[string]core.WorkflowSourceRevision{}}
 	for alias, pinned := range revision.Sources {
-		app.HelmProvenance.Sources[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: pinned.Repository, Branch: pinned.Branch, CommitSHA: pinned.CommitSHA}
+		app.HelmProvenance.Sources[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: pinned.Repository, Branch: pinned.Branch, CommitSHA: pinned.CommitSHA, GitHubAppID: pinned.GitHubAppID, CloneURL: pinned.CloneURL}
 	}
 	if resource.Temporary {
 		triggers, err := s.Store.ListWorkflowPreviewTriggers(ctx)
@@ -432,11 +436,11 @@ func (s *Service) runPipeline(ctx context.Context, name string, inputs map[strin
 	}
 	snapshot := map[string]core.WorkflowSourceRevision{}
 	for alias, spec := range documents[0].Pipeline.Sources {
-		sha, err := s.repositoryHead(ctx, source, spec.Repository, spec.Branch)
+		item, err := s.resolveWorkflowSource(ctx, source, "", alias, spec)
 		if err != nil {
-			return core.WorkflowRevision{}, err
+			return core.WorkflowRevision{}, fmt.Errorf("resolve source %s: %w", alias, err)
 		}
-		snapshot[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: spec.Repository, Branch: spec.Branch, CommitSHA: sha, Path: spec.Path}
+		snapshot[alias] = item
 	}
 	started := time.Now().UTC()
 	revision := core.WorkflowRevision{ID: ulid.Make().String(), ResourceID: resource.ID, ConfigSHA: resource.ConfigSHA, SpecDigest: resource.SpecDigest,

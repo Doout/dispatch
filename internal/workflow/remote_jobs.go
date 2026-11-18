@@ -93,7 +93,11 @@ func (r *jobRuntime) runRemoteJob(ctx context.Context, job JobSpec, secrets map[
 	return result.Outputs, result.Log, err
 }
 func (s *Service) workerSource(ctx context.Context, source core.ConfigSource, revision core.WorkflowSourceRevision) (workerSource, error) {
-	url, err := s.repositoryCloneURL(ctx, source, revision.Repository)
+	source, repository, err := s.workflowSourceAccess(ctx, source, revision)
+	if err != nil {
+		return workerSource{}, err
+	}
+	url, err := s.repositoryCloneURL(ctx, source, repository)
 	if err != nil {
 		return workerSource{}, err
 	}
@@ -106,7 +110,7 @@ func (s *Service) workerSource(ctx context.Context, source core.ConfigSource, re
 			return item, errors.New("GitHub App access is not configured")
 		}
 		item.AuthType = deploy.SourceAuthGitHubApp
-		item.Credential, err = s.GitHub.RepositoryToken(ctx, source.GitHubAppID, revision.Repository)
+		item.Credential, err = s.GitHub.RepositoryToken(ctx, source.GitHubAppID, repository)
 		return item, err
 	}
 	if source.CredentialSecretID == "" || s.Secrets == nil {

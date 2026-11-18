@@ -136,6 +136,8 @@ type WorkflowSourceRevision struct {
 	Branch        string            `json:"branch"`
 	CommitSHA     string            `json:"commitSha"`
 	Path          string            `json:"path,omitempty"`
+	GitHubAppID   string            `json:"githubAppId,omitempty"`
+	CloneURL      string            `json:"cloneUrl,omitempty"`
 }
 
 // WorkflowPullRequest captures the PR identity when a deployment is scheduled.

@@ -18,6 +18,11 @@ func WithWorkflowPreviewTrigger(ctx context.Context, trigger core.WorkflowPrevie
 	return context.WithValue(ctx, workflowPreviewTriggerKey{}, trigger)
 }
 
+func WorkflowPreviewTriggerFromContext(ctx context.Context) (core.WorkflowPreviewTrigger, bool) {
+	trigger, ok := ctx.Value(workflowPreviewTriggerKey{}).(core.WorkflowPreviewTrigger)
+	return trigger, ok
+}
+
 type WorkflowReceipt struct{ Key, TriggerID, CommentID string }
 
 // WithWorkflowReceipt binds scheduling to a durable event or logical comment.

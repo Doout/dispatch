@@ -75,11 +75,11 @@ func (s *Service) ProvisionService(ctx context.Context, resource core.WorkflowRe
 	source.ProjectID = projectID
 	snapshot := map[string]core.WorkflowSourceRevision{}
 	for alias, ref := range spec.Sources {
-		sha, err := s.repositoryHead(ctx, source, ref.Repository, sourceRevisionRef(ref))
+		item, err := s.resolveWorkflowSource(ctx, source, "", alias, ref)
 		if err != nil {
 			return nil, fmt.Errorf("resolve source %s: %w", alias, err)
 		}
-		snapshot[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: ref.Repository, Branch: sourceRevisionRef(ref), CommitSHA: sha, Path: ref.Path}
+		snapshot[alias] = item
 	}
 	root, err := os.MkdirTemp("", "dispatch-service-")
 	if err != nil {

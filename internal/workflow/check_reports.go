@@ -18,6 +18,9 @@ func (s *Service) workflowCheckReports(ctx context.Context, resource core.Workfl
 	targets := map[string]target{}
 	for _, input := range revision.Sources {
 		app := source.GitHubAppID
+		if input.GitHubAppID != "" && input.GitHubAppID != app {
+			app = ""
+		}
 		repo := normalizeRepository(input.Repository)
 		for _, pr := range revision.PullRequests {
 			if normalizeRepository(pr.Repository) == repo && pr.CommitSHA == input.CommitSHA {
