@@ -8,12 +8,10 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflowfile"
 )
 
-type PreviewServiceSpec struct {
-	TemplateRef   string `json:"templateRef" yaml:"templateRef"`
-	CleanupPolicy string `json:"cleanupPolicy,omitempty" yaml:"cleanupPolicy,omitempty"`
-}
+type PreviewServiceSpec = workflowfile.PreviewServiceSpec
 
 const previewServicePrefix = "preview:"
 

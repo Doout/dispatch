@@ -31,6 +31,7 @@ class RequiredStatusTest(unittest.TestCase):
         self.assertIsNotNone(needs)
         self.assertEqual([job.strip() for job in needs[1].split(',')], self.required)
         self.assertRegex(gate, r'(?m)^    if: always\(\)$')
+        self.assertRegex(self.jobs['build-checks'], r'(?m)^    needs: release-binaries$')
         self.assertRegex(self.jobs['api-coverage'], r'(?m)^    needs: \[api-race, go-race\]$')
         self.assertIn('--verify api-race-results --count 8', self.jobs['api-coverage'])
         self.assertIn('--verify go-race-results --count 6', self.jobs['api-coverage'])
@@ -51,7 +52,7 @@ class RequiredStatusTest(unittest.TestCase):
             match = re.search(r'(?m)^    timeout-minutes: (\d+)$', body)
             self.assertIsNotNone(match, name)
             self.assertLessEqual(int(match[1]), 14 if name == 'api-race' else 10, name)
-        self.assertNotIn('--other-packages', self.jobs['build-checks'])
+        self.assertNotIn('--other-packages', self.jobs['release-binaries'])
 
     def test_gate_rejects_failed_cancelled_and_skipped_results_for_each_job(self):
         body = self.jobs['test'].split('        run: |\n', 1)[1]

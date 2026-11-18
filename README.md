@@ -4,6 +4,8 @@ Dispatch builds images and deploys applications from Git repositories. It suppor
 
 Each run saves its source commits, configuration, job outputs and logs. The controller includes a React UI, HTTP API, CLI and stdio MCP server. Operational data uses SQLite or PostgreSQL; historical reporting uses embedded DuckDB.
 
+Run slot and PR workflows from a laptop with [doodship and its local example](examples/doodship/README.md).
+
 Dispatch is under active development. Keep the controller and its agents on a trusted network. The bundled machine provider is a mock. Allocating real servers and restoring machine snapshots require an external provider adapter and tests against that provider.
 
 ## What it does

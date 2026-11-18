@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -25,12 +24,12 @@ import (
 	"github.com/doout/dispatch/internal/runlog"
 	"github.com/doout/dispatch/internal/serviceconn"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflowfile"
 	"github.com/oklog/ulid/v2"
 )
 
 const (
 	maxJobLogBytes = 1 << 20
-	maxJobOutput   = 64 << 10
 )
 
 // References include both the builder and waiters so a key is removed only
@@ -347,7 +346,7 @@ func (r *jobRuntime) runJobCommand(ctx context.Context, job JobSpec, secrets map
 	if err != nil {
 		return nil, logText, fmt.Errorf("command failed: %w", err)
 	}
-	outputs, err := readJobOutputs(outputPath, job.Outputs)
+	outputs, err := workflowfile.ReadJobOutputs(outputPath, job.Outputs)
 	if err != nil {
 		return nil, logText, err
 	}
@@ -428,32 +427,7 @@ func (r *jobRuntime) resolveSecrets(ctx context.Context, bindings map[string]Sec
 }
 
 func selectJSONKey(contents []byte, path string) (string, error) {
-	if !jsonKeyPathPattern.MatchString(path) {
-		return "", errors.New("invalid JSON key path")
-	}
-	var object map[string]any
-	if err := json.Unmarshal(contents, &object); err != nil || object == nil {
-		return "", errors.New("value is not a JSON object")
-	}
-	var current any = object
-	for _, key := range strings.Split(path, ".") {
-		fields, ok := current.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("JSON key %s is not available", path)
-		}
-		current, ok = fields[key]
-		if !ok {
-			return "", fmt.Errorf("JSON key %s is not available", path)
-		}
-	}
-	switch value := current.(type) {
-	case string:
-		return value, nil
-	case bool, float64:
-		return fmt.Sprint(value), nil
-	default:
-		return "", fmt.Errorf("JSON key %s must contain a string, number, or boolean", path)
-	}
+	return workflowfile.SelectJSONKey(contents, path)
 }
 
 func (r *jobRuntime) checkout(ctx context.Context, alias string) (string, error) {
@@ -548,119 +522,15 @@ func completeOutputs(outputs map[string]string, declared []string) bool {
 }
 
 func jobSourceAliases(job JobSpec) []string {
-	aliases := append([]string{}, job.Sources...)
-	if job.RunFrom != "" {
-		aliases = append(aliases, job.RunFrom)
-	}
-	slices.Sort(aliases)
-	return uniqueStrings(aliases)
-}
-
-func readJobOutputs(path string, declared []string) (map[string]string, error) {
-	if len(declared) == 0 {
-		return map[string]string{}, nil
-	}
-	file, err := os.Open(filepath.Clean(path))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, errors.New("job did not create DISPATCH_OUTPUT_FILE")
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	contents, err := io.ReadAll(io.LimitReader(file, maxJobOutput+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(contents) > maxJobOutput {
-		return nil, errors.New("job output exceeds 64 KiB")
-	}
-	outputs := map[string]string{}
-	if json.Unmarshal(contents, &outputs) != nil {
-		scanner := bufio.NewScanner(bytes.NewReader(contents))
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
-			name, value, ok := strings.Cut(line, "=")
-			if !ok || strings.TrimSpace(name) == "" {
-				return nil, errors.New("job output must contain JSON or name=value lines")
-			}
-			outputs[strings.TrimSpace(name)] = strings.Trim(strings.TrimSpace(value), "\"'")
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, err
-		}
-	}
-	for _, name := range declared {
-		if _, ok := outputs[name]; !ok {
-			return nil, fmt.Errorf("job output %s is missing", name)
-		}
-	}
-	for name := range outputs {
-		if !slices.Contains(declared, name) {
-			delete(outputs, name)
-		}
-	}
-	return outputs, nil
+	return workflowfile.JobSourceAliases(job)
 }
 
 func renderRuntime(value string, paths map[string]string, sources map[string]core.WorkflowSourceRevision, inputs map[string]string, stage *StageSpec) (string, error) {
-	var renderErr error
-	rendered := templatePattern.ReplaceAllStringFunc(value, func(expression string) string {
-		parts := strings.Split(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(expression, "{{"), "}}")), ".")
-		switch {
-		case len(parts) == 3 && parts[0] == "sources":
-			source, ok := sources[parts[1]]
-			if !ok {
-				renderErr = fmt.Errorf("source %s is unavailable", parts[1])
-				return ""
-			}
-			switch parts[2] {
-			case "path":
-				return paths[parts[1]]
-			case "commit":
-				return source.CommitSHA
-			case "branch":
-				return source.Branch
-			}
-		case len(parts) == 2 && parts[0] == "inputs":
-			value, ok := inputs[parts[1]]
-			if !ok {
-				renderErr = fmt.Errorf("input %s is unavailable", parts[1])
-				return ""
-			}
-			return value
-		case len(parts) == 2 && parts[0] == "stage" && stage != nil:
-			if parts[1] == "name" {
-				return stage.Name
-			}
-			if parts[1] == "url" {
-				return stage.URL
-			}
-		}
-		renderErr = fmt.Errorf("template %s is unavailable", expression)
-		return ""
-	})
-	return rendered, renderErr
+	return workflowfile.RenderRuntime(value, paths, sources, inputs, stage)
 }
 
 func safeJoin(root, value string) (string, error) {
-	value = filepath.Clean(strings.TrimSpace(value))
-	if value == "." || value == "" {
-		return root, nil
-	}
-	if filepath.IsAbs(value) || value == ".." || strings.HasPrefix(value, ".."+string(filepath.Separator)) {
-		return "", errors.New("source path must remain inside the repository")
-	}
-	joined := filepath.Join(root, value)
-	relative, err := filepath.Rel(root, joined)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", errors.New("source path must remain inside the repository")
-	}
-	return joined, nil
+	return workflowfile.SafeJoin(root, value)
 }
 
 func safePathPart(value string) string {

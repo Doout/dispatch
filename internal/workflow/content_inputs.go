@@ -14,6 +14,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflowfile"
 )
 
 var errSourceInputSymlink = errors.New("source input contains a symlink")
@@ -44,15 +45,7 @@ func (d *sourceSymlinkDetector) Write(value []byte) (int, error) {
 }
 
 func validateInputPath(value string) error {
-	if strings.TrimSpace(value) == "" || path.IsAbs(value) || strings.ContainsAny(value, "\\\x00*?[") {
-		return fmt.Errorf("input path %q must be a relative file or directory without wildcards", value)
-	}
-	for _, part := range strings.Split(value, "/") {
-		if part == ".." {
-			return fmt.Errorf("input path %q must not traverse parent directories", value)
-		}
-	}
-	return nil
+	return workflowfile.ValidateInputPath(value)
 }
 
 func jobInputPaths(job JobSpec, alias string) []string {

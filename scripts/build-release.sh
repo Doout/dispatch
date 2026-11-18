@@ -23,4 +23,5 @@ for arch in amd64 arm64; do
   tar -czf "$output/dispatch-linux-$arch.tar.gz" -C "$output/$arch" dispatch dispatchctl -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
   tar -czf "$output/dispatch-platform-linux-$arch.tar.gz" -C "$output/$arch" dispatch-platform dispatch-worker -C "$(cd "$output" && pwd)" edge -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
 done
-(cd "$output" && sha256sum dispatch-linux-*.tar.gz dispatch-platform-linux-*.tar.gz > SHA256SUMS)
+sh scripts/build-doodship-release.sh "$output"
+(cd "$output" && sha256sum dispatch-linux-*.tar.gz dispatch-platform-linux-*.tar.gz doodship-*.tar.gz > SHA256SUMS)

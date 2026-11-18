@@ -9,6 +9,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflowfile"
 )
 
 func TestRenderRuntimeReferences(t *testing.T) {
@@ -40,7 +41,7 @@ func TestReadJobOutputs(t *testing.T) {
 			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			outputs, err := readJobOutputs(path, []string{"image", "tag"})
+			outputs, err := workflowfile.ReadJobOutputs(path, []string{"image", "tag"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +50,7 @@ func TestReadJobOutputs(t *testing.T) {
 			}
 		})
 	}
-	if _, err := readJobOutputs(filepath.Join(directory, "missing"), []string{"image"}); err == nil {
+	if _, err := workflowfile.ReadJobOutputs(filepath.Join(directory, "missing"), []string{"image"}); err == nil {
 		t.Fatal("expected missing output file error")
 	}
 }
