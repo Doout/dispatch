@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	wf "github.com/doout/dispatch/internal/workflowfile"
-	"gopkg.in/yaml.v3"
+	"sigs.k8s.io/yaml"
 )
 
 type release struct {
@@ -88,7 +88,10 @@ func (r *runner) prepareReleases() ([]release, error) {
 					return nil, err
 				}
 				var values map[string]any
-				if err = yaml.Unmarshal(raw, &values); err != nil {
+				if err = yaml.Unmarshal(raw, &values, func(dec *json.Decoder) *json.Decoder {
+					dec.UseNumber()
+					return dec
+				}); err != nil {
 					return nil, fmt.Errorf("invalid Helm values file %s: %w", file.Path, err)
 				}
 				// _pipeline contains Dispatch configuration and is removed by the hosted runner too.
@@ -127,9 +130,20 @@ func helm(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 func checkReleases(ctx context.Context, releases []release) error {
+	if len(releases) == 0 {
+		return nil
+	}
+	version, err := helm(ctx, "version", "--template", "{{.Version}}")
+	if err != nil {
+		return err
+	}
 	for i := range releases {
 		r := &releases[i]
-		args := []string{"list", "--kube-context", r.kube, "--namespace", r.namespace, "--all", "--short", "--filter", "^" + regexp.QuoteMeta(r.name) + "$"}
+		args := []string{"list", "--kube-context", r.kube, "--namespace", r.namespace, "--short", "--filter", "^" + regexp.QuoteMeta(r.name) + "$"}
+		// Helm 4 lists all release statuses by default and removed --all.
+		if strings.HasPrefix(version, "v3.") {
+			args = append(args, "--all")
+		}
 		found, err := helm(ctx, args...)
 		if err != nil {
 			return fmt.Errorf("check target %s: %w", r.kube, err)
