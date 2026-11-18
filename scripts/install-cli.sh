@@ -24,6 +24,13 @@ fetch() {
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
+  # doodship update passes the resolved path of the running executable and its build version.
+  --update-executable)
+    [[ $# == 3 && $2 == /* && -f $2 ]] || fail "Expected an installed executable."
+    mode=update
+    target=$2
+    current_version=$3
+    ;;
   --list-versions) [[ $# == 1 ]] || { usage >&2; exit 2; }; mode=list ;;
   --version) [[ $# == 2 ]] || { usage >&2; exit 2; }; mode=pinned ;;
   *) [[ $# == 0 ]] || { usage >&2; exit 2; }; mode=latest ;;
@@ -54,7 +61,7 @@ if [[ $mode == list ]]; then
   exit 0
 fi
 
-if [[ $mode == latest ]]; then
+if [[ $mode != pinned ]]; then
   if command -v curl >/dev/null; then
     url=$(curl -fsSLI --proto '=https' --proto-redir '=https' -o /dev/null -w '%{url_effective}' "$releases/latest")
   else
@@ -68,9 +75,18 @@ else
 fi
 [[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Expected a stable release tag (for example, v0.2.0)."
 
-bin_dir=${DOODSHIP_BIN_DIR:-"$HOME/.local/bin"}
-mkdir -p "$bin_dir"
-[[ ! -d "$bin_dir/doodship" ]] || fail "$bin_dir/doodship is a directory."
+if [[ $mode == update ]]; then
+  if [[ $version == "$current_version" ]]; then
+    printf 'doodship %s is already up to date.\n' "$version"
+    exit 0
+  fi
+  bin_dir=$(dirname "$target")
+else
+  bin_dir=${DOODSHIP_BIN_DIR:-"$HOME/.local/bin"}
+  mkdir -p "$bin_dir"
+  target="$bin_dir/doodship"
+fi
+[[ ! -d "$target" ]] || fail "$target is a directory."
 tmp=$(mktemp -d "$bin_dir/.doodship-install.XXXXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
@@ -90,8 +106,12 @@ fetch "$base/SHA256SUMS" > "$tmp/SHA256SUMS"
   [[ -f doodship && ! -L doodship ]] || fail "Expected a doodship executable in $asset."
   chmod 755 doodship
 )
-mv -f "$tmp/doodship" "$bin_dir/doodship"
-printf 'Installed doodship %s to %s/doodship\n' "$version" "$bin_dir"
+mv -f "$tmp/doodship" "$target"
+if [[ $mode == update ]]; then
+  printf 'Updated %s to doodship %s.\n' "$target" "$version"
+  exit 0
+fi
+printf 'Installed doodship %s to %s\n' "$version" "$target"
 case ":${PATH:-}:" in
   *":$bin_dir:"*) ;;
   *) printf 'Add this to your shell profile and run it in this terminal:\n  export PATH=%q:"$PATH"\n' "$bin_dir" ;;
