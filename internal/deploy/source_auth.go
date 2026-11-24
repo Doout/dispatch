@@ -49,6 +49,9 @@ func (e SourceAuthExecutor) Deploy(ctx context.Context, deployment core.Deployme
 	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Deploy); err != nil {
 		return err
 	}
+	if app.HasInlineCompose() && strings.TrimSpace(app.PreDeployHook) == "" && strings.TrimSpace(app.PostDeployHook) == "" {
+		return e.Next.Deploy(ctx, deployment, app, server, progress)
+	}
 	resolved, err := e.Resolve(ctx, app)
 	if err != nil {
 		return err
@@ -57,20 +60,21 @@ func (e SourceAuthExecutor) Deploy(ctx context.Context, deployment core.Deployme
 }
 
 func (e SourceAuthExecutor) Cleanup(ctx context.Context, app core.App, server core.Server, progress Progress) error {
-	if id, _ := ctx.Value(cleanupOperationKey{}).(string); id != "" {
-		cleaner, ok := e.Next.(CleanupExecutor)
-		if !ok {
-			return ErrCleanupUnsupported
+	id, _ := ctx.Value(cleanupOperationKey{}).(string)
+	capabilities := e.RuntimeCapabilities(app, server)
+	if id == "" {
+		if err := capabilities.Check(ctx, runtimecontract.Destroy); err != nil {
+			return err
 		}
-		app.SourceCredential = ""
-		return cleaner.Cleanup(ctx, app, server, progress)
-	}
-	if err := e.RuntimeCapabilities(app, server).Check(ctx, runtimecontract.Destroy); err != nil {
-		return err
 	}
 	cleaner, ok := e.Next.(CleanupExecutor)
 	if !ok {
 		return ErrCleanupUnsupported
+	}
+	// Enrolled Docker agents destroy resources by their ownership labels.
+	if id != "" || capabilities.Driver == "docker-agent" {
+		app.SourceCredential, app.SourceProxyURL, app.SourceNoProxy = "", "", ""
+		return cleaner.Cleanup(ctx, app, server, progress)
 	}
 	resolved, err := e.Resolve(ctx, app)
 	if err != nil {
@@ -158,7 +162,7 @@ func PrepareGitEnvironment(app core.App) ([]string, func(), error) {
 	if err != nil {
 		return nil, cleanup, err
 	}
-	return repositoryproxy.GitEnvironment(environment, app.SourceProxyURL, app.SourceNoProxy), cleanup, nil
+	return repositoryproxy.GitEnvironment(environment, app.SourceRepo, app.SourceProxyURL, app.SourceNoProxy), cleanup, nil
 }
 
 func prepareGitCredentials(app core.App) ([]string, func(), error) {

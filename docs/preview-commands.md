@@ -55,11 +55,11 @@ To add or change a trigger URL, call `PUT /api/v1/workflow/preview-triggers/{id}
 
 ## Report the result to GitHub
 
-After a successful revision, the poller posts or updates one report with the GitHub App installation token. It retries failed reports and does not use `DISPATCH_GITHUB_TOKEN`.
+After a successful revision, the poller uses the GitHub App installation token to post or update one report. It retries failed reports.
 
 For a repository-managed workflow, an owner can also call `POST /api/v1/workflow/revisions/{id}/preview-report` after the revision succeeds. Send `githubAppId`, `repository`, `pullRequestNumber` and the verified HTTPS `url`.
 
-The report includes the target, deployment, full source commits and built image tags. If an enterprise GitHub App rejects comment writes, a configured `DISPATCH_GITHUB_TOKEN` can provide a fallback for this manual endpoint.
+The report includes the target, deployment, full source commits and built image tags. If an App with PR automation access is denied permission to write a preview comment, Dispatch can retry with `DISPATCH_GITHUB_TOKEN` when the App's API URL matches `DISPATCH_GITHUB_API_URL`.
 
 ## Find the deployed Helm release
 

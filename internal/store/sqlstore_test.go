@@ -75,8 +75,21 @@ func TestSQLiteAdminCredentialIsSingleUse(t *testing.T) {
 }
 
 func TestSQLiteGitHubAppConnectionRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	data, err := Open(ctx, filepath.Join(t.TempDir(), "github-apps.db"))
+	testGitHubAppConnectionRoundTrip(t, filepath.Join(t.TempDir(), "github.db"))
+}
+
+func TestPostgresGitHubAppConnectionRoundTrip(t *testing.T) {
+	dsn := isolatedPostgresURL(t, "DISPATCH_TEST_POSTGRES_URL")
+	if dsn == "" {
+		t.Skip("set DISPATCH_TEST_POSTGRES_URL to exercise PostgreSQL storage")
+	}
+	testGitHubAppConnectionRoundTrip(t, dsn)
+}
+
+func testGitHubAppConnectionRoundTrip(t *testing.T, dsn string) {
+	t.Helper()
+	ctx := t.Context()
+	data, err := Open(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +105,7 @@ func TestSQLiteGitHubAppConnectionRoundTrip(t *testing.T) {
 		WebhookURL: "https://dispatch.example/api/v1/events/github/apps/github-app-1", EncryptedPrivateKey: "private-ciphertext",
 		EncryptedWebhookSecret: "webhook-ciphertext", State: "ready", LastVerifiedAt: &now, CreatedAt: now, UpdatedAt: now,
 	}
+	item.Proxy = core.RepositoryProxySettings{URL: "https://old-proxy.example", EncryptedUserinfo: "old-ciphertext"}
 	if err := data.CreateGitHubApp(ctx, item); err != nil {
 		t.Fatal(err)
 	}
@@ -104,12 +118,38 @@ func TestSQLiteGitHubAppConnectionRoundTrip(t *testing.T) {
 	}
 	stored.InstallationAccount = "platform-tools"
 	stored.UpdatedAt = now.Add(time.Minute)
-	if err := data.UpdateGitHubApp(ctx, stored); err != nil {
+	if err := data.UpdateGitHubApp(ctx, stored, nil); err != nil {
 		t.Fatal(err)
 	}
 	items, err := data.ListGitHubApps(ctx)
 	if err != nil || len(items) != 1 || items[0].InstallationAccount != "platform-tools" {
 		t.Fatalf("unexpected GitHub App list: %#v, %v", items, err)
+	}
+	// A bypass-only edit may have read the connection before another owner
+	// rotated or removed the proxy credentials.
+	stale := stored
+	stored.Proxy = core.RepositoryProxySettings{URL: "https://proxy.example", EncryptedUserinfo: "rotated-ciphertext"}
+	if err := data.UpdateGitHubApp(ctx, stored, &GitHubAppProxyEdit{Address: true}); err != nil {
+		t.Fatal(err)
+	}
+	stale.Proxy.NoProxy = ".example.test"
+	if err := data.UpdateGitHubApp(ctx, stale, &GitHubAppProxyEdit{Bypass: true}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := data.GetGitHubApp(ctx, item.ID)
+	if err != nil || updated.Proxy.URL != stored.Proxy.URL || updated.Proxy.EncryptedUserinfo != stored.Proxy.EncryptedUserinfo || updated.Proxy.NoProxy != stale.Proxy.NoProxy {
+		t.Fatalf("bypass edit lost a credential rotation: %v", err)
+	}
+	stored.Proxy = core.RepositoryProxySettings{}
+	if err := data.UpdateGitHubApp(ctx, stored, &GitHubAppProxyEdit{Address: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.UpdateGitHubApp(ctx, stale, &GitHubAppProxyEdit{Bypass: true}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err = data.GetGitHubApp(ctx, item.ID)
+	if err != nil || updated.Proxy != (core.RepositoryProxySettings{}) {
+		t.Fatalf("bypass edit restored a removed proxy: %v", err)
 	}
 	if err := data.DeleteGitHubApp(ctx, item.ID); err != nil {
 		t.Fatal(err)

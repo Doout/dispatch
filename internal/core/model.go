@@ -198,6 +198,10 @@ type HelmPullRequest struct {
 	URL         string `json:"url,omitempty"`
 }
 
+func (a App) HasInlineCompose() bool {
+	return a.BuildType == BuildTypeCompose && strings.TrimSpace(a.ComposeContent) != ""
+}
+
 func (a App) SpecDigest() string {
 	payload, _ := json.Marshal(struct {
 		ServerID           string

@@ -37,27 +37,44 @@ func gitWithProtocol(ctx context.Context, dir, protocol string, args ...string) 
 	return strings.TrimSpace(string(b)), nil
 }
 
-// Accept SSH, scp-style and HTTPS origins for the same owner/repository.
-func identity(remote string) string {
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		remote = u.Path
-	} else if _, path, ok := strings.Cut(remote, ":"); ok {
-		remote = path
+// A shorthand owner/repo has no host. Qualified repositories retain theirs
+// across SSH and HTTPS, including custom ports.
+func repositoryIdentity(remote string) (host, path string) {
+	path = remote
+	if strings.Contains(remote, "://") {
+		if u, err := url.Parse(remote); err == nil && u.Host != "" {
+			host, path = u.Host, u.Path
+			defaultPort := map[string]string{"https": ":443", "http": ":80", "ssh": ":22"}[u.Scheme]
+			host = strings.TrimSuffix(host, defaultPort)
+		}
+	} else if parts := scpRepository.FindStringSubmatch(remote); parts != nil {
+		host, path = parts[1], parts[2]
 	}
-	return strings.ToLower(strings.TrimSuffix(strings.Trim(remote, "/"), ".git"))
+	return strings.ToLower(host), strings.ToLower(strings.TrimSuffix(strings.Trim(path, "/"), ".git"))
 }
+
+var scpRepository = regexp.MustCompile(`^(?:[^@/:]+@)?(\[[^]]+\]|[^@/:]+):(.+)$`)
+
 func repoRoot(ctx context.Context, path string) string {
 	root, _ := git(ctx, path, "rev-parse", "--show-toplevel")
 	return root
 }
 func discover(ctx context.Context, want string, roots []string) string {
+	wantHost, wantPath := repositoryIdentity(want)
+	name := filepath.Base(want)
 	for _, root := range roots {
 		if root == "" {
 			continue
 		}
-		for _, candidate := range []string{root, filepath.Join(root, filepath.Base(want)), filepath.Join(filepath.Dir(root), filepath.Base(want))} {
+		parent := filepath.Dir(root)
+		candidates := []string{root, filepath.Join(root, name), filepath.Join(parent, name)}
+		if checkoutName, ok := strings.CutSuffix(name, ".git"); ok {
+			candidates = append(candidates, filepath.Join(root, checkoutName), filepath.Join(parent, checkoutName))
+		}
+		for _, candidate := range candidates {
 			origin, err := git(ctx, candidate, "remote", "get-url", "origin")
-			if err == nil && identity(origin) == identity(want) {
+			host, path := repositoryIdentity(origin)
+			if err == nil && path == wantPath && (wantHost == "" || host == wantHost) {
 				return repoRoot(ctx, candidate)
 			}
 		}

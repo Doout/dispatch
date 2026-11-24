@@ -204,7 +204,7 @@ func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource
 	if err != nil {
 		return repositoryAccess{}, err
 	}
-	var app core.App
+	app := core.App{SourceRepo: repositoryURL}
 	if repositoryproxy.IsHTTPRepository(repositoryURL) {
 		app.SourceProxyURL, app.SourceNoProxy, err = s.RepositoryProxy.Resolve(repositoryproxy.WithGitHubApp(ctx, source.GitHubAppID))
 		if err != nil {
@@ -246,15 +246,15 @@ func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource
 
 func (s *Service) repositoryCloneURL(ctx context.Context, source core.ConfigSource, repository string) (string, error) {
 	repository = strings.TrimSpace(repository)
-	if isCloneURL(repository) {
-		return repository, nil
-	}
 	if source.GitHubAppID != "" {
 		connection, err := s.Store.GetGitHubApp(ctx, source.GitHubAppID)
 		if err != nil {
 			return "", err
 		}
-		return strings.TrimRight(connection.WebURL, "/") + "/" + strings.Trim(strings.TrimSuffix(repository, ".git"), "/") + ".git", nil
+		return githubAppSourceURL(connection, repository)
+	}
+	if isCloneURL(repository) {
+		return repository, nil
 	}
 	base := strings.TrimSpace(source.Repository)
 	if marker := strings.Index(base, ":"); marker > 0 && strings.Contains(base[:marker], "@") {

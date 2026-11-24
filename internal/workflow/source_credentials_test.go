@@ -93,7 +93,7 @@ func TestWorkflowSourcesUseTheirSelectedGitHubApps(t *testing.T) {
 	defaultApp.Name, defaultApp.APIURL = "dispatch-dev", github.URL+"/dispatch-dev"
 	defaultApp.EncryptedPrivateKey, defaultApp.EncryptedWebhookSecret, err = manager.EncryptCredentials(defaultApp.ID, appKey, "fixture-webhook-secret")
 	must(err)
-	must(data.UpdateGitHubApp(ctx, defaultApp))
+	must(data.UpdateGitHubApp(ctx, defaultApp, nil))
 	chartApp := defaultApp
 	chartApp.ID, chartApp.Name, chartApp.APIURL = "chart-reader", "charts-reader", github.URL+"/charts-reader"
 	chartApp.AppID, chartApp.InstallationID, chartApp.ReadOnly = 11, 12, true

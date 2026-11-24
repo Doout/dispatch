@@ -89,11 +89,12 @@ func (a *API) postPreviewTestReply(ctx context.Context, trigger core.WorkflowPre
 	if err != nil {
 		return "", err
 	}
-	notifier := events.GitHubNotifier{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, Token: a.eventConfig.GitHubToken}
+	fallbackToken := a.previewCommentFallbackToken(connection)
+	notifier := events.GitHubNotifier{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, Token: fallbackToken}
 	if a.eventConfig.GitHubApps != nil {
 		notifier.RepositoryTokenSource = func(ctx context.Context, repository string) (string, error) {
 			return a.eventConfig.GitHubApps.RepositoryToken(ctx, trigger.GitHubAppID, repository)
 		}
 	}
-	return postWorkflowPreviewComment(ctx, notifier, a.eventConfig.GitHubToken, trigger.Repository, trigger.PullRequestNumber, commentID, body)
+	return postWorkflowPreviewComment(ctx, notifier, fallbackToken, trigger.Repository, trigger.PullRequestNumber, commentID, body)
 }

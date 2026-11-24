@@ -234,11 +234,23 @@ func (a *API) githubAuthClient(timeout time.Duration) *http.Client {
 }
 
 func (a *API) githubAppClient(id string) *http.Client {
-	return repositoryproxy.ClientForGitHubApp(a.githubHTTP, id)
+	return a.githubClientForApp(id, 15*time.Second)
 }
 
 func (a *API) githubAppEventsClient(id string) *http.Client {
-	return repositoryproxy.ClientForGitHubApp(a.githubEventsHTTP, id)
+	return a.githubClientForApp(id, 10*time.Second)
+}
+
+func (a *API) githubClientForApp(id string, timeout time.Duration) *http.Client {
+	manager := a.eventConfig.GitHubApps
+	if manager == nil {
+		// An existing preview can still use its configured fallback token.
+		manager = &githubapp.Manager{Store: a.store, Edge: a.edge, Client: a.githubHTTP}
+		if a.auth.Hosted == nil {
+			manager.Proxy = a.repositoryProxy
+		}
+	}
+	return manager.ClientForApp(id, timeout)
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.handler.ServeHTTP(w, r) }

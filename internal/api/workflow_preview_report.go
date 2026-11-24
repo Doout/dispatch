@@ -76,6 +76,10 @@ func (a *API) reportWorkflowPreview(w http.ResponseWriter, r *http.Request) {
 		a.notFoundOrInternal(w, err, "GitHub App")
 		return
 	}
+	if connection.ReadOnly {
+		problem(w, http.StatusConflict, "Read-only GitHub App", "Choose a GitHub App with PR automation access to report a preview.")
+		return
+	}
 	if connection.InstallationID < 1 {
 		problem(w, http.StatusConflict, "GitHub App not installed", "Install the selected GitHub App for the pull request repository.")
 		return
@@ -114,7 +118,7 @@ func (a *API) reportWorkflowPreview(w http.ResponseWriter, r *http.Request) {
 	if reportTrigger != nil {
 		body = workflowPreviewReportForTrigger(revision, resource, stages, input.URL, connection.WebURL, *reportTrigger)
 	}
-	commentID, err = postWorkflowPreviewComment(r.Context(), notifier, a.eventConfig.GitHubToken,
+	commentID, err = postWorkflowPreviewComment(r.Context(), notifier, a.previewCommentFallbackToken(connection),
 		input.Repository, input.PullRequestNumber, commentID, body)
 	if err != nil {
 		problem(w, http.StatusBadGateway, "Preview report failed", err.Error())
@@ -125,6 +129,17 @@ func (a *API) reportWorkflowPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"commentId": commentID, "revisionId": revision.ID, "url": input.URL})
+}
+
+func (a *API) previewCommentFallbackToken(connection core.GitHubAppConnection) string {
+	base := strings.TrimRight(a.eventConfig.GitHubAPIURL, "/")
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	if connection.ReadOnly || strings.TrimRight(connection.APIURL, "/") != base {
+		return ""
+	}
+	return a.eventConfig.GitHubToken
 }
 
 func postWorkflowPreviewComment(ctx context.Context, notifier events.GitHubNotifier, fallbackToken, repository string, number int, commentID, body string) (string, error) {
@@ -188,7 +203,7 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 				return errors.Join(feedbackErr, err)
 			}
 			body := workflowPreviewTestReport(revision, stages, trigger.PreviewURL)
-			commentID, err := postWorkflowPreviewComment(ctx, notifier, a.eventConfig.GitHubToken,
+			commentID, err := postWorkflowPreviewComment(ctx, notifier, a.previewCommentFallbackToken(connection),
 				trigger.Repository, trigger.PullRequestNumber, statusCommentID, body)
 			if err != nil {
 				return errors.Join(feedbackErr, err)

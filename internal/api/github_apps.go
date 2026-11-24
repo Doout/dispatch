@@ -270,17 +270,17 @@ func (a *API) updateGitHubApp(w http.ResponseWriter, r *http.Request) {
 		}
 		item.LastVerifiedAt = nil
 	}
-	var proxyUpdate []core.RepositoryProxySettings
+	var proxyUpdate *store.GitHubAppProxyEdit
 	if input.Proxy != nil {
 		item.Proxy, err = a.prepareGitHubAppProxy(id, input.Proxy, item.Proxy)
 		if err != nil {
 			problem(w, http.StatusBadRequest, "Invalid GitHub App proxy", err.Error())
 			return
 		}
-		proxyUpdate = append(proxyUpdate, item.Proxy)
+		proxyUpdate = &store.GitHubAppProxyEdit{Address: input.Proxy.URL != nil, Bypass: input.Proxy.NoProxy != nil}
 	}
 	item.State, item.UpdatedAt = githubapp.State(item), time.Now().UTC()
-	if err := a.store.UpdateGitHubApp(r.Context(), item, proxyUpdate...); err != nil {
+	if err := a.store.UpdateGitHubApp(r.Context(), item, proxyUpdate); err != nil {
 		a.notFoundOrInternal(w, err, "GitHub App")
 		return
 	}
@@ -288,6 +288,11 @@ func (a *API) updateGitHubApp(w http.ResponseWriter, r *http.Request) {
 	a.githubMu.Lock()
 	delete(a.githubServices, id)
 	a.githubMu.Unlock()
+	item, err = a.store.GetGitHubApp(r.Context(), id)
+	if err != nil {
+		a.notFoundOrInternal(w, err, "GitHub App")
+		return
+	}
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -385,7 +390,7 @@ func (a *API) verifyGitHubApp(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	item.LastVerifiedAt, item.UpdatedAt = &now, now
 	item.State = githubapp.State(item)
-	if err := a.store.UpdateGitHubApp(r.Context(), item); err != nil {
+	if err := a.store.UpdateGitHubApp(r.Context(), item, nil); err != nil {
 		a.internal(w, err)
 		return
 	}

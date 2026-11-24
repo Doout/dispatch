@@ -14,6 +14,8 @@ import (
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/edge"
 	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/runtimeclient"
+	"github.com/doout/dispatch/internal/runtimecontract"
 )
 
 func runtimeAPIFixture(t *testing.T) (*API, core.PrivateNetwork, edge.Session, core.App) {
@@ -143,4 +145,37 @@ func TestRemoteRuntimeOrdinaryRenewalDoesNotRequireCleanupNegotiation(t *testing
 		}
 	}
 	runtimeNodeRequest(t, a, "POST", path+job.ID+"/complete", session.Token, remoteruntime.Completion{LeaseToken: leased.LeaseToken, Result: remoteruntime.Result{State: "succeeded"}}, 204)
+}
+
+func TestRuntimeLeaseRequiresProxySupportForRepositoryCheckout(t *testing.T) {
+	a, node, session, app := runtimeAPIFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	broker := a.runtimeBroker()
+	server, err := a.store.GetServer(ctx, app.ServerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.ComposeContent, app.SourceRepo = "", "https://github.example.test/team/project.git"
+	app.SourceProxyURL = "http://proxy-user:fixture-pass@proxy.example.test:3128"
+	deployment := core.Deployment{ID: "deploy-source", AppID: app.ID, SpecDigest: "spec", CommitSHA: strings.Repeat("a", 40)}
+	job := remoteruntime.NewRequest(runtimecontract.Deploy, deployment, app, server)
+	if _, err := broker.Submit(ctx, "proxy-legacy", job); err != nil {
+		t.Fatal(err)
+	}
+	runtimeNodeRequest(t, a, http.MethodGet, "/api/v1/edge/nodes/"+node.ID+"/runtime/jobs/next", session.Token, nil, http.StatusNoContent)
+	result, err := broker.Wait(ctx, "proxy-legacy", nil)
+	if err == nil || result.Code != runtimecontract.Unsupported {
+		t.Fatalf("legacy agent could not be rejected before checkout: %v", err)
+	}
+	if _, err := broker.Submit(ctx, "proxy-capable", job); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := httptest.NewServer(a)
+	t.Cleanup(endpoint.Close)
+	client := runtimeclient.Client{Controller: endpoint.URL, Node: node.ID, HTTP: endpoint.Client(), Token: func(context.Context) (string, error) { return session.Token, nil }}
+	leased, err := client.Lease(ctx)
+	if err != nil || leased == nil || leased.ID != "proxy-capable" || leased.Request.App().SourceProxyURL != app.SourceProxyURL {
+		t.Fatalf("current agent did not receive the checkout proxy: %v", err)
+	}
 }

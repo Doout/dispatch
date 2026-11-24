@@ -89,3 +89,29 @@ func TestCloneURLs(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoverOfflineRepositoryHost(t *testing.T) {
+	root := t.TempDir()
+	public := filepath.Join(root, "public")
+	enterprise := filepath.Join(root, "hello")
+	for _, entry := range []struct{ dir, remote string }{
+		{public, "https://github.com/example/hello.git"},
+		{enterprise, "git@enterprise.test:example/hello.git"},
+	} {
+		gitFixture(t, root, "init", "-q", entry.dir)
+		gitFixture(t, entry.dir, "remote", "add", "origin", entry.remote)
+	}
+
+	for _, tc := range []struct{ source, want string }{
+		{"https://enterprise.test/example/hello.git", enterprise},
+		{"https://Enterprise.Test:443/example/hello.git", enterprise},
+		{"ssh://git@enterprise.test:22/example/hello.git", enterprise},
+		{"git@unknown.test:example/hello.git", ""},
+		{"https://enterprise.test:8443/example/hello.git", ""},
+		{"example/hello", public},
+	} {
+		if got := discover(t.Context(), tc.source, []string{public}); got != tc.want {
+			t.Errorf("discover(%q) = %q, want %q", tc.source, got, tc.want)
+		}
+	}
+}

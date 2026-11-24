@@ -453,7 +453,7 @@ func TestWorkflowChecksRejectChangedAppAndForeignSavedCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	connection.AppID = 900
-	if err := f.a.store.UpdateGitHubApp(ctx, connection); err != nil {
+	if err := f.a.store.UpdateGitHubApp(ctx, connection, nil); err != nil {
 		t.Fatal(err)
 	}
 	r = f.step(t)

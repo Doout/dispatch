@@ -145,7 +145,7 @@ func (e DockerExecutor) deploy(ctx context.Context, deployment core.Deployment, 
 	if err != nil {
 		return err
 	}
-	directCompose := app.BuildType == core.BuildTypeCompose && strings.TrimSpace(app.ComposeContent) != ""
+	directCompose := app.HasInlineCompose()
 	if !directCompose && !validGitSourceForExecution(app) {
 		return errors.New("live Docker execution requires an HTTPS or file repository, or an SSH repository with a configured key")
 	}

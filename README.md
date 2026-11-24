@@ -100,24 +100,11 @@ docker compose up -d --build
 
 The Compose file binds the controller to `127.0.0.1:8080`, mounts the host Docker socket and joins the external `web` network for Traefik. If `.env` has no administrator credentials, the first visit opens owner setup. Set `DISPATCH_HOST` and `DISPATCH_PUBLIC_URL` when using a public hostname.
 
-### Outbound proxy
+### GitHub App proxy
 
-On a self-hosted controller, open **Connections**, add or edit the App, and choose **Outbound proxy > Use an App proxy**. Dispatch uses that proxy for the App's setup, repository checkouts, polling, and API calls. Choose **Use controller settings** to inherit the default route. A bypass list can send selected destinations through their direct or configured edge route.
+On a self-hosted controller, open **Connections**, add or edit a GitHub App, and select **Outbound proxy → Use an App proxy**. Enter the HTTP or HTTPS proxy URL. Dispatch uses it for that App's API requests and HTTPS repository checkouts, including worker fetches. The controller and each worker that checks out code must be able to reach the proxy. Update enrolled runtime agents before running deployments that need it.
 
-In **Settings > Features > Repository proxy**, a controller owner can set an HTTP or HTTPS forward proxy for GitHub API calls, including OAuth, polling, PR comments, and status updates, and for Git checkouts over HTTP or HTTPS. Workers use the saved proxy for new runs without a controller restart. A saved proxy takes precedence over process proxy settings and edge routes for covered traffic. Hosts on the bypass list connect directly or use the GitHub App's configured edge route. Removing the saved proxy restores environment settings.
-
-Use HTTPS repository URLs for GitHub checkouts that need the proxy. Update enrolled runtime agents before deploying applications that use a proxy. Use the Docker or process environment for other HTTP clients such as webhook relay and secrets manager connections.
-
-For Compose, create `.env.proxy` next to `compose.yml`. Add `HTTP_PROXY` for HTTP destinations and list hosts and domains to reach directly in `NO_PROXY`.
-
-```dotenv
-HTTPS_PROXY=http://proxy.example.com:3128
-NO_PROXY=localhost,127.0.0.1,.internal.example.com
-```
-
-For a running installation, apply the changes with `docker compose up -d --no-deps dispatch`. If your Docker client already supplies proxy variables, set both uppercase and lowercase forms of each variable you override so Git and the controller use the same value.
-
-For managed installs, set the variables in `dispatch.env`. For a controller running as a binary, set them in its process environment. Docker daemon traffic, hook scripts, and workflow job scripts have separate proxy settings. See [managed installation configuration](docs/installation.md#configuration).
+To share a default across Apps, set **Settings → Features → Repository proxy** and choose **Use controller settings** on each App. The default also covers GitHub sign-in, GitHub API calls without an App, and HTTP(S) repository checkouts without an App. Changes apply to new requests and runs. Use hostnames or domains in the bypass list when the same rule must cover both API calls and Git checkouts. Git uses the worker’s libcurl bypass syntax. Port-specific entries work for API calls, and Git support for IP ranges depends on the installed libcurl version. Bypassed API calls use the App’s edge route when one is configured.
 
 ### Doodship control plane
 

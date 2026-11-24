@@ -4117,7 +4117,7 @@ paths:
   /workflow/revisions/{revisionId}/preview-report:
     post:
       operationId: reportWorkflowPreview
-      description: Posts or updates a GitHub comment for a successful preview revision. Uses a configured GitHub token if the App cannot write comments. The report includes the URL, target, full source commits, and built images. Owner access is required.
+      description: Posts or updates a GitHub comment for a successful preview revision. Requires a GitHub App with PR automation access. If the App cannot write comments, Dispatch can retry with the controller token for the same GitHub API endpoint. The report includes the URL, target, full source commits, and built images. Owner access is required.
       parameters:
         - { in: path, name: revisionId, required: true, schema: { type: string } }
       requestBody:

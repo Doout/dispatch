@@ -7,11 +7,14 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +23,7 @@ import (
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/secretvalue"
+	"github.com/doout/dispatch/internal/store"
 )
 
 func TestRepositoryCloneURLUsesSavedCredentialHost(t *testing.T) {
@@ -160,20 +164,54 @@ func TestWorkflowCheckoutFetchesThroughSavedRepositoryProxy(t *testing.T) {
 		t.Fatalf("checked out %s, want %s", actual, commit)
 	}
 
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, token, ok := r.BasicAuth()
+		if r.Host != "example.com" || !ok || user != "x-access-token" || token != "test-fixture" {
+			t.Error("Git checkout did not use the App credential")
+			http.Error(w, "unexpected checkout", http.StatusBadRequest)
+			return
+		}
+		backend.ServeHTTP(w, r)
+	}))
+	defer origin.Close()
+	cert := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: origin.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_SSL_CAINFO", cert)
 	appProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect && r.Host == "example.com:443" {
+			upstream, err := net.Dial("tcp", origin.Listener.Addr().String())
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer upstream.Close()
+			client, buffered, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer client.Close()
+			if _, err = io.WriteString(client, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
+				t.Error(err)
+				return
+			}
+			go func() {
+				_, _ = io.Copy(upstream, buffered.Reader)
+				_ = upstream.(*net.TCPConn).CloseWrite()
+			}()
+			_, _ = io.Copy(client, upstream)
+			return
+		}
 		switch r.URL.Path {
 		case "/repos/team/source/installation":
 			_, _ = fmt.Fprint(w, `{"id":2,"app_id":1}`)
 		case "/app/installations/2/access_tokens":
 			_, _ = fmt.Fprintf(w, `{"token":"test-fixture","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
 		default:
-			user, token, ok := r.BasicAuth()
-			if r.URL.Host != "github.example.test" || !ok || user != "x-access-token" || token != "test-fixture" {
-				t.Errorf("unexpected Git request to App proxy: %s %s", r.Method, r.URL)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			backend.ServeHTTP(w, r)
+			t.Errorf("unexpected proxy request: %s %s", r.Method, r.URL)
+			http.NotFound(w, r)
 		}
 	}))
 	defer appProxy.Close()
@@ -192,12 +230,20 @@ func TestWorkflowCheckoutFetchesThroughSavedRepositoryProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connection.WebURL, connection.APIURL = "http://github.example.test", "http://github.example.test"
-	if err := data.UpdateGitHubApp(ctx, connection, core.RepositoryProxySettings{URL: appProxy.URL}); err != nil {
+	connection.WebURL, connection.APIURL = "https://example.com", "http://github.example.test"
+	connection.Proxy.URL = appProxy.URL
+	if err := data.UpdateGitHubApp(ctx, connection, &store.GitHubAppProxyEdit{Address: true}); err != nil {
 		t.Fatal(err)
 	}
 	runtime.source.GitHubAppID, runtime.source.CredentialSecretID = appID, ""
 	runtime.service.GitHub = manager
+	_, err = runtime.service.workerSource(ctx, runtime.source, core.WorkflowSourceRevision{Repository: "https://other.example/team/source.git"})
+	if err == nil || !strings.Contains(err.Error(), "does not match GitHub App host") {
+		t.Fatalf("unexpected validation result for a checkout on another host: %v", err)
+	}
+	runtime.revision.Sources["code"] = core.WorkflowSourceRevision{
+		Alias: "code", Repository: "https://example.com/team/source.git", Branch: "main", CommitSHA: commit,
+	}
 	runtime.root = t.TempDir()
 	delete(runtime.paths, "code")
 	path, err = runtime.checkout(ctx, "code")
