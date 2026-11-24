@@ -16,6 +16,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/sourceerror"
 	"github.com/doout/dispatch/internal/store"
@@ -42,6 +43,7 @@ type Service struct {
 	Deployments          DeploymentRunner
 	Logger               *slog.Logger
 	Repositories         *repositoryCache
+	RepositoryProxy      *repositoryproxy.Service
 
 	mu           sync.Mutex
 	locks        map[string]*sync.Mutex

@@ -11,6 +11,8 @@ func (a *API) operationsRoutes(r chi.Router) {
 		r.Use(a.ownerOnly)
 		r.Get("/", a.getControllerSettings)
 		r.Put("/", a.saveControllerSettings)
+		r.Get("/repository-proxy", a.getRepositoryProxy)
+		r.Put("/repository-proxy", a.saveRepositoryProxy)
 	})
 	r.With(a.requireOperationsEnabled).Get("/audit", a.listAudit)
 	r.Route("/operations", func(r chi.Router) {

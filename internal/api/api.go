@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/doout/dispatch/internal/analytics"
 	"github.com/doout/dispatch/internal/bootstrap"
@@ -22,6 +23,7 @@ import (
 	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/observe"
 	"github.com/doout/dispatch/internal/openshift"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
 	workflowservice "github.com/doout/dispatch/internal/workflow"
@@ -88,6 +90,9 @@ type API struct {
 	lifecycle                 events.Lifecycle
 	githubMu                  sync.Mutex
 	githubServices            map[string]githubEventServices
+	githubHTTP                *http.Client
+	githubEventsHTTP          *http.Client
+	repositoryProxy           *repositoryproxy.Service
 	manifestMu                sync.Mutex
 	manifestStates            map[string]githubAppManifestState
 	authManifestStates        map[string]authProviderManifestState
@@ -121,15 +126,26 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	if eventConfig.SecretResolver != nil && eventConfig.SecretResolver.Edge == nil {
 		eventConfig.SecretResolver.Edge = eventConfig.Edge
 	}
+	repositoryProxy := &repositoryproxy.Service{Store: data, Vault: eventConfig.Vault}
+	var githubTransport http.RoundTripper
+	if auth.Hosted == nil {
+		githubTransport = repositoryProxy.Transport()
+	}
+	githubHTTP := &http.Client{Transport: githubTransport, Timeout: 15 * time.Second}
+	githubEventsHTTP := &http.Client{Transport: githubTransport, Timeout: 10 * time.Second}
+	if auth.Hosted == nil && eventConfig.GitHubApps != nil && eventConfig.GitHubApps.Client == nil {
+		eventConfig.GitHubApps.Client = githubHTTP
+		eventConfig.GitHubApps.Proxy = repositoryProxy
+	}
 	var resolver events.PullRequestResolver
 	var groupResolver groups.Resolver
 	if eventConfig.GitHubAPIURL != "" || eventConfig.GitHubToken != "" {
-		githubResolver := events.GitHubResolver{BaseURL: eventConfig.GitHubAPIURL, Token: eventConfig.GitHubToken}
+		githubResolver := events.GitHubResolver{Client: githubEventsHTTP, BaseURL: eventConfig.GitHubAPIURL, Token: eventConfig.GitHubToken}
 		resolver, groupResolver = githubResolver, githubResolver
 	}
 	var notifier events.Notifier
 	if eventConfig.GitHubToken != "" {
-		notifier = events.GitHubNotifier{BaseURL: eventConfig.GitHubAPIURL, Token: eventConfig.GitHubToken}
+		notifier = events.GitHubNotifier{Client: githubEventsHTTP, BaseURL: eventConfig.GitHubAPIURL, Token: eventConfig.GitHubToken}
 	}
 	lifecycle := events.DeploymentLifecycle{Store: data, Deployments: deployments}
 	groupNotifier, _ := notifier.(groups.Notifier)
@@ -149,6 +165,9 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		oauthStates:        make(map[string]oauthState),
 		oauthCodes:         make(map[string]oauthCode),
 		githubServices:     make(map[string]githubEventServices),
+		githubHTTP:         githubHTTP,
+		githubEventsHTTP:   githubEventsHTTP,
+		repositoryProxy:    repositoryProxy,
 		manifestStates:     make(map[string]githubAppManifestState),
 		authManifestStates: make(map[string]authProviderManifestState),
 	}
@@ -164,6 +183,9 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	a.observations = observe.New(data, a.drift, deployments, eventConfig.Vault)
 	deployments.OnFinished = a.observations.DeploymentFinished
 	a.workflows = workflowservice.NewService(data, eventConfig.GitHubApps, eventConfig.SecretResolver, deployments, logger, eventConfig.RepositoryCache)
+	if auth.Hosted == nil {
+		a.workflows.RepositoryProxy = repositoryProxy
+	}
 	a.workflows.LocalDockerSocket = eventConfig.DockerSocket
 	if eventConfig.MasterKeyFile != "" {
 		a.workflows.LogDirectory = filepath.Join(filepath.Dir(eventConfig.MasterKeyFile), "github-logs")
@@ -183,6 +205,40 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 	}
 	a.handler = a.routes()
 	return a
+}
+
+func (a *API) sourceAuth() deploy.SourceAuthExecutor {
+	auth := deploy.SourceAuthExecutor{Secrets: a.store, Vault: a.eventConfig.Vault}
+	if a.auth.Hosted == nil {
+		auth.Proxy = a.repositoryProxy
+	}
+	if a.secretResolver != nil {
+		auth.Resolver = a.secretResolver
+	}
+	if a.eventConfig.GitHubApps != nil {
+		auth.GitHubApps = a.eventConfig.GitHubApps
+	}
+	return auth
+}
+
+func (a *API) githubAuthClient(timeout time.Duration) *http.Client {
+	if a.githubHTTP == nil {
+		return &http.Client{Timeout: timeout}
+	}
+	if a.githubHTTP.Timeout == timeout {
+		return a.githubHTTP
+	}
+	client := *a.githubHTTP
+	client.Timeout = timeout
+	return &client
+}
+
+func (a *API) githubAppClient(id string) *http.Client {
+	return repositoryproxy.ClientForGitHubApp(a.githubHTTP, id)
+}
+
+func (a *API) githubAppEventsClient(id string) *http.Client {
+	return repositoryproxy.ClientForGitHubApp(a.githubEventsHTTP, id)
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.handler.ServeHTTP(w, r) }

@@ -33,3 +33,9 @@ func IsUIFeature(name string) bool {
 	}
 	return false
 }
+
+type RepositoryProxySettings struct {
+	URL               string `json:"url"`
+	NoProxy           string `json:"noProxy"`
+	EncryptedUserinfo string `json:"-"`
+}

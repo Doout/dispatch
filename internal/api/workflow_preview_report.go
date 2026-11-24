@@ -80,7 +80,7 @@ func (a *API) reportWorkflowPreview(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusConflict, "GitHub App not installed", "Install the selected GitHub App for the pull request repository.")
 		return
 	}
-	resolver := events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
+	resolver := events.GitHubResolver{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
 		return a.eventConfig.GitHubApps.RepositoryToken(ctx, input.GitHubAppID, repository)
 	}}
 	pr, err := resolver.ResolvePullRequest(r.Context(), input.Repository, input.PullRequestNumber)
@@ -97,7 +97,7 @@ func (a *API) reportWorkflowPreview(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, err)
 		return
 	}
-	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: resolver.RepositoryTokenSource}
+	notifier := events.GitHubNotifier{Client: resolver.Client, BaseURL: connection.APIURL, RepositoryTokenSource: resolver.RepositoryTokenSource}
 	var reportTrigger *core.WorkflowPreviewTrigger
 	triggers, err := a.store.ListWorkflowPreviewTriggers(r.Context())
 	if err != nil {
@@ -132,7 +132,7 @@ func postWorkflowPreviewComment(ctx context.Context, notifier events.GitHubNotif
 	if errors.Is(err, events.ErrCommentForbidden) && fallbackToken != "" {
 		// Keep the existing comment ID when switching credentials. A failed
 		// UpdateComment returns an empty ID, which would create a duplicate.
-		fallback := events.GitHubNotifier{BaseURL: notifier.BaseURL, Token: fallbackToken}
+		fallback := events.GitHubNotifier{Client: notifier.Client, BaseURL: notifier.BaseURL, Token: fallbackToken}
 		return fallback.UpdateComment(ctx, repository, number, commentID, body)
 	}
 	return updatedID, err
@@ -158,7 +158,7 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 	if err != nil {
 		return errors.Join(feedbackErr, err)
 	}
-	resolver := events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
+	resolver := events.GitHubResolver{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
 		return a.eventConfig.GitHubApps.RepositoryToken(ctx, trigger.GitHubAppID, repository)
 	}}
 	pr, err := resolver.ResolvePullRequest(ctx, trigger.Repository, trigger.PullRequestNumber)
@@ -168,7 +168,7 @@ func (a *API) reportPendingWorkflowPreviews(ctx context.Context, trigger core.Wo
 	if !pr.Open {
 		return feedbackErr
 	}
-	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: resolver.RepositoryTokenSource}
+	notifier := events.GitHubNotifier{Client: resolver.Client, BaseURL: connection.APIURL, RepositoryTokenSource: resolver.RepositoryTokenSource}
 	resource, err := a.store.GetWorkflowResource(ctx, trigger.ResourceID)
 	if err != nil {
 		return errors.Join(feedbackErr, err)

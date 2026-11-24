@@ -187,8 +187,8 @@ func (a *API) previewPollTargets(ctx context.Context) ([]*previewPollTarget, err
 }
 
 func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) error {
-	reader := events.GitHubCommentReader{BaseURL: a.eventConfig.GitHubAPIURL, Token: a.eventConfig.GitHubToken}
-	resolver := events.GitHubResolver{BaseURL: reader.BaseURL, Token: reader.Token}
+	reader := events.GitHubCommentReader{Client: a.githubHTTP, BaseURL: a.eventConfig.GitHubAPIURL, Token: a.eventConfig.GitHubToken}
+	resolver := events.GitHubResolver{Client: a.githubEventsHTTP, BaseURL: reader.BaseURL, Token: reader.Token}
 	groupService, eventService := a.groups, a.events
 	if target.connectionID != "" {
 		connection, err := a.store.GetGitHubApp(ctx, target.connectionID)
@@ -203,7 +203,9 @@ func (a *API) scanPreviewTarget(ctx context.Context, target *previewPollTarget) 
 			return a.eventConfig.GitHubApps.RepositoryToken(ctx, target.connectionID, target.repository)
 		}
 		reader.BaseURL, reader.Token, reader.TokenSource = connection.APIURL, "", tokenSource
+		reader.Client = a.githubAppClient(connection.ID)
 		resolver.BaseURL, resolver.Token = connection.APIURL, ""
+		resolver.Client = a.githubAppEventsClient(connection.ID)
 		resolver.RepositoryTokenSource = func(ctx context.Context, repository string) (string, error) {
 			return a.eventConfig.GitHubApps.RepositoryToken(ctx, target.connectionID, repository)
 		}

@@ -165,13 +165,14 @@ func (a *API) processWorkflowPreviewWebhook(ctx context.Context, event core.Inco
 			continue
 		}
 		target.transport = "webhook"
-		resolver := events.GitHubResolver{BaseURL: a.eventConfig.GitHubAPIURL, Token: a.eventConfig.GitHubToken}
+		resolver := events.GitHubResolver{Client: a.githubEventsHTTP, BaseURL: a.eventConfig.GitHubAPIURL, Token: a.eventConfig.GitHubToken}
 		if target.connectionID != "" {
 			connection, err := a.store.GetGitHubApp(ctx, target.connectionID)
 			if err != nil {
 				return err
 			}
 			resolver.BaseURL = connection.APIURL
+			resolver.Client = a.githubAppEventsClient(connection.ID)
 			resolver.RepositoryTokenSource = func(ctx context.Context, repository string) (string, error) {
 				return a.eventConfig.GitHubApps.RepositoryToken(ctx, target.connectionID, repository)
 			}

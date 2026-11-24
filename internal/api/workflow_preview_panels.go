@@ -30,7 +30,7 @@ func (a *API) previewPanelGitHub(ctx context.Context, connectionID, repository s
 	repositoryTokenSource := func(ctx context.Context, repo string) (string, error) {
 		return a.eventConfig.GitHubApps.RepositoryToken(ctx, connectionID, repo)
 	}
-	return events.GitHubCommentReader{BaseURL: connection.APIURL, TokenSource: tokenSource}, events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: repositoryTokenSource}, events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: repositoryTokenSource}, connection.WebURL, nil
+	return events.GitHubCommentReader{Client: a.githubAppClient(connection.ID), BaseURL: connection.APIURL, TokenSource: tokenSource}, events.GitHubResolver{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, RepositoryTokenSource: repositoryTokenSource}, events.GitHubNotifier{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, RepositoryTokenSource: repositoryTokenSource}, connection.WebURL, nil
 }
 
 func previewTriggerLinks(trigger core.WorkflowPreviewTrigger, resource core.WorkflowResource) map[string]int {

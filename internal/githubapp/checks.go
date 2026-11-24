@@ -112,7 +112,7 @@ func (m *Manager) FindCheckRun(ctx context.Context, r core.WorkflowCheckReport) 
 	base := fmt.Sprintf("%s/repos/%s", strings.TrimRight(connection.APIURL, "/"), repository)
 	if r.CheckID > 0 {
 		var found CheckRun
-		if err := m.request(ctx, http.MethodGet, fmt.Sprintf("%s/check-runs/%d", base, r.CheckID), token, nil, &found, connection.PrivateNetworkID); err != nil {
+		if err := m.request(ctx, http.MethodGet, fmt.Sprintf("%s/check-runs/%d", base, r.CheckID), token, nil, &found, connection); err != nil {
 			return found, m.checkRunRequestFailure(r, err, false)
 		}
 		if !checkRunMatches(found, r) {
@@ -126,7 +126,7 @@ func (m *Manager) FindCheckRun(ctx context.Context, r core.WorkflowCheckReport) 
 		}
 		query := url.Values{"filter": {"all"}, "per_page": {"100"}, "page": {fmt.Sprint(page)}, "check_name": {r.Name}, "app_id": {fmt.Sprint(r.AppID)}}
 		endpoint := fmt.Sprintf("%s/commits/%s/check-runs?%s", base, url.PathEscape(r.CommitSHA), query.Encode())
-		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
+		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection); err != nil {
 			return CheckRun{}, m.checkRunRequestFailure(r, err, false)
 		}
 		for _, run := range response.Runs {
@@ -156,7 +156,7 @@ func (m *Manager) PublishCheckRun(ctx context.Context, r core.WorkflowCheckRepor
 		return CheckRun{}, &CheckRunError{Message: "A saved check ID is required before updating GitHub."}
 	}
 	var response CheckRun
-	if err := m.request(ctx, method, endpoint, token, payload, &response, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, method, endpoint, token, payload, &response, connection); err != nil {
 		return response, m.checkRunRequestFailure(r, err, create)
 	}
 	if !checkRunMatches(response, r) {

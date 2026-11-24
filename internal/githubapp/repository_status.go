@@ -124,7 +124,7 @@ func (m *Manager) RepositoryBranches(ctx context.Context, appID, repository stri
 			} `json:"commit"`
 		}
 		endpoint := fmt.Sprintf("%s/repos/%s/branches?per_page=100&page=%d", strings.TrimRight(connection.APIURL, "/"), path, page)
-		if err = m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
+		if err = m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection); err != nil {
 			return nil, errors.New("Branches could not be loaded. Check repository contents permission and retry; the selected branch has not changed.")
 		}
 		for _, branch := range response {

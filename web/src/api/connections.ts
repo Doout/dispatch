@@ -44,6 +44,7 @@ export type GitHubAppConnection = {
   webhookUrl?: string;
   relayWebhookId?: string;
   privateNetworkId?: string;
+  proxy?: { url: string; noProxy: string };
   privateKeyConfigured: boolean;
   webhookSecretConfigured: boolean;
   state: "needs_installation" | "unverified" | "ready" | string;
@@ -135,6 +136,7 @@ export const connectionsApi = {
     eventDelivery?: "none" | "direct" | "relay";
     relayServerId?: string;
     privateNetworkId?: string;
+    proxy?: { url?: string; noProxy?: string };
   }) =>
     request<GitHubAppManifest>("/api/v1/github-apps/manifest", {
       method: "POST",

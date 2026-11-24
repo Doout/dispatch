@@ -2,9 +2,24 @@ package workflow
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"net/http"
+	"net/http/cgi"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/repositoryproxy"
+	"github.com/doout/dispatch/internal/secretvalue"
 )
 
 func TestRepositoryCloneURLUsesSavedCredentialHost(t *testing.T) {
@@ -63,5 +78,133 @@ func TestParseRepositoryHeadRejectsWrongRef(t *testing.T) {
 	_, err := parseRepositoryHead("0123456789abcdef0123456789abcdef01234567\trefs/heads/other\n", "refs/heads/main")
 	if err == nil {
 		t.Fatal("expected the wrong ref to be rejected")
+	}
+}
+
+func TestWorkflowCheckoutFetchesThroughSavedRepositoryProxy(t *testing.T) {
+	runtime, _ := schedulerFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "working")
+	if err := os.Mkdir(filepath.Join(root, "team"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.test", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.test")
+	for _, args := range [][]string{
+		{"init", "--initial-branch=main", repo},
+		{"-C", repo, "commit", "--allow-empty", "-m", "Proxy checkout"},
+		{"clone", "--bare", repo, filepath.Join(root, "team", "source.git")},
+	} {
+		if err := runGit(ctx, env, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := gitOutput(t, repo, "rev-parse", "HEAD")
+	execPath, err := runGitOutput("--exec-path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &cgi.Handler{
+		Path: filepath.Join(execPath, "git-http-backend"),
+		Env:  []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"},
+	}
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host != "github.example.test" || r.Header.Get("Authorization") != "Bearer test-fixture" {
+			t.Errorf("unexpected Git request to proxy: %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		backend.ServeHTTP(w, r)
+	}))
+	defer proxy.Close()
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcde!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretcrypto.OpenFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := vault.Encrypt("secret:checkout", []byte("test-fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := runtime.service.Store
+	appID := runtime.source.GitHubAppID
+	if err := data.CreateSecret(ctx, core.Secret{ID: "checkout", Name: "checkout", Type: core.SecretTypeGitHubToken, EncryptedValue: encrypted, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.SaveRepositoryProxy(ctx, core.RepositoryProxySettings{URL: proxy.URL}, true); err != nil {
+		t.Fatal(err)
+	}
+	conflictingConfig := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(conflictingConfig, []byte("[http]\n\tproxy = http://127.0.0.1:1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", conflictingConfig)
+	t.Setenv("no_proxy", "*")
+	runtime.source.GitHubAppID, runtime.source.CredentialSecretID = "", "checkout"
+	runtime.service.Secrets = secretvalue.New(data, vault)
+	runtime.service.RepositoryProxy = &repositoryproxy.Service{Store: data, Vault: vault}
+	runtime.service.Repositories = newRepositoryCache(t.TempDir())
+	runtime.revision.Sources["code"] = core.WorkflowSourceRevision{
+		Alias: "code", Repository: "http://github.example.test/team/source.git", Branch: "main", CommitSHA: commit,
+	}
+	defer runtime.close()
+	path, err := runtime.checkout(ctx, "code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual := gitOutput(t, path, "rev-parse", "HEAD"); actual != commit {
+		t.Fatalf("checked out %s, want %s", actual, commit)
+	}
+
+	appProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/team/source/installation":
+			_, _ = fmt.Fprint(w, `{"id":2,"app_id":1}`)
+		case "/app/installations/2/access_tokens":
+			_, _ = fmt.Fprintf(w, `{"token":"test-fixture","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		default:
+			user, token, ok := r.BasicAuth()
+			if r.URL.Host != "github.example.test" || !ok || user != "x-access-token" || token != "test-fixture" {
+				t.Errorf("unexpected Git request to App proxy: %s %s", r.Method, r.URL)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			backend.ServeHTTP(w, r)
+		}
+	}))
+	defer appProxy.Close()
+	manager := githubapp.New(data, vault)
+	manager.Client = &http.Client{Transport: runtime.service.RepositoryProxy.Transport()}
+	connection, err := data.GetGitHubApp(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	connection.EncryptedPrivateKey, connection.EncryptedWebhookSecret, err = manager.EncryptCredentials(appID, privateKey, "webhook-test-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection.WebURL, connection.APIURL = "http://github.example.test", "http://github.example.test"
+	if err := data.UpdateGitHubApp(ctx, connection, core.RepositoryProxySettings{URL: appProxy.URL}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.source.GitHubAppID, runtime.source.CredentialSecretID = appID, ""
+	runtime.service.GitHub = manager
+	runtime.root = t.TempDir()
+	delete(runtime.paths, "code")
+	path, err = runtime.checkout(ctx, "code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual := gitOutput(t, path, "rev-parse", "HEAD"); actual != commit {
+		t.Fatalf("App checkout fetched %s, want %s", actual, commit)
 	}
 }

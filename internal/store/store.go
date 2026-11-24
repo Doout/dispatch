@@ -49,6 +49,8 @@ type Store interface {
 	GetControllerSettings(context.Context) (core.ControllerSettings, error)
 	SaveControllerSettings(context.Context, core.ControllerSettings) error
 	UpdateControllerSettings(context.Context, core.ControllerSettingsPatch) (core.ControllerSettings, error)
+	GetRepositoryProxy(context.Context) (core.RepositoryProxySettings, error)
+	SaveRepositoryProxy(context.Context, core.RepositoryProxySettings, bool) error
 	SearchDeploymentHistory(context.Context, core.DeploymentSearch) ([]core.Deployment, error)
 	SaveDriftBaseline(context.Context, core.DriftBaseline) error
 	GetDriftBaseline(context.Context, string) (core.DriftBaseline, error)
@@ -149,7 +151,7 @@ type Store interface {
 	GetEdgeJob(context.Context, string) (core.EdgeJob, error)
 	DeleteEdgeJob(context.Context, string) error
 	CreateGitHubApp(context.Context, core.GitHubAppConnection) error
-	UpdateGitHubApp(context.Context, core.GitHubAppConnection) error
+	UpdateGitHubApp(context.Context, core.GitHubAppConnection, ...core.RepositoryProxySettings) error
 	DeleteGitHubApp(context.Context, string) error
 	ListGitHubApps(context.Context) ([]core.GitHubAppConnection, error)
 	GetGitHubApp(context.Context, string) (core.GitHubAppConnection, error)

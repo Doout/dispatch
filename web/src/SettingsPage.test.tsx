@@ -33,6 +33,27 @@ it("does not request or expose controller settings to a non-owner", () => {
  expect(screen.getByText("Owner access required")).toBeTruthy(); expect(screen.queryByRole("switch")).toBeNull(); expect(request).not.toHaveBeenCalled();
 });
 
+it("saves a repository proxy and removes it from Settings", async () => {
+  const endpoint = "/api/v1/settings/repository-proxy";
+  const request = vi.spyOn(client, "request").mockImplementation(async <T,>(path: string, init?: RequestInit) => {
+    if (path !== endpoint) return { operationsEnabled: false } as T;
+    const input = init?.body ? JSON.parse(String(init.body)) : {};
+    return { url: input.url || "", noProxy: input.noProxy || "", authenticated: false } as T;
+  });
+  const user = userEvent.setup();
+  render(<SettingsPage overview={owner} />);
+  await user.click(screen.getByText("Repository proxy"));
+  const url = await screen.findByRole("textbox", { name: /Proxy URL/ });
+  await user.type(url, "http://proxy.example.test:3128");
+  await user.type(screen.getByRole("textbox", { name: /Bypass list/ }), ".internal.example.test");
+  await user.click(screen.getByRole("button", { name: "Save proxy" }));
+  await screen.findByText("Repository proxy saved.");
+  expect(request).toHaveBeenCalledWith(endpoint, { method: "PUT", body: JSON.stringify({ url: "http://proxy.example.test:3128", noProxy: ".internal.example.test" }) });
+  await user.click(screen.getByRole("button", { name: "Remove proxy" }));
+  await screen.findByText("Repository proxy removed.");
+  expect(request).toHaveBeenCalledWith(endpoint, { method: "PUT", body: JSON.stringify({ url: "", noProxy: "" }) });
+});
+
 it("guards repeated changes while saving and rolls the switch back after a failed write", async () => {
  let rejectSave!: (cause: Error) => void;
  const request = vi.spyOn(client, "request").mockImplementation(async <T,>(_path: string, init?: RequestInit) => init?.method === "PUT" ? new Promise<unknown>((_resolve, reject) => { rejectSave = reject; }) as Promise<T> : { operationsEnabled: false } as T);

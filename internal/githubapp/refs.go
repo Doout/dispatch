@@ -29,7 +29,7 @@ func (m *Manager) RepositoryBranchHead(ctx context.Context, id, repository, bran
 	}
 	var reference BranchReference
 	endpoint := fmt.Sprintf("%s/repos/%s/git/ref/heads/%s", strings.TrimRight(connection.APIURL, "/"), repo, url.PathEscape(branch))
-	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &reference, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &reference, connection); err != nil {
 		return "", fmt.Errorf("resolve %s branch %s: %w", repository, branch, err)
 	}
 	return reference.Commit(branch)

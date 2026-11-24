@@ -525,3 +525,18 @@
 .instance-connection-settings[data-expanded="false"] > header {
   border-bottom: 0;
 }
+
+.settings-proxy > summary { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; cursor: pointer; list-style: none; }
+.settings-proxy > summary::-webkit-details-marker { display: none; }
+.settings-proxy[open] > summary { border-bottom: 1px solid var(--rule); }
+.settings-proxy[open] > summary > svg { transform: rotate(180deg); }
+.settings-proxy-form > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.settings-proxy-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-proxy-actions .primary-button { min-height: 32px; padding: 6px 12px; font-size: 11px; }
+.settings-proxy-form .settings-feedback { margin: 0; }
+.settings-proxy-form .settings-error { color: var(--red); }
+.settings-proxy-form .settings-success { color: var(--green); }
+
+@media (max-width: 600px) {
+  .settings-proxy-fields { grid-template-columns: minmax(0, 1fr); }
+}

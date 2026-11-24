@@ -100,3 +100,18 @@ func (s *SQLStore) UpdateControllerSettings(ctx context.Context, patch core.Cont
 	}
 	return settings, nil
 }
+
+func (s *SQLStore) GetRepositoryProxy(ctx context.Context) (core.RepositoryProxySettings, error) {
+	var settings core.RepositoryProxySettings
+	err := s.db.QueryRowContext(ctx, `SELECT repository_proxy_url, repository_no_proxy, repository_proxy_userinfo FROM controller_settings WHERE id=1`).Scan(&settings.URL, &settings.NoProxy, &settings.EncryptedUserinfo)
+	return settings, err
+}
+
+func (s *SQLStore) SaveRepositoryProxy(ctx context.Context, settings core.RepositoryProxySettings, replaceURL bool) error {
+	if !replaceURL {
+		_, err := s.db.ExecContext(ctx, s.q(`UPDATE controller_settings SET repository_no_proxy=? WHERE id=1 AND repository_proxy_url<>''`), settings.NoProxy)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, s.q(`UPDATE controller_settings SET repository_proxy_url=?, repository_no_proxy=?, repository_proxy_userinfo=? WHERE id=1`), settings.URL, settings.NoProxy, settings.EncryptedUserinfo)
+	return err
+}

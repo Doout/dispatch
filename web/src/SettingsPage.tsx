@@ -7,6 +7,8 @@ import {
 } from "@phosphor-icons/react";
 import { request, type ControllerSettings, type Overview } from "./api";
 import "./SettingsPage.css";
+import { RepositoryProxySettings } from "./RepositoryProxySettings";
+import { useHostedTenant } from "./hosted/context";
 import {
   InterfaceSettings,
   type InterfaceSettingsProps,
@@ -37,6 +39,7 @@ function SettingsContent({
   navigationInShell = false,
 }: Props) {
   const owner = overview.identity?.systemRole === "owner";
+  const hosted = useHostedTenant();
   const id = useId();
   const [section, setSection] = useState<SettingsSection>(
     interfaceSettings ? "interface" : "features",
@@ -130,6 +133,7 @@ function SettingsContent({
             observed={JSON.stringify(overview.controllerSettings)}
             onChanged={onChanged}
           />
+          {!hosted && <RepositoryProxySettings />}
         </div>
       ) : (
         <section className="settings-access" role="status">

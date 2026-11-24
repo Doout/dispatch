@@ -16,6 +16,9 @@ services:
     restart: unless-stopped
     group_add:
       - "${DOCKER_GID:-1001}"
+    env_file:
+      - path: ./.env.proxy
+        required: false
     environment:
       DISPATCH_ADDR: 0.0.0.0:8080
       DATABASE_URL: /data/dispatch.db

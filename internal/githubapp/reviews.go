@@ -48,7 +48,7 @@ func (m *Manager) PullRequestHead(ctx context.Context, id, repository string, nu
 		return head, err
 	}
 	endpoint := fmt.Sprintf("%s/repos/%s/pulls/%d", strings.TrimRight(connection.APIURL, "/"), repo, number)
-	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &head, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &head, connection); err != nil {
 		return head, err
 	}
 	// GitHub Enterprise can return an old head SHA after the branch has moved.
@@ -99,7 +99,7 @@ func (m *Manager) SubmitPullRequestReview(ctx context.Context, id, repository st
 				Type  string `json:"type"`
 			} `json:"user"`
 		}
-		if err := m.request(ctx, http.MethodGet, fmt.Sprintf("%s?per_page=100&page=%d", endpoint, page), token, nil, &reviews, connection.PrivateNetworkID); err != nil {
+		if err := m.request(ctx, http.MethodGet, fmt.Sprintf("%s?per_page=100&page=%d", endpoint, page), token, nil, &reviews, connection); err != nil {
 			return 0, feedbackPermissionError(err, "Pull requests")
 		}
 		state := "APPROVED"
@@ -133,7 +133,7 @@ func (m *Manager) SubmitPullRequestReview(ctx context.Context, id, repository st
 		ID int64 `json:"id"`
 	}
 	payload := map[string]string{"commit_id": sha, "event": event, "body": marker + "\n" + body}
-	if err := m.request(ctx, http.MethodPost, endpoint, token, payload, &review, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodPost, endpoint, token, payload, &review, connection); err != nil {
 		return 0, feedbackPermissionError(err, "Pull requests")
 	}
 	if review.ID < 1 {

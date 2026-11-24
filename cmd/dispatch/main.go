@@ -26,6 +26,7 @@ import (
 	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/provision"
 	"github.com/doout/dispatch/internal/remoteruntime"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/routing"
 	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
@@ -100,7 +101,7 @@ func run(logger *slog.Logger) error {
 		snapshots := deploy.SnapshotExecutor{Next: runtime, Store: data}
 		executor = deploy.HookExecutor{Next: snapshots, Outputs: data, Vault: vault, Resolver: secretResolver}
 	}
-	sourceAuth := deploy.SourceAuthExecutor{Next: executor, Secrets: data, Vault: vault, Resolver: secretResolver, GitHubApps: githubApps}
+	sourceAuth := deploy.SourceAuthExecutor{Next: executor, Secrets: data, Vault: vault, Resolver: secretResolver, GitHubApps: githubApps, Proxy: &repositoryproxy.Service{Store: data, Vault: vault}}
 	executor = sourceAuth
 	deployments := deploy.NewService(data, executor)
 	deployments.Retention = deploy.SimulationRetention{Store: data}

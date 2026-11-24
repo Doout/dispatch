@@ -85,6 +85,11 @@ func (a *API) leaseRuntimeJob(w http.ResponseWriter, r *http.Request) {
 	if required := job.Request.BackupCacheCleanupCapability(); required != "" && !slices.Contains(advertised, string(required)) {
 		supported = false
 	}
+	if job.Request.Inputs.SourceProxyURL != "" && r.Header.Get(remoteruntime.SourceProxyHeader) != "1" {
+		a.rejectRuntimeDispatch(r.Context(), broker, node.ID, job, runtimecontract.Unsupported, "Update the enrolled agent to use repository proxy settings.")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if !supported {
 		a.rejectRuntimeDispatch(r.Context(), broker, node.ID, job, runtimecontract.Unsupported, "The enrolled agent does not advertise this runtime capability.")
 		w.WriteHeader(http.StatusNoContent)

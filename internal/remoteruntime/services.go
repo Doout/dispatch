@@ -37,7 +37,7 @@ func (r Request) validateService() error {
 	return nil
 }
 func (r Request) SecretValues() []string {
-	secrets := []string{r.Inputs.SourceCredential}
+	secrets := []string{r.Inputs.SourceCredential, r.Inputs.SourceProxyURL}
 	if r.WorkloadBackup != nil {
 		secrets = append(secrets, r.WorkloadBackup.Key, r.WorkloadBackup.Source.Password)
 		if a := r.WorkloadBackup.OffsiteAccess; a != nil {
