@@ -62,7 +62,7 @@ func (a *API) importWorkflowPreviewDocument(w http.ResponseWriter, r *http.Reque
 		problem(w, http.StatusConflict, "GitHub App unavailable", "Choose an installed GitHub App.")
 		return
 	}
-	resolver := events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
+	resolver := events.GitHubResolver{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, RepositoryTokenSource: func(ctx context.Context, repository string) (string, error) {
 		return a.eventConfig.GitHubApps.RepositoryToken(ctx, input.GitHubAppID, repository)
 	}}
 	pr, err := resolver.ResolvePullRequest(r.Context(), input.Repository, input.PullRequestNumber)

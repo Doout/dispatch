@@ -96,6 +96,21 @@ describe("connections page", () => {
     expect(onAddRelay).toHaveBeenCalledOnce();
   });
 
+  it("sends an App proxy when starting GitHub registration", async () => {
+    const start = vi.spyOn(api, "startGitHubAppManifest").mockRejectedValue(new Error("Registration fixture"));
+    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
+    fireEvent.change(screen.getByLabelText("Registration owner"), { target: { value: "personal" } });
+    fireEvent.change(screen.getByLabelText(/Outbound proxy/), { target: { value: "app" } });
+    fireEvent.change(screen.getByLabelText("Proxy URL"), { target: { value: "http://proxy.example.test:3128" } });
+    fireEvent.change(screen.getByLabelText(/Bypass list/), { target: { value: ".internal.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to GitHub" }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      proxy: { url: "http://proxy.example.test:3128", noProxy: ".internal.test" },
+    })));
+  });
+
   it("creates a read-only GitHub App without event delivery", async () => {
     const manifest = { default_permissions: { contents: "read", metadata: "read" } };
     const start = vi.spyOn(api, "startGitHubAppManifest").mockResolvedValue({ action: "https://github.example.com/settings/apps/new", manifest });

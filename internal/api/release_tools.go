@@ -40,14 +40,7 @@ func (a *API) previewApplicationRelease(w http.ResponseWriter, r *http.Request) 
 	}
 	var result deploy.ReleasePreview
 	err = a.deploy.WithIdleApplication(r.Context(), app.ID, func() error {
-		sourceAuth := deploy.SourceAuthExecutor{Secrets: a.store, Vault: a.eventConfig.Vault}
-		if a.eventConfig.SecretResolver != nil {
-			sourceAuth.Resolver = a.eventConfig.SecretResolver
-		}
-		if a.eventConfig.GitHubApps != nil {
-			sourceAuth.GitHubApps = a.eventConfig.GitHubApps
-		}
-		result = a.deploy.PreviewRelease(r.Context(), app, server, input.Revision, sourceAuth)
+		result = a.deploy.PreviewRelease(r.Context(), app, server, input.Revision, a.sourceAuth())
 		return nil
 	})
 	if err != nil {

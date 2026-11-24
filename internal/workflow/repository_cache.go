@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/doout/dispatch/internal/repositoryproxy"
 )
 
 type repositoryCache struct {
@@ -151,7 +153,7 @@ func runGit(ctx context.Context, environment []string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env, cmd.Stdout, cmd.Stderr = environment, &output, &output
 	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(output.String())
+		message := strings.TrimSpace(repositoryproxy.RedactGitOutput(output.String(), environment))
 		if message == "" {
 			return err
 		}

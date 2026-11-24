@@ -39,6 +39,18 @@ func testControllerSettings(t *testing.T, dsn string) {
 	if err != nil || settings.OperationsEnabled {
 		t.Fatal("Operations must default to disabled", settings, err)
 	}
+	proxy, err := data.GetRepositoryProxy(ctx)
+	if err != nil || proxy != (core.RepositoryProxySettings{}) {
+		t.Fatal("Repository proxy must default to empty", proxy, err)
+	}
+	proxy = core.RepositoryProxySettings{URL: "http://proxy.example.test:3128", EncryptedUserinfo: "encrypted"}
+	if err = data.SaveRepositoryProxy(ctx, proxy, true); err != nil {
+		t.Fatal(err)
+	}
+	proxy.NoProxy = ".internal.example.test"
+	if err = data.SaveRepositoryProxy(ctx, core.RepositoryProxySettings{NoProxy: proxy.NoProxy}, false); err != nil {
+		t.Fatal(err)
+	}
 	changes := data.Changes()
 	if err = data.SaveControllerSettings(ctx, core.ControllerSettings{OperationsEnabled: true}); err != nil {
 		t.Fatal(err)
@@ -61,6 +73,9 @@ func testControllerSettings(t *testing.T, dsn string) {
 	settings, err = data.GetControllerSettings(ctx)
 	if err != nil || !settings.OperationsEnabled {
 		t.Fatal("saved setting did not survive reopen and migration", settings, err)
+	}
+	if saved, err := data.GetRepositoryProxy(ctx); err != nil || saved != proxy {
+		t.Fatal("repository proxy did not survive an Operations change and reopen", err)
 	}
 	changes = data.Changes()
 	if err = data.SaveControllerSettings(ctx, settings); err != nil {

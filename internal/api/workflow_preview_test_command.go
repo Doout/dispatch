@@ -89,7 +89,7 @@ func (a *API) postPreviewTestReply(ctx context.Context, trigger core.WorkflowPre
 	if err != nil {
 		return "", err
 	}
-	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, Token: a.eventConfig.GitHubToken}
+	notifier := events.GitHubNotifier{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, Token: a.eventConfig.GitHubToken}
 	if a.eventConfig.GitHubApps != nil {
 		notifier.RepositoryTokenSource = func(ctx context.Context, repository string) (string, error) {
 			return a.eventConfig.GitHubApps.RepositoryToken(ctx, trigger.GitHubAppID, repository)

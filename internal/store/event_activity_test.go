@@ -313,6 +313,9 @@ func TestEventActivityUpgradePreservesPreviewDeliveryIdentity(t *testing.T) {
 	must(data.Migrate(ctx))
 	connection, err := data.GetGitHubApp(ctx, "github")
 	must(err)
+	if connection.Proxy != (core.RepositoryProxySettings{}) {
+		t.Fatal("legacy GitHub App must inherit the controller proxy")
+	}
 	if connection.ReadOnly {
 		t.Fatal("existing GitHub App changed to read-only")
 	}

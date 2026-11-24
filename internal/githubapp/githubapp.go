@@ -24,6 +24,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/edge"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/sourceerror"
 )
 
@@ -44,6 +45,7 @@ type Manager struct {
 	Vault   *secretcrypto.Vault
 	Client  *http.Client
 	Edge    *edge.Broker
+	Proxy   *repositoryproxy.Service
 
 	mu           sync.Mutex
 	tokens       map[string]cachedToken
@@ -315,7 +317,7 @@ func (m *Manager) installationToken(ctx context.Context, id string, installation
 		ExpiresAt   time.Time         `json:"expires_at"`
 		Permissions map[string]string `json:"permissions"`
 	}
-	if err := m.request(ctx, http.MethodPost, endpoint, jwt, body, &response, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodPost, endpoint, jwt, body, &response, connection); err != nil {
 		return "", fmt.Errorf("create GitHub App installation token: %w", err)
 	}
 	if response.Token == "" {
@@ -350,7 +352,7 @@ func (m *Manager) ListInstallations(ctx context.Context, id string) ([]Installat
 			} `json:"account"`
 		}
 		endpoint := fmt.Sprintf("%s/app/installations?per_page=100&page=%d", strings.TrimRight(connection.APIURL, "/"), page)
-		if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &response, connection.PrivateNetworkID); err != nil {
+		if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &response, connection); err != nil {
 			return nil, err
 		}
 		for _, item := range response {
@@ -403,7 +405,7 @@ func (m *Manager) ListRepositories(ctx context.Context, id string) ([]Repository
 				} `json:"repositories"`
 			}
 			endpoint := fmt.Sprintf("%s/installation/repositories?per_page=100&page=%d", strings.TrimRight(connection.APIURL, "/"), page)
-			if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
+			if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection); err != nil {
 				return nil, fmt.Errorf("list installation repositories: %w", err)
 			}
 			for _, repository := range response.Repositories {
@@ -440,7 +442,7 @@ func (m *Manager) RepositoryHead(ctx context.Context, id, repository, branch str
 		SHA string `json:"sha"`
 	}
 	endpoint := fmt.Sprintf("%s/repos/%s/commits/%s", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(branch))
-	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection); err != nil {
 		return "", fmt.Errorf("resolve %s branch %s: %w", repository, branch, err)
 	}
 	if strings.TrimSpace(response.SHA) == "" {
@@ -481,7 +483,7 @@ func (m *Manager) RepositoryFiles(ctx context.Context, id, repository, revision,
 		} `json:"tree"`
 	}
 	endpoint := fmt.Sprintf("%s/repos/%s/git/trees/%s?recursive=1", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(revision))
-	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &tree, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &tree, connection); err != nil {
 		return nil, fmt.Errorf("list configuration files: %w", err)
 	}
 	if tree.Truncated {
@@ -515,7 +517,7 @@ func (m *Manager) RepositoryFiles(ctx context.Context, id, repository, revision,
 			Size     int64  `json:"size"`
 		}
 		endpoint := fmt.Sprintf("%s/repos/%s/git/blobs/%s", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(item.sha))
-		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection.PrivateNetworkID); err != nil {
+		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &response, connection); err != nil {
 			return nil, fmt.Errorf("load configuration file %s: %w", item.path, err)
 		}
 		if response.Encoding != "base64" || response.Size > 1<<20 {
@@ -566,7 +568,7 @@ func (m *Manager) SetCommitStatusWithContext(ctx context.Context, id, repository
 		payload["target_url"] = targetURL
 	}
 	endpoint := fmt.Sprintf("%s/repos/%s/statuses/%s", strings.TrimRight(connection.APIURL, "/"), repository, url.PathEscape(revision))
-	if err := m.request(ctx, http.MethodPost, endpoint, token, payload, nil, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodPost, endpoint, token, payload, nil, connection); err != nil {
 		return fmt.Errorf("publish commit status: %w", feedbackPermissionError(err, "Commit statuses"))
 	}
 	return nil
@@ -617,7 +619,7 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 		Events      []string          `json:"events"`
 		Permissions map[string]string `json:"permissions"`
 	}
-	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/app", jwt, nil, &app, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/app", jwt, nil, &app, connection); err != nil {
 		return Verification{}, fmt.Errorf("verify GitHub App registration: %w", err)
 	}
 	if app.ID != connection.AppID {
@@ -661,7 +663,7 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 		} `json:"account"`
 	}
 	endpoint := fmt.Sprintf("%s/app/installations/%d", strings.TrimRight(connection.APIURL, "/"), connection.InstallationID)
-	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &installation, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &installation, connection); err != nil {
 		return Verification{}, fmt.Errorf("verify GitHub App installation: %w", err)
 	}
 	if installation.ID != connection.InstallationID {
@@ -688,7 +690,7 @@ func (m *Manager) Verify(ctx context.Context, id string) (Verification, error) {
 	var repositories struct {
 		Total int `json:"total_count"`
 	}
-	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/installation/repositories?per_page=1", token, nil, &repositories, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, strings.TrimRight(connection.APIURL, "/")+"/installation/repositories?per_page=1", token, nil, &repositories, connection); err != nil {
 		return Verification{}, fmt.Errorf("verify installation repository access: %w", err)
 	}
 	result.RepositoryCount = repositories.Total
@@ -721,14 +723,22 @@ func (m *Manager) EnsureWebhookConfig(ctx context.Context, id string) error {
 		"insecure_ssl": "0",
 	}
 	endpoint := strings.TrimRight(connection.APIURL, "/") + "/app/hook/config"
-	if err := m.request(ctx, http.MethodPatch, endpoint, jwt, payload, nil, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodPatch, endpoint, jwt, payload, nil, connection); err != nil {
 		return fmt.Errorf("configure GitHub App webhook: %w", err)
 	}
 	return nil
 }
 
 func (m *Manager) ConvertManifest(ctx context.Context, apiURL, code string, privateNetworkID ...string) (ManifestConversion, error) {
-	endpoint := strings.TrimRight(strings.TrimSpace(apiURL), "/") + "/app-manifests/" + url.PathEscape(strings.TrimSpace(code)) + "/conversions"
+	connection := core.GitHubAppConnection{APIURL: apiURL}
+	if len(privateNetworkID) > 0 {
+		connection.PrivateNetworkID = privateNetworkID[0]
+	}
+	return m.ConvertAppManifest(ctx, connection, code)
+}
+
+func (m *Manager) ConvertAppManifest(ctx context.Context, connection core.GitHubAppConnection, code string) (ManifestConversion, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(connection.APIURL), "/") + "/app-manifests/" + url.PathEscape(strings.TrimSpace(code)) + "/conversions"
 	var result struct {
 		ID            int64  `json:"id"`
 		ClientID      string `json:"client_id"`
@@ -742,7 +752,7 @@ func (m *Manager) ConvertManifest(ctx context.Context, apiURL, code string, priv
 			Type  string `json:"type"`
 		} `json:"owner"`
 	}
-	if err := m.request(ctx, http.MethodPost, endpoint, "", nil, &result, privateNetworkID...); err != nil {
+	if err := m.request(ctx, http.MethodPost, endpoint, "", nil, &result, connection); err != nil {
 		return ManifestConversion{}, err
 	}
 	if result.ID < 1 || result.PEM == "" {
@@ -779,7 +789,8 @@ func (m *Manager) appJWT(connection core.GitHubAppConnection) (string, error) {
 
 func rawURL(value []byte) string { return base64.RawURLEncoding.EncodeToString(value) }
 
-func (m *Manager) request(ctx context.Context, method, endpoint, token string, body interface{}, output interface{}, privateNetworkID ...string) error {
+func (m *Manager) request(ctx context.Context, method, endpoint, token string, body interface{}, output interface{}, connection core.GitHubAppConnection) error {
+	ctx = repositoryproxy.WithGitHubAppConnection(ctx, connection)
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -803,11 +814,21 @@ func (m *Manager) request(ctx context.Context, method, endpoint, token string, b
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	var response *http.Response
-	if len(privateNetworkID) > 0 && strings.TrimSpace(privateNetworkID[0]) != "" {
+	privateNetworkID := strings.TrimSpace(connection.PrivateNetworkID)
+	useEdge := privateNetworkID != ""
+	if useEdge && m.Proxy != nil {
+		var proxied bool
+		request, proxied, err = m.Proxy.Route(request)
+		if err != nil {
+			return err
+		}
+		useEdge = !proxied
+	}
+	if useEdge {
 		if m.Store == nil || m.Edge == nil {
 			return errors.New("GitHub edge routing is not configured")
 		}
-		network, loadErr := m.Store.GetPrivateNetwork(ctx, strings.TrimSpace(privateNetworkID[0]))
+		network, loadErr := m.Store.GetPrivateNetwork(ctx, privateNetworkID)
 		if loadErr != nil {
 			return fmt.Errorf("load GitHub network route: %w", loadErr)
 		}

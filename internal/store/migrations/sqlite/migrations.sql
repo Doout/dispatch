@@ -1833,3 +1833,13 @@ ALTER TABLE deployments ADD COLUMN retention_pinned BOOLEAN NOT NULL DEFAULT FAL
 
 -- dispatch:migration 106_github_app_read_only
 ALTER TABLE github_apps ADD COLUMN read_only BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- dispatch:migration 107_repository_proxy
+ALTER TABLE controller_settings ADD COLUMN repository_proxy_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE controller_settings ADD COLUMN repository_no_proxy TEXT NOT NULL DEFAULT '';
+ALTER TABLE controller_settings ADD COLUMN repository_proxy_userinfo TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 108_github_app_proxy
+ALTER TABLE github_apps ADD COLUMN proxy_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE github_apps ADD COLUMN no_proxy TEXT NOT NULL DEFAULT '';
+ALTER TABLE github_apps ADD COLUMN proxy_userinfo TEXT NOT NULL DEFAULT '';

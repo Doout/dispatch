@@ -149,6 +149,8 @@ type App struct {
 	// SourceCredential is decrypted only for the duration of a deployment. It
 	// is never persisted, returned by the API, or included in the spec digest.
 	SourceCredential string    `json:"-"`
+	SourceProxyURL   string    `json:"-"`
+	SourceNoProxy    string    `json:"-"`
 	BuildType        BuildType `json:"buildType"`
 	ContextPath      string    `json:"contextPath"`
 	DockerfilePath   string    `json:"dockerfilePath"`
@@ -429,30 +431,31 @@ type EventTrigger struct {
 // GitHubAppConnection stores one GitHub App registration and installation.
 // PrivateKey and WebhookSecret are encrypted at rest and never serialized.
 type GitHubAppConnection struct {
-	ID                      string     `json:"id"`
-	Name                    string     `json:"name"`
-	WebURL                  string     `json:"webUrl"`
-	APIURL                  string     `json:"apiUrl"`
-	AppID                   int64      `json:"appId"`
-	ReadOnly                bool       `json:"readOnly,omitempty"`
-	ClientID                string     `json:"clientId,omitempty"`
-	Slug                    string     `json:"slug,omitempty"`
-	RegistrationOwner       string     `json:"registrationOwner,omitempty"`
-	RegistrationOwnerType   string     `json:"registrationOwnerType,omitempty"`
-	InstallationID          int64      `json:"installationId,omitempty"`
-	InstallationAccount     string     `json:"installationAccount,omitempty"`
-	InstallationURL         string     `json:"installationUrl,omitempty"`
-	WebhookURL              string     `json:"webhookUrl"`
-	RelayWebhookID          string     `json:"relayWebhookId,omitempty"`
-	PrivateNetworkID        string     `json:"privateNetworkId,omitempty"`
-	PrivateKeyConfigured    bool       `json:"privateKeyConfigured"`
-	WebhookSecretConfigured bool       `json:"webhookSecretConfigured"`
-	EncryptedPrivateKey     string     `json:"-"`
-	EncryptedWebhookSecret  string     `json:"-"`
-	State                   string     `json:"state"`
-	LastVerifiedAt          *time.Time `json:"lastVerifiedAt,omitempty"`
-	CreatedAt               time.Time  `json:"createdAt"`
-	UpdatedAt               time.Time  `json:"updatedAt"`
+	ID                      string                  `json:"id"`
+	Name                    string                  `json:"name"`
+	WebURL                  string                  `json:"webUrl"`
+	APIURL                  string                  `json:"apiUrl"`
+	AppID                   int64                   `json:"appId"`
+	ReadOnly                bool                    `json:"readOnly,omitempty"`
+	ClientID                string                  `json:"clientId,omitempty"`
+	Slug                    string                  `json:"slug,omitempty"`
+	RegistrationOwner       string                  `json:"registrationOwner,omitempty"`
+	RegistrationOwnerType   string                  `json:"registrationOwnerType,omitempty"`
+	InstallationID          int64                   `json:"installationId,omitempty"`
+	InstallationAccount     string                  `json:"installationAccount,omitempty"`
+	InstallationURL         string                  `json:"installationUrl,omitempty"`
+	WebhookURL              string                  `json:"webhookUrl"`
+	RelayWebhookID          string                  `json:"relayWebhookId,omitempty"`
+	PrivateNetworkID        string                  `json:"privateNetworkId,omitempty"`
+	Proxy                   RepositoryProxySettings `json:"proxy,omitzero"`
+	PrivateKeyConfigured    bool                    `json:"privateKeyConfigured"`
+	WebhookSecretConfigured bool                    `json:"webhookSecretConfigured"`
+	EncryptedPrivateKey     string                  `json:"-"`
+	EncryptedWebhookSecret  string                  `json:"-"`
+	State                   string                  `json:"state"`
+	LastVerifiedAt          *time.Time              `json:"lastVerifiedAt,omitempty"`
+	CreatedAt               time.Time               `json:"createdAt"`
+	UpdatedAt               time.Time               `json:"updatedAt"`
 }
 
 // EncryptedValue is persisted by the store but is never serialized to API

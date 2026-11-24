@@ -384,12 +384,11 @@ func (a *API) inspectHelmSource(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		resolved, err := (deploy.SourceAuthExecutor{Secrets: a.store, Vault: a.eventConfig.Vault, Resolver: a.secretResolver, GitHubApps: a.eventConfig.GitHubApps}).Resolve(r.Context(), app)
-		if err != nil {
-			problem(w, http.StatusBadRequest, "Repository credential unavailable", err.Error())
-			return
-		}
-		app = resolved
+	}
+	app, err := a.sourceAuth().Resolve(r.Context(), app)
+	if err != nil {
+		problem(w, http.StatusBadRequest, "Repository access unavailable", err.Error())
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
@@ -435,7 +434,7 @@ func (a *API) getAppHelmValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.SourceRepo = deploy.RepositoryForSourceAuth(item.SourceRepo, item.SourceAuthType)
-	resolved, err := (deploy.SourceAuthExecutor{Secrets: a.store, Vault: a.eventConfig.Vault, Resolver: a.secretResolver, GitHubApps: a.eventConfig.GitHubApps}).Resolve(r.Context(), item)
+	resolved, err := a.sourceAuth().Resolve(r.Context(), item)
 	if err != nil {
 		problem(w, http.StatusBadRequest, "Repository credential unavailable", err.Error())
 		return

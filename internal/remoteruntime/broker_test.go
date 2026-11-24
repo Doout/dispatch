@@ -2,6 +2,7 @@ package remoteruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -248,5 +249,25 @@ func TestBrokerServiceProvisionOwnershipAndEncryptedOutputs(t *testing.T) {
 	request.Service.Request.Run.ProjectID = "another-project"
 	if _, err = b.Submit(ctx, "wrong-service", request); err == nil {
 		t.Fatal("cross-project service accepted")
+	}
+}
+
+func TestRuntimeRequestPreservesSourceProxy(t *testing.T) {
+	app := core.App{SourceProxyURL: "http://proxy-user:fixture-pass@proxy.example.test:3128", SourceNoProxy: ".internal.test"}
+	request := NewRequest(runtimecontract.Deploy, core.Deployment{}, app, core.Server{})
+	data, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received Request
+	if err := json.Unmarshal(data, &received); err != nil {
+		t.Fatal(err)
+	}
+	resolved := received.App()
+	if resolved.SourceProxyURL != app.SourceProxyURL || resolved.SourceNoProxy != app.SourceNoProxy {
+		t.Fatal("runtime request lost the repository proxy")
+	}
+	if strings.Contains(received.Redact("connection failed via "+app.SourceProxyURL), "fixture-pass") {
+		t.Fatal("runtime output exposed proxy credentials")
 	}
 }

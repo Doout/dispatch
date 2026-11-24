@@ -2115,6 +2115,46 @@ paths:
           $ref: '#/components/responses/Problem'
         '403':
           $ref: '#/components/responses/Problem'
+  /settings/repository-proxy:
+    get:
+      operationId: getRepositoryProxy
+      description: Returns the proxy address, bypass list, and authentication status to a controller owner.
+      responses:
+        '200':
+          description: Saved proxy settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RepositoryProxy' }
+        '403':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: saveRepositoryProxy
+      description: >-
+        Controller owner only. Sets the forward proxy for GitHub requests and HTTP or HTTPS
+        Git fetches. Omit url to update only the bypass list. Set url to an empty string to
+        remove the saved proxy. Credentials in a proxy URL require encrypted storage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [noProxy]
+              properties:
+                url: { type: string, writeOnly: true }
+                noProxy: { type: string }
+      responses:
+        '200':
+          description: Saved proxy settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RepositoryProxy' }
+        '400':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
   /operations/summary:
     get:
       operationId: getOperationsSummary
@@ -3563,6 +3603,7 @@ paths:
                 ownerType: { type: string, enum: [personal, organization], description: Selects the GitHub settings account that owns the registration. }
                 owner: { type: string, description: Organization login. Required when ownerType is organization. }
                 readOnly: { type: boolean, default: false, description: Requests read access to Contents and Metadata with webhook delivery disabled. }
+                proxy: { $ref: '#/components/schemas/GitHubAppProxyInput' }
       responses:
         "200": { description: GitHub App manifest form action and manifest payload. }
   /github-apps/manifest/callback:
@@ -6200,6 +6241,13 @@ components:
           type: array
           items:
             type: object
+    RepositoryProxy:
+      type: object
+      required: [url, noProxy, authenticated]
+      properties:
+        url: { type: string, description: Proxy address with credentials removed. }
+        noProxy: { type: string, description: Comma-separated destinations that bypass the proxy. }
+        authenticated: { type: boolean, description: Whether proxy credentials are saved. }
     ControllerSettings:
       type: object
       required: [operationsEnabled, uiFeatures]
@@ -7368,6 +7416,11 @@ components:
         mode: { type: string }
         metric: { type: integer }
         state: { type: string }
+    GitHubAppProxyInput:
+      type: object
+      properties:
+        url: { type: string, writeOnly: true, description: HTTP or HTTPS forward proxy URL. Omit to keep the saved address or send an empty string to use controller settings. }
+        noProxy: { type: string, description: Comma-separated hosts, domains, or IP ranges that bypass this proxy. }
     GitHubAppInput:
       type: object
       required: [name, webUrl, appId, privateKey]
@@ -7387,6 +7440,7 @@ components:
         eventDelivery: { type: string, enum: [none, direct, relay], description: Defaults to none for a read-only App and direct otherwise unless a relay is selected. }
         relayServerId: { type: string, description: Optional relay server used for durable outbound event delivery. }
         privateNetworkId: { type: string, description: Optional edge node used for GitHub API requests. }
+        proxy: { $ref: '#/components/schemas/GitHubAppProxyInput' }
     GitHubAppConnection:
       type: object
       required: [id, name, webUrl, apiUrl, appId, privateKeyConfigured, webhookSecretConfigured, state, createdAt, updatedAt]
@@ -7411,6 +7465,11 @@ components:
         lastVerifiedAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        proxy:
+          type: object
+          properties:
+            url: { type: string, description: Saved App proxy address with credentials removed. }
+            noProxy: { type: string }
     GitHubAppUpdateInput:
       type: object
       description: Every property is optional. Read-only connections can rotate their private key on its own. Otherwise replace the private key and webhook secret together.
@@ -7425,6 +7484,7 @@ components:
         privateKey: { type: string, format: password, writeOnly: true }
         webhookSecret: { type: string, format: password, minLength: 16, writeOnly: true }
         privateNetworkId: { type: string, description: Edge node used for GitHub API requests. Set to an empty string for direct access. }
+        proxy: { $ref: '#/components/schemas/GitHubAppProxyInput' }
     GitHubRepository:
       type: object
       required: [id, fullName, name, owner, defaultBranch, private, webUrl]

@@ -97,6 +97,10 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
   const [slug, setSlug] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [useAppProxy, setUseAppProxy] = useState(false);
+  const [proxyURL, setProxyURL] = useState("");
+  const [proxyBypass, setProxyBypass] = useState("");
+
 	const [privateNetworkID, setPrivateNetworkID] = useState("");
   const relayServers = overview.servers.filter((server) => server.runtime === "relay");
   const [eventDelivery, setEventDelivery] = useState<"none" | "direct" | "relay">("none");
@@ -134,6 +138,9 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
     setSlug("");
     setPrivateKey("");
     setWebhookSecret("");
+    setUseAppProxy(false);
+    setProxyURL("");
+    setProxyBypass("");
 		setPrivateNetworkID("");
     setEventDelivery("none");
     setRelayServerID(relayServers[0]?.id ?? "");
@@ -155,6 +162,9 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
     setSlug(connection.slug || "");
     setPrivateKey("");
     setWebhookSecret("");
+    setUseAppProxy(Boolean(connection.proxy?.url));
+    setProxyURL("");
+    setProxyBypass(connection.proxy?.noProxy ?? "");
 		setPrivateNetworkID(connection.privateNetworkId || "");
     setError("");
   }
@@ -172,9 +182,11 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
     setBusyID(editing?.id || "create");
     try {
       const delivery = readOnly ? "none" : eventDelivery;
+      const proxy = !hosted && useAppProxy ? { url: proxyURL.trim() || undefined, noProxy: proxyBypass }
+        : editing?.proxy?.url ? { url: "" } : undefined;
       if (method === "manifest" && !editing) {
 		if (!ownerType) throw new Error("Choose the GitHub App owner.");
-		const flow = await api.startGitHubAppManifest({ name, webUrl: webURL, apiUrl: apiURL, ownerType, owner: ownerType === "organization" ? owner : "", readOnly, eventDelivery: delivery, relayServerId: delivery === "relay" ? relayServerID : undefined, privateNetworkId: privateNetworkID || undefined });
+		const flow = await api.startGitHubAppManifest({ name, webUrl: webURL, apiUrl: apiURL, ownerType, owner: ownerType === "organization" ? owner : "", readOnly, eventDelivery: delivery, relayServerId: delivery === "relay" ? relayServerID : undefined, privateNetworkId: privateNetworkID || undefined, ...(proxy ? { proxy } : {}) });
         const form = document.createElement("form");
         form.method = "post";
         form.action = flow.action;
@@ -195,6 +207,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
       };
       if (!editing) body.readOnly = readOnly;
       if (!editing && delivery === "relay") body.relayServerId = relayServerID;
+      if (proxy) body.proxy = proxy;
       if (privateKey || (!readOnly && webhookSecret)) {
         body.privateKey = privateKey;
         if (!readOnly) body.webhookSecret = webhookSecret;
@@ -288,6 +301,20 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
             <label><span>App ID</span><input inputMode="numeric" value={appID} onChange={(event) => setAppID(event.target.value)} placeholder="123456" required /></label>
           </>}
         </div>
+        {!hosted && <div className="connection-grid">
+          <label><span>Outbound proxy</span><select value={useAppProxy ? "app" : "controller"} onChange={event => setUseAppProxy(event.target.value === "app")}>
+            <option value="controller">Use controller settings</option><option value="app">Use an App proxy</option>
+          </select><small>Routes this App’s API calls and HTTPS Git checkouts.</small></label>
+          {useAppProxy && <>
+            <label><span>Proxy URL</span><input type="url" autoComplete="off" spellCheck={false} maxLength={2048}
+              value={proxyURL} onChange={event => setProxyURL(event.target.value)} required={!editing?.proxy?.url}
+              placeholder={editing?.proxy?.url ?? "http://proxy.example.com:3128"} />
+              {editing?.proxy?.url && <small>Leave blank to keep the saved address and credentials.</small>}</label>
+            <label><span>Bypass list</span><input value={proxyBypass} onChange={event => setProxyBypass(event.target.value)}
+              spellCheck={false} maxLength={2048} placeholder=".internal.example.com" />
+              <small>Optional comma-separated hosts, domains, or IP ranges.</small></label>
+          </>}
+        </div>}
         {!editing && !readOnly && <section className="connection-delivery" aria-labelledby="event-delivery-title">
           <div className="connection-webhook-toggle">
             <span><strong id="event-delivery-title">Event delivery</strong><small>{eventDelivery === "none" ? "Polling only" : "Webhooks enabled"}</small></span>

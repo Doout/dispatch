@@ -15,6 +15,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 )
 
 type repositoryAccess struct {
@@ -71,7 +72,7 @@ func (s *Service) repositoryHead(ctx context.Context, source core.ConfigSource, 
 			return "", fmt.Errorf("branch or tag %q was not found in %s", branch, repository)
 		}
 		lines := []string{}
-		for _, line := range strings.Split(output.String(), "\n") {
+		for _, line := range strings.Split(repositoryproxy.RedactGitOutput(output.String(), access.environment), "\n") {
 			if !strings.Contains(line, "Permanently added") && strings.TrimSpace(line) != "" {
 				lines = append(lines, line)
 			}
@@ -203,12 +204,20 @@ func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource
 	if err != nil {
 		return repositoryAccess{}, err
 	}
+	var app core.App
+	if repositoryproxy.IsHTTPRepository(repositoryURL) {
+		app.SourceProxyURL, app.SourceNoProxy, err = s.RepositoryProxy.Resolve(repositoryproxy.WithGitHubApp(ctx, source.GitHubAppID))
+		if err != nil {
+			return repositoryAccess{}, err
+		}
+	}
 	if source.GitHubAppID != "" {
 		token, err := s.GitHub.RepositoryToken(ctx, source.GitHubAppID, repository)
 		if err != nil {
 			return repositoryAccess{}, err
 		}
-		environment, cleanup, err := prepareEnvironment(core.App{SourceAuthType: deploy.SourceAuthGitHubApp, SourceCredential: token})
+		app.SourceAuthType, app.SourceCredential = deploy.SourceAuthGitHubApp, token
+		environment, cleanup, err := prepareEnvironment(app)
 		return repositoryAccess{url: repositoryURL, credentialID: "github-app:" + source.GitHubAppID, environment: environment, cleanup: cleanup}, err
 	}
 	if source.CredentialSecretID == "" || s.Secrets == nil {
@@ -230,7 +239,8 @@ func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource
 	if err := deploy.ValidateSourceCredentialType(authType, secret.Type); err != nil {
 		return repositoryAccess{}, err
 	}
-	environment, cleanup, err := prepareEnvironment(core.App{SourceAuthType: authType, SourceCredential: string(credential)})
+	app.SourceAuthType, app.SourceCredential = authType, string(credential)
+	environment, cleanup, err := prepareEnvironment(app)
 	return repositoryAccess{url: repositoryURL, credentialID: "secret:" + secret.ID, environment: environment, cleanup: cleanup}, err
 }
 

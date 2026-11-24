@@ -16,6 +16,7 @@ import (
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
 	"github.com/doout/dispatch/internal/hookresult"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -505,7 +506,7 @@ func checkoutHookSource(ctx context.Context, deployment core.Deployment, app cor
 		if err := runGitForApp(ctx, app, args...); err != nil {
 			return err
 		}
-	} else if err := runGitWithToken(ctx, hookGitToken(app), args...); err != nil {
+	} else if err := runGitWithToken(ctx, app, hookGitToken(app), args...); err != nil {
 		return err
 	}
 	if deployment.CommitSHA == "" || deployment.CommitSHA == "HEAD" || deployment.CommitSHA == "chart" || deployment.CommitSHA == "inline" {
@@ -515,16 +516,12 @@ func checkoutHookSource(ctx context.Context, deployment core.Deployment, app cor
 		if app.SourceCredential != "" {
 			return runGitForApp(ctx, app, args...)
 		}
-		return runGitWithToken(ctx, hookGitToken(app), args...)
+		return runGitWithToken(ctx, app, hookGitToken(app), args...)
 	}
 	if err := run("-C", workspace, "fetch", "--depth", "1", "origin", deployment.CommitSHA); err != nil {
 		return err
 	}
 	return run("-C", workspace, "checkout", "--detach", deployment.CommitSHA)
-}
-
-func runGit(ctx context.Context, args ...string) error {
-	return runGitWithToken(ctx, os.Getenv("DISPATCH_GIT_TOKEN"), args...)
 }
 
 func hookGitToken(app core.App) string {
@@ -536,15 +533,17 @@ func hookGitToken(app core.App) string {
 	return os.Getenv("DISPATCH_GIT_TOKEN")
 }
 
-func runGitWithToken(ctx context.Context, token string, args ...string) error {
+func runGitWithToken(ctx context.Context, app core.App, token string, args ...string) error {
 	var output strings.Builder
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Stdout, cmd.Stderr = &output, &output
+	environment := os.Environ()
 	if token != "" {
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0=Authorization: Bearer "+token)
+		environment = append(environment, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0=Authorization: Bearer "+token)
 	}
+	cmd.Env = repositoryproxy.GitEnvironment(environment, app.SourceProxyURL, app.SourceNoProxy)
 	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(output.String())
+		detail := strings.TrimSpace(repositoryproxy.RedactGitOutput(output.String(), cmd.Env))
 		if detail != "" {
 			return fmt.Errorf("%w: %s", err, detail)
 		}

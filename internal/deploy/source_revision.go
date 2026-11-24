@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/runtimecontract"
 )
 
@@ -122,11 +123,11 @@ func (e DockerExecutor) checkoutRevision(ctx context.Context, app core.App, revi
 
 func (e DockerExecutor) gitOutput(ctx context.Context, app core.App, args ...string) (string, error) {
 	var output gitOutputBuffer
+	var environment []string
 	var err error
 	if e.run != nil {
 		err = e.run(ctx, nil, &output, "git", args...)
 	} else {
-		var environment []string
 		var cleanup func()
 		environment, cleanup, err = PrepareGitEnvironment(app)
 		if err != nil {
@@ -135,7 +136,7 @@ func (e DockerExecutor) gitOutput(ctx context.Context, app core.App, args ...str
 		defer cleanup()
 		err = commandWithEnvironment(ctx, environment, nil, &output, "git", args...)
 	}
-	return output.String(), err
+	return repositoryproxy.RedactGitOutput(output.String(), environment), err
 }
 
 type gitOutputBuffer struct{ strings.Builder }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 )
 
 type LogWorkflowRun struct {
@@ -40,7 +41,7 @@ func (m *Manager) ResolveLogWorkflow(ctx context.Context, r core.WorkflowCheckRe
 		DefaultBranch string `json:"default_branch"`
 	}
 	endpoint := strings.TrimRight(connection.APIURL, "/") + "/repos/" + repository
-	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &result, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &result, connection); err != nil {
 		return "", m.checkRunRequestFailure(r, err, false)
 	}
 	if !strings.EqualFold(result.FullName, repository) || result.DefaultBranch == "" || strings.TrimSpace(result.DefaultBranch) != result.DefaultBranch || strings.ContainsAny(result.DefaultBranch, "\r\n\x00") {
@@ -69,7 +70,7 @@ func (m *Manager) FindLogWorkflow(ctx context.Context, r core.WorkflowCheckRepor
 			Runs []LogWorkflowRun `json:"workflow_runs"`
 		}
 		endpoint := base + "/workflows/" + logWorkflowFile + "/runs?" + query.Encode()
-		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &result, connection.PrivateNetworkID); err != nil {
+		if err := m.request(ctx, http.MethodGet, endpoint, token, nil, &result, connection); err != nil {
 			return LogWorkflowRun{}, err
 		}
 		for _, run := range result.Runs {
@@ -93,7 +94,7 @@ func (m *Manager) DispatchLogWorkflow(ctx context.Context, r core.WorkflowCheckR
 		return errors.New("GitHub log workflow is not configured")
 	}
 	endpoint := strings.TrimRight(connection.APIURL, "/") + "/repos/" + repository + "/actions/workflows/" + logWorkflowFile + "/dispatches"
-	if err := m.request(ctx, http.MethodPost, endpoint, token, map[string]any{"ref": r.LogRef, "inputs": map[string]string{"report_id": r.ID}}, nil, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodPost, endpoint, token, map[string]any{"ref": r.LogRef, "inputs": map[string]string{"report_id": r.ID}}, nil, connection); err != nil {
 		uncertain := true
 		var response *responseError
 		if errors.As(err, &response) && response.StatusCode >= 400 && response.StatusCode < 500 && !response.RateLimited {
@@ -128,7 +129,7 @@ func (m *Manager) VerifyLogWorkflowToken(ctx context.Context, r core.WorkflowChe
 	if !strings.EqualFold(u.Host, "api.github.com") {
 		issuer = "https://" + u.Host + "/_services/token"
 	}
-	key := issuer + "\x00" + connection.PrivateNetworkID
+	key := issuer + "\x00" + connection.PrivateNetworkID + "\x00" + connection.ID
 	m.logOIDC.mu.Lock()
 	if m.logOIDC.keys == nil {
 		m.logOIDC.keys = map[string]*oidc.Provider{}
@@ -136,7 +137,7 @@ func (m *Manager) VerifyLogWorkflowToken(ctx context.Context, r core.WorkflowChe
 	provider := m.logOIDC.keys[key]
 	m.logOIDC.mu.Unlock()
 	if provider == nil {
-		client := &http.Client{Timeout: 15 * time.Second, Transport: logOIDCTransport{manager: m, network: connection.PrivateNetworkID, host: strings.TrimPrefix(issuer, "https://")}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client := &http.Client{Timeout: 15 * time.Second, Transport: logOIDCTransport{manager: m, appID: connection.ID, network: connection.PrivateNetworkID, host: strings.TrimPrefix(issuer, "https://")}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		// The key cache must outlive the first incoming request's cancellation.
 		clientContext := oidc.ClientContext(context.Background(), client)
 		discovery, cancel := context.WithTimeout(clientContext, 15*time.Second)
@@ -171,8 +172,8 @@ func (m *Manager) VerifyLogWorkflowToken(ctx context.Context, r core.WorkflowChe
 }
 
 type logOIDCTransport struct {
-	manager       *Manager
-	network, host string
+	manager              *Manager
+	appID, network, host string
 }
 
 func (t logOIDCTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -180,7 +181,18 @@ func (t logOIDCTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.URL.Scheme != "https" || r.URL.Host != u.Host {
 		return nil, errors.New("GitHub identity discovery changed host")
 	}
-	if t.network != "" {
+	r = r.WithContext(repositoryproxy.WithGitHubApp(r.Context(), t.appID))
+	useEdge := t.network != ""
+	if useEdge && t.manager.Proxy != nil {
+		var proxied bool
+		var err error
+		r, proxied, err = t.manager.Proxy.Route(r)
+		if err != nil {
+			return nil, err
+		}
+		useEdge = !proxied
+	}
+	if useEdge {
 		if t.manager.Edge == nil {
 			return nil, errors.New("GitHub network route is unavailable")
 		}

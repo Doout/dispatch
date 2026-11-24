@@ -378,7 +378,7 @@ func (a *API) verifyAuthProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	request, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, item.APIURL, nil)
 	request.Header.Set("Accept", "application/vnd.github+json")
-	client := &http.Client{Timeout: 8 * time.Second}
+	client := &http.Client{Transport: a.githubHTTP.Transport, Timeout: 8 * time.Second}
 	response, err := client.Do(request)
 	if err != nil || response.StatusCode >= 500 {
 		problem(w, http.StatusBadGateway, "GitHub unavailable", "Dispatch could not reach this GitHub API.")

@@ -406,7 +406,7 @@ func (a *API) exchangeGitHubIdentity(ctx context.Context, request *http.Request,
 	}
 	tokenRequest.Header.Set("Accept", "application/json")
 	tokenRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := a.githubHTTP
 	response, err := client.Do(tokenRequest)
 	if err != nil {
 		return githubOAuthProfile{}, err

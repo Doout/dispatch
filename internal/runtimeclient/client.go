@@ -44,6 +44,7 @@ func (c Client) request(ctx context.Context, token, method, path string, input, 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Dispatch-Runtime-Version", remoteruntime.APIVersion)
+	req.Header.Set(remoteruntime.SourceProxyHeader, "1")
 	req.Header.Set("X-Dispatch-Runtime-Capabilities", remoteruntime.CapabilityHeader())
 	req.Header.Set("X-Dispatch-Agent-Version", "dev")
 	req.Header.Set("X-Dispatch-Agent-Artifact", c.Artifact)

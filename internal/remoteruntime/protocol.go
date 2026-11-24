@@ -11,14 +11,15 @@ import (
 )
 
 const (
-	ProvisionService runtimecontract.Operation = "provision_service"
-	ServiceInspect   runtimecontract.Operation = "service_inspect"
-	ServiceDelete    runtimecontract.Operation = "service_delete"
-	APIVersion                                 = "dispatch.agent.runtime/v1"
-	MaxPayload                                 = 2 << 20
-	MaxResult                                  = 1 << 20
-	LeaseDuration                              = 45 * time.Second
-	MaxDuration                                = 30 * time.Minute
+	ProvisionService  runtimecontract.Operation = "provision_service"
+	ServiceInspect    runtimecontract.Operation = "service_inspect"
+	ServiceDelete     runtimecontract.Operation = "service_delete"
+	APIVersion                                  = "dispatch.agent.runtime/v1"
+	SourceProxyHeader                           = "X-Dispatch-Runtime-Source-Proxy"
+	MaxPayload                                  = 2 << 20
+	MaxResult                                   = 1 << 20
+	LeaseDuration                               = 45 * time.Second
+	MaxDuration                                 = 30 * time.Minute
 )
 
 var commitPattern = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
@@ -48,6 +49,8 @@ type Inputs struct {
 	RoutingProvenance *core.HelmProvenance         `json:"routingProvenance,omitempty"`
 	ComposeContent    string                       `json:"composeContent,omitempty"`
 	SourceCredential  string                       `json:"sourceCredential,omitempty"`
+	SourceProxyURL    string                       `json:"sourceProxyUrl,omitempty"`
+	SourceNoProxy     string                       `json:"sourceNoProxy,omitempty"`
 	Services          []core.ServiceRuntimeBinding `json:"services,omitempty"`
 }
 
@@ -100,7 +103,7 @@ type Completion struct {
 }
 
 func NewRequest(op runtimecontract.Operation, d core.Deployment, app core.App, server core.Server) Request {
-	inputs := Inputs{ComposeContent: app.ComposeContent, SourceCredential: app.SourceCredential, Services: app.ServiceRuntime}
+	inputs := Inputs{ComposeContent: app.ComposeContent, SourceCredential: app.SourceCredential, SourceProxyURL: app.SourceProxyURL, SourceNoProxy: app.SourceNoProxy, Services: app.ServiceRuntime}
 	if server.Routing != nil && server.Routing.Hosted != nil && app.Generated && len(app.HelmProvenance.PullRequests) > 0 {
 		provenance := app.HelmProvenance
 		inputs.RoutingProvenance = &provenance
@@ -178,6 +181,7 @@ func (r Request) App() core.App {
 		app.HelmProvenance = *r.Inputs.RoutingProvenance
 	}
 	app.ComposeContent, app.SourceCredential, app.ServiceRuntime = r.Inputs.ComposeContent, r.Inputs.SourceCredential, r.Inputs.Services
+	app.SourceProxyURL, app.SourceNoProxy = r.Inputs.SourceProxyURL, r.Inputs.SourceNoProxy
 	return app
 }
 

@@ -22,32 +22,34 @@ import (
 )
 
 type githubAppRequest struct {
-	Name             string `json:"name"`
-	WebURL           string `json:"webUrl"`
-	APIURL           string `json:"apiUrl"`
-	AppID            int64  `json:"appId"`
-	ReadOnly         bool   `json:"readOnly"`
-	ClientID         string `json:"clientId"`
-	Slug             string `json:"slug"`
-	InstallationID   int64  `json:"installationId"`
-	PrivateKey       string `json:"privateKey"`
-	WebhookSecret    string `json:"webhookSecret"`
-	EventDelivery    string `json:"eventDelivery"`
-	RelayServerID    string `json:"relayServerId"`
-	PrivateNetworkID string `json:"privateNetworkId"`
+	Name             string                 `json:"name"`
+	WebURL           string                 `json:"webUrl"`
+	APIURL           string                 `json:"apiUrl"`
+	AppID            int64                  `json:"appId"`
+	ReadOnly         bool                   `json:"readOnly"`
+	ClientID         string                 `json:"clientId"`
+	Slug             string                 `json:"slug"`
+	InstallationID   int64                  `json:"installationId"`
+	PrivateKey       string                 `json:"privateKey"`
+	WebhookSecret    string                 `json:"webhookSecret"`
+	EventDelivery    string                 `json:"eventDelivery"`
+	RelayServerID    string                 `json:"relayServerId"`
+	PrivateNetworkID string                 `json:"privateNetworkId"`
+	Proxy            *githubAppProxyRequest `json:"proxy"`
 }
 
 type githubAppUpdateRequest struct {
-	Name             *string `json:"name"`
-	WebURL           *string `json:"webUrl"`
-	APIURL           *string `json:"apiUrl"`
-	AppID            *int64  `json:"appId"`
-	ClientID         *string `json:"clientId"`
-	Slug             *string `json:"slug"`
-	InstallationID   *int64  `json:"installationId"`
-	PrivateKey       *string `json:"privateKey"`
-	WebhookSecret    *string `json:"webhookSecret"`
-	PrivateNetworkID *string `json:"privateNetworkId"`
+	Name             *string                `json:"name"`
+	WebURL           *string                `json:"webUrl"`
+	APIURL           *string                `json:"apiUrl"`
+	AppID            *int64                 `json:"appId"`
+	ClientID         *string                `json:"clientId"`
+	Slug             *string                `json:"slug"`
+	InstallationID   *int64                 `json:"installationId"`
+	PrivateKey       *string                `json:"privateKey"`
+	WebhookSecret    *string                `json:"webhookSecret"`
+	PrivateNetworkID *string                `json:"privateNetworkId"`
+	Proxy            *githubAppProxyRequest `json:"proxy"`
 }
 
 type githubAppManifestState struct {
@@ -62,9 +64,39 @@ type githubAppManifestState struct {
 	PrivateNetworkID      string
 	ReadOnly              bool
 	ExpiresAt             time.Time
+	Proxy                 core.RepositoryProxySettings
 }
 
 var githubOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
+
+type githubAppProxyRequest struct {
+	URL     *string `json:"url"`
+	NoProxy *string `json:"noProxy"`
+}
+
+func (a *API) prepareGitHubAppProxy(id string, input *githubAppProxyRequest, current core.RepositoryProxySettings) (core.RepositoryProxySettings, error) {
+	if input == nil {
+		return current, nil
+	}
+	if a.auth.Hosted != nil {
+		return core.RepositoryProxySettings{}, errors.New("GitHub App proxies are available on self-hosted controllers.")
+	}
+	bypass := current.NoProxy
+	if input.NoProxy != nil {
+		bypass = *input.NoProxy
+	}
+	if input.URL == nil {
+		validated, err := a.repositoryProxy.Prepare(id, "", bypass)
+		if current.URL != "" {
+			current.NoProxy = validated.NoProxy
+		}
+		return current, err
+	}
+	if strings.TrimSpace(*input.URL) == "" {
+		return core.RepositoryProxySettings{}, nil
+	}
+	return a.repositoryProxy.Prepare(id, *input.URL, bypass)
+}
 
 func (a *API) listGitHubApps(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListGitHubApps(r.Context())
@@ -100,6 +132,11 @@ func (a *API) createGitHubApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := ulid.Make().String()
+	proxy, err := a.prepareGitHubAppProxy(id, input.Proxy, core.RepositoryProxySettings{})
+	if err != nil {
+		problem(w, http.StatusBadRequest, "Invalid GitHub App proxy", err.Error())
+		return
+	}
 	delivery, err := githubAppEventDelivery(input.EventDelivery, input.RelayServerID, input.ReadOnly)
 	if err != nil {
 		problem(w, http.StatusBadRequest, "Invalid event delivery", err.Error())
@@ -140,7 +177,7 @@ func (a *API) createGitHubApp(w http.ResponseWriter, r *http.Request) {
 		ID: id, Name: input.Name, WebURL: webURL, APIURL: apiURL, AppID: input.AppID,
 		ReadOnly: input.ReadOnly,
 		ClientID: strings.TrimSpace(input.ClientID), Slug: strings.TrimSpace(input.Slug), InstallationID: input.InstallationID,
-		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID,
+		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID, Proxy: proxy,
 		EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret, CreatedAt: now, UpdatedAt: now,
 	}
 	item.State = githubapp.State(item)
@@ -233,8 +270,17 @@ func (a *API) updateGitHubApp(w http.ResponseWriter, r *http.Request) {
 		}
 		item.LastVerifiedAt = nil
 	}
+	var proxyUpdate []core.RepositoryProxySettings
+	if input.Proxy != nil {
+		item.Proxy, err = a.prepareGitHubAppProxy(id, input.Proxy, item.Proxy)
+		if err != nil {
+			problem(w, http.StatusBadRequest, "Invalid GitHub App proxy", err.Error())
+			return
+		}
+		proxyUpdate = append(proxyUpdate, item.Proxy)
+	}
 	item.State, item.UpdatedAt = githubapp.State(item), time.Now().UTC()
-	if err := a.store.UpdateGitHubApp(r.Context(), item); err != nil {
+	if err := a.store.UpdateGitHubApp(r.Context(), item, proxyUpdate...); err != nil {
 		a.notFoundOrInternal(w, err, "GitHub App")
 		return
 	}
@@ -403,15 +449,16 @@ func (a *API) githubRepositoryAccess(ctx context.Context, id string) (map[string
 }
 
 type startManifestRequest struct {
-	Name             string `json:"name"`
-	WebURL           string `json:"webUrl"`
-	APIURL           string `json:"apiUrl"`
-	OwnerType        string `json:"ownerType"`
-	Owner            string `json:"owner"`
-	ReadOnly         bool   `json:"readOnly"`
-	EventDelivery    string `json:"eventDelivery"`
-	RelayServerID    string `json:"relayServerId"`
-	PrivateNetworkID string `json:"privateNetworkId"`
+	Name             string                 `json:"name"`
+	WebURL           string                 `json:"webUrl"`
+	APIURL           string                 `json:"apiUrl"`
+	OwnerType        string                 `json:"ownerType"`
+	Owner            string                 `json:"owner"`
+	ReadOnly         bool                   `json:"readOnly"`
+	EventDelivery    string                 `json:"eventDelivery"`
+	RelayServerID    string                 `json:"relayServerId"`
+	PrivateNetworkID string                 `json:"privateNetworkId"`
+	Proxy            *githubAppProxyRequest `json:"proxy"`
 }
 
 func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
@@ -457,6 +504,11 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	state := base64.RawURLEncoding.EncodeToString(random)
 	connectionID := ulid.Make().String()
+	proxy, err := a.prepareGitHubAppProxy(connectionID, input.Proxy, core.RepositoryProxySettings{})
+	if err != nil {
+		problem(w, http.StatusBadRequest, "Invalid GitHub App proxy", err.Error())
+		return
+	}
 	origin := externalOrigin(r)
 	webhookURL := ""
 	relayWebhookID := ""
@@ -505,7 +557,7 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	a.manifestStates[state] = githubAppManifestState{ConnectionID: connectionID, Name: input.Name, WebURL: webURL,
 		APIURL: apiURL, RegistrationOwner: input.Owner, RegistrationOwnerType: input.OwnerType,
-		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID, ReadOnly: input.ReadOnly,
+		WebhookURL: webhookURL, RelayWebhookID: relayWebhookID, PrivateNetworkID: input.PrivateNetworkID, Proxy: proxy, ReadOnly: input.ReadOnly,
 		ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	a.manifestMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"action": action, "manifest": manifest})
@@ -557,7 +609,9 @@ func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) 
 		redirect("error", "The GitHub App setup expired. Start again from Connections.")
 		return
 	}
-	conversion, err := a.eventConfig.GitHubApps.ConvertManifest(r.Context(), pending.APIURL, code, pending.PrivateNetworkID)
+	conversion, err := a.eventConfig.GitHubApps.ConvertAppManifest(r.Context(), core.GitHubAppConnection{
+		ID: pending.ConnectionID, APIURL: pending.APIURL, PrivateNetworkID: pending.PrivateNetworkID, Proxy: pending.Proxy,
+	}, code)
 	if err != nil {
 		redirect("error", err.Error())
 		return
@@ -587,7 +641,7 @@ func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) 
 		ID: pending.ConnectionID, Name: name, WebURL: pending.WebURL, APIURL: pending.APIURL, AppID: conversion.AppID,
 		ReadOnly: pending.ReadOnly,
 		ClientID: conversion.ClientID, Slug: conversion.Slug, RegistrationOwner: conversion.RegistrationOwner,
-		RegistrationOwnerType: conversion.RegistrationOwnerType, WebhookURL: pending.WebhookURL, RelayWebhookID: pending.RelayWebhookID, PrivateNetworkID: pending.PrivateNetworkID,
+		RegistrationOwnerType: conversion.RegistrationOwnerType, WebhookURL: pending.WebhookURL, RelayWebhookID: pending.RelayWebhookID, PrivateNetworkID: pending.PrivateNetworkID, Proxy: pending.Proxy,
 		EncryptedPrivateKey: privateKey, EncryptedWebhookSecret: webhookSecret, State: "needs_installation",
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -657,8 +711,8 @@ func (a *API) githubAppServices(ctx context.Context, id string) (githubEventServ
 	tokenSource := func(ctx context.Context, repository string) (string, error) {
 		return a.eventConfig.GitHubApps.RepositoryToken(ctx, id, repository)
 	}
-	resolver := events.GitHubResolver{BaseURL: connection.APIURL, RepositoryTokenSource: tokenSource}
-	notifier := events.GitHubNotifier{BaseURL: connection.APIURL, RepositoryTokenSource: tokenSource}
+	resolver := events.GitHubResolver{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, RepositoryTokenSource: tokenSource}
+	notifier := events.GitHubNotifier{Client: a.githubAppEventsClient(connection.ID), BaseURL: connection.APIURL, RepositoryTokenSource: tokenSource}
 	services := githubEventServices{
 		events: events.New(a.store, resolver, a.lifecycle, notifier),
 		groups: groups.New(a.store, a.deploy, resolver, notifier, nil),

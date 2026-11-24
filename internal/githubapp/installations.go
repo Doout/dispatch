@@ -43,7 +43,7 @@ func (m *Manager) RepositoryInstallation(ctx context.Context, id, repository str
 		SuspendedAt *time.Time `json:"suspended_at"`
 	}
 	endpoint := strings.TrimRight(connection.APIURL, "/") + "/repos/" + path + "/installation"
-	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &result, connection.PrivateNetworkID); err != nil {
+	if err := m.request(ctx, http.MethodGet, endpoint, jwt, nil, &result, connection); err != nil {
 		if sourceerror.Describe(err).Transient {
 			return 0, fmt.Errorf("find GitHub App installation for %s: %w", repository, err)
 		}

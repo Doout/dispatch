@@ -124,7 +124,7 @@ func (a *API) resolvePreviewSource(ctx context.Context, appID, repository string
 	if a.eventConfig.GitHubToken == "" {
 		return githubapp.PullRequestHead{}, errors.New("GitHub source verification unavailable")
 	}
-	resolver := events.GitHubResolver{BaseURL: a.eventConfig.GitHubAPIURL, Token: a.eventConfig.GitHubToken}
+	resolver := events.GitHubResolver{Client: a.githubEventsHTTP, BaseURL: a.eventConfig.GitHubAPIURL, Token: a.eventConfig.GitHubToken}
 	pr, err := resolver.ResolvePullRequest(ctx, repository, number)
 	if err != nil {
 		return githubapp.PullRequestHead{}, err

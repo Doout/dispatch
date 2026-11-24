@@ -11,6 +11,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/runtimecontract"
 )
 
@@ -41,6 +42,7 @@ type SourceAuthExecutor struct {
 	Vault      *secretcrypto.Vault
 	Resolver   SecretResolver
 	GitHubApps githubAppTokenSource
+	Proxy      *repositoryproxy.Service
 }
 
 func (e SourceAuthExecutor) Deploy(ctx context.Context, deployment core.Deployment, app core.App, server core.Server, progress Progress) error {
@@ -80,6 +82,17 @@ func (e SourceAuthExecutor) Cleanup(ctx context.Context, app core.App, server co
 // Resolve decrypts the application's scoped repository credential into a
 // transient App copy. Callers must never persist or serialize the result.
 func (e SourceAuthExecutor) Resolve(ctx context.Context, app core.App) (core.App, error) {
+	if e.Proxy != nil && repositoryproxy.IsHTTPRepository(app.SourceRepo) {
+		proxyContext := ctx
+		if app.SourceAuthType == SourceAuthGitHubApp {
+			proxyContext = repositoryproxy.WithGitHubApp(ctx, app.SourceCredentialID)
+		}
+		proxyURL, noProxy, err := e.Proxy.Resolve(proxyContext)
+		if err != nil {
+			return app, err
+		}
+		app.SourceProxyURL, app.SourceNoProxy = proxyURL, noProxy
+	}
 	if app.SourceCredentialID == "" {
 		return app, nil
 	}
@@ -141,7 +154,15 @@ func ValidateSourceCredentialType(authType string, secretType core.SecretType) e
 }
 
 func PrepareGitEnvironment(app core.App) ([]string, func(), error) {
-	environment := append([]string{}, os.Environ()...)
+	environment, cleanup, err := prepareGitCredentials(app)
+	if err != nil {
+		return nil, cleanup, err
+	}
+	return repositoryproxy.GitEnvironment(environment, app.SourceProxyURL, app.SourceNoProxy), cleanup, nil
+}
+
+func prepareGitCredentials(app core.App) ([]string, func(), error) {
+	environment := os.Environ()
 	environment = append(environment, "GIT_TERMINAL_PROMPT=0")
 	credential := strings.TrimSpace(app.SourceCredential)
 	if app.SourceAuthType == "" && credential == "" {
@@ -201,7 +222,7 @@ func runGitForApp(ctx context.Context, app core.App, args ...string) error {
 	var output strings.Builder
 	cmd := commandWithEnvironment(ctx, environment, nil, &output, "git", args...)
 	if cmd != nil {
-		detail := strings.TrimSpace(output.String())
+		detail := strings.TrimSpace(repositoryproxy.RedactGitOutput(output.String(), environment))
 		if detail != "" {
 			return fmt.Errorf("%w: %s", cmd, detail)
 		}
