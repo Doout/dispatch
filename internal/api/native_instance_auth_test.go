@@ -127,8 +127,9 @@ func TestInstanceNativeAuthenticationOverOutboundConnection(t *testing.T) {
 		}
 	}
 	exchanges := 0
-	original := http.DefaultTransport
-	http.DefaultTransport = hostedOAuthTransport(func(r *http.Request) (*http.Response, error) {
+	oauthClient := *a.githubHTTP
+	original := oauthClient.Transport
+	oauthClient.Transport = hostedOAuthTransport(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Host != "github.example.test" {
 			return original.RoundTrip(r)
 		}
@@ -149,7 +150,7 @@ func TestInstanceNativeAuthenticationOverOutboundConnection(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})
-	t.Cleanup(func() { http.DefaultTransport = original })
+	a.githubHTTP = &oauthClient
 	start := func() (string, *http.Cookie) {
 		t.Helper()
 		w := call("POST", "/api/v1/auth/providers/github/start", "{}")
