@@ -73,7 +73,7 @@ The installer requires the selected Docker engine to match `--docker-socket`. If
 
 Copy optional settings into the managed installation with `--env-file`. Each line is a literal `KEY=value` entry; do not add shell quotes or variable substitutions. The file is copied with mode `0600` and can be edited at `/opt/dispatch/dispatch.env` afterward. It can contain administrator credentials, provider credentials, and other controller settings.
 
-For outbound GitHub traffic through a forward proxy, add `HTTPS_PROXY=http://proxy.example.com:3128` to that file. Set `HTTP_PROXY` for other HTTP destinations and `NO_PROXY` for hosts and domains the controller should reach directly. Apply the changes to an existing install with `sudo dispatch recover`.
+Configure a [GitHub App proxy](../README.md#github-app-proxy) in the controller UI. Workers receive the saved route when Dispatch prepares a repository checkout. If an older Compose installation uses `.env.proxy`, copy the proxy URL and bypass list into the UI before recreating the controller.
 
 The managed controller uses SQLite in its data volume. The installer fixes the database location, master-key path, Docker socket, listener, executor, repository-cache location, and public URL so the upgrade backup includes the database and encryption key. These values override entries in the environment file. External PostgreSQL installations are not managed by this installer.
 

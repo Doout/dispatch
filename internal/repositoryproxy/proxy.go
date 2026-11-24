@@ -133,24 +133,6 @@ func (s *Service) resolveSettings(settings core.RepositoryProxySettings, appID s
 	return scheme + "://" + string(userinfo) + "@" + host, settings.NoProxy, nil
 }
 
-type githubAppTransport struct {
-	base  http.RoundTripper
-	appID string
-}
-
-func (t githubAppTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	return t.base.RoundTrip(request.WithContext(WithGitHubApp(request.Context(), t.appID)))
-}
-
-func ClientForGitHubApp(base *http.Client, appID string) *http.Client {
-	if base == nil || base.Transport == nil || appID == "" {
-		return base
-	}
-	client := *base
-	client.Transport = githubAppTransport{base: base.Transport, appID: appID}
-	return &client
-}
-
 func (s *Service) Transport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = func(request *http.Request) (*url.URL, error) {
@@ -194,8 +176,8 @@ func (s *Service) Route(request *http.Request) (*http.Request, bool, error) {
 	return request.WithContext(context.WithValue(request.Context(), requestProxyKey{}, selectProxy)), true, nil
 }
 
-func GitEnvironment(environment []string, proxyURL, noProxy string) []string {
-	if proxyURL == "" {
+func GitEnvironment(environment []string, repository, proxyURL, noProxy string) []string {
+	if proxyURL == "" || !IsHTTPRepository(repository) {
 		return environment
 	}
 	environment = append(environment, "HTTP_PROXY="+proxyURL, "HTTPS_PROXY="+proxyURL, "NO_PROXY="+noProxy,
@@ -206,14 +188,20 @@ func GitEnvironment(environment []string, proxyURL, noProxy string) []string {
 		if ok {
 			var err error
 			count, err = strconv.Atoi(value)
-			if err != nil || count < 0 || count == math.MaxInt {
+			if err != nil || count < 0 || count > math.MaxInt-2 {
 				return environment
 			}
 			break
 		}
 	}
-	index := strconv.Itoa(count)
-	return append(environment, "GIT_CONFIG_COUNT="+strconv.Itoa(count+1), "GIT_CONFIG_KEY_"+index+"=http.proxy", "GIT_CONFIG_VALUE_"+index+"="+proxyURL)
+	// URL-specific settings win over http.proxy, and fetching a named remote
+	// also consults remote.<name>.proxy. Dispatch fetches from origin.
+	for _, key := range []string{"http." + repository + ".proxy", "remote.origin.proxy"} {
+		index := strconv.Itoa(count)
+		environment = append(environment, "GIT_CONFIG_KEY_"+index+"="+key, "GIT_CONFIG_VALUE_"+index+"="+proxyURL)
+		count++
+	}
+	return append(environment, "GIT_CONFIG_COUNT="+strconv.Itoa(count))
 }
 
 func IsHTTPRepository(repository string) bool {

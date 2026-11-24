@@ -181,7 +181,7 @@ spec:
       connection: charts-reader
 ```
 
-For a source override, a short repository name uses the selected App's GitHub host. An HTTPS URL must match that host. Dispatch records the resolved connection and commit for the run and uses that connection for source checkout and Helm inputs. PR comments, links, and reports use the GitHub App selected on the preview trigger. Offline `doodship` continues to use local checkouts.
+For a source using a GitHub App, a short repository name uses the App's GitHub host. An HTTPS URL must match that host, including when the source inherits its App. An override pins the connection and commit for the run. Dispatch uses the App's saved proxy for source checkout and Helm inputs. PR comments, links, and reports use the GitHub App selected on the preview trigger. Offline `doodship` continues to use local checkouts.
 
 ### Docker builders
 

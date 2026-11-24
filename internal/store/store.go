@@ -13,6 +13,13 @@ type AdminCredential struct {
 	CreatedAt    time.Time
 }
 
+// GitHubAppProxyEdit selects the fields from the connection to update.
+// Replacing the address also replaces its encrypted credentials.
+type GitHubAppProxyEdit struct {
+	Address bool
+	Bypass  bool
+}
+
 type Store interface {
 	WorkflowCheckStore
 	ListWorkflowJobSummaries(context.Context, string) ([]core.WorkflowJobResult, error)
@@ -151,7 +158,7 @@ type Store interface {
 	GetEdgeJob(context.Context, string) (core.EdgeJob, error)
 	DeleteEdgeJob(context.Context, string) error
 	CreateGitHubApp(context.Context, core.GitHubAppConnection) error
-	UpdateGitHubApp(context.Context, core.GitHubAppConnection, ...core.RepositoryProxySettings) error
+	UpdateGitHubApp(context.Context, core.GitHubAppConnection, *GitHubAppProxyEdit) error
 	DeleteGitHubApp(context.Context, string) error
 	ListGitHubApps(context.Context) ([]core.GitHubAppConnection, error)
 	GetGitHubApp(context.Context, string) (core.GitHubAppConnection, error)

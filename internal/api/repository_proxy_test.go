@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,9 +16,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/edge"
 )
 
 func TestGitHubAppProxyIsScopedToTheConnection(t *testing.T) {
@@ -108,6 +111,69 @@ func TestGitHubAppProxyIsScopedToTheConnection(t *testing.T) {
 	}
 	serviceRequestTest(t, a, http.MethodPut, endpoint, map[string]any{"proxy": map[string]string{"url": ""}}, http.StatusOK)
 	check(client, "controller")
+}
+
+func TestAppEventsUseEdgeForProxyBypass(t *testing.T) {
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{Vault: webhookTestVault(t)})
+	defer cleanup()
+	a := handler.(*API)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	now := time.Now().UTC()
+	node := core.PrivateNetwork{ID: "github-edge", Name: "GitHub edge", Driver: edge.DriverAgent, State: "ready", CreatedAt: now, UpdatedAt: now}
+	if err := a.store.CreatePrivateNetwork(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	app := core.GitHubAppConnection{ID: "scoped", Name: "GitHub", PrivateNetworkID: node.ID,
+		Proxy: core.RepositoryProxySettings{URL: "http://127.0.0.1:1", NoProxy: ".internal.test"}, CreatedAt: now, UpdatedAt: now}
+	if err := a.store.CreateGitHubApp(ctx, app); err != nil {
+		t.Fatal(err)
+	}
+
+	const endpoint = "https://github.internal.test/api/v3/repos/org/repo/pulls"
+	done := make(chan error, 1)
+	go func() {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err == nil {
+			var response *http.Response
+			response, err = a.githubAppEventsClient(app.ID).Do(request)
+			if err == nil {
+				response.Body.Close()
+				if response.StatusCode != http.StatusNoContent {
+					err = fmt.Errorf("unexpected edge status %d", response.StatusCode)
+				}
+			}
+		}
+		done <- err
+	}()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("GitHub request finished before the edge took the job: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+			job, err := a.edge.Lease(ctx, node.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if job == nil {
+				continue
+			}
+			if job.Request.URL != endpoint || job.Request.Method != http.MethodGet {
+				t.Fatalf("unexpected edge request: %s %s", job.Request.Method, job.Request.URL)
+			}
+			if err := a.edge.Complete(ctx, node.ID, job.ID, edge.Completion{LeaseToken: job.LeaseToken, Response: &edge.HTTPResponse{StatusCode: http.StatusNoContent}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
 }
 
 func TestRepositoryProxySettingsRouteGitHubAndProtectCredentials(t *testing.T) {

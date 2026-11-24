@@ -12,7 +12,6 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/doout/dispatch/internal/core"
-	"github.com/doout/dispatch/internal/repositoryproxy"
 )
 
 type LogWorkflowRun struct {
@@ -137,7 +136,9 @@ func (m *Manager) VerifyLogWorkflowToken(ctx context.Context, r core.WorkflowChe
 	provider := m.logOIDC.keys[key]
 	m.logOIDC.mu.Unlock()
 	if provider == nil {
-		client := &http.Client{Timeout: 15 * time.Second, Transport: logOIDCTransport{manager: m, appID: connection.ID, network: connection.PrivateNetworkID, host: strings.TrimPrefix(issuer, "https://")}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client := m.ClientForApp(connection.ID, 15*time.Second)
+		client.Transport = logOIDCTransport{base: client.Transport, host: strings.TrimPrefix(issuer, "https://")}
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		// The key cache must outlive the first incoming request's cancellation.
 		clientContext := oidc.ClientContext(context.Background(), client)
 		discovery, cancel := context.WithTimeout(clientContext, 15*time.Second)
@@ -172,8 +173,8 @@ func (m *Manager) VerifyLogWorkflowToken(ctx context.Context, r core.WorkflowChe
 }
 
 type logOIDCTransport struct {
-	manager              *Manager
-	appID, network, host string
+	base http.RoundTripper
+	host string
 }
 
 func (t logOIDCTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -181,30 +182,5 @@ func (t logOIDCTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.URL.Scheme != "https" || r.URL.Host != u.Host {
 		return nil, errors.New("GitHub identity discovery changed host")
 	}
-	r = r.WithContext(repositoryproxy.WithGitHubApp(r.Context(), t.appID))
-	useEdge := t.network != ""
-	if useEdge && t.manager.Proxy != nil {
-		var proxied bool
-		var err error
-		r, proxied, err = t.manager.Proxy.Route(r)
-		if err != nil {
-			return nil, err
-		}
-		useEdge = !proxied
-	}
-	if useEdge {
-		if t.manager.Edge == nil {
-			return nil, errors.New("GitHub network route is unavailable")
-		}
-		network, err := t.manager.Store.GetPrivateNetwork(r.Context(), t.network)
-		if err != nil {
-			return nil, err
-		}
-		return t.manager.Edge.Do(r.Context(), network, r)
-	}
-	client := t.manager.Client
-	if client != nil && client.Transport != nil {
-		return client.Transport.RoundTrip(r)
-	}
-	return http.DefaultTransport.RoundTrip(r)
+	return t.base.RoundTrip(r)
 }

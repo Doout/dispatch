@@ -253,7 +253,7 @@ func TestBrokerServiceProvisionOwnershipAndEncryptedOutputs(t *testing.T) {
 }
 
 func TestRuntimeRequestPreservesSourceProxy(t *testing.T) {
-	app := core.App{SourceProxyURL: "http://proxy-user:fixture-pass@proxy.example.test:3128", SourceNoProxy: ".internal.test"}
+	app := core.App{BuildType: core.BuildTypeDockerfile, SourceRepo: "https://github.example.test/team/project.git", SourceProxyURL: "http://proxy-user:fixture-pass@proxy.example.test:3128", SourceNoProxy: ".internal.test"}
 	request := NewRequest(runtimecontract.Deploy, core.Deployment{}, app, core.Server{})
 	data, err := json.Marshal(request)
 	if err != nil {
@@ -269,5 +269,21 @@ func TestRuntimeRequestPreservesSourceProxy(t *testing.T) {
 	}
 	if strings.Contains(received.Redact("connection failed via "+app.SourceProxyURL), "fixture-pass") {
 		t.Fatal("runtime output exposed proxy credentials")
+	}
+}
+
+func TestRuntimeRequestOmitsSourceCredentialsForOperationsWithoutCheckout(t *testing.T) {
+	app := core.App{
+		BuildType: core.BuildTypeCompose, SourceRepo: "https://github.example.test/team/project.git",
+		SourceCredential: "source-token", SourceProxyURL: "http://user:fixture-pass@proxy.example.test:3128", SourceNoProxy: ".internal.test",
+	}
+	for _, op := range []runtimecontract.Operation{runtimecontract.Destroy, runtimecontract.Rollback, runtimecontract.Inspect, runtimecontract.Logs, runtimecontract.Start, runtimecontract.Stop, runtimecontract.Deploy} {
+		if op == runtimecontract.Deploy {
+			app.ComposeContent = "services: {}"
+		}
+		request := NewRequest(op, core.Deployment{}, app, core.Server{})
+		if request.Inputs.SourceProxyURL != "" || request.Inputs.SourceNoProxy != "" || request.Inputs.SourceCredential != "" {
+			t.Errorf("%s carried unused repository credentials or proxy settings", op)
+		}
 	}
 }

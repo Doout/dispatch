@@ -460,19 +460,22 @@ func (s *SQLStore) CreateGitHubApp(ctx context.Context, item core.GitHubAppConne
 	return err
 }
 
-func (s *SQLStore) UpdateGitHubApp(ctx context.Context, item core.GitHubAppConnection, proxy ...core.RepositoryProxySettings) error {
-	var settings core.RepositoryProxySettings
-	updateProxy := len(proxy) > 0
-	if updateProxy {
-		settings = proxy[0]
+func (s *SQLStore) UpdateGitHubApp(ctx context.Context, item core.GitHubAppConnection, edit *GitHubAppProxyEdit) error {
+	var address, userinfo, bypass *string
+	if edit != nil && edit.Address {
+		address, userinfo = &item.Proxy.URL, &item.Proxy.EncryptedUserinfo
+	}
+	if edit != nil && edit.Bypass {
+		bypass = &item.Proxy.NoProxy
 	}
 	result, err := s.db.ExecContext(ctx, s.q(`UPDATE github_apps SET name=?,web_url=?,api_url=?,app_id=?,client_id=?,slug=?,
 		registration_owner=?,registration_owner_type=?,installation_id=?,installation_account=?,installation_url=?,webhook_url=?,relay_webhook_id=?,private_network_id=?,encrypted_private_key=?,encrypted_webhook_secret=?,state=?,
-		last_verified_at=?,updated_at=?,read_only=?,proxy_url=CASE WHEN ? THEN ? ELSE proxy_url END,no_proxy=CASE WHEN ? THEN ? ELSE no_proxy END,
-		proxy_userinfo=CASE WHEN ? THEN ? ELSE proxy_userinfo END WHERE id=?`), item.Name, item.WebURL, item.APIURL, item.AppID, item.ClientID,
+		last_verified_at=?,updated_at=?,read_only=?,proxy_url=COALESCE(?,proxy_url),
+		no_proxy=CASE WHEN COALESCE(?,proxy_url)='' THEN '' ELSE COALESCE(?,no_proxy) END,
+		proxy_userinfo=COALESCE(?,proxy_userinfo) WHERE id=?`), item.Name, item.WebURL, item.APIURL, item.AppID, item.ClientID,
 		item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL, item.RelayWebhookID, item.PrivateNetworkID, item.EncryptedPrivateKey,
 		item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ReadOnly,
-		updateProxy, settings.URL, updateProxy, settings.NoProxy, updateProxy, settings.EncryptedUserinfo, item.ID)
+		address, address, bypass, userinfo, item.ID)
 	return changed(result, err)
 }
 

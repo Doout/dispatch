@@ -31,6 +31,46 @@ func TestWorkflowPreviewReportListsDeployedSourcesAndImages(t *testing.T) {
 	}
 }
 
+func TestWorkflowPreviewReportRejectsReadOnlyApp(t *testing.T) {
+	f := newFeedbackFixture(t)
+	ctx := t.Context()
+	app, err := f.a.store.GetGitHubApp(ctx, "qa-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.ReadOnly = true
+	if err := f.a.store.UpdateGitHubApp(ctx, app, nil); err != nil {
+		t.Fatal(err)
+	}
+	f.revision.State = "succeeded"
+	f.revision.Sources = map[string]core.WorkflowSourceRevision{"service": {Repository: "example/service"}}
+	if err := f.a.store.UpdateWorkflowRevision(ctx, f.revision); err != nil {
+		t.Fatal(err)
+	}
+	f.a.eventConfig.GitHubToken = "operator-fixture"
+	response := serviceRequestTest(t, f.a, http.MethodPost, "/api/v1/workflow/revisions/"+f.revision.ID+"/preview-report",
+		workflowPreviewReportRequest{GitHubAppID: app.ID, Repository: "example/service", PullRequestNumber: 42, URL: "https://preview.example.test"}, http.StatusConflict)
+	if !strings.Contains(string(response), "Read-only GitHub App") {
+		t.Fatalf("expected read-only App rejection, got %s", response)
+	}
+}
+
+func TestPreviewCommentFallbackTokenIsScopedToTheAPIEndpoint(t *testing.T) {
+	controller := &API{eventConfig: EventConfig{GitHubToken: "operator-fixture"}}
+	enterprise := core.GitHubAppConnection{APIURL: "https://github.internal.test/api/v3"}
+	if token := controller.previewCommentFallbackToken(enterprise); token != "" {
+		t.Fatal("GitHub.com token available to an Enterprise connection")
+	}
+	controller.eventConfig.GitHubAPIURL = enterprise.APIURL + "/"
+	if token := controller.previewCommentFallbackToken(enterprise); token != "operator-fixture" {
+		t.Fatal("missing fallback for the configured API")
+	}
+	enterprise.ReadOnly = true
+	if token := controller.previewCommentFallbackToken(enterprise); token != "" {
+		t.Fatal("controller write token available to a read-only App")
+	}
+}
+
 func TestWorkflowPreviewFallbackUpdatesExistingComment(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

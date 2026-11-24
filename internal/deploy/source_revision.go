@@ -39,7 +39,7 @@ func (s *Service) ConfigureHostedSourceResolution(auth SourceAuthExecutor) {
 
 func (s *Service) configureSourceResolution(auth SourceAuthExecutor, isolated bool) {
 	s.resolveRevision = func(ctx context.Context, app core.App, revision string) (string, error) {
-		if app.BuildType == core.BuildTypeCompose && strings.TrimSpace(app.ComposeContent) != "" {
+		if app.HasInlineCompose() {
 			return "inline", nil
 		}
 		if app.BuildType == core.BuildTypeHelm && !gitBackedHelmChart(app) {

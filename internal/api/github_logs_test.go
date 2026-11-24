@@ -46,7 +46,7 @@ func TestGitHubLogEndpointScopesFullLogsToTheAcceptedWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	connection.APIURL = provider.URL + "/api/v3"
-	if err := f.a.store.UpdateGitHubApp(ctx, connection); err != nil {
+	if err := f.a.store.UpdateGitHubApp(ctx, connection, nil); err != nil {
 		t.Fatal(err)
 	}
 	f.a.eventConfig.GitHubApps.Client = provider.Client()

@@ -790,7 +790,6 @@ func (m *Manager) appJWT(connection core.GitHubAppConnection) (string, error) {
 func rawURL(value []byte) string { return base64.RawURLEncoding.EncodeToString(value) }
 
 func (m *Manager) request(ctx context.Context, method, endpoint, token string, body interface{}, output interface{}, connection core.GitHubAppConnection) error {
-	ctx = repositoryproxy.WithGitHubAppConnection(ctx, connection)
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -813,33 +812,7 @@ func (m *Manager) request(ctx context.Context, method, endpoint, token string, b
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	var response *http.Response
-	privateNetworkID := strings.TrimSpace(connection.PrivateNetworkID)
-	useEdge := privateNetworkID != ""
-	if useEdge && m.Proxy != nil {
-		var proxied bool
-		request, proxied, err = m.Proxy.Route(request)
-		if err != nil {
-			return err
-		}
-		useEdge = !proxied
-	}
-	if useEdge {
-		if m.Store == nil || m.Edge == nil {
-			return errors.New("GitHub edge routing is not configured")
-		}
-		network, loadErr := m.Store.GetPrivateNetwork(ctx, privateNetworkID)
-		if loadErr != nil {
-			return fmt.Errorf("load GitHub network route: %w", loadErr)
-		}
-		response, err = m.Edge.Do(ctx, network, request)
-	} else {
-		client := m.Client
-		if client == nil {
-			client = &http.Client{Timeout: 15 * time.Second}
-		}
-		response, err = client.Do(request)
-	}
+	response, err := m.routedClient(appTransport{connection: &connection}).Do(request)
 	if err != nil {
 		return err
 	}

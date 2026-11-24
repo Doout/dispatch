@@ -20,6 +20,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 )
 
 type testStore struct{ connection core.GitHubAppConnection }
@@ -29,6 +30,27 @@ func (s testStore) GetGitHubApp(context.Context, string) (core.GitHubAppConnecti
 }
 func (s testStore) GetPrivateNetwork(context.Context, string) (core.PrivateNetwork, error) {
 	return core.PrivateNetwork{}, errors.New("not configured")
+}
+
+func TestManifestRedirectRechecksAppRoute(t *testing.T) {
+	connection := core.GitHubAppConnection{ID: "pending", APIURL: "https://github.example.test", PrivateNetworkID: "private-edge",
+		Proxy: core.RepositoryProxySettings{URL: "http://proxy.example.test", NoProxy: ".internal.test"}}
+	manager := New(testStore{}, nil)
+	manager.Proxy = &repositoryproxy.Service{}
+	redirects := 0
+	manager.Client = &http.Client{
+		Transport: logTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host != "github.example.test" {
+				t.Fatalf("bypassed host reached the direct transport: %s", r.URL)
+			}
+			return &http.Response{StatusCode: http.StatusTemporaryRedirect, Header: http.Header{"Location": {"https://github.internal.test/converted"}}, Body: http.NoBody}, nil
+		}),
+		CheckRedirect: func(*http.Request, []*http.Request) error { redirects++; return nil },
+	}
+	_, err := manager.ConvertAppManifest(t.Context(), connection, "fixture")
+	if err == nil || !strings.Contains(err.Error(), "edge routing is not configured") || redirects != 1 {
+		t.Fatalf("redirect did not require the selected edge: redirects=%d, error=%v", redirects, err)
+	}
 }
 
 func TestNormalizeEndpoints(t *testing.T) {

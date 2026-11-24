@@ -103,7 +103,11 @@ type Completion struct {
 }
 
 func NewRequest(op runtimecontract.Operation, d core.Deployment, app core.App, server core.Server) Request {
-	inputs := Inputs{ComposeContent: app.ComposeContent, SourceCredential: app.SourceCredential, SourceProxyURL: app.SourceProxyURL, SourceNoProxy: app.SourceNoProxy, Services: app.ServiceRuntime}
+	inputs := Inputs{ComposeContent: app.ComposeContent, Services: app.ServiceRuntime}
+	if op == runtimecontract.Deploy && !app.HasInlineCompose() {
+		inputs.SourceCredential, inputs.SourceProxyURL, inputs.SourceNoProxy = app.SourceCredential, app.SourceProxyURL, app.SourceNoProxy
+	}
+	app.SourceCredential, app.SourceProxyURL, app.SourceNoProxy = "", "", ""
 	if server.Routing != nil && server.Routing.Hosted != nil && app.Generated && len(app.HelmProvenance.PullRequests) > 0 {
 		provenance := app.HelmProvenance
 		inputs.RoutingProvenance = &provenance

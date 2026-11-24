@@ -196,7 +196,7 @@ func previewPanelFixture(t *testing.T) (*API, *panelGitHubFixture, core.Workflow
 	connection.AppID = 42
 	connection.EncryptedPrivateKey = encryptedKey
 	connection.EncryptedWebhookSecret = encryptedSecret
-	if err := data.UpdateGitHubApp(ctx, connection); err != nil {
+	if err := data.UpdateGitHubApp(ctx, connection, nil); err != nil {
 		t.Fatal(err)
 	}
 	a.eventConfig.GitHubApps = manager

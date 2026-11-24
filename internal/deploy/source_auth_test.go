@@ -11,6 +11,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/runtimecontract"
 )
 
 type staticSecretReader struct{ secret core.Secret }
@@ -105,5 +106,33 @@ func TestGitBackedHelmChartValidationRejectsTraversal(t *testing.T) {
 	app := core.App{SourceRepo: "https://github.com/example/charts.git", HelmChart: "../private", BuildType: core.BuildTypeHelm}
 	if err := ValidateHelmTarget(app, server); err == nil || !strings.Contains(err.Error(), "escapes repository") {
 		t.Fatalf("expected chart traversal rejection, got %v", err)
+	}
+}
+
+type remoteCleanupCapture struct{ captureExecutor }
+
+func (*remoteCleanupCapture) RuntimeCapabilities(core.App, core.Server) runtimecontract.Manifest {
+	return runtimecontract.Describe("docker-agent", "outbound", runtimecontract.Destroy)
+}
+
+func TestAgentCleanupWorksWhenGitHubAppIsUnavailable(t *testing.T) {
+	cleaner := &remoteCleanupCapture{}
+	executor := SourceAuthExecutor{Next: cleaner}
+	app := core.App{SourceAuthType: SourceAuthGitHubApp, SourceCredentialID: "removed-app"}
+	if err := executor.Cleanup(t.Context(), app, core.Server{}, func(core.DeploymentState, string) error { return nil }); err != nil || !cleaner.cleanedUp {
+		t.Fatalf("agent cleanup did not run: %v", err)
+	}
+}
+
+func TestInlineComposeOnlyResolvesGitHubAppForHooks(t *testing.T) {
+	next := &sourceCaptureExecutor{}
+	executor := SourceAuthExecutor{Next: next}
+	app := core.App{BuildType: core.BuildTypeCompose, ComposeContent: "services: {}", SourceRepo: "https://github.example.test/team/project.git", SourceAuthType: SourceAuthGitHubApp, SourceCredentialID: "missing-app"}
+	if err := executor.Deploy(t.Context(), core.Deployment{}, app, core.Server{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	app.PreDeployHook = "./prepare.sh"
+	if err := executor.Deploy(t.Context(), core.Deployment{}, app, core.Server{}, nil); err == nil {
+		t.Fatal("hook checkout skipped source credential resolution")
 	}
 }
