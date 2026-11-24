@@ -23,7 +23,6 @@ import (
 	"github.com/doout/dispatch/internal/instanceconnection"
 	"github.com/doout/dispatch/internal/observe"
 	"github.com/doout/dispatch/internal/openshift"
-	"github.com/doout/dispatch/internal/publichttp"
 	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
@@ -128,17 +127,15 @@ func New(data store.Store, deployments *deploy.Service, demo bool, auth AuthConf
 		eventConfig.SecretResolver.Edge = eventConfig.Edge
 	}
 	repositoryProxy := &repositoryproxy.Service{Store: data, Vault: eventConfig.Vault}
-	githubTransport := publichttp.Transport()
+	var githubTransport http.RoundTripper
 	if auth.Hosted == nil {
 		githubTransport = repositoryProxy.Transport()
 	}
 	githubHTTP := &http.Client{Transport: githubTransport, Timeout: 15 * time.Second}
 	githubEventsHTTP := &http.Client{Transport: githubTransport, Timeout: 10 * time.Second}
-	if eventConfig.GitHubApps != nil && eventConfig.GitHubApps.Client == nil {
+	if auth.Hosted == nil && eventConfig.GitHubApps != nil && eventConfig.GitHubApps.Client == nil {
 		eventConfig.GitHubApps.Client = githubHTTP
-		if auth.Hosted == nil {
-			eventConfig.GitHubApps.Proxy = repositoryProxy
-		}
+		eventConfig.GitHubApps.Proxy = repositoryProxy
 	}
 	var resolver events.PullRequestResolver
 	var groupResolver groups.Resolver
@@ -222,6 +219,18 @@ func (a *API) sourceAuth() deploy.SourceAuthExecutor {
 		auth.GitHubApps = a.eventConfig.GitHubApps
 	}
 	return auth
+}
+
+func (a *API) githubAuthClient(timeout time.Duration) *http.Client {
+	if a.githubHTTP == nil {
+		return &http.Client{Timeout: timeout}
+	}
+	if a.githubHTTP.Timeout == timeout {
+		return a.githubHTTP
+	}
+	client := *a.githubHTTP
+	client.Timeout = timeout
+	return &client
 }
 
 func (a *API) githubAppClient(id string) *http.Client {

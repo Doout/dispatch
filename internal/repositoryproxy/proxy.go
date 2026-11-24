@@ -143,7 +143,7 @@ func (t githubAppTransport) RoundTrip(request *http.Request) (*http.Response, er
 }
 
 func ClientForGitHubApp(base *http.Client, appID string) *http.Client {
-	if base == nil || appID == "" {
+	if base == nil || base.Transport == nil || appID == "" {
 		return base
 	}
 	client := *base
