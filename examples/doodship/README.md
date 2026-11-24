@@ -61,7 +61,18 @@ doodship workflow run --file deployment/slot1.yaml
 doodship workflow run --file deployment/templates/preview.yaml --pr 142 --source service=../service-pr-142
 ```
 
-- **Sources.** Doodship matches Git origins to the workflow's repository names. Keep clones together under one parent directory, named after the repositories, or supply repeated `--source alias=/path/to/clone` flags. Slots use each source's declared branch or ref, even when your working tree is on another branch. Git resolves local commits, tags and branches, including cached origin branches. Have all required commits, scripts and chart dependencies available locally before disconnecting.
+To fetch the workflow sources from GitHub Enterprise using your laptop’s Git credentials, run:
+
+```sh
+doodship workflow run --file deployment/templates/preview.yaml --pr 142 \
+  --pr-source service --clone ssh --git-host github.ibm.com --dry-run
+```
+
+Use `--clone https` for Git over HTTPS, or `--clone http` for a plain HTTP server. For a slot, use the same clone options without `--pr` or `--pr-source`. The host defaults to `github.com` for `owner/repo` names. A full repository URL supplies its own host. Git uses your SSH agent or configured credential helper.
+
+Clone mode fetches each source into a temporary directory for that run, including during a dry-run. A PR uses GitHub’s `refs/pull/NUMBER/head` for the selected repository. Other sources use their declared branch or ref. With one watched source the selection is automatic. Supply `--source alias=/path/to/checkout` to use a local copy for that alias. A local PR checkout supplies its committed HEAD. `--list-inputs` alone reads the YAML without fetching anything.
+
+- **Offline sources.** Doodship matches Git origins to the workflow's repository names. Keep clones together under one parent directory, named after the repositories, or supply repeated `--source alias=/path/to/clone` flags. Slots use each source's declared branch or ref, even when your working tree is on another branch. Git resolves local commits, tags and branches, including cached origin branches. Have all required commits, scripts and chart dependencies available locally before disconnecting.
 - **PR revisions.** Supply a checkout at the intended PR commit for a watched alias. Doodship uses its committed HEAD. From a watched repository, your current checkout can supply the PR revision. Other sources use their configured refs. Supplying two watched checkouts links both HEADs. Doodship prints the SHAs so you can check what you are deploying. Uncommitted edits are excluded.
 - **Targets.** A stage's `targetRef` names its kube context. If the laptop uses another name, pass `--target dev-005=my-context`. Doodship checks access before running build jobs. Slot runs install or upgrade the named Helm release. Preview runs label their releases. If a preview name is already owned elsewhere, supply a distinct instance ID, for example `--pr 142 --instance 142-local`.
 - **Variables and secrets.** Bindings use their YAML `secretRef` names. Doodship reads `--var NAME=value` for ordinary values, then `--env-file FILE`, then the environment. An env file contains literal `NAME=value` lines, without shell expansion or quote processing. Keep secret values in the environment or a private file. On a terminal, missing values prompt once with input hidden. `--non-interactive` lists missing names and exits before running a job. Each job receives its own declared bindings and the local tool settings it needs.

@@ -1,4 +1,4 @@
-// doodship runs a trusted workflow from local Git checkouts.
+// doodship runs trusted workflows on the local machine.
 package main
 
 import (
@@ -20,13 +20,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const workflowUsage = "Usage: doodship workflow run --file FILE [--pr NUMBER] [--source alias=checkout] [--target ref=context]"
+const workflowUsage = "Usage: doodship workflow run --file FILE [--pr NUMBER] [--source alias=checkout] [--clone ssh|https|http] [--target ref=context]"
 
 const updateUsage = "Usage: doodship update"
 const usage = workflowUsage + "\n" + updateUsage
 
 type options struct {
 	file, envFile, envExample, instance string
+	cloneProtocol, gitHost, prSource    string
 	pr                                  int
 	sources, targets, vars              map[string]string
 	plan, listInputs, nonInteractive    bool
@@ -92,6 +93,9 @@ func run(ctx context.Context, args []string, out, log io.Writer) error {
 	flags.IntVar(&o.pr, "pr", 0, "PR number for a WorkflowTemplate")
 	flags.StringVar(&o.instance, "instance", "", "Preview instance ID (defaults to the PR number)")
 	flags.Func("source", "alias=local Git checkout (repeatable)", mapping(o.sources))
+	flags.StringVar(&o.cloneProtocol, "clone", "", "Fetch sources into the run directory using ssh, https, or http (local-only by default)")
+	flags.StringVar(&o.gitHost, "git-host", "", "Host for owner/repository sources with --clone (defaults to github.com)")
+	flags.StringVar(&o.prSource, "pr-source", "", "Watched alias that owns --pr when cloning a multi-source preview")
 	flags.Func("target", "targetRef=kube-context (defaults to targetRef)", mapping(o.targets))
 	flags.Func("var", "name=value for a declared nonsecret binding", mapping(o.vars))
 	flags.StringVar(&o.envFile, "env-file", "", "Local file of literal NAME=value bindings")
@@ -111,6 +115,18 @@ func run(ctx context.Context, args []string, out, log io.Writer) error {
 	}
 	if o.envExample != "" && !o.listInputs {
 		return errors.New("--write-env-example requires --list-inputs")
+	}
+	switch o.cloneProtocol {
+	case "":
+		if o.gitHost != "" || o.prSource != "" {
+			return errors.New("--git-host and --pr-source require --clone")
+		}
+	case "ssh", "https", "http":
+	default:
+		return errors.New("--clone must be ssh, https, or http")
+	}
+	if o.prSource != "" && o.pr <= 0 {
+		return errors.New("--pr-source requires --pr NUMBER")
 	}
 	doc, watch, err := load(o)
 	if err != nil {

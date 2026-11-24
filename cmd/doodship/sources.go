@@ -24,8 +24,12 @@ type checkout struct {
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitWithProtocol(ctx, dir, "file", args...)
+}
+
+func gitWithProtocol(ctx context.Context, dir, protocol string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_ALLOW_PROTOCOL=file", "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1")
+	cmd.Env = append(os.Environ(), "GIT_ALLOW_PROTOCOL="+protocol, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1")
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(b)))
@@ -81,33 +85,53 @@ func (r *runner) prepareSources(ctx context.Context, watch []string) error {
 			roots = append(roots, root)
 		}
 	}
+	remotePR, err := r.clonePRAlias(watch, explicitPR)
+	if err != nil {
+		return err
+	}
 	r.sources = map[string]checkout{}
 	pinnedPR := false
 	for _, alias := range slices.Sorted(maps.Keys(r.doc.Spec.Sources)) {
 		spec := r.doc.Spec.Sources[alias]
 		ref := wf.SourceRevisionRef(spec)
 		dir, explicit := r.o.sources[alias]
-		if explicit {
-			dir = repoRoot(ctx, dir)
+		lookupRef := ref
+		cloned := r.o.cloneProtocol != "" && !explicit
+		if cloned {
+			if alias == remotePR {
+				ref = fmt.Sprintf("refs/pull/%d/head", r.o.pr)
+				pinnedPR = true
+			}
+			dir, err = r.cloneSource(ctx, alias, spec.Repository, ref)
+			if err != nil {
+				return fmt.Errorf("source %s: %w", alias, err)
+			}
+			lookupRef = "HEAD"
 		} else {
-			dir = discover(ctx, spec.Repository, roots)
+			if explicit {
+				dir = repoRoot(ctx, dir)
+			} else {
+				dir = discover(ctx, spec.Repository, roots)
+			}
+			if dir == "" {
+				return fmt.Errorf("missing local checkout for %s (%s); supply --source %s=/path/to/checkout or use --clone https", alias, spec.Repository, alias)
+			}
+			isWatched := len(watch) == 0 || slices.Contains(watch, alias)
+			if r.o.pr > 0 && isWatched && (r.o.prSource == "" || r.o.prSource == alias) && (explicit || !explicitPR && dir == workingRepo) {
+				ref = "HEAD"
+				lookupRef = ref
+				pinnedPR = true
+			}
 		}
-		if dir == "" {
-			return fmt.Errorf("missing local checkout for %s (%s); supply --source %s=/path/to/checkout", alias, spec.Repository, alias)
-		}
-		if r.o.pr > 0 && (len(watch) == 0 || slices.Contains(watch, alias)) && (explicit || !explicitPR && dir == workingRepo) {
-			ref = "HEAD"
-			pinnedPR = true
-		}
-		sha, err := git(ctx, dir, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
-		if err != nil && ref != "HEAD" {
+		sha, err := git(ctx, dir, "rev-parse", "--verify", "--end-of-options", lookupRef+"^{commit}")
+		if err != nil && lookupRef != "HEAD" {
 			sha, err = git(ctx, dir, "rev-parse", "--verify", "--end-of-options", "refs/remotes/origin/"+ref+"^{commit}")
 		}
 		if err != nil {
 			return fmt.Errorf("source %s: ref %s is unavailable locally: %w", alias, ref, err)
 		}
 		branch := ref
-		if ref == "HEAD" {
+		if ref == "HEAD" && !cloned {
 			if name, e := git(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD"); e == nil {
 				branch = name
 			}
