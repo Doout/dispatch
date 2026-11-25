@@ -44,6 +44,13 @@ function repositoryOwner(repository: GitHubRepository) {
   return (repository.owner || repository.fullName.split("/")[0] || "").toLowerCase();
 }
 
+export function githubInstallationStatus(installations: GitHubAppInstallation[] | null | undefined) {
+  if (installations === undefined) return "checking";
+  if (installations === null) return "unavailable";
+  if (installations.length === 0) return "needs_installation";
+  return installations.some(installation => !installation.suspended) ? "connected" : "suspended";
+}
+
 function accessLabel(installation: GitHubAppInstallation) {
   if (installation.repositorySelection === "all") return "All repositories";
   if (installation.repositorySelection === "selected") return "Selected repositories";
@@ -67,7 +74,7 @@ export function GitHubConnectionDetail({ connection, overview, installURL, setti
   onEdit: () => void;
   onChanged: () => Promise<void>;
 }) {
-  const [installations, setInstallations] = useState<GitHubAppInstallation[] | null>(null);
+  const [installations, setInstallations] = useState<GitHubAppInstallation[] | null>();
   const [repositories, setRepositories] = useState<GitHubRepository[] | null>(null);
   const [installationError, setInstallationError] = useState("");
   const [repositoryError, setRepositoryError] = useState("");
@@ -158,7 +165,7 @@ export function GitHubConnectionDetail({ connection, overview, installURL, setti
     }}><ArrowLeft size={16} />Connections</a>
     <header className="github-detail-heading">
       <div className="github-detail-title"><span className="github-mark"><GithubLogo size={22} weight="fill" /></span><div><h1>{connection.name}</h1><p>{new URL(connection.webUrl).host}</p></div></div>
-      <StatusLabel state={connection.state} />
+      <StatusLabel state={githubInstallationStatus(installations)} />
     </header>
     <div className="github-detail-toolbar">
       <button className="quiet-button" disabled={busy} onClick={() => void refresh()}><ArrowClockwise size={16} />{busy ? "Checking…" : "Refresh access"}</button>
@@ -170,7 +177,7 @@ export function GitHubConnectionDetail({ connection, overview, installURL, setti
     {error && <p className="form-error" role="alert">{error}</p>}
     <dl className="github-detail-facts">
       <div><dt>App ID</dt><dd>{connection.appId}</dd></div>
-      <div><dt>Accounts</dt><dd>{installations === null ? installationError ? "Unavailable" : "Loading" : installationList.length}</dd></div>
+      <div><dt>Accounts</dt><dd>{installations === undefined ? "Loading" : installations === null ? "Unavailable" : installations.length}</dd></div>
       <div><dt>Accessible repositories</dt><dd>{repositories === null ? repositoryError ? "Unavailable" : "Loading" : repositories.length}</dd></div>
       {connection.readOnly ? <div><dt>Access</dt><dd>Read-only</dd></div> : <div><dt>Event delivery</dt><dd>{eventDelivery}</dd></div>}
     </dl>
@@ -180,7 +187,7 @@ export function GitHubConnectionDetail({ connection, overview, installURL, setti
       {installationError && <p className="form-error" role="alert">Could not load installations. {installationError}</p>}
       {repositoryError && <p className="form-error" role="alert">Could not check repository access. {repositoryError}</p>}
       {repositories && (repositories.length > 8 || watchedRepositories.length > 6) && <label className="github-watch-search">Filter repositories<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="owner/repository" /></label>}
-      {installations !== null && !installationList.length && !installationError && <p className="github-detail-empty">No installations found. Install the App on an account to grant repository access.</p>}
+      {installations?.length === 0 && !installationError && <p className="github-detail-empty">No installations found. Install the App on an account to grant repository access.</p>}
       {installationList.length > 0 && <div className="github-installation-list">{installationList.map((installation) => {
         const ownedRepositories = (repositories ?? []).filter((item) => repositoryOwner(item) === installation.account.toLowerCase());
         const matches = ownedRepositories.filter((item) => item.fullName.toLowerCase().includes(query.trim().toLowerCase()));

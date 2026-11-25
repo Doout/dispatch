@@ -43,7 +43,7 @@ import { StatusLabel, TableIconAction } from "./ResourceTable";
 import { readSecretTextFile } from "./fileUploads";
 import { useDialogFocus } from "./useDialogFocus";
 import { LanewayNetworksSection } from "./LanewayNetworksSection";
-import { GitHubConnectionDetail } from "./GitHubConnectionDetail";
+import { GitHubConnectionDetail, githubInstallationStatus } from "./GitHubConnectionDetail";
 import { routePath, shouldHandleNavigation } from "./routes";
 
 function githubAPIFor(webURL: string) {
@@ -135,18 +135,23 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
   const [eventDelivery, setEventDelivery] = useState<"none" | "direct" | "relay">("none");
   const [relayServerID, setRelayServerID] = useState(relayServers[0]?.id ?? "");
   const [busyID, setBusyID] = useState("");
-  const [installations, setInstallations] = useState<Record<string, GitHubAppInstallation[]>>({});
+  const [installations, setInstallations] = useState<Record<string, GitHubAppInstallation[] | null>>({});
   const [confirmDelete, setConfirmDelete] = useState("");
   const [error, setError] = useState("");
   const privateKeyFile = useRef<HTMLInputElement>(null);
   const installationConnections = overview.githubApps.map(connection => `${connection.id}:${connection.updatedAt}`).join(",");
   useEffect(() => {
     if (selectedConnectionID) return;
+    setInstallations({});
     let active = true;
     for (const connection of overview.githubApps) {
       void api.githubAppInstallations(connection.id).then(items => {
         if (active) setInstallations(current => ({...current, [connection.id]: items}));
-      }).catch(cause => { if (active) setError(`${connection.name}: could not load installations. ${cause instanceof Error ? cause.message : String(cause)}`); });
+      }).catch(cause => {
+        if (!active) return;
+        setInstallations(current => ({...current, [connection.id]: null}));
+        setError(`${connection.name}: could not load installations. ${cause instanceof Error ? cause.message : String(cause)}`);
+      });
     }
     return () => { active = false; };
   }, [installationConnections, selectedConnectionID]);
@@ -516,12 +521,13 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
         {overview.githubApps.length ? <div className="connection-list">{overview.githubApps.map((connection) => {
       const installURL = githubAppInstallURL(connection);
       const settingsURL = githubAppSettingsURL(connection);
-      const choices = installations[connection.id] || [];
+      const choices = installations[connection.id];
+      const status = githubInstallationStatus(choices);
       return <section className="connection-row" key={connection.id}>
         <div className="connection-identity"><span className="github-mark"><GithubLogo size={21} weight="fill" /></span><div><strong>{connection.name}</strong><small>{new URL(connection.webUrl).host}{connection.registrationOwner ? " / " + connection.registrationOwner : ""}{connection.privateNetworkId ? ` · via ${edgeNetworks.find((network) => network.id === connection.privateNetworkId)?.name ?? "edge"}` : ""}</small></div></div>
-        <div className="connection-metadata"><div><span>App ID</span><code>{connection.appId}</code></div><div><span>Installations</span><strong>{choices.length ? `${choices.length} connected` : connection.installationId ? "Automatic per repository" : "Not installed"}</strong></div><div><span>{connection.readOnly ? "Access" : "Events"}</span><strong>{connection.readOnly ? "Read-only" : !connection.webhookUrl ? "Polling" : connection.relayWebhookId ? "Relay" : "Direct"}</strong></div><div><span>Status</span><StatusLabel state={connection.state} /></div></div>
+        <div className="connection-metadata"><div><span>App ID</span><code>{connection.appId}</code></div><div><span>Installations</span><strong>{choices === undefined ? "Loading" : choices === null ? "Unavailable" : choices.length}</strong></div><div><span>{connection.readOnly ? "Access" : "Events"}</span><strong>{connection.readOnly ? "Read-only" : !connection.webhookUrl ? "Polling" : connection.relayWebhookId ? "Relay" : "Direct"}</strong></div><div><span>Status</span><StatusLabel state={status} /></div></div>
         <div className="connection-row-actions">
-          {connection.state === "needs_installation" && installURL && <a className="table-action primary-link" href={installURL}>Install App<ArrowRight size={14} /></a>}
+          {status === "needs_installation" && installURL && <a className="table-action primary-link" href={installURL}>Install App<ArrowRight size={14} /></a>}
           <a className="table-action primary-link" href={routePath({ view: "connections", connectionID: connection.id })} onClick={(event) => {
             if (!shouldHandleNavigation(event)) return;
             event.preventDefault();
