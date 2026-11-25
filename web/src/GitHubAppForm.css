@@ -1,0 +1,257 @@
+.github-app-form.connection-editor {
+  container-type: inline-size;
+  width: 100%;
+  max-width: 54rem;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.github-app-form.connection-editor > header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 16px 24px;
+  background: var(--surface-subtle);
+}
+
+.github-app-form header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.github-app-methods {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+  padding: 3px;
+  color: var(--muted-strong);
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-control);
+}
+
+.github-app-methods label {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.github-app-methods input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.github-app-methods label > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.github-app-methods label:hover > span {
+  background: var(--surface-subtle);
+}
+
+.github-app-methods input:checked + span {
+  color: var(--blue-dark);
+  background: var(--blue-soft);
+  box-shadow: inset 0 0 0 1px var(--blue);
+}
+
+.github-app-methods input:focus-visible + span {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.github-app-form .connection-form {
+  gap: 0;
+  padding: 0;
+}
+
+.github-app-section {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  margin: 0;
+  padding: 18px 24px;
+}
+
+.github-app-section + .github-app-section {
+  border-top: 1px solid var(--rule);
+}
+
+.github-app-section-heading {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.github-app-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px 18px;
+}
+
+.github-app-owner {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.github-app-fields label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.github-app-fields :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 7px 10px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-control);
+  font-size: 13px;
+}
+
+.github-app-fields textarea {
+  min-height: 92px;
+  resize: vertical;
+  font: 12px/1.5 var(--mono);
+}
+
+.github-app-fields :disabled {
+  color: var(--muted);
+  background: var(--surface-subtle);
+}
+
+.github-app-fields small,
+.github-app-permissions {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+.github-app-permissions {
+  align-self: center;
+}
+
+.github-app-wide {
+  grid-column: 1 / -1;
+}
+
+.github-app-details {
+  min-width: 0;
+}
+
+.github-app-details > summary {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 0;
+  overflow-wrap: anywhere;
+  color: var(--muted-strong);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.github-app-details > summary span {
+  margin-inline-start: 5px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.github-app-details > summary:hover {
+  color: var(--blue);
+}
+
+.github-app-details > .github-app-fields {
+  margin-top: 8px;
+}
+
+.github-app-form .connection-webhook-toggle {
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.github-app-form .connection-webhook-toggle > div {
+  display: grid;
+  gap: 3px;
+}
+
+.github-app-form .connection-webhook-toggle small,
+.github-app-form .credential-heading small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.github-app-add-relay {
+  align-self: end;
+  justify-self: start;
+}
+
+.github-app-form .credential-heading {
+  flex-wrap: wrap;
+}
+
+.github-app-form .github-app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px;
+  background: var(--surface-subtle);
+  border-top: 1px solid var(--rule);
+}
+
+@container (max-width: 36rem) {
+  .github-app-form.connection-editor > header,
+  .github-app-section,
+  .github-app-form .github-app-actions {
+    padding-inline: 16px;
+  }
+
+  .github-app-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .github-app-fields :is(input, select, textarea) {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .github-app-fields textarea {
+    min-height: 92px;
+  }
+
+  .github-app-methods label > span {
+    min-height: 38px;
+  }
+}
+
+@media (forced-colors: active) {
+  .github-app-methods input:checked + span {
+    outline: 1px solid SelectedItem;
+    outline-offset: -1px;
+  }
+}
