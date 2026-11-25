@@ -7,6 +7,7 @@ import * as client from "../api";
 import type { WorkloadSection } from "../routes";
 import { subscribeOverview } from "../overviewStream";
 import { catalogClient } from "../deployments/catalogClient";
+import { sanitizeLegacyGitHubManifestRedirect } from "../githubManifestCallback";
 import { interfacePreferenceKey } from "./preference";
 
 const enabledFeatures = { machineProvisioning: true, machineSnapshots: true, workloadBackups: true, automationCredentials: true, infrastructureAssignments: true, mutationReceipts: true };
@@ -39,6 +40,30 @@ beforeEach(() => {
   vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
+
+it.each([
+  ["githubAppCreated=fixture", "status", "GitHub App created. Install it on an account to finish the connection."],
+  ["githubAppStatus=error&detail=Registration+expired", "alert", "Registration expired"],
+  ["lanewayStatus=connected", "status", "Laneway network connected."],
+  ["lanewayStatus=error", "alert", "Laneway connection failed."],
+])("announces the connection callback %s with its outcome", async (query, role, message) => {
+  vi.mocked(client.api.overview).mockResolvedValue(overview("owner", true));
+  path("/?view=connections&" + query);
+  render(<DispatchApp />);
+  const notice = (await screen.findByText(message)).closest("[role]");
+  expect(notice?.getAttribute("role")).toBe(role);
+  expect(window.location.pathname + window.location.search).toBe("/connections");
+  await userEvent.setup().click(within(notice as HTMLElement).getByRole("button", { name: "Dismiss message" }));
+  expect(screen.queryByText(message)).toBeNull();
+});
+
+it.each(["githubAppStatus", "authProviderStatus"])("removes legacy manifest codes from %s redirects before rendering", status => {
+  const detail = 'Post "https://github.example.test/api/v3/app-manifests/fixture-code/conversions": proxyconnect tcp: tls: failed to verify certificate: x509: certificate signed by unknown authority';
+  path("/?view=connections&" + new URLSearchParams({ [status]: "error", detail }));
+  sanitizeLegacyGitHubManifestRedirect();
+  expect(window.location.href).not.toContain("fixture-code");
+  expect(new URLSearchParams(window.location.search).get("detail")).toMatch(/TLS certificate.*unknown authority/);
+});
 
 it("starts in the new interface and lets members switch without controller access", async () => {
   const user = userEvent.setup();

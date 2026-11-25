@@ -91,6 +91,14 @@ The proxy network and certificate resolver must already exist. Without proxy fla
 
 The generated `compose.json` is managed by the CLI. It refuses upgrades if that file was manually changed. To apply an environment-file edit, run `dispatch recover` when there is no interrupted upgrade; this reconciles and starts the existing pinned image.
 
+### Corporate CA certificates
+
+Managed Linux controllers use the Docker host’s readable system CA bundle. New installations mount it read-only. Controllers upgraded from an older installation load the host bundle on startup. On Debian and Ubuntu the host bundle is `/etc/ssl/certs/ca-certificates.crt`. On RHEL and Fedora it is usually `/etc/pki/tls/certs/ca-bundle.crt`. Install your organization's CA through the host's trust-store tools. If no supported bundle is available, the controller uses the certificates packaged in its image. Recreate the controller after replacing the host bundle so Docker picks up the new file and Go reloads its roots.
+
+In **Settings → Connections → Add GitHub App → Network access**, select the proxy, enter its URL, and choose **Test connection**. The controller contacts the configured API root through that App's route before registration. An unauthenticated HTTP 401 from GitHub confirms connectivity. Repository permissions and installation credentials can be checked after the App exists.
+
+Remote runtime agents perform HTTPS Git checkouts on their own hosts. Install the corporate CA in each agent's trust store as well. For agents running in a container, mount a trusted CA bundle read-only at `/etc/ssl/certs/ca-certificates.crt` and recreate the agent.
+
 ## Move a self-hosted installation
 
 Export the managed installation on the old server:

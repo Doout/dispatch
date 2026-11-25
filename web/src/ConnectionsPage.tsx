@@ -1,9 +1,10 @@
+import { GitHubAppConnectionTest } from "./GitHubAppConnectionTest";
 import { InstanceConnectionSettings } from "./InstanceConnectionSettings";
 import { useHostedTenant, usesSelfHostedController } from "./hosted/context";
 import "./SettingsPage.css";
 import "./GitHubAppForm.css";
 import { destructiveRequest } from "./api";
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
   ArrowRight,
@@ -74,7 +75,9 @@ function githubAppInstallURL(connection: GitHubAppConnection) {
   return `${connection.webUrl}/${path}/${encodeURIComponent(connection.slug)}/installations/new`;
 }
 
-export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnection = () => {}, notice, onNotice, onChanged, onAddRelay = () => {} }: { overview: Overview; selectedConnectionID?: string; onOpenConnection?: (id: string | null) => void; notice: string; onNotice: (value: string) => void; onChanged: () => Promise<void>; onAddRelay?: () => void }) {
+export type ConnectionNotice = { kind: "success" | "error"; message: string };
+
+export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnection = () => {}, notice, onDismissNotice, onChanged, onAddRelay = () => {} }: { overview: Overview; selectedConnectionID?: string; onOpenConnection?: (id: string | null) => void; notice?: ConnectionNotice; onDismissNotice: () => void; onChanged: () => Promise<void>; onAddRelay?: () => void }) {
   const hosted = useHostedTenant();
   const supportsProxy = usesSelfHostedController(hosted);
   const showDoodship = overview.identity?.systemRole === "owner" && !hosted;
@@ -177,18 +180,26 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
     if (!apiURL || apiURL === previousDerived) setAPIURL(githubAPIFor(value));
   }
 
+  const networkSettings = useMemo(() => {
+    const proxy = useAppProxy ? { url: proxyURL.trim() || undefined, noProxy: proxyBypass }
+      : editing?.proxy?.url ? { url: "" } : undefined;
+    return {
+      id: editing?.id, webUrl: webURL, apiUrl: apiURL, privateNetworkId: privateNetworkID,
+      ...(supportsProxy && proxy ? { proxy } : {}),
+    };
+  }, [editing, webURL, apiURL, privateNetworkID, supportsProxy, useAppProxy, proxyURL, proxyBypass]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
-    onNotice("");
+    onDismissNotice();
     setBusyID(editing?.id || "create");
     try {
       const delivery = readOnly ? "none" : eventDelivery;
-      const proxy = useAppProxy ? { url: proxyURL.trim() || undefined, noProxy: proxyBypass }
-        : editing?.proxy?.url ? { url: "" } : undefined;
+      const proxy = networkSettings.proxy;
       if (method === "manifest" && !editing) {
 		if (!ownerType) throw new Error("Choose the GitHub App owner.");
-		const flow = await api.startGitHubAppManifest({ name, webUrl: webURL, apiUrl: apiURL, ownerType, owner: ownerType === "organization" ? owner : "", readOnly, eventDelivery: delivery, relayServerId: delivery === "relay" ? relayServerID : undefined, privateNetworkId: privateNetworkID || undefined, ...(supportsProxy && proxy ? { proxy } : {}) });
+		const flow = await api.startGitHubAppManifest({ name, webUrl: webURL, apiUrl: apiURL, ownerType, owner: ownerType === "organization" ? owner : "", readOnly, eventDelivery: delivery, relayServerId: delivery === "relay" ? relayServerID : undefined, privateNetworkId: privateNetworkID || undefined, ...(proxy ? { proxy } : {}) });
         const form = document.createElement("form");
         form.method = "post";
         form.action = flow.action;
@@ -209,7 +220,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
       };
       if (!editing) body.readOnly = readOnly;
       if (!editing && delivery === "relay") body.relayServerId = relayServerID;
-      if (supportsProxy && proxy) body.proxy = proxy;
+      if (proxy) body.proxy = proxy;
       if (privateKey || (!readOnly && webhookSecret)) {
         body.privateKey = privateKey;
         if (!readOnly) body.webhookSecret = webhookSecret;
@@ -293,7 +304,11 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
 	<PageHeader view="connections" trailing={creating ? null : creatingSecretStore || creatingPrivateNetwork || creatingLanewayNetwork
       ? <button type="button" className="quiet-button" onClick={closeEditor}><X size={16} weight="bold" />Cancel</button>
 			: <ConnectionAddMenu onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />} />
-    {notice && <div className="connection-notice" role="status"><CheckCircle size={18} weight="fill" /><span>{notice}</span><button aria-label="Dismiss message" onClick={() => onNotice("")}><X size={15} /></button></div>}
+    {notice && <div className="connection-notice" role={notice.kind === "error" ? "alert" : "status"}>
+      {notice.kind === "error" ? <WarningCircle size={18} weight="fill" aria-hidden="true" /> : <CheckCircle size={18} weight="fill" aria-hidden="true" />}
+      <span>{notice.message}</span>
+      <button aria-label="Dismiss message" onClick={onDismissNotice}><X size={15} /></button>
+    </div>}
     {error && !creating && <p className="form-error connection-error" role="alert">{error}</p>}
     {showDoodship && <InstanceConnectionSettings key={overview.identity?.id} active={!creating && !creatingSecretStore && !creatingPrivateNetwork && !creatingLanewayNetwork} />}
     {creating ? <section className="inline-create connection-editor github-app-form" aria-labelledby="connection-editor-title">
@@ -401,6 +416,8 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
               </label>
             </div>
           </details>
+          {supportsProxy && <GitHubAppConnectionTest settings={networkSettings} busy={Boolean(busyID)}
+            needsProxyURL={useAppProxy && !proxyURL.trim() && !editing?.proxy?.url} />}
         </section>
 
         {!editing && !readOnly && <section className="github-app-section" aria-labelledby="event-delivery-title">

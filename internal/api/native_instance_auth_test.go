@@ -233,7 +233,10 @@ func TestInstanceNativeAuthenticationOverOutboundConnection(t *testing.T) {
 		t.Fatalf("access capabilities: %d %s", w.Code, w.Body.String())
 	}
 	t.Run("GitHub App registration uses the connected tenant origin", func(t *testing.T) {
-		w := call("POST", "/api/v1/github-apps/manifest", `{"name":"Portal fixture","ownerType":"personal","eventDelivery":"none","proxy":{"url":"http://proxy.example.test:3128"}}`, ownerSession)
+		github := newGitHubAPIRootFixture(t)
+		proxy := newGitHubTestProxy(t, github, false, "")
+		trustGitHubTestServer(a, github)
+		w := call("POST", "/api/v1/github-apps/manifest", `{"name":"Portal fixture","webUrl":"https://example.com","ownerType":"personal","eventDelivery":"none","proxy":{"url":"`+proxy.URL+`"}}`, ownerSession)
 		if w.Code != http.StatusOK {
 			t.Fatalf("start GitHub App registration: %d %s", w.Code, w.Body.String())
 		}

@@ -514,6 +514,9 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "Invalid GitHub App proxy", err.Error())
 		return
 	}
+	if !a.checkGitHubAppConnection(w, r, core.GitHubAppConnection{ID: connectionID, WebURL: webURL, APIURL: apiURL, PrivateNetworkID: input.PrivateNetworkID, Proxy: proxy}) {
+		return
+	}
 	origin := externalOrigin(r)
 	if manager := a.eventConfig.InstanceConnection; manager != nil {
 		if remote := manager.RemoteOrigin(r); remote != "" {
@@ -605,6 +608,8 @@ func newGitHubAppWebhookSecret() (string, error) {
 }
 
 func (a *API) completeGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	state, code := strings.TrimSpace(r.URL.Query().Get("state")), strings.TrimSpace(r.URL.Query().Get("code"))
 	a.manifestMu.Lock()
 	pending, ok := a.manifestStates[state]

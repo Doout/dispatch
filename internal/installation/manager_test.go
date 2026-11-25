@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -220,12 +222,18 @@ func TestInstallPreservesRawEnvironmentAndDetectsSocketGroup(t *testing.T) {
 	defer listener.Close()
 	c.Socket = socket
 	source := filepath.Join(t.TempDir(), "config")
-	os.WriteFile(source, []byte("PASSWORD=literal$with'quotes\n"), 0600)
+	settings := "PASSWORD=literal$with'quotes\nGIT_SSL_CAINFO=/operator/custom.pem\n"
+	os.WriteFile(source, []byte(settings), 0600)
+	cert := httptest.NewTLSServer(nil)
+	cert.Close()
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate().Raw}))
 	run := m.Run
 	owned := ""
 	m.Run = func(ctx context.Context, name string, args ...string) (string, error) {
 		line := strings.Join(args, " ")
 		switch {
+		case strings.Contains(line, "target=/tmp/dispatch-host-ca"):
+			return certPEM, nil
 		case strings.Contains(line, "context inspect"):
 			return "unix://" + socket, nil
 		case strings.Contains(line, "volume create"):
@@ -245,7 +253,7 @@ func TestInstallPreservesRawEnvironmentAndDetectsSocketGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(m.path("dispatch.env"))
-	if string(data) != "PASSWORD=literal$with'quotes\n" {
+	if string(data) != settings {
 		t.Fatal("environment was interpolated")
 	}
 	info, _ := os.Stat(m.path("dispatch.env"))
@@ -256,6 +264,9 @@ func TestInstallPreservesRawEnvironmentAndDetectsSocketGroup(t *testing.T) {
 		t.Fatal("data directory was not initialized")
 	}
 	content, _ := os.ReadFile(m.path("compose.json"))
+	if !strings.Contains(string(content), `"source": "`+controllerCABundle+`"`) || !strings.Contains(string(content), `"create_host_path": false`) || !strings.Contains(string(content), `"read_only": true`) {
+		t.Fatal("missing read-only CA file bind")
+	}
 	if !strings.Contains(string(content), `"format": "raw"`) {
 		t.Fatal("missing raw env_file")
 	}

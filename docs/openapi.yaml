@@ -3585,6 +3585,39 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/GitHubBranch" } }
         "400": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
+  /github-apps/test-connection:
+    post:
+      operationId: testGitHubAppConnection
+      description: Owners can test the GitHub API root with the proposed proxy and network route before saving. A successful test confirms the API responded with HTTP 2xx or 401.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                id: { type: string, description: Use this saved App as the starting configuration. }
+                webUrl: { type: string, format: uri }
+                apiUrl: { type: string, format: uri }
+                privateNetworkId: { type: string }
+                proxy: { $ref: '#/components/schemas/GitHubAppProxyInput' }
+      responses:
+        "200":
+          description: The controller reached the API over the selected route.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reachable]
+                properties:
+                  reachable: { type: boolean, enum: [true] }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /github-apps/manifest:
     post:
       operationId: startGitHubAppManifest
@@ -3605,7 +3638,8 @@ paths:
                 readOnly: { type: boolean, default: false, description: Requests read access to Contents and Metadata with webhook delivery disabled. }
                 proxy: { $ref: '#/components/schemas/GitHubAppProxyInput' }
       responses:
-        "200": { description: GitHub App manifest form action and manifest payload. }
+        "200": { description: GitHub App manifest form action and payload after the controller reaches the GitHub API. }
+        "502": { $ref: "#/components/responses/Problem" }
   /github-apps/manifest/callback:
     get:
       operationId: completeGitHubAppManifest
