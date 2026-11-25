@@ -1,3 +1,4 @@
+import { usesSelfHostedController, useHostedTenant } from "./hosted/context";
 import { ApplicationDeploymentLink, ApplicationOwnerLabel, useDeploymentCatalog } from "./deployments/DeploymentCatalog";
 import { ApplicationSync } from "./ApplicationSync";
 import { ApplicationServices } from "./ApplicationServices";
@@ -61,6 +62,7 @@ import { WorkflowTopologyPage } from "./workflows/TopologyPage";
 import { isPreviewCheckRun, workflowResourceStatus, workflowResourceStatusLabel } from "./workflows/status";
 
 export function ApplicationsPage({ overview, section, applicationID, configurationSourceID, creating, onToggleCreate, onChanged, onDeploy, onDelete, onDeleteGroup, onNavigate, onOpenTopology = () => {}, onOpenConfigurationTopology = () => {}, onOpenWorkflowStage = () => {}, onOpenDeploymentManifests = () => {}, onOpenDeployment, onCloseTopology = () => {} }: { overview: Overview; section: ApplicationSection; applicationID?: string; configurationSourceID?: string; creating: boolean; onToggleCreate: () => void; onChanged: () => Promise<void>; onDeploy: (appID: string) => void; onDelete: (application: AppModel) => void; onDeleteGroup: (group: PreviewGroup) => void; onNavigate: (view: View) => void; onOpenTopology?: (resource: WorkflowResource) => void; onOpenConfigurationTopology?: (source: ConfigSource) => void; onOpenWorkflowStage?: (applicationID: string, stageName: string) => void; onOpenDeploymentManifests?: (deploymentID: string) => void; onOpenDeployment?: (id: string) => void; onCloseTopology?: () => void }) {
+  const selfHostedController = usesSelfHostedController(useHostedTenant());
   const catalog = useDeploymentCatalog();
   const openStage = (applicationID: string, stageName: string) => {
     const item = catalog.items.find(item => item.resourceId === applicationID && item.environment === stageName);
@@ -138,6 +140,7 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
       <div className="application-environment-links">{catalog.items.filter(item => item.resourceId === resource.id).map(item => <ApplicationDeploymentLink key={item.appId} appId={item.appId} label={`Open ${item.environment} release`} onNavigate={route => route.deploymentID && onOpenDeployment?.(route.deploymentID)} />)}</div>
       <WorkflowTopologyPage
         resource={resource} source={source} revisions={overview.workflowRevisions}
+        canTakeOver={selfHostedController && overview.identity?.systemRole === "owner"}
         canRun={Boolean(source && canManageProject(overview, source.projectId, "deployment.run"))}
         onBack={onCloseTopology}
         onRun={async () => { await api.runWorkflowResource(resource.id); await onChanged(); }}

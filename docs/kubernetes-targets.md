@@ -23,6 +23,12 @@ Supply a working ingress controller, DNS and TLS configuration for public routes
 
 For K3s, copy the intended context into a scoped kubeconfig rather than distributing the administrator credentials. See [K3s cluster access](https://docs.k3s.io/cluster-access).
 
+## Take over a release after moving controllers
+
+Stop the old controller from managing the release. On the new self-hosted controller, sign in as an owner and open the failed Helm deployment’s **Summary** or the workflow application with the failed run. Select **Inspect release ownership**, then check the target, namespace, release name, deployed revision and previous application and project IDs. Confirm that the old controller has stopped managing it and select **Take over release**. Retry the deployment or run the workflow again.
+
+Takeover updates the current Helm storage record. Running workloads and earlier revisions keep their state. The next deployment reconciles the live resources. Dispatch requires a deployed revision with verifiable Dispatch ownership and rejects a previous application that still exists on this controller. If the reviewed record changes, inspect it again. Both Kubernetes Secret and ConfigMap Helm storage are supported.
+
 ## Ownership and recovery
 
 Registered targets restrict Helm resources to their namespace. Charts may use supported built-in namespaced resources. Cluster resources, custom resources and removed API versions are rejected. Dispatch does not install CRDs, and chart hooks are disabled for these targets. Install cluster prerequisites through a separate administrator workflow.

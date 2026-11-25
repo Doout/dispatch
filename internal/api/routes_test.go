@@ -75,6 +75,7 @@ func TestRouteGroupsRejectMembersAndImpersonatedOwners(t *testing.T) {
 		"GET /secrets", "POST /secret-stores", "DELETE /private-networks/missing",
 		"POST /laneway-networks/authorize", "POST /github-apps/test-connection", "POST /github-apps/manifest", "POST /servers",
 		"POST /relay/ssh/install", "POST /auth/providers", "GET /users/missing/profile",
+		"GET /apps/missing/helm-takeover", "POST /apps/missing/helm-takeover",
 		"POST /config-sources", "POST /projects", "POST /preview-groups",
 		"POST /workflow/preview-templates", "PUT /workflow/preview-templates/missing",
 		"POST /workflow/temporary-resources/import", "DELETE /workflow/temporary-resources/missing",

@@ -1,5 +1,7 @@
 import { request, destructiveRequest } from "./transport";
 
+export type HelmTakeoverReview = { release: string; namespace: string; target: string; revision: number; previousAppId: string; previousProjectId: string; version: string };
+
 export type ApplicationRoute = { appId: string; projectId: string; serverId: string; hostname: string; entryPoint: string; tlsResolver?: string; requireTls: boolean; requestedDeploymentId: string; deploymentId?: string; destination?: string; previousDeploymentId?: string; previousDestination?: string; state: string; message: string; dns: string; certificate: { state: string; message: string; expiresAt?: string; checkedAt?: string }; publishedAt?: string; updatedAt: string };
 
 export type HealthCheck = { id: string; kind: "container" | "http" | "tcp" | "tls"; scope: "workload" | "route" | "certificate"; service?: string; port?: number; path?: string };
@@ -78,6 +80,8 @@ export type ApplicationSyncStatus = {
 };
 
 export const applicationsApi = {
+  reviewHelmTakeover: (id: string) => request<HelmTakeoverReview>(`/api/v1/apps/${encodeURIComponent(id)}/helm-takeover`),
+  acceptHelmTakeover: (id: string, version: string) => request<HelmTakeoverReview>(`/api/v1/apps/${encodeURIComponent(id)}/helm-takeover`, { method: "POST", body: JSON.stringify({ version, previousControllerStopped: true }) }),
   applicationRoute: (id: string) => request<ApplicationRoute | null>(`/api/v1/apps/${id}/route`),
   checkApplicationRoute: (id: string) => request<ApplicationRoute>(`/api/v1/apps/${id}/route/check`, { method: "POST" }),
   applicationSync: (id: string) => request<ApplicationSyncStatus>(`/api/v1/apps/${id}/sync`),
