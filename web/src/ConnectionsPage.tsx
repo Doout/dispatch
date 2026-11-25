@@ -326,7 +326,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
         </div>}
       </header>
       <form className="connection-form" onSubmit={submit} aria-busy={busyID === (editing?.id || "create")}>
-        <section className="github-app-section" aria-labelledby="github-app-details-title">
+        <section className="github-app-section github-app-registration" aria-labelledby="github-app-details-title">
           <h3 className="github-app-section-heading" id="github-app-details-title">App details</h3>
           <div className="github-app-fields">
             <label>
@@ -367,7 +367,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
           </div>
         </section>
 
-        <section className="github-app-section" aria-labelledby="github-app-network-title">
+        <section className="github-app-section github-app-network" aria-labelledby="github-app-network-title">
           <h3 className="github-app-section-heading" id="github-app-network-title">Network access</h3>
           <div className="github-app-fields">
             {supportsProxy && <label>
