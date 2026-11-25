@@ -6,7 +6,7 @@ import { dateLabel, errorMessage, InventoryStatus, ResourceRows, useInventory } 
 
 const permissions = ["project.view", "project.configure", "deployment.run", "deployment.cancel", "service.provision", "runtime.cleanup", "infrastructure.inspect", "infrastructure.create", "infrastructure.modify", "infrastructure.delete", "infrastructure.snapshot", "infrastructure.restore"];
 
-export function Credentials({ overview }: { overview: Overview }) {
+export function Credentials({ overview, showCLI }: { overview: Overview; showCLI: boolean }) {
   const accounts = useInventory(automationClient.accounts, overview.identity?.id ?? "");
   const [selected, setSelected] = useState("");
   const [creating, setCreating] = useState(false);
@@ -24,8 +24,17 @@ export function Credentials({ overview }: { overview: Overview }) {
     <div className="resources-heading"><p>Give CI jobs and agents an account with expiring credentials and project permissions.</p><button type="button" className="primary-button" onClick={() => setCreating(true)}>Create account</button></div>
     {error && <p role="alert" className="form-error">{error}</p>}
     {creating && <form className="resources-form" onSubmit={event => void create(event)} aria-label="Create automation account"><label>Account name<input required maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label><label>Description<textarea maxLength={2000} value={description} onChange={event => setDescription(event.target.value)} /></label><div className="resources-actions"><button type="button" className="quiet-button" disabled={busy} onClick={() => setCreating(false)}>Cancel</button><button className="primary-button" disabled={busy || !name.trim()}>Create account</button></div></form>}
-    <InventoryStatus {...accounts} retry={accounts.refresh} />
+    <InventoryStatus {...accounts} error={accounts.error && `Could not load automation accounts. ${accounts.error}`} retry={accounts.refresh} />
     {!accounts.loading && !accounts.error && <ResourceRows items={accounts.items} label="Automation accounts" columns={["Account", "State", "Actions"]} rowKey={item => item.id} empty="No automation accounts." row={item => <><td><strong>{item.name}</strong><small>{item.description || item.id}</small></td><td><StatusLabel state={item.state} /></td><td><button type="button" className="table-action" aria-pressed={item.id === selected} onClick={() => setSelected(item.id)}>Manage {item.name}</button></td></>} />}
+    {showCLI && <details className="resources-policy">
+      <summary>Use an account with dispatchctl</summary>
+      <p>Give the account <code>project.view</code> on a project, issue a credential, and save the token in a file readable only by its owner (mode 0600). Set the file path and your controller’s HTTPS address on the machine running the CLI.</p>
+      <pre>{`export DISPATCH_URL=${window.location.protocol === "https:" ? window.location.origin : "https://dispatch.example.com"}
+export DISPATCH_TOKEN_FILE=/path/to/dispatch-token
+dispatchctl auth status
+dispatchctl projects list`}</pre>
+      <a href="https://github.com/Doout/dispatch/blob/main/docs/automation-client.md">Install and use dispatchctl</a>
+    </details>}
     {account && <AccountDetails key={account.id} account={account} overview={overview} onChanged={accounts.refresh} />}
   </>;
 }

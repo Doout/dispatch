@@ -109,6 +109,7 @@ type Operation struct {
 }
 
 var Operations = combineOperations([]Operation{
+	{Name: "auth_status", Method: "GET", Path: "/auth/me", Description: "Show the authenticated identity and its project grants."},
 	{Name: "projects_list", Method: "GET", Path: "/projects", Description: "List projects visible to the current scoped identity."},
 	{Name: "apps_list", Method: "GET", Path: "/apps", Description: "List visible applications, optionally filtered by project.", Fields: []string{"projectId"}},
 	{Name: "deployment_preview", Method: "POST", Path: "/apps/{appId}/release-preview", Description: "Inspect release inputs and obtain the server's point-in-time deployment review.", Fields: []string{"appId", "revision"}, Required: []string{"appId"}},

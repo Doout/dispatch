@@ -28,8 +28,12 @@ for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatchctl" ./cmd/dispatchctl
 done
 for arch in amd64 arm64; do
+  mkdir -p "$output/darwin-$arch"
+  CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/darwin-$arch/dispatchctl" ./cmd/dispatchctl
+  tar -czf "$output/dispatchctl-darwin-$arch.tar.gz" -C "$output/darwin-$arch" dispatchctl -C "$source_dir" LICENSE
+  tar -czf "$output/dispatchctl-linux-$arch.tar.gz" -C "$output/$arch" dispatchctl -C "$source_dir" LICENSE
   tar -czf "$output/dispatch-linux-$arch.tar.gz" -C "$output/$arch" dispatch dispatchctl -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
   tar -czf "$output/dispatch-platform-linux-$arch.tar.gz" -C "$output/$arch" dispatch-platform dispatch-worker -C "$(cd "$output" && pwd)" edge -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
 done
 sh scripts/build-doodship-release.sh "$output" "$version"
-(cd "$output" && sha256sum dispatch-linux-*.tar.gz dispatch-platform-linux-*.tar.gz doodship-*.tar.gz > SHA256SUMS)
+(cd "$output" && sha256sum dispatch-linux-*.tar.gz dispatch-platform-linux-*.tar.gz doodship-*.tar.gz dispatchctl-*.tar.gz > SHA256SUMS)

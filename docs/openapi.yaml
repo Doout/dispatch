@@ -9,6 +9,13 @@ security:
   - basicAuth: []
   - bearerAuth: []
 paths:
+  /auth/me:
+    get:
+      operationId: getCurrentIdentity
+      summary: Show the authenticated identity, role assignments and direct project grants.
+      responses:
+        '200': { description: Identity and project access for the current request. }
+        '401': { description: Credentials missing, expired or invalid. }
   /instance-connection:
     get:
       operationId: getInstanceConnection

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Install the standalone doodship workflow CLI.
+# Install a standalone Dispatch CLI.
 set -euo pipefail
 
 usage() {
   cat <<'HELP'
-Usage: install-cli.sh [--version vX.Y.Z | --list-versions]
+Usage: install-cli.sh [--dispatchctl] [--version vX.Y.Z | --list-versions]
 
 With no arguments, install the latest stable doodship release.
+--dispatchctl installs the automation API client for CI jobs and agents.
 --version accepts a release number with or without the leading v.
 --list-versions lists stable releases available for this platform (requires jq).
 Set DOODSHIP_BIN_DIR to change the install directory (default: ~/.local/bin).
@@ -22,11 +23,17 @@ fetch() {
   fi
 }
 
+tool=doodship
+if [[ ${1:-} == --dispatchctl ]]; then
+  tool=dispatchctl
+  shift
+fi
+
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
   # doodship update passes the resolved path of the running executable and its build version.
   --update-executable)
-    [[ $# == 3 && $2 == /* && -f $2 ]] || fail "Expected an installed executable."
+    [[ $tool == doodship && $# == 3 && $2 == /* && -f $2 ]] || fail "Expected an installed executable."
     mode=update
     target=$2
     current_version=$3
@@ -42,10 +49,10 @@ esac
 case "$(uname -m)" in
   arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=amd64 ;; *) fail "Supported architectures: arm64 and amd64." ;;
 esac
-asset="doodship-$os-$arch.tar.gz"
+asset="$tool-$os-$arch.tar.gz"
 releases=https://github.com/Doout/dispatch/releases
 
-command -v curl >/dev/null || command -v wget >/dev/null || fail "Install curl or wget to download doodship."
+command -v curl >/dev/null || command -v wget >/dev/null || fail "Install curl or wget to download $tool."
 
 if [[ $mode == list ]]; then
   command -v jq >/dev/null || fail "Install jq to use --list-versions."
@@ -84,7 +91,7 @@ if [[ $mode == update ]]; then
 else
   bin_dir=${DOODSHIP_BIN_DIR:-"$HOME/.local/bin"}
   mkdir -p "$bin_dir"
-  target="$bin_dir/doodship"
+  target="$bin_dir/$tool"
 fi
 [[ ! -d "$target" ]] || fail "$target is a directory."
 tmp=$(mktemp -d "$bin_dir/.doodship-install.XXXXXXXX")
@@ -102,16 +109,16 @@ fetch "$base/SHA256SUMS" > "$tmp/SHA256SUMS"
   else
     shasum -a 256 -c expected.sha256
   fi
-  tar -xzf "$asset" doodship
-  [[ -f doodship && ! -L doodship ]] || fail "Expected a doodship executable in $asset."
-  chmod 755 doodship
+  tar -xzf "$asset" "$tool"
+  [[ -f $tool && ! -L $tool ]] || fail "Expected a $tool executable in $asset."
+  chmod 755 "$tool"
 )
-mv -f "$tmp/doodship" "$target"
+mv -f "$tmp/$tool" "$target"
 if [[ $mode == update ]]; then
   printf 'Updated %s to doodship %s.\n' "$target" "$version"
   exit 0
 fi
-printf 'Installed doodship %s to %s\n' "$version" "$target"
+printf 'Installed %s %s to %s\n' "$tool" "$version" "$target"
 case ":${PATH:-}:" in
   *":$bin_dir:"*) ;;
   *) printf 'Add this to your shell profile and run it in this terminal:\n  export PATH=%q:"$PATH"\n' "$bin_dir" ;;

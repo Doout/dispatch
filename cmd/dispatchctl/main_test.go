@@ -281,3 +281,25 @@ func TestCLIOffsiteSelectionAndContinuation(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIAuthStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential")
+	if err := os.WriteFile(path, []byte("dsa_cli_fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/api/v1/auth/me" || r.Header.Get("Authorization") != "Bearer dsa_cli_fixture" {
+			t.Error("unexpected identity request", r.Method, r.URL.Path)
+		}
+		io.WriteString(w, `{"identity":{"id":"ci-reader"},"grants":[]}`)
+	}))
+	defer server.Close()
+	t.Setenv("DISPATCH_URL", server.URL)
+	t.Setenv("DISPATCH_TOKEN_FILE", path)
+	var out, diagnostics bytes.Buffer
+	code := run(context.Background(), []string{"auth", "status"}, strings.NewReader(""), &out, &diagnostics)
+	var result automationclient.Result
+	if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK || !strings.Contains(string(result.Data), "ci-reader") {
+		t.Fatal("expected authenticated identity", code, out.String(), diagnostics.String())
+	}
+}

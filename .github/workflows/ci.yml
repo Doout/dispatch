@@ -254,6 +254,7 @@ jobs:
           done
           for os in darwin linux; do
             for arch in amd64 arm64; do
+              tar -tzf "dispatchctl-$os-$arch.tar.gz" dispatchctl LICENSE
               tar -tzf "doodship-$os-$arch.tar.gz" doodship LICENSE
             done
           done

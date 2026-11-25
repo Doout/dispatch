@@ -2,7 +2,16 @@
 
 `dispatchctl` is a thin API client and stdio MCP server. It returns the same reviewed operations and durable receipts as the browser and REST API. It cannot approve a human gate or override a project grant, provider assignment, quota, source trust decision or data protection rule.
 
-Build with `go build -o dispatchctl ./cmd/dispatchctl`. Linux release archives include the client. Run `dispatchctl --help` for its supported commands. The underscore form, such as `deployment_preview`, is also accepted and matches the MCP tool name.
+Install the standalone client on Linux or macOS (amd64 or arm64) from a release that includes a `dispatchctl` archive:
+
+```sh
+curl -fsSLo install-cli.sh https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install-cli.sh
+bash install-cli.sh --dispatchctl
+```
+
+The installer verifies the archive against the release checksums and installs to `~/.local/bin`. Use `--dispatchctl --version vX.Y.Z` to pin a release in CI. Older Linux controller archives also contain `dispatchctl`. To build from source, run `go build -o dispatchctl ./cmd/dispatchctl`.
+
+Run `dispatchctl --help` for its supported commands. The underscore form, such as `deployment_preview`, is also accepted and matches the MCP tool name.
 
 An executable integration test exercises the CLI and MCP against an isolated
 controller using simulated deployment and an owned service fixture. It verifies
@@ -11,13 +20,14 @@ support for a real infrastructure provider.
 
 ## Credentials
 
-Have a controller owner create a service account with only the required project grants. Inspection needs `project.view`; deployment needs `deployment.run`. Infrastructure uses its separate inspect, create and delete grants and assigned providers and SSH public keys. An owner credential is not needed for ordinary automation. See [automation identities](automation-identities.md).
+On the controller, open **Automation → Credentials → Create account** as an owner. Choose **Manage**, save the required project permissions, then choose **Issue credential**. Use the direct controller address when connecting through a portal. Inspection needs `project.view`; deployment needs `deployment.run`. Infrastructure uses its separate inspect, create and delete grants and assigned providers and SSH public keys. An owner credential is not needed for ordinary automation. See [automation identities](automation-identities.md).
 
 Save the issued token in a mode 0600 file. Keep the file out of Git and shell history. Configure only its path and the controller origin:
 
 ```sh
 export DISPATCH_URL=https://dispatch.example.com
 export DISPATCH_TOKEN_FILE=/run/secrets/dispatch-token
+dispatchctl auth status
 ```
 
 The client accepts HTTPS, with HTTP allowed for loopback development. Redirects are not followed. It never prints the authentication header and redacts an echoed token from responses. Each response is limited to 4 MiB; request files and MCP messages are limited to 1 MiB. The default HTTP timeout is 30 seconds; use the global `--request-timeout 60s` option before a command when needed.
