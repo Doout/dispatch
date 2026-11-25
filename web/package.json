@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:layout": "node --test tests/github-app-layout.mjs"
+    "test:browser": "node --test tests/ui-flows.mjs"
   },
   "dependencies": {
     "@ai-sdk/react": "4.0.186",

@@ -1,0 +1,145 @@
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+import { chromium } from "playwright";
+import { preview } from "vite";
+
+let browser, server, origin;
+before(async () => {
+  server = await preview({ preview: { host: "127.0.0.1", port: 0 } });
+  origin = server.resolvedUrls.local[0];
+  browser = await chromium.launch();
+});
+after(async () => {
+  await browser?.close();
+  await server?.close();
+});
+
+const settings = { operationsEnabled: false, uiFeatures: {} };
+const overview = {
+  identity: { id: "owner", username: "owner", systemRole: "owner", permissions: ["connections.manage"] },
+  controllerSettings: settings, secretStorageConfigured: true, projectPermissions: {},
+  projects: [], apps: [], servers: [], deployments: [], eventTriggers: [], previews: [],
+  previewGroups: [], previewGroupRuns: [], secrets: [], secretStores: [], githubApps: [], relayWebhooks: [],
+};
+
+async function openPage(t, width) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } });
+  t.after(() => page.close());
+  page.setDefaultTimeout(7000);
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  t.after(() => assert.deepEqual(errors, [], "Browser errors or unexpected requests"));
+  let analyticsAttempts = 0;
+  const fixtures = {
+    hosted: { mode: "tenant", backendMode: "connected", origin, loginUrl: new URL("/login", origin).href, authentication: "doodship",
+      tenant: { id: "tenant", name: "Test", slug: "test", state: "ready" },
+      connection: { state: "connected", remoteAccess: true, instanceUrl: "https://controller.example.test", backendMode: "connected" } },
+    analytics: { state: "disabled" },
+    "events/rules": [], "events/activity": { items: [], total: 0 }, "secrets/usage": [],
+    overview: structuredClone(overview), settings, "deployment-catalog": { items: [] },
+  };
+  await page.route("**/api/v1/**", route => {
+    const key = new URL(route.request().url()).pathname.slice("/api/v1/".length);
+    if (key === "projects" && route.request().method() === "POST") {
+      const project = { ...route.request().postDataJSON(), id: "project", createdAt: "2026-01-01T00:00:00Z" };
+      fixtures.overview.projects.push(project);
+      return route.fulfill({ status: 201, json: project });
+    }
+    if (route.request().method() === "GET" && Object.hasOwn(fixtures, key)) {
+      if (key === "analytics" && analyticsAttempts++ === 0) {
+        return route.fulfill({ status: 503, json: { detail: "Temporarily unavailable" } });
+      }
+      return route.fulfill({ json: fixtures[key] });
+    }
+    errors.push(`Unexpected request: ${route.request().method()} ${key}`);
+    return route.abort();
+  });
+  await page.routeWebSocket("**/*", socket => socket.close());
+  return page;
+}
+
+for (const [width, sideBySide] of [[390, false], [1000, false], [1440, true], [1720, true]]) {
+  test(`GitHub App form at ${width}px`, async t => {
+    const page = await openPage(t, width);
+    await page.goto(new URL("/connections", origin).href);
+    await page.getByRole("button", { name: /GitHub App/ }).click();
+    const editor = page.getByRole("region", { name: "Add GitHub App" });
+    await editor.getByLabel("Outbound proxy").selectOption("app");
+    await editor.getByLabel("Proxy URL").fill("https://proxy.example.test:3129");
+    await editor.getByText("GitHub endpoints").click();
+    await editor.getByLabel("GitHub URL", { exact: true }).fill("https://github.example.test");
+
+    const details = await editor.getByRole("region", { name: "App details" }).boundingBox();
+    const network = await editor.getByRole("region", { name: "Network access" }).boundingBox();
+    if (sideBySide) {
+      assert.equal(details.y, network.y);
+      assert.ok(network.x >= details.x + details.width - 1);
+    } else {
+      assert.ok(network.y >= details.y + details.height - 1);
+    }
+    const widths = await editor.evaluate(el => {
+      const page = el.parentElement;
+      const style = getComputedStyle(page);
+      return {
+        available: page.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+        editor: el.getBoundingClientRect().width,
+        overflow: el.scrollWidth - el.clientWidth,
+        pageOverflow: document.documentElement.scrollWidth - innerWidth,
+      };
+    });
+    assert.ok(Math.abs(widths.editor - widths.available) <= 1, "Editor must fill the settings page");
+    assert.ok(widths.overflow <= 1 && widths.pageOverflow <= 1, "Controls must fit without horizontal scrolling");
+  });
+}
+
+for (const width of [390, 1440]) {
+  test(`Shared navigation and forms at ${width}px`, async t => {
+    const page = await openPage(t, width);
+    await page.goto(new URL("/connections", origin).href);
+    async function navigate(name) {
+      if (width === 390) await page.getByRole("button", { name: "Open navigation" }).click();
+      const link = page.getByRole("complementary", { name: "Primary navigation" }).getByRole("link", { name, exact: true });
+      const href = await link.getAttribute("href");
+      await link.click();
+      await page.waitForURL(new URL(href, origin).href);
+    }
+    await navigate("Workloads");
+    await page.getByRole("heading", { name: "Applications", level: 1 }).waitFor();
+    await navigate("Infrastructure");
+    await page.getByRole("heading", { name: "Servers", level: 1 }).waitFor();
+    await navigate("Analytics");
+    await page.getByRole("alert").getByText("Analytics could not be loaded").waitFor();
+    await page.getByRole("button", { name: "Try again" }).click();
+    await page.getByText("Historical analytics is disabled").waitFor();
+    await navigate("Automation");
+    await page.getByRole("navigation", { name: "Automation pages" }).waitFor();
+    await navigate("Projects");
+    await page.getByRole("button", { name: "Add project" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Add project" });
+    const save = dialog.getByRole("button", { name: "Add project" });
+    assert.ok(await save.isDisabled(), "An empty project name must block submission");
+    await dialog.getByLabel("Project name").fill("Browser fixture");
+    await save.click();
+    await page.getByText("Browser fixture", { exact: true }).waitFor();
+    await page.reload();
+    await page.getByText("Browser fixture", { exact: true }).waitFor();
+
+    await navigate("Settings");
+    await page.getByRole("link", { name: "Variables", exact: true }).click();
+    await page.getByRole("button", { name: "Add value" }).first().click();
+    await page.getByRole("radio", { name: /Plain value/ }).check();
+    await page.getByRole("combobox", { name: /^Type\b/ }).selectOption("json");
+    await page.getByLabel("Name", { exact: true }).fill("Test variable");
+    await page.getByLabel("Environment variable", { exact: true }).fill("CONFIG");
+    await page.getByLabel("Value", { exact: true }).fill("[]");
+    await page.getByRole("button", { name: "Add variable" }).click();
+    await page.getByRole("alert").filter({ hasText: "Enter a non-empty JSON object." }).waitFor();
+    await page.getByRole("button", { name: "Cancel", exact: true }).first().click();
+    await page.getByLabel("Environment variable", { exact: true }).waitFor({ state: "hidden" });
+    await page.getByRole("link", { name: "Connections", exact: true }).click();
+    await page.goBack();
+    await page.getByRole("heading", { name: "Variables", level: 1 }).waitFor();
+    await page.goForward();
+    await page.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
+  });
+}
