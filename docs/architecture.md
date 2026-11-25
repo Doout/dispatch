@@ -1,6 +1,6 @@
 # Architecture
 
-One Dispatch controller owns the API, web interface, reconciliation loop, and durable state. Agents and provider adapters run as separate processes.
+One Doodship controller owns the API, web interface, reconciliation loop, and durable state. Agents and provider adapters run as separate processes.
 
 ```text
 Browser -> REST/SSE -> Controller -> Store (SQLite or PostgreSQL)
@@ -14,11 +14,11 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Secret APIs return metadata rather than stored credential values. Deployment logs and outputs contain data written by job scripts; scripts must not print credentials.
 - The controller holds encrypted integration material and issues scoped work to agents.
 - The API checks controller roles and project grants. Hiding an action in the web interface is not an authorization check.
-- A linked external identity authenticates the same Dispatch user. Linking accounts does not merge permissions at sign-in time.
-- Impersonation requires the controller owner. Credential changes are blocked while the owner views Dispatch as another user.
+- A linked external identity authenticates the same Doodship user. Linking accounts does not merge permissions at sign-in time.
+- Impersonation requires the controller owner. Credential changes are blocked while the owner views Doodship as another user.
 - SSH is for enrollment and operator-invoked recovery. Routine operations use the agent path.
 - Provider adapters receive only the configuration needed for their registered provider.
-- Dispatch stores edge node tokens as hashes. It encrypts provider requests and responses while queued, then deletes them after use.
+- Doodship stores edge node tokens as hashes. It encrypts provider requests and responses while queued, then deletes them after use.
 - Edge nodes accept bounded typed work over an outbound HTTPS poll; they do not expose a public arbitrary-command endpoint.
 - Laneway remains available as an IP-overlay transport for legacy socket routes.
 - Runtime drivers expose typed operations; there is no public arbitrary-command endpoint.
@@ -30,7 +30,7 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Only one mutating deployment may be active for an application.
 - Every transition is recorded before work continues.
 - Docker execution is opt-in. Simulation is the safe development default.
-- Pasted Kubernetes credentials remain API-write-only. Dispatch writes them to mode `0600` temporary files for Kubernetes operations.
+- Pasted Kubernetes credentials remain API-write-only. Doodship writes them to mode `0600` temporary files for Kubernetes operations.
 - Managed OpenShift connections persist only the cluster-admin service-account kubeconfig. Repair verifies and persists a replacement token Secret before revoking the prior credential.
 - A provider connection explicitly selects Direct or one edge node and stores that binding.
 
@@ -40,11 +40,11 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Component aliases and repositories are unique, one component is the entrypoint, and dependencies form a directed acyclic graph.
 - Every attempt snapshots the full group configuration and desired source SHAs before deployment begins.
 - A run owns one generated namespace and stable release name per component.
-- Components deploy by dependency level. Dispatch saves their outputs before dependent components start.
-- Dispatch applies saved Helm values first, pre-hook values second, and group output bindings last.
+- Components deploy by dependency level. Doodship saves their outputs before dependent components start.
+- Doodship applies saved Helm values first, pre-hook values second, and group output bindings last.
 - Deployment hooks are owned by event rules and snapshotted per attempt; group rules keep separate hooks for each component.
 - Hooks receive normalized `DISPATCH_EVENT_*` context from the command that started the attempt.
-- Dispatch removes a failed first attempt. After a failed update, it reruns the last successful revision set. A failed restoration leaves the run degraded for operator inspection.
+- Doodship removes a failed first attempt. After a failed update, it reruns the last successful revision set. A failed restoration leaves the run degraded for operator inspection.
 - Only explicitly linked pull requests control automatic cleanup. Default-branch sources do not keep a run open.
 
 ## Repository workflows
@@ -54,7 +54,7 @@ GitHub -> signed webhook -----|<---- scheduled reconciliation
 - Every Application run resolves all source branches to exact commits before work starts.
 - The poller checks remote heads before fetching repository content. Applications share credential-scoped mirrors. Each run receives a detached worktree for its immutable revision.
 - A job fingerprint covers its definition, declared sources, inputs, resolved secrets, and controller platform. Applications in one configuration source share matching successful results with complete outputs. Concurrent matching builds are coordinated within one controller.
-- Dispatch resolves secrets before starting a job. Jobs receive those values in their environment and are responsible for keeping them out of logs and outputs.
+- Doodship resolves secrets before starting a job. Jobs receive those values in their environment and are responsible for keeping them out of logs and outputs.
 - Stage promotion reuses one immutable revision and its versioned outputs. It does not rebuild between targets.
 - A stage starts only after the prior stage and all of its checks succeed. Required approval pauses before deployment.
 - Webhooks and polling use the same event deduplication and source snapshot code. Either method can detect a source change.
@@ -75,7 +75,7 @@ rules within each domain when extracting shared code.
 | `internal/deploy` and `internal/agentruntime` | Execute bounded operations, record effects and cleanup evidence, and journal outcomes before acknowledging them. An interrupted mutation requires inspection. |
 | `internal/provider`, `internal/provision` and `internal/bootstrap` | Allocate through provider adapters, track the original operation and enroll pinned agent artifacts. Snapshot isolation and deployable target readiness have separate acceptance rules. |
 | `internal/workflow` | Capture source revisions, schedule jobs and stage promotion, and preserve the workflow's owned resources and outputs. |
-| `internal/automationclient` and `cmd/dispatchctl` | Use the public API contracts, retain continuation IDs and report approval or reconciliation requirements to callers. |
+| `internal/automationclient` and `cmd/doodship` | Use the public API contracts, retain continuation IDs and report approval or reconciliation requirements to callers. |
 
 SQL helpers may share a locked read or a compare-and-swap write. Their callers
 must continue to own the transaction, lock order and domain predicates. A helper
@@ -158,3 +158,13 @@ as revocation while execution waits for a target lock. PostgreSQL tests must
 exercise transaction and concurrency changes. Recovery tests must continue to
 retain original IDs, keys, receipts and protected data. Keep schema migrations
 and public contract changes separate from behavior-preserving extraction.
+
+## Compatibility with existing Dispatch installations
+
+| Surface | What an upgrade preserves |
+| --- | --- |
+| Automation CLI | New installations use `doodship automation`, `DOODSHIP_URL`, and `DOODSHIP_TOKEN_FILE`. Existing controller archives still provide `dispatchctl`. Both commands accept the previous environment names and return the same `dispatch.client/v1` JSON. |
+| Installer and storage | The controller executable, GHCR image coordinates, Compose service, volumes, database filenames, backup members and agent service paths retain their names. Existing upgrades and restores use those identifiers to find data. |
+| Helm and GitHub | Helm ownership annotations and the `Dispatch provenance: ` history prefix identify existing releases. GitHub check names and status contexts such as `Dispatch/deployment` can be required by branch protection. |
+| Workflows and the API | Existing `dispatch/v1alpha1` YAML, `.dispatch` discovery paths, provider and worker protocols, and `X-Dispatch-*` headers continue to work across upgrades. |
+| Distribution | Repository links and Go imports still resolve through `github.com/Doout/dispatch` and `github.com/doout/dispatch` respectively. |

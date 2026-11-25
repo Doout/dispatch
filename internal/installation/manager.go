@@ -470,9 +470,9 @@ func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bo
 			fmt.Fprintln(m.Out, "Server started. Connecting to Doodship.")
 			return nil
 		}
-		fmt.Fprintf(m.Out, "Dispatch is ready at http://%s. Complete owner setup in the browser.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
+		fmt.Fprintf(m.Out, "Doodship is ready at http://%s. Complete owner setup in the browser.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
 	} else {
-		fmt.Fprintf(m.Out, "Dispatch imported at http://%s. Sign in with your existing account.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
+		fmt.Fprintf(m.Out, "Doodship imported at http://%s. Sign in with your existing account.\n", net.JoinHostPort(c.Bind, fmt.Sprint(c.Port)))
 	}
 	return nil
 }
@@ -546,7 +546,7 @@ func (m *Manager) Upgrade(ctx context.Context, image string, pull, check bool) e
 				return err
 			}
 		}
-		fmt.Fprintln(m.Out, "Dispatch is already up to date.")
+		fmt.Fprintln(m.Out, "Doodship is already up to date.")
 		return nil
 	}
 	backup := m.path("backups/" + time.Now().UTC().Format("20060102T150405.000000000Z"))
@@ -575,11 +575,11 @@ func (m *Manager) Upgrade(ctx context.Context, image string, pull, check bool) e
 			return fmt.Errorf("controller upgraded; local CLI update failed: %w", e)
 		}
 	}
-	fmt.Fprintln(m.Out, "Dispatch upgraded. Backup:", backup)
+	fmt.Fprintln(m.Out, "Doodship upgraded. Backup:", backup)
 	return nil
 }
 func (m *Manager) performUpgrade(ctx context.Context, c Config, image string, tx *transaction) error {
-	fmt.Fprintln(m.Out, "Stopping Dispatch and backing up its data…")
+	fmt.Fprintln(m.Out, "Stopping Doodship and backing up its data…")
 	if _, err := m.compose(ctx, c, "stop", "--timeout", "30", "dispatch"); err != nil {
 		return err
 	}

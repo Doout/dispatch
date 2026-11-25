@@ -427,7 +427,7 @@ func validateKubernetesServer(input *kubernetesServerRequest, existing *core.Kub
 		config.CertificateAuthorityStored = config.CertificateAuthorityData != ""
 	case "path":
 		if config.KubeconfigPath == "" {
-			return nil, "Enter the kubeconfig path mounted on the Dispatch controller."
+			return nil, "Enter the kubeconfig path mounted on the Doodship controller."
 		}
 		contextName, err = validateKubeconfig(config.KubeconfigPath, config.Context)
 	default:

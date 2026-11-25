@@ -92,7 +92,7 @@ func (a *API) reportWorkflowCheck(ctx context.Context, r core.WorkflowCheckRepor
 				r.CheckID = found.ID
 				found, err = a.eventConfig.GitHubApps.PublishCheckRun(ctx, r, payload, false)
 			} else if errors.Is(err, githubapp.ErrCheckRunNotFound) {
-				err = &githubapp.CheckRunError{Message: "The create response was lost and the accepted check has not appeared yet. Dispatch will keep reconciling its identity without creating a duplicate."}
+				err = &githubapp.CheckRunError{Message: "The create response was lost and the accepted check has not appeared yet. Doodship will keep reconciling its identity without creating a duplicate."}
 			}
 			if err == nil {
 				r.CheckID, r.HTMLURL = found.ID, safeCheckLink(found.HTMLURL)
@@ -107,7 +107,7 @@ func (a *API) reportWorkflowCheck(ctx context.Context, r core.WorkflowCheckRepor
 	}
 	if err != nil {
 		r.State = "retrying"
-		r.Error = "Check reporting is temporarily unavailable. Dispatch will retry; the workflow outcome is unchanged."
+		r.Error = "Check reporting is temporarily unavailable. Doodship will retry; the workflow outcome is unchanged."
 		var failure *githubapp.CheckRunError
 		if errors.As(err, &failure) {
 			r.Error = failure.Message
@@ -229,7 +229,7 @@ func (a *API) workflowCheckPayload(ctx context.Context, r core.WorkflowCheckRepo
 	case "failed":
 		payload.Status = "completed"
 		payload.Conclusion = "failure"
-		summary = "The recorded execution failed. Open the Dispatch run for details."
+		summary = "The recorded execution failed. Open the Doodship run for details."
 	case "cancelled":
 		payload.Status = "completed"
 		payload.Conclusion = "cancelled"
@@ -274,7 +274,7 @@ func (a *API) workflowCheckPayload(ctx context.Context, r core.WorkflowCheckRepo
 		}
 	}
 	if r.LogURL != "" || strings.Contains(payload.DetailsURL, "/actions/runs/") {
-		summary = strings.ReplaceAll(summary, "Open the Dispatch run for details.", "Open the GitHub run for logs.")
+		summary = strings.ReplaceAll(summary, "Open the Doodship run for details.", "Open the GitHub run for logs.")
 	}
 	if preview := safeCheckLink(r.PreviewURL); preview != "" {
 		if payload.DetailsURL == "" {

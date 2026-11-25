@@ -48,7 +48,7 @@ the original operation ID and record the credential used for that request.
 
 ## Acceptance and recovery
 
-Dispatch first reserves a stable operation identity in SQLite or PostgreSQL. It
+Doodship first reserves a stable operation identity in SQLite or PostgreSQL. It
 then creates the existing deployment or provisioning operation and accepts the receipt in one
 transaction, before scheduling execution. Concurrent retries share that identity.
 If a controller stops during preparation, retrying the same request after the

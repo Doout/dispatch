@@ -133,7 +133,7 @@ mv -f /usr/local/bin/dispatch-agent.new /usr/local/bin/dispatch-agent
 install -m 0600 "$bootstrap_root/edge.env" /etc/dispatch-edge/edge.env
 cat > /etc/systemd/system/dispatch-edge.service <<'UNIT'
 [Unit]
-Description=Dispatch enrolled target agent
+Description=Doodship enrolled target agent
 After=network-online.target docker.service
 Wants=network-online.target
 [Service]

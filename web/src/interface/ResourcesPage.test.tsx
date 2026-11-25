@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, expect, it, vi } from "vitest";
 import * as api from "../api";
 import { infrastructureApi } from "../InfrastructureProviders";
+import { HostedTenantContext } from "../hosted/context";
+import type { HostedTenant } from "../hosted/client";
 import { ResourcesPage } from "./ResourcesPage";
 import { automationClient, Assignment } from "./resources/client";
 
@@ -42,6 +44,26 @@ it.each<{ section: string; feature: api.UIFeatureKey; role: "button" | "form" | 
   await act(async () => {});
   expect(screen.getByRole(role, { name })).toBeTruthy();
   expect(screen.queryByText(/is disabled$/)).toBeNull();
+});
+
+it("directs connected portal owners to the controller without requesting credentials", () => {
+  const accounts = vi.spyOn(automationClient, "accounts");
+  const tenant: HostedTenant = { mode: "tenant", backendMode: "connected", origin: "https://team.example", loginUrl: "https://example", tenant: { id: "t", name: "Team", slug: "team", state: "active", createdAt: "" } };
+  render(<HostedTenantContext.Provider value={tenant}><ResourcesPage overview={overview} section="credentials" onChanged={changed} /></HostedTenantContext.Provider>);
+  expect(screen.getByText(/sign in to your self-hosted controller/i)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create account" })).toBeNull();
+  expect(accounts).not.toHaveBeenCalled();
+});
+
+it("lets a controller owner retry a failed account list and find CLI setup", async () => {
+  const accounts = vi.spyOn(automationClient, "accounts").mockRejectedValueOnce(new Error("HTTP 502")).mockResolvedValue([]);
+  render(<ResourcesPage overview={overview} section="credentials" onChanged={changed} />);
+  expect((await screen.findByRole("alert")).textContent).toContain("Could not load automation accounts. HTTP 502");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByText("No automation accounts.");
+  expect(accounts).toHaveBeenCalledTimes(2);
+  fireEvent.click(screen.getByText("Use an account with the Doodship CLI"));
+  expect(screen.getByText(/export DOODSHIP_TOKEN_FILE/).textContent).toContain("doodship automation auth status");
 });
 
 it("removes an open credential form when the controller disables the feature", async () => {

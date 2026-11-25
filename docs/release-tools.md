@@ -20,7 +20,7 @@ that namespace. Admission validation may also require CRDs to be installed first
 Preview does not guarantee rollout success. Reviewed deployment requests include
 the application name used to select the release, project, application
 configuration digest, binding mapping digest, and service
-revisions. Dispatch checks those inputs in the same transaction that accepts the
+revisions. Doodship checks those inputs in the same transaction that accepts the
 deployment and captures its bindings. Changed local inputs require another review.
 Git sources resolve to a fixed commit. External credentials and cluster state can
 still change after the observation.
@@ -32,7 +32,7 @@ Repository-managed applications use their environment approval/promotion flow.
 ## Restore a retained release
 
 Select a successful deployment in History, open Release tools, and review rollback
-to that version. Dispatch requires one retained successful Helm revision whose
+to that version. Doodship requires one retained successful Helm revision whose
 target, release, saved values, and deployment time match the selected run. It
 checks that the original chart and immutable service Secrets still exist, validates
 the desired resources using server-side dry-run, and asks the operator to confirm
@@ -45,7 +45,7 @@ the original Secret references. Current application settings and newly rotated
 credentials do not replace those inputs. Retained newer Secrets remain available
 to their releases.
 
-Rollback does not run Dispatch hooks or Helm hooks. It does not reverse database
+Rollback does not run Doodship hooks or Helm hooks. It does not reverse database
 migrations or external side effects. It cannot restore an application after its
 target, namespace, or release name changes. Missing or ambiguous history and
 missing credentials produce an explicit unavailable reason.
@@ -55,7 +55,7 @@ when the controller has a master key configured. Review shows the target, exact
 image IDs, container port and configured domain. The images must still exist on
 the original Docker target. Restore uses those images and the original
 resolved environment, commands, mounts and service networks. It never fetches
-source, builds images or runs hooks. Dispatch records the restore as a new
+source, builds images or runs hooks. Doodship records the restore as a new
 deployment and preserves the selected successful deployment. Enrolled targets
 keep those artifacts in the agent's private state directory and use durable
 [remote runtime receipts](remote-runtime.md) for restore.
@@ -80,12 +80,12 @@ remain outside release rollback.
 ## Diagnose and inspect activity
 
 Diagnosis reads current pods, recent events, and bounded log excerpts from the
-Dispatch controller. Image-pull failures, scheduling failures, crash loops, memory
+Doodship controller. Image-pull failures, scheduling failures, crash loops, memory
 termination, and readiness failures include concrete next steps. Historical
 deployment selection is labeled separately from current workload inspection.
 
 Inspection requires an idle application so that a concurrent deployment cannot
-replace the runtime inputs during credential redaction. Dispatch redacts captured
+replace the runtime inputs during credential redaction. Doodship redacts captured
 credentials from the selected run, current successful release, and latest attempt.
 If historical external credentials cannot be resolved safely, log and event
 details remain hidden. Diagnosis never treats unreadable resources as healthy.
@@ -107,7 +107,7 @@ Before accepting traffic, the controller marks interrupted queued/running workfl
 revisions, jobs, and stages as failed with explicit inspection and retry guidance.
 Pending approvals and successful build outputs remain intact. Recovery never
 automatically repeats a job or a deployment whose external effects are uncertain.
-This startup reconciliation assumes a single Dispatch controller.
+This startup reconciliation assumes a single Doodship controller.
 
 ## API
 

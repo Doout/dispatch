@@ -191,7 +191,7 @@ describe("applications overview", () => {
     await vi.waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ configSourceId: "slots", githubAppId: "github-1", repository: "Example/service", command: "/preview", commentOnOpen: true, previewUrl: "https://dev.example.test/app/preview/{{ instance.id }}", active: true })));
   });
 
-  it("creates a GitHub template without copying YAML into Dispatch", async () => {
+  it("creates a GitHub template without copying YAML into Doodship", async () => {
     const user = userEvent.setup();
     const configured: Overview = {
       ...overview,

@@ -91,7 +91,7 @@ command -v systemctl >/dev/null 2>&1 || { echo "systemd is required" >&2; exit 1
 install -m 0755 "$temporary" /usr/local/bin/dispatch-agent
 cat > /etc/systemd/system/dispatch-edge.service <<'EOF'
 [Unit]
-Description=Dispatch outbound edge node
+Description=Doodship outbound edge node
 After=network-online.target
 Wants=network-online.target
 

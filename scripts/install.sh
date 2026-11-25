@@ -1,8 +1,8 @@
 #!/bin/sh
-# Download the Dispatch CLI. Docker is installed separately by the operator.
+# Download the Doodship controller CLI. Docker is installed separately by the operator.
 set -eu
 
-case "$(uname -s)" in Linux) ;; *) echo 'Dispatch installation currently requires Linux.' >&2; exit 1 ;; esac
+case "$(uname -s)" in Linux) ;; *) echo 'Doodship controller installation currently requires Linux.' >&2; exit 1 ;; esac
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
@@ -24,7 +24,7 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$base/S
 (cd "$scratch" && awk -v file="$archive" '$2 == file { print }' SHA256SUMS > selected.sha256 && test -s selected.sha256 && sha256sum -c selected.sha256)
 tar -xzf "$scratch/$archive" -C "$scratch" dispatch
 "$scratch/dispatch" version >/dev/null || {
-  echo 'The downloaded Dispatch CLI cannot run on this host. Keeping the existing CLI.' >&2
+  echo 'The downloaded Doodship controller CLI cannot run on this host. Keeping the existing CLI.' >&2
   exit 1
 }
 if [ -w "$bin_dir" ] || [ "$(id -u)" = 0 ]; then

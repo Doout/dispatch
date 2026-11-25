@@ -1,6 +1,6 @@
 # On-demand servers
 
-Dispatch can create, inspect, adopt, and delete machines through a registered
+Doodship can create, inspect, adopt, and delete machines through a registered
 `dispatch.provider/v1` adapter, with optional power and clone promotion capabilities.
 The runnable mock supports the whole workflow
 without cloud credentials or billing. A real provider adapter is a separate
@@ -67,8 +67,8 @@ the server endpoint to check whether the intended node has enrolled and passed
 a fresh runtime check:
 
 ```sh
-dispatchctl server get --server SERVER_ID
-dispatchctl server wait --server SERVER_ID --timeout 120
+doodship automation server get --server SERVER_ID
+doodship automation server wait --server SERVER_ID --timeout 120
 ```
 
 `server_get` and `server_wait` are also MCP tools. They require current

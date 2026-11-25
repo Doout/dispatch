@@ -144,7 +144,7 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 				return true, retry(e)
 			}
 			if e == nil && ownedResource(review, resource) != nil {
-				return true, stop("ownership", "The provider resource does not match Dispatch ownership; deletion was stopped.")
+				return true, stop("ownership", "The provider resource does not match Doodship ownership; deletion was stopped.")
 			}
 			remote, err = client.DeleteServer(ctx, op.ID, server.ResourceID)
 		}
@@ -193,7 +193,7 @@ func (m *Manager) Reconcile(ctx context.Context) (bool, error) {
 				return true, retry(e)
 			}
 			if e = ownedResource(review, resource); e != nil || resource.State != "ready" || !m.safeEvidence(review, map[string]string{"id": resource.ID, "address": resource.Address}) {
-				return true, stop("ownership", "The provider resource is not ready or does not match Dispatch ownership.")
+				return true, stop("ownership", "The provider resource is not ready or does not match Doodship ownership.")
 			}
 			if m.verifyReviewedClone(review, resource) != nil {
 				return true, stop("restore_evidence", "Clone isolation, fresh identity or disk integrity evidence was not verified.")

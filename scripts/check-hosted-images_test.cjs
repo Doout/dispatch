@@ -107,7 +107,7 @@ function imageFixture() {
   const docker = args => {
     calls.push(args);
     if (args[0] === 'buildx') return JSON.stringify(manifest);
-    return `Dispatch platform main-${sha}\n`;
+    return `Doodship platform main-${sha}\n`;
   };
   return { config, manifest, calls, docker };
 }
@@ -148,7 +148,7 @@ for (const [index, architecture] of ['amd64', 'arm64'].entries()) {
     const f = imageFixture();
     const docker = args => {
       const version = f.docker(args);
-      return args.includes(`linux/${architecture}`) ? 'Dispatch platform development\n' : version;
+      return args.includes(`linux/${architecture}`) ? 'Doodship platform development\n' : version;
     };
     assert.throws(() => checkImage(f.config, docker), /unexpected version/);
     assert.equal(f.calls.length, index + 2);
@@ -169,7 +169,7 @@ test('Docker pull and runtime failures fail the check', () => {
    const f = imageFixture();
    checkImage({ ...f.config, product: 'controller' }, args => {
      const result = f.docker(args);
-     return args[0] === 'buildx' ? result : `Dispatch main-${sha}\n`;
+     return args[0] === 'buildx' ? result : `Doodship main-${sha}\n`;
    });
    assert.equal(f.calls.length, 3);
  });

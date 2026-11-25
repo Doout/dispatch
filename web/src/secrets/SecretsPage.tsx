@@ -334,7 +334,7 @@ export function SecretsPage({
             <form className="resource-form secret-form" onSubmit={save}>
               <div className="secret-form-main">
                 <fieldset className="secret-value-kind">
-                  <legend>How should Dispatch store this value?</legend>
+                  <legend>How should Doodship store this value?</legend>
                   <div>
                     <label>
                       <input type="radio" name="value-kind" checked={valueKind === "secret"} disabled={!overview.secretStorageConfigured} onChange={() => { setValueKind("secret"); setValue(""); }} />
@@ -358,7 +358,7 @@ export function SecretsPage({
                       />
                       <span>
                         <LockSimple size={16} />
-                        <strong>Dispatch</strong>
+                        <strong>Doodship</strong>
                       </span>
                     </label>
                     <label>
@@ -573,7 +573,7 @@ export function SecretsPage({
                       {(secretType === "json" && valueKind === "secret" || plainFormat === "json" && valueKind === "plain") &&
                         <small>In workflow YAML, bind a key with <code>secretRef: {name.trim() || environmentVariable}</code> and <code>key: APIKEY</code>. {valueKind === "plain" && "Choose Secret if any key is a credential."}</small>}
                       {editing && isPlain(editing) !== (valueKind === "plain") &&
-                        <small className="variable-conversion-note">{valueKind === "plain" ? "Enter a new plain value. Dispatch cannot show the current secret." : "Enter a new secret value before saving."}</small>}
+                        <small className="variable-conversion-note">{valueKind === "plain" ? "Enter a new plain value. Doodship cannot show the current secret." : "Enter a new secret value before saving."}</small>}
                     </div>
                   )
                 )}
@@ -656,7 +656,7 @@ export function SecretsPage({
                   {plain ? <code>{secret.publicValue}</code> : <span className="variable-hidden"><LockSimple size={14} />Hidden after saving</span>}
                 </div>
                 <div className="variable-details">
-                  <span>{plain ? "Dispatch" : secret.source === "external" ? (store?.name ?? "External store") : "Dispatch"}</span>
+                  <span>{plain ? "Doodship" : secret.source === "external" ? (store?.name ?? "External store") : "Doodship"}</span>
                   <span>{secret.type === "environment_json" ? "JSON" : plain ? "Environment variable" : secretTypeLabel(secret.type)}</span>
                   <VariableUsageButton secret={secret} usage={usage.items?.find(item => item.secretId === secret.id)} loading={usage.loading} error={usage.error} onClick={() => setUsageSecret(secret)} />
                 </div>

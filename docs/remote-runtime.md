@@ -1,6 +1,6 @@
 # Enrolled Docker runtime
 
-A Docker server can bind to an enrolled Dispatch agent using `agentNodeId` in
+A Docker server can bind to an enrolled Doodship agent using `agentNodeId` in
 `POST /api/v1/servers`. The binding is immutable and unique. The node uses its
 existing persistent enrollment key and short-lived HTTPS session. Legacy bearer
 tokens cannot execute runtime jobs. The controller needs encrypted storage and

@@ -109,6 +109,7 @@ type Operation struct {
 }
 
 var Operations = combineOperations([]Operation{
+	{Name: "auth_status", Method: "GET", Path: "/auth/me", Description: "Show the authenticated identity and its project grants."},
 	{Name: "projects_list", Method: "GET", Path: "/projects", Description: "List projects visible to the current scoped identity."},
 	{Name: "apps_list", Method: "GET", Path: "/apps", Description: "List visible applications, optionally filtered by project.", Fields: []string{"projectId"}},
 	{Name: "deployment_preview", Method: "POST", Path: "/apps/{appId}/release-preview", Description: "Inspect release inputs and obtain the server's point-in-time deployment review.", Fields: []string{"appId", "revision"}, Required: []string{"appId"}},
@@ -126,7 +127,7 @@ var Operations = combineOperations([]Operation{
 	{Name: "provider_options", Method: "POST", Path: "/projects/{projectId}/infrastructure/providers/{providerId}/options", Description: "Inspect available provider regions, sizes, images or networks using public configuration.", Fields: []string{"projectId", "providerId", "input"}, Required: []string{"projectId", "providerId", "input"}, InputSchema: "ProviderOptionsInput"},
 	{Name: "server_operations", Method: "GET", Path: "/infrastructure/servers/{serverId}/operations", Description: "Inspect original server operation history and recovery state.", Fields: []string{"serverId"}, Required: []string{"serverId"}},
 	{Name: "server_review", Method: "POST", Path: "/infrastructure/servers/review", Description: "Prepare a server creation review using assigned provider and public SSH key references.", Fields: []string{"input"}, Required: []string{"input"}, InputSchema: "ServerCreateReview"},
-	{Name: "server_create", Method: "POST", Path: "/infrastructure/servers", Description: "Accept a supplied server creation review with an explicit key. Project grants, assignments and quota are enforced by Dispatch.", Fields: []string{"key", "input"}, Required: []string{"key", "input"}, Mutation: true, InputSchema: "InfrastructureAcceptance"},
+	{Name: "server_create", Method: "POST", Path: "/infrastructure/servers", Description: "Accept a supplied server creation review with an explicit key. Project grants, assignments and quota are enforced by Doodship.", Fields: []string{"key", "input"}, Required: []string{"key", "input"}, Mutation: true, InputSchema: "InfrastructureAcceptance"},
 	{Name: "server_delete_review", Method: "POST", Path: "/infrastructure/servers/{serverId}/delete-review", Description: "Preview server deletion and protected data consequences without accepting deletion.", Fields: []string{"serverId"}, Required: []string{"serverId"}},
 	{Name: "server_delete", Method: "POST", Path: "/infrastructure/servers/{serverId}/delete", Description: "Submit the operator-supplied deletion digest and exact name with an explicit key. Never generates confirmation or bypasses protected storage.", Fields: []string{"serverId", "key", "input"}, Required: []string{"serverId", "key", "input"}, Mutation: true, InputSchema: "InfrastructureAcceptance"},
 	{Name: "snapshots_list", Method: "GET", Path: "/projects/{projectId}/infrastructure/snapshots", Description: "List owned machine snapshots and their retention and recovery state.", Fields: []string{"projectId"}, Required: []string{"projectId"}},

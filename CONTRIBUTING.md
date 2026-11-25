@@ -1,6 +1,6 @@
 # Contributing
 
-Dispatch is a Go controller with an embedded React application. Start with the [architecture](docs/architecture.md) and [repository configuration](docs/application-config.md) docs when changing deployment behavior.
+Doodship is a Go controller with an embedded React application. Start with the [architecture](docs/architecture.md) and [repository configuration](docs/application-config.md) docs when changing deployment behavior.
 
 ## Local setup
 

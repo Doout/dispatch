@@ -46,7 +46,7 @@ func (a *API) applicationSync(ctx context.Context, id string) (applicationSync, 
 	if err != nil {
 		return applicationSync{}, err
 	}
-	out := applicationSync{AppID: id, Configuration: configurationSync{State: "not_applicable", Message: "Application configuration is managed in Dispatch."}, Revision: revisionStatus{State: "not_deployed"}, Drift: core.DriftCheck{State: "unknown", Health: "unknown", Location: "Dispatch controller", Message: "No successful deployment is available.", Resources: []core.DriftResource{}}, Actions: []core.DriftAction{}}
+	out := applicationSync{AppID: id, Configuration: configurationSync{State: "not_applicable", Message: "Application configuration is managed in Doodship."}, Revision: revisionStatus{State: "not_deployed"}, Drift: core.DriftCheck{State: "unknown", Health: "unknown", Location: "Dispatch controller", Message: "No successful deployment is available.", Resources: []core.DriftResource{}}, Actions: []core.DriftAction{}}
 	if a.observations != nil {
 		if observation, e := a.observations.Status(ctx, id); e == nil {
 			out.ObservationFreshness = observation.Freshness

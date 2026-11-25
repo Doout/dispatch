@@ -107,7 +107,7 @@ describe("sign-in methods", () => {
 
     expect(
       within(dialog).getByText(
-        "Dispatch creates a pending account. An owner must approve it before sign-in.",
+        "Doodship creates a pending account. An owner must approve it before sign-in.",
       ),
     ).not.toBeNull();
     expect(within(dialog).queryByText(/Email domains/i)).toBeNull();

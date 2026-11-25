@@ -121,7 +121,7 @@ func previewPanelBody(panel core.WorkflowPreviewPanel, template core.WorkflowPre
 	body += "\nLifetime: " + workflowPreviewLifetimeText(*trigger) + "\n"
 	body += previewPanelControls(*trigger)
 	if revision.Error != "" {
-		body += "\nThe latest run failed. Open the workflow run in Dispatch for the error and logs.\n"
+		body += "\nThe latest run failed. Open the workflow run in Doodship for the error and logs.\n"
 	}
 	if runs.Deployed.ID != "" {
 		body += "\n<details>\n<summary>Deployment details</summary>\n\n" + workflowPreviewReportForTrigger(runs.Deployed, resource, runs.DeployedStages, trigger.PreviewURL, webURL, *trigger) + "\n</details>\n"
@@ -132,7 +132,7 @@ func previewPanelBody(panel core.WorkflowPreviewPanel, template core.WorkflowPre
 		body += workflowPreviewCommandHelp(revision, *trigger)
 	}
 	if runs.Checks.ID != "" {
-		body += "\nLatest checks: " + runs.Checks.State + ". Open the workflow run in Dispatch for results and logs.\n"
+		body += "\nLatest checks: " + runs.Checks.State + ". Open the workflow run in Doodship for results and logs.\n"
 	}
 	return body
 }

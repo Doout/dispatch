@@ -1,4 +1,4 @@
-// Package automationclient is the shared, bounded API client used by dispatchctl
+// Package automationclient is the shared, bounded API client used by Doodship automation
 // and its MCP transport. The controller remains the authorization authority.
 package automationclient
 
@@ -80,7 +80,7 @@ type Client struct {
 func New(endpoint, token string, timeout time.Duration) (*Client, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || strings.Trim(u.Path, "/") != "" {
-		return nil, errors.New("DISPATCH_URL must be a controller origin without credentials, path, query or fragment")
+		return nil, errors.New("The controller URL must be a controller origin without credentials, path, query or fragment")
 	}
 	ip := net.ParseIP(u.Hostname())
 	local := u.Hostname() == "localhost" || ip != nil && ip.IsLoopback()
@@ -129,7 +129,7 @@ func (c *Client) request(ctx context.Context, method, path, key string, body any
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "dispatchctl/1")
+	req.Header.Set("User-Agent", "doodship/1")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

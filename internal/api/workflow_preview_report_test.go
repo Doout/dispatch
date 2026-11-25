@@ -24,7 +24,7 @@ func TestWorkflowPreviewReportListsDeployedSourcesAndImages(t *testing.T) {
 			t.Fatalf("preview report omitted %q: %s", want, body)
 		}
 	}
-	for _, unwanted := range []string{"**Dispatch revision:**", "**Dispatch controller:**"} {
+	for _, unwanted := range []string{"**Dispatch revision:**", "**Doodship controller:**"} {
 		if strings.Contains(body, unwanted) {
 			t.Fatalf("preview report included %q: %s", unwanted, body)
 		}
@@ -158,7 +158,7 @@ func TestWorkflowPreviewTestReportKeepsDeploymentReportSeparate(t *testing.T) {
 	revision := core.WorkflowRevision{ID: "test-run", State: "failed", Error: "check qa failed", Trigger: "pull request test 17"}
 	stages := []core.WorkflowStageRun{{StageName: "development", State: "failed", CheckRuns: map[string]string{"qa": "pipeline-run"}, Error: "check qa: command failed"}}
 	body := workflowPreviewTestReport(revision, stages, "https://preview.example.test/42")
-	for _, want := range []string{"Preview checks failed", "https://preview.example.test/42", "`qa`", "check qa: command failed", "Dispatch"} {
+	for _, want := range []string{"Preview checks failed", "https://preview.example.test/42", "`qa`", "check qa: command failed", "Open the preview run in Doodship for check logs."} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("test report omitted %q: %s", want, body)
 		}

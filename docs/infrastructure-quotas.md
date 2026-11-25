@@ -48,7 +48,7 @@ capabilities.
 
 ## Capacity and recovery
 
-Dispatch reserves a server slot in the transaction that accepts its creation.
+Doodship reserves a server slot in the transaction that accepts its creation.
 The transaction records the original operation ID and immutable project,
 provider, region and size. Concurrent requests serialize against the project
 policy before counting reservations. Replaying one accepted operation consumes
@@ -58,13 +58,13 @@ Reservations have four states:
 
 | State | Counts toward the limit | Meaning |
 | --- | --- | --- |
-| `reserved` | Yes | Dispatch accepted the create; allocation may be pending |
+| `reserved` | Yes | Doodship accepted the create; allocation may be pending |
 | `allocated` | Yes | The provider confirmed the owned resource |
 | `unknown` | Yes | The provider's outcome needs inspection |
 | `released` | No | Confirmed deletion, or cancellation before submission |
 
 Failed enrollment and failed application deployment retain the slot. Requesting
-deletion does not release it. Dispatch releases capacity only when it confirms
+deletion does not release it. Doodship releases capacity only when it confirms
 resource absence or proves that creation was cancelled before submission.
 Uncertain operations retain their original identity and recovery records across
 restart. Existing managed resources are counted during migration, including

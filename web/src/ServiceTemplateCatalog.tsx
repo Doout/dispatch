@@ -16,7 +16,7 @@ export function ServiceTemplateCatalog({ templates, overview, onEdit, onUse, onC
  return <div className="service-template-list">{templates.map(item => {
   const manage = canManageProject(overview, item.projectId, "project.configure");
   return <article className="service-template-card" key={item.id}>
-   <div className="service-template-card-heading"><div><h2>{item.name}</h2><p>{item.serviceType === "postgresql" ? "PostgreSQL" : "Generic"} · {overview.projects.find(p => p.id === item.projectId)?.name}</p></div><span className="service-template-origin">{item.managedBy === "dispatch" ? "Saved in Dispatch" : "GitOps"}</span></div>
+   <div className="service-template-card-heading"><div><h2>{item.name}</h2><p>{item.serviceType === "postgresql" ? "PostgreSQL" : "Generic"} · {overview.projects.find(p => p.id === item.projectId)?.name}</p></div><span className="service-template-origin">{item.managedBy === "dispatch" ? "Saved in Doodship" : "GitOps"}</span></div>
    {item.description && <p>{item.description}</p>}
    <p className="service-help">{item.provider === "neon" ? "Neon · " : item.provider === "docker" ? "Docker · " : item.provider === "helm" ? "Helm · " : ""}{Object.keys(item.inputs ?? {}).length} inputs · {Object.keys(item.outputs ?? {}).length} outputs</p>
    <div className="service-actions">

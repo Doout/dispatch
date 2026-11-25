@@ -63,7 +63,7 @@ proxy cannot reach those loopback ports; changing the bind address to expose the
 publicly defeats the readiness boundary. The default installation does not enable
 this managed provider automatically.
 
-Reserve the managed DNS zone for this provider. Dispatch checks its own directory
+Reserve the managed DNS zone for this provider. Doodship checks its own directory
 and controller reservations, but cannot arbitrate competing routes configured in
 other Traefik providers. Do not edit generated route files: changed or foreign
 files cause deployment to fail instead of being overwritten. Remove owned routes
@@ -108,7 +108,7 @@ Simulation does not publish routes or claim verified public reachability.
 Managed Compose routing supports stateless candidates. A single service is selected
 automatically. For multiple services set `x-dispatch-ingress-service: web` at the top
 of the Compose definition, or configure the target's default ingress service. Only
-that service may publish the application's configured TCP port; Dispatch replaces
+that service may publish the application's configured TCP port; Doodship replaces
 the published binding with an allocated loopback port.
 
 Fixed container names, host networking, external links, multiple replicas, writable

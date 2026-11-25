@@ -4,7 +4,7 @@ import { api, type HelmTakeoverReview } from "../api";
 import "./HelmTakeoverPanel.css";
 
 export function hasHelmOwnershipConflict(message?: string) {
-  return message?.includes("The Helm release does not belong to this Dispatch application and namespace.");
+  return /The Helm release does not belong to this (?:Dispatch|Doodship) application and namespace\./.test(message ?? "");
 }
 
 type Props = {

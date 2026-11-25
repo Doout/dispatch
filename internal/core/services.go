@@ -2,7 +2,7 @@ package core
 
 import "time"
 
-// SavedServiceTemplate is authored in Dispatch. Repository templates remain
+// SavedServiceTemplate is authored in Doodship. Repository templates remain
 // workflow resources owned by their configuration source.
 type SavedServiceTemplate struct {
 	ID             string    `json:"id"`

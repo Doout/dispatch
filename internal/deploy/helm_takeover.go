@@ -200,7 +200,7 @@ func takeoverRelease(ctx context.Context, client kubernetes.Interface, app core.
 	if raw, ok := strings.CutPrefix(r.Info.Description, prefix); ok {
 		var m helmDeploymentMetadata
 		if json.Unmarshal([]byte(raw), &m) != nil || (prior.ID != "" && prior.ID != m.AppID) || (prior.ProjectID != "" && m.ProjectID != "" && prior.ProjectID != m.ProjectID) {
-			return review, errors.New("Conflicting Dispatch ownership in Helm storage.")
+			return review, errors.New("Conflicting Doodship ownership in Helm storage.")
 		}
 		prior.ID = m.AppID
 		if m.ProjectID != "" {
@@ -212,12 +212,12 @@ func takeoverRelease(ctx context.Context, client kubernetes.Interface, app core.
 		return review, errors.New("Helm storage belongs to another manager.")
 	}
 	if prior.ID == "" || requireHelmReleaseOwner(r, prior, ns) != nil {
-		return review, errors.New("Cannot verify a previous Dispatch owner for this release.")
+		return review, errors.New("Cannot verify a previous Doodship owner for this release.")
 	}
 	if raw := object.GetAnnotations()[helmProvenanceAnnotation]; raw != "" {
 		var m helmDeploymentMetadata
 		if json.Unmarshal([]byte(raw), &m) != nil || m.AppID != prior.ID || (m.ProjectID != "" && m.ProjectID != prior.ProjectID) {
-			return review, errors.New("Conflicting Dispatch ownership on the Helm storage object.")
+			return review, errors.New("Conflicting Doodship ownership on the Helm storage object.")
 		}
 	}
 	if prior.ID == app.ID && prior.ProjectID == app.ProjectID {
@@ -246,7 +246,7 @@ func takeoverRelease(ctx context.Context, client kubernetes.Interface, app core.
 func transferProvenance(raw, appID, projectID string) (string, error) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &m); err != nil || m == nil {
-		return "", errors.New("Invalid stored Dispatch provenance.")
+		return "", errors.New("Invalid stored Doodship provenance.")
 	}
 	m["appId"], _ = json.Marshal(appID)
 	m["projectId"], _ = json.Marshal(projectID)
@@ -278,12 +278,12 @@ func prepareTransferredRelease(r *release.Release, prior, app core.App, isolated
 		annotations := yamlField(meta, "annotations")
 		provenance := yamlField(annotations, helmProvenanceAnnotation)
 		if provenance == nil {
-			return errors.New("Release resources have missing Dispatch ownership.")
+			return errors.New("Release resources have missing Doodship ownership.")
 		}
 		p := provenance.Value
 		var owner helmDeploymentMetadata
 		if json.Unmarshal([]byte(p), &owner) != nil || owner.AppID != prior.ID || owner.DeploymentID == "" || (owner.ProjectID != "" && owner.ProjectID != prior.ProjectID) {
-			return errors.New("Release resources have missing or conflicting Dispatch ownership.")
+			return errors.New("Release resources have missing or conflicting Doodship ownership.")
 		}
 		if isolated {
 			var scope map[string]any

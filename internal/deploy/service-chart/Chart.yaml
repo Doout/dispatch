@@ -1,4 +1,4 @@
 apiVersion: v2
 name: dispatch-postgresql
 version: 0.1.0
-description: PostgreSQL service provisioned by Dispatch
+description: PostgreSQL service provisioned by Doodship

@@ -405,7 +405,7 @@ func (a *API) processWorkflowPreviewPanelEdit(ctx context.Context, target *previ
 		for index, action := range actions {
 			event := core.IncomingEvent{ControlAction: true, Kind: core.EventKindPullRequestComment, Action: "edited", ProviderConnectionID: target.connectionID, Repository: target.repository, PullRequestNumber: panel.PullRequestNumber, Command: command, Arguments: action, SourceCommentID: fmt.Sprintf("panel:%s:%x:%d", panel.CommentID, hash, index), DeliveryID: fmt.Sprintf("panel:%s:%x:%d", panel.CommentID, hash, index), TrustedActor: true, Actor: editor, HeadSHA: pr.HeadSHA, HeadRef: pr.HeadRef, BaseRef: pr.BaseRef}
 			if err := a.processWorkflowPreviewComment(ctx, target, event, resolver); err != nil {
-				panel.ActionError = "The requested action could not start. Open Events in Dispatch for the error, then check the action to retry."
+				panel.ActionError = "The requested action could not start. Open Events in Doodship for the error, then check the action to retry."
 				panel.Body = comment.Body
 				saveErr := a.store.SaveWorkflowPreviewPanel(ctx, panel)
 				return true, errors.Join(err, saveErr)

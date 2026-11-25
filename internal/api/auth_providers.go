@@ -182,7 +182,7 @@ func (a *API) startAuthProviderManifest(w http.ResponseWriter, r *http.Request) 
 	manifest := map[string]interface{}{
 		"name":                     appName,
 		"url":                      origin,
-		"description":              "Signs users in to Dispatch.",
+		"description":              "Signs users in to Doodship.",
 		"redirect_url":             callbackURL,
 		"callback_urls":            []string{origin + "/api/v1/auth/callback"},
 		"public":                   true,
@@ -383,7 +383,7 @@ func (a *API) verifyAuthProvider(w http.ResponseWriter, r *http.Request) {
 	client := a.githubAuthClient(8 * time.Second)
 	response, err := client.Do(request)
 	if err != nil || response.StatusCode >= 500 {
-		problem(w, http.StatusBadGateway, "GitHub unavailable", "Dispatch could not reach this GitHub API.")
+		problem(w, http.StatusBadGateway, "GitHub unavailable", "Doodship could not reach this GitHub API.")
 		return
 	}
 	_ = response.Body.Close()

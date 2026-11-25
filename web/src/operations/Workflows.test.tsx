@@ -132,7 +132,7 @@ it("guards mapping saves against repeated submissions and exposes failures witho
  const request = vi.spyOn(client, "request").mockImplementation(async <T,>(_path: string, init?: RequestInit) => init?.method === "POST" ? new Promise((_resolve, fail) => { reject = fail; }) as Promise<T> : [] as T);
  const user = userEvent.setup(); render(<IdentityMappings />);
  await user.click(await screen.findByRole("button", { name: "Add mapping" }));
- await user.selectOptions(screen.getByLabelText("Sign-in provider"), "github"); await user.selectOptions(screen.getByLabelText("Dispatch team"), "team"); await user.type(screen.getByLabelText("GitHub team"), "org/platform");
+ await user.selectOptions(screen.getByLabelText("Sign-in provider"), "github"); await user.selectOptions(screen.getByLabelText("Doodship team"), "team"); await user.type(screen.getByLabelText("GitHub team"), "org/platform");
  const form = screen.getByRole("form", { name: "Add identity mapping" }); fireEvent.submit(form); fireEvent.submit(form);
  await waitFor(() => expect(request.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1));
  reject(new Error("Mapping could not be saved")); await screen.findByRole("alert"); expect((screen.getByLabelText("GitHub team") as HTMLInputElement).value).toBe("org/platform"); expect((screen.getByRole("button", { name: "Save mapping" }) as HTMLButtonElement).disabled).toBe(false);

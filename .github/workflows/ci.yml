@@ -258,6 +258,7 @@ jobs:
             done
           done
           ./doodship-linux-amd64/doodship --help
+          ./doodship-linux-amd64/doodship automation --help
       - name: Bundle the executables used by the runtime image
         run: tar -C release -cf runtime-binaries.tar amd64/dispatch amd64/dispatch-hook arm64/dispatch arm64/dispatch-hook edge relay
       - uses: actions/upload-artifact@v4

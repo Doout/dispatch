@@ -1,12 +1,12 @@
-# Dispatch
+# Doodship
 
-Dispatch builds images and deploys applications from Git repositories. It supports Dockerfile and Compose deployments, plus Helm releases on Kubernetes and OpenShift.
+Doodship builds images and deploys applications from Git repositories. It supports Dockerfile and Compose deployments, plus Helm releases on Kubernetes and OpenShift.
 
 Each run saves its source commits, configuration, job outputs and logs. The controller includes a React UI, HTTP API, CLI and stdio MCP server. Operational data uses SQLite or PostgreSQL; historical reporting uses embedded DuckDB.
 
 Run slot and PR workflows from a laptop with [doodship and its local example](examples/doodship/README.md).
 
-Dispatch is under active development. Keep the controller and its agents on a trusted network. The bundled machine provider is a mock. Allocating real servers and restoring machine snapshots require an external provider adapter and tests against that provider.
+Doodship is under active development. Keep the controller and its agents on a trusted network. The bundled machine provider is a mock. Allocating real servers and restoring machine snapshots require an external provider adapter and tests against that provider.
 
 ## What it does
 
@@ -35,6 +35,8 @@ Or use wget:
 wget -qO- https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install-cli.sh | bash
 ```
 
+To query projects and run deployments from CI with an automation credential, use [Doodship automation commands](docs/automation-client.md).
+
 The installer verifies the release checksum and installs `doodship` in `~/.local/bin`. If that directory is missing from your PATH, add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and run it in your terminal.
 
 Run `doodship update` to replace the executable you are using with the latest stable release. If you installed v0.2.0, rerun the installer once after a release containing the update command is published.
@@ -49,7 +51,7 @@ curl -fsSL "$installer" | bash -s -- --version v0.2.0
 
 ## Install and upgrade
 
-The installer runs Dispatch in Docker on Linux, on amd64 or arm64. Install Docker and Compose 2.30 or newer first, then download the CLI:
+The installer runs Doodship in Docker on Linux, on amd64 or arm64. Install Docker and Compose 2.30 or newer first, then download the CLI:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install.sh | sh
@@ -63,7 +65,7 @@ sudo dispatch upgrade --check
 sudo dispatch upgrade
 ```
 
-Upgrades preserve configuration and back up controller data before replacing the container. If the replacement fails its health check, Dispatch restores the previous image and data. Upgrades interrupt the controller, so schedule them outside active deployments.
+Upgrades preserve configuration and back up controller data before replacing the container. If the replacement fails its health check, Doodship restores the previous image and data. Upgrades interrupt the controller, so schedule them outside active deployments.
 
 To move a managed installation, export it on the old server, copy the archive and import it on the new server:
 
@@ -102,7 +104,7 @@ The Compose file binds the controller to `127.0.0.1:8080`, mounts the host Docke
 
 ### GitHub App proxy
 
-Open **Connections** on your self-hosted controller or through its connected instance in the Doodship portal. Add or edit a GitHub App and select **Outbound proxy → Use an App proxy**. Enter the HTTP or HTTPS proxy URL and select **Test connection** under **Network access**. This checks whether the controller can reach the GitHub API with the current settings. Dispatch also checks before opening GitHub for registration. Your browser opens GitHub for approval. Dispatch uses the proxy to exchange the registration code, then uses it for that App's API requests and HTTPS repository checkouts, including worker fetches. The controller and each worker that checks out code must be able to reach the proxy. Update enrolled runtime agents before running deployments that need it.
+Open **Connections** on your self-hosted controller or through its connected instance in the Doodship portal. Add or edit a GitHub App and select **Outbound proxy → Use an App proxy**. Enter the HTTP or HTTPS proxy URL and select **Test connection** under **Network access**. This checks whether the controller can reach the GitHub API with the current settings. Doodship also checks before opening GitHub for registration. Your browser opens GitHub for approval. Doodship uses the proxy to exchange the registration code, then uses it for that App's API requests and HTTPS repository checkouts, including worker fetches. The controller and each worker that checks out code must be able to reach the proxy. Update enrolled runtime agents before running deployments that need it.
 
 To share a default across Apps, set **Settings → Features → Repository proxy** and choose **Use controller settings** on each App. The default also covers GitHub sign-in, GitHub API calls without an App, and HTTP(S) repository checkouts without an App. Changes apply to new requests and runs. Use hostnames or domains in the bypass list when the same rule must cover both API calls and Git checkouts. Git uses the worker’s libcurl bypass syntax. Port-specific entries work for API calls, and Git support for IP ranges depends on the installed libcurl version. Bypassed API calls use the App’s edge route when one is configured.
 
@@ -114,9 +116,9 @@ See [instance connections](docs/tenant-servers.md) for setup, disconnect behavio
 
 ## Configure a deployment
 
-Add an application from a repository or save a Compose document in Dispatch. Private repositories can use a GitHub App, token or SSH key. Helm sources can use an OCI chart, an HTTPS chart repository or a chart directory in Git.
+Add an application from a repository or save a Compose document in Doodship. Private repositories can use a GitHub App, token or SSH key. Helm sources can use an OCI chart, an HTTPS chart repository or a chart directory in Git.
 
-For jobs and promotion stages, add a repository configuration under Applications. Dispatch reads `dispatch/v1alpha1` YAML or JSON, resolves source branches to exact commits and runs jobs for the sources that changed. Each stage deploys that revision and its saved outputs. Polling works without a public controller URL; webhooks can start the same sync sooner.
+For jobs and promotion stages, add a repository configuration under Applications. Doodship reads `dispatch/v1alpha1` YAML or JSON, resolves source branches to exact commits and runs jobs for the sources that changed. Each stage deploys that revision and its saved outputs. Polling works without a public controller URL; webhooks can start the same sync sooner.
 
 The [repository configuration guide](docs/application-config.md) has the schema, a complete Application example, build-output bindings and Helm values syntax. The [deployment workspace guide](docs/deployment-workspace.md) covers the UI.
 
@@ -130,7 +132,7 @@ An event rule can start a deployment from a trusted repository member's comment:
 /preview with owner/repository=#123
 ```
 
-Linked deployments stay active until all explicitly linked pull requests close. Commands can also supply Helm values for one deployment. Dispatch keeps run history after cleanup.
+Linked deployments stay active until all explicitly linked pull requests close. Commands can also supply Helm values for one deployment. Doodship keeps run history after cleanup.
 
 See [pull request commands](docs/preview-commands.md) for setup, inline Applications, value overrides and reporting APIs. The [preview lifecycle guide](docs/preview-lifecycle.md) explains expiry, cleanup retries and recovery.
 
@@ -180,4 +182,4 @@ See [contributing](CONTRIBUTING.md) for setup, migrations and review guidance.
 | Automation and operations | [CLI and MCP tools](docs/automation-client.md), [controller operations](docs/operations.md), [observations and notifications](docs/observations.md), [analytics](docs/analytics.md) |
 | Internals | [Architecture](docs/architecture.md), [HTTP API](docs/openapi.yaml), [provider API](docs/provider-api.md), [runtime contract](docs/runtime-contract.md), [roadmap](docs/roadmap.md) |
 
-Dispatch uses the [Apache 2.0 license](LICENSE). Keep private provider code and credentials outside this repository.
+Doodship uses the [Apache 2.0 license](LICENSE). Keep private provider code and credentials outside this repository.

@@ -45,7 +45,7 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(ctx, logger); err != nil {
-		logger.Error("dispatch stopped", "error", err)
+		logger.Error("Doodship controller stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -194,7 +194,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		defer cancel()
 		_ = api.Shutdown(ctx, server)
 	}()
-	logger.Info("dispatch controller listening", "addr", cfg.Addr, "executor", cfg.Executor, "demo", cfg.Demo)
+	logger.Info("Doodship controller listening", "addr", cfg.Addr, "executor", cfg.Executor, "demo", cfg.Demo)
 	err = server.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil

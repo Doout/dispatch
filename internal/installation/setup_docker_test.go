@@ -165,7 +165,7 @@ func TestConnectedDockerSetup(t *testing.T) {
 		t.Fatal("Docker updater missing", err)
 	}
 	binary := m.path("bin/dispatch")
-	if version, err := m.Run(ctx, binary, "version"); err != nil || !strings.Contains(version, "Dispatch") {
+	if version, err := m.Run(ctx, binary, "version"); err != nil || !strings.Contains(version, "Doodship") {
 		t.Fatal("installed binary cannot run", err)
 	}
 	deadline = time.Now().Add(10 * time.Second)

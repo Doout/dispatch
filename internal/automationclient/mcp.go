@@ -272,7 +272,7 @@ readLoop:
 				version = "2025-11-25"
 			}
 			initialized = true
-			reply(request.ID, map[string]any{"protocolVersion": version, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "dispatch", "version": "1"}, "instructions": "Use a scoped Dispatch service account. Supply reviews, confirmation names and retry keys explicitly. Tool calls never satisfy required human approval. Client cancellation stops waiting only; inspect saved receipts before retrying."})
+			reply(request.ID, map[string]any{"protocolVersion": version, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "dispatch", "version": "1"}, "instructions": "Use a scoped Doodship service account. Supply reviews, confirmation names and retry keys explicitly. Tool calls never satisfy required human approval. Client cancellation stops waiting only; inspect saved receipts before retrying."})
 		case "ping":
 			reply(request.ID, map[string]any{})
 		case "tools/list":

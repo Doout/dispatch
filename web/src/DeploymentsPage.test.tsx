@@ -297,6 +297,6 @@ describe("deployment navigation", () => {
     render(<DeploymentDetail logsError="network unavailable" />);
     expect(await screen.findByText("Unavailable")).not.toBeNull();
     await user.click(screen.getByText("Deployment log"));
-    expect(await screen.findByText("Dispatch could not load logs. Retrying automatically.")).not.toBeNull();
+    expect(await screen.findByText("Doodship could not load logs. Retrying automatically.")).not.toBeNull();
   });
 });

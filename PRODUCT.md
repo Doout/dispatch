@@ -8,11 +8,11 @@ Web
 
 ## Users
 
-Dispatch is for infrastructure and application teams that deploy to private Docker, Kubernetes, and OpenShift targets. Controller owners manage access. Project roles limit what members and teams can view or change.
+Doodship is for infrastructure and application teams that deploy to private Docker, Kubernetes, and OpenShift targets. Controller owners manage access. Project roles limit what members and teams can view or change.
 
 ## Purpose
 
-Dispatch connects source repositories to deployment targets. It records the source revision, configuration, logs, outputs, and runtime resources for each deployment.
+Doodship connects source repositories to deployment targets. It records the source revision, configuration, logs, outputs, and runtime resources for each deployment.
 
 A working deployment path lets an operator:
 
@@ -20,7 +20,7 @@ A working deployment path lets an operator:
 2. Deploy an exact revision.
 3. Inspect each build and deployment step.
 4. Reuse the same revision when promoting it to another stage.
-5. Diagnose a failed release without bypassing Dispatch.
+5. Diagnose a failed release without bypassing Doodship.
 
 ## Scope
 
@@ -43,7 +43,7 @@ A working deployment path lets an operator:
 
 ## Language
 
-Use the product name Dispatch. Write short labels that name the action or state. Avoid marketing copy, repeated helper text, and generic status messages.
+Use the product name Doodship. Write short labels that name the action or state. Avoid marketing copy, repeated helper text, and generic status messages.
 
 ## Accessibility
 

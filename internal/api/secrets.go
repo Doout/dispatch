@@ -158,7 +158,7 @@ func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if core.PlainSecretType(secretType) && secretSource != core.SecretSourceLocal {
-		problem(w, http.StatusBadRequest, "Invalid variable", "Plain variables must be stored in Dispatch.")
+		problem(w, http.StatusBadRequest, "Invalid variable", "Plain variables must be stored in Doodship.")
 		return
 	}
 	if input.Generate {
@@ -248,7 +248,7 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if core.PlainSecretType(secretType) && secretSource != core.SecretSourceLocal {
-		problem(w, http.StatusBadRequest, "Invalid variable", "Plain variables must be stored in Dispatch.")
+		problem(w, http.StatusBadRequest, "Invalid variable", "Plain variables must be stored in Doodship.")
 		return
 	}
 	if core.PlainSecretType(secretType) != core.PlainSecretType(item.Type) && (input.Value == nil || *input.Value == "") {
@@ -309,7 +309,7 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 	validationValue := input.Value
 	if secretSource == core.SecretSourceLocal && !core.PlainSecretType(secretType) && (validationValue == nil || *validationValue == "") && (secretType != item.Type || item.Source == core.SecretSourceExternal) {
 		if item.Source == core.SecretSourceExternal {
-			problem(w, http.StatusBadRequest, "Invalid secret", "Enter a value when moving an external secret into Dispatch.")
+			problem(w, http.StatusBadRequest, "Invalid secret", "Enter a value when moving an external secret into Doodship.")
 			return
 		}
 		plaintext, decryptErr := a.secretResolver.Resolve(r.Context(), item.ID)

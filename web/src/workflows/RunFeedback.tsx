@@ -12,7 +12,7 @@ export function RunFeedback({ feedback, overview }: { feedback: WorkflowFeedback
         <code title={target.commitSha}>{target.commitSha.slice(0, 12)}</code>
         <dl><div><dt>Commit status</dt><dd>{target.status || "Waiting to report"}</dd></div><div><dt>PR review</dt><dd>{target.review ? target.review.replaceAll("_", " ") : feedback.reviewOnSuccess === "approve" || feedback.reviewOnFailure === "requestChanges" ? "After QA completes" : "Disabled"}</dd></div></dl>
         {target.skipReason && <p>{target.skipReason}</p>}
-        {target.error && <p className="form-error" role="alert">{target.error} Dispatch will retry.</p>}
+        {target.error && <p className="form-error" role="alert">{target.error} Doodship will retry.</p>}
       </div>;
     })}
   </section>;

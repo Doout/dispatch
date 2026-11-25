@@ -6,7 +6,7 @@ import { dateLabel, errorMessage, InventoryStatus, ResourceRows, useInventory } 
 
 const permissions = ["project.view", "project.configure", "deployment.run", "deployment.cancel", "service.provision", "runtime.cleanup", "infrastructure.inspect", "infrastructure.create", "infrastructure.modify", "infrastructure.delete", "infrastructure.snapshot", "infrastructure.restore"];
 
-export function Credentials({ overview }: { overview: Overview }) {
+export function Credentials({ overview, showCLI }: { overview: Overview; showCLI: boolean }) {
   const accounts = useInventory(automationClient.accounts, overview.identity?.id ?? "");
   const [selected, setSelected] = useState("");
   const [creating, setCreating] = useState(false);
@@ -24,8 +24,17 @@ export function Credentials({ overview }: { overview: Overview }) {
     <div className="resources-heading"><p>Give CI jobs and agents an account with expiring credentials and project permissions.</p><button type="button" className="primary-button" onClick={() => setCreating(true)}>Create account</button></div>
     {error && <p role="alert" className="form-error">{error}</p>}
     {creating && <form className="resources-form" onSubmit={event => void create(event)} aria-label="Create automation account"><label>Account name<input required maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label><label>Description<textarea maxLength={2000} value={description} onChange={event => setDescription(event.target.value)} /></label><div className="resources-actions"><button type="button" className="quiet-button" disabled={busy} onClick={() => setCreating(false)}>Cancel</button><button className="primary-button" disabled={busy || !name.trim()}>Create account</button></div></form>}
-    <InventoryStatus {...accounts} retry={accounts.refresh} />
+    <InventoryStatus {...accounts} error={accounts.error && `Could not load automation accounts. ${accounts.error}`} retry={accounts.refresh} />
     {!accounts.loading && !accounts.error && <ResourceRows items={accounts.items} label="Automation accounts" columns={["Account", "State", "Actions"]} rowKey={item => item.id} empty="No automation accounts." row={item => <><td><strong>{item.name}</strong><small>{item.description || item.id}</small></td><td><StatusLabel state={item.state} /></td><td><button type="button" className="table-action" aria-pressed={item.id === selected} onClick={() => setSelected(item.id)}>Manage {item.name}</button></td></>} />}
+    {showCLI && <details className="resources-policy">
+      <summary>Use an account with the Doodship CLI</summary>
+      <p>Give the account <code>project.view</code> on a project, issue a credential, and save the token in a file readable only by its owner (mode 0600). Set the file path and your controller’s HTTPS address on the machine running the CLI.</p>
+      <pre>{`export DOODSHIP_URL=${window.location.protocol === "https:" ? window.location.origin : "https://doodship.example.com"}
+export DOODSHIP_TOKEN_FILE=/path/to/doodship-token
+doodship automation auth status
+doodship automation projects list`}</pre>
+      <a href="https://github.com/Doout/dispatch/blob/main/docs/automation-client.md">Install and use the Doodship CLI</a>
+    </details>}
     {account && <AccountDetails key={account.id} account={account} overview={overview} onChanged={accounts.refresh} />}
   </>;
 }
@@ -51,7 +60,7 @@ function AccountDetails({ account, overview, onChanged }: { account: AutomationA
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {confirmation && <div className="resources-confirm"><p>{confirmation.label}</p><div className="resources-actions"><button type="button" className="quiet-button" disabled={busy} onClick={() => setConfirmation(null)}>Cancel</button><button type="button" className="danger-button" disabled={busy} onClick={() => void act(async () => { await confirmation.action(); setConfirmation(null); credentials.refresh(); onChanged(); setNotice("Account updated."); })}>Confirm</button></div></div>}
     {issue && <form className="resources-form" aria-label={issue === "new" ? "Issue credential" : "Rotate credential"} onSubmit={event => { event.preventDefault(); void act(async () => { const saved = await automationClient.issue(account.id, name.trim(), new Date(Date.now() + days * 86400000).toISOString(), issue === "new" ? undefined : issue.id); setToken(saved.token); setIssue(null); credentials.refresh(); }); }}><label>Credential name<input required maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label><label>Expires in days<input type="number" min={1} max={365} step={1} required value={days} onChange={event => setDays(Number(event.target.value))} /></label>{issue !== "new" && <p>Issuing the replacement immediately revokes the old credential.</p>}<div className="resources-actions"><button type="button" className="quiet-button" disabled={busy} onClick={() => setIssue(null)}>Cancel</button><button className="primary-button" disabled={busy || !name.trim()}>{issue === "new" ? "Issue credential" : "Rotate credential"}</button></div></form>}
-    {token && <div className="resources-token" role="status"><h3>Save this token</h3><p>Dispatch shows it once. Store it in your CI or agent secret store before leaving this account.</p><label>New token<textarea readOnly value={token} autoComplete="off" spellCheck={false} /></label><button type="button" className="quiet-button" onClick={() => setToken("")}>I saved the token</button></div>}
+    {token && <div className="resources-token" role="status"><h3>Save this token</h3><p>Doodship shows it once. Store it in your CI or agent secret store before leaving this account.</p><label>New token<textarea readOnly value={token} autoComplete="off" spellCheck={false} /></label><button type="button" className="quiet-button" onClick={() => setToken("")}>I saved the token</button></div>}
     <InventoryStatus {...credentials} retry={credentials.refresh} />
     {!credentials.loading && !credentials.error && <ResourceRows items={credentials.items} label="Account credentials" columns={["Credential", "Expiry", "Last used", "Actions"]} rowKey={item => item.id} empty="No credentials issued." row={item => { const inactive = !!item.revokedAt || Date.parse(item.expiresAt) <= Date.now(); return <><td><strong>{item.name}</strong><small>{item.revokedAt ? "Revoked" : inactive ? "Expired" : "Active"}</small></td><td>{dateLabel(item.expiresAt)}</td><td>{dateLabel(item.lastUsedAt)}</td><td><div className="resources-actions"><button type="button" className="table-action" disabled={busy || inactive || !!token || account.state !== "active"} onClick={() => beginIssue(item)}>Rotate {item.name}</button><button type="button" className="table-action delete-action" disabled={busy || !!token || !!item.revokedAt} onClick={() => setConfirmation({ label: `Revoke ${item.name}? Requests using this token will fail.`, action: () => automationClient.revoke(account.id, item.id) })}>Revoke {item.name}</button></div></td></>; }} />}
     <h3>Project permissions</h3><InventoryStatus {...grants} retry={grants.refresh} />

@@ -36,7 +36,7 @@ including stopped containers. Enrolled targets use typed `storage_inspect` and
 `storage_delete` jobs; they never inspect or delete data on the controller daemon.
 The agent rechecks volume identity, provenance and consumers immediately before
 removal. Only ownership labels are returned; arbitrary volume labels are excluded.
-Dispatch adopts existing volumes only when runtime labels identify an application
+Doodship adopts existing volumes only when runtime labels identify an application
 or built-in service provisioning run on the same target and in the correct
 project. Unlabeled volumes remain unverified and protected. Bind-mounted host
 directories are not claimed or deleted by this workflow.
@@ -45,8 +45,8 @@ Kubernetes/OpenShift targets inspect PVCs, pods and standard workload references
 The credential needs list access to PVCs, pods, Deployments, StatefulSets,
 DaemonSets, ReplicaSets, Jobs and CronJobs in the target's default namespace,
 configured application/service namespaces and namespaces of retained inventory.
-Dispatch queries each namespace separately. Missing permission blocks inspection
-and destructive cleanup. PVC ownership uses Dispatch labels or a verified Helm
+Doodship queries each namespace separately. Missing permission blocks inspection
+and destructive cleanup. PVC ownership uses Doodship labels or a verified Helm
 release identity; arbitrary names alone do not establish ownership. PVC owner
 references and workload references remain consumers even between running pods.
 
@@ -66,7 +66,7 @@ creation/deletion, remote Kubernetes storage, backups and snapshots are separate
 capabilities; unsupported storage deletion fails before mutation.
 
 The controller currently has one active execution process. Storage inspection,
-policy changes and Dispatch runtime mutations serialize per target. External
+policy changes and Doodship runtime mutations serialize per target. External
 administrators can still change a runtime directly; re-inspection, object identity
 checks and runtime in-use protections reject detected conflicts.
 

@@ -1,5 +1,5 @@
 ---
-name: Dispatch
+name: Doodship
 description: A deployment control plane for private infrastructure.
 colors:
   graphite-rail: "#111c2d"
@@ -65,9 +65,9 @@ components:
     padding: "0 18px 0 12px"
 ---
 
-# Dispatch design system
+# Doodship design system
 
-Dispatch is an operations interface. Put the current state, affected resource, and next action before explanatory text. Dense tables and topology views are useful when they expose real data. Empty decoration is not.
+Doodship is an operations interface. Put the current state, affected resource, and next action before explanatory text. Dense tables and topology views are useful when they expose real data. Empty decoration is not.
 
 ## Color
 

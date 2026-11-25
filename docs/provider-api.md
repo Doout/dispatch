@@ -95,7 +95,7 @@ operation even after the resulting power or network state changes; changed input
 with the same key returns 409. Successful inspection must identify that same
 operation and still match the immutable digest.
 
-Dispatch encrypts accepted action requests before provider I/O and journals their
+Doodship encrypts accepted action requests before provider I/O and journals their
 original operation IDs. A promoted clone becomes a workload target only after
 confirmed network release and fresh authenticated runtime evidence from its
 intended enrollment. An uncertain action keeps the machine unavailable. Explicit
@@ -209,7 +209,7 @@ Controller registration, capability approval and credential rotation are documen
 ### Ownership evidence
 
 Adapters used for managed server creation advertise `server.ownership` and
-accept `CreateServerRequest.labels`. They preserve every supplied Dispatch label
+accept `CreateServerRequest.labels`. They preserve every supplied Doodship label
 on the resource returned by inspection: `dispatch.provider-registration`,
 `dispatch.project`, `dispatch.server`, and `dispatch.request`. These labels bind
 reconciliation and adoption to one reviewed intent; resource names or public IPs

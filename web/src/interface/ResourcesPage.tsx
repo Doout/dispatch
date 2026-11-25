@@ -5,6 +5,7 @@ import { ManagedServers } from "../ManagedServers";
 import { WorkloadBackups } from "../WorkloadBackups";
 import { Backups } from "../operations/Maintenance";
 import { canManageProject } from "../permissions";
+import { useHostedTenant } from "../hosted/context";
 import { Credentials } from "./resources/Credentials";
 import { Assignments } from "./resources/Assignments";
 import { Receipts } from "./resources/Receipts";
@@ -26,6 +27,7 @@ export function ResourcesPage({ overview, section, onChanged }: { overview: Over
 }
 
 function EnabledResourcesPage({ overview, section, onChanged }: { overview: Overview; section: string; onChanged: () => Promise<void> }) {
+  const hosted = useHostedTenant();
   const owner = overview.identity?.systemRole === "owner";
   const identityKey = JSON.stringify([overview.identity?.id, overview.identity?.systemRole, overview.projectPermissions]);
   const permitted = { ...overview, projects: overview.projects.filter(project => canManageProject(overview, project.id, "infrastructure.inspect")) };
@@ -34,7 +36,7 @@ function EnabledResourcesPage({ overview, section, onChanged }: { overview: Over
     content = <p className="section-empty">A controller owner manages {titles[section].toLowerCase()}.</p>;
   } else if (section === "controller-backups") {
     content = overview.controllerSettings?.operationsEnabled === true
-      ? <><p>Back up Dispatch's database and vault key. Application data uses workload backups.</p><Backups onChanged={() => void onChanged()} /></>
+      ? <><p>Back up Doodship's database and vault key. Application data uses workload backups.</p><Backups onChanged={() => void onChanged()} /></>
       : <p className="section-empty">Enable Operations in Settings to use controller backups.</p>;
   } else if (section === "providers") {
     content = <><p>Provider adapters supply machine allocation and snapshots. The bundled mock provider does not create real infrastructure.</p><InfrastructureProviders overview={overview} extended /></>;
@@ -45,7 +47,9 @@ function EnabledResourcesPage({ overview, section, onChanged }: { overview: Over
   } else if (section === "workload-backups") {
     content = <ProjectBackups overview={overview} />;
   } else if (section === "credentials") {
-    content = <Credentials overview={overview} />;
+    content = hosted?.backendMode === "connected"
+      ? <p>Sign in to your self-hosted controller as an owner and open <strong>Automation → Credentials</strong> to issue tokens for CI jobs and the Doodship CLI.</p>
+      : <Credentials overview={overview} showCLI={!hosted} />;
   } else if (section === "assignments") {
     content = <Assignments overview={overview} />;
   } else if (section === "receipts") {

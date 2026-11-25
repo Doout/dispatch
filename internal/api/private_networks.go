@@ -358,7 +358,7 @@ func privateNetworkInput(input privateNetworkRequest, existing *core.PrivateNetw
 			route = netip.PrefixFrom(address, address.BitLen()).String()
 		}
 		if prefix, err := netip.ParsePrefix(route); err != nil || !prefix.IsValid() {
-			return item, "Enter the private Dispatch IP or CIDR exposed through Laneway."
+			return item, "Enter the private Doodship IP or CIDR exposed through Laneway."
 		}
 		item.Config["route"] = route
 		if existing != nil {
@@ -393,7 +393,7 @@ func privateNetworkInput(input privateNetworkRequest, existing *core.PrivateNetw
 
 	}
 	if input.Driver != edge.DriverAgent && (input.WorkflowMode != "" || input.WorkflowProjectID != "") {
-		return item, "Workflow execution requires an enrolled Dispatch agent."
+		return item, "Workflow execution requires an enrolled Doodship agent."
 	}
 	if existing != nil && existing.Driver != input.Driver {
 		return item, "The private network driver cannot be changed."

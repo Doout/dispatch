@@ -47,9 +47,9 @@ The automatically registered `local-docker` server is both a deployment target a
 
 Local secrets can contain text, API tokens, GitHub tokens, SSH private keys, or registry passwords. Paste a value or upload a text file up to 64 KiB.
 
-Dispatch can generate an Ed25519 deploy key. It encrypts the private key and returns only the public key after creation.
+Doodship can generate an Ed25519 deploy key. It encrypts the private key and returns only the public key after creation.
 
-IBM Cloud Secrets Manager references remain external. Dispatch stores the API key encrypted and reads the current secret when a checkout, hook, or SSH operation starts. A private provider endpoint can use an edge node in the same network.
+IBM Cloud Secrets Manager references remain external. Doodship stores the API key encrypted and reads the current secret when a checkout, hook, or SSH operation starts. A private provider endpoint can use an edge node in the same network.
 
 Job definitions bind credentials by name:
 
@@ -63,7 +63,7 @@ secrets:
     secretRef: registry-password
 ```
 
-Dispatch passes resolved secrets to the job process. Job scripts can print those values or write them to outputs, so review scripts before granting credentials. Avoid shell tracing such as `set -x` in jobs that use secrets.
+Doodship passes resolved secrets to the job process. Job scripts can print those values or write them to outputs, so review scripts before granting credentials. Avoid shell tracing such as `set -x` in jobs that use secrets.
 
 ## GitHub connections and events
 
@@ -73,7 +73,7 @@ The manifest requests Contents read, Pull requests write for PR comments, Issues
 
 A GitHub App uses one installation webhook. It does not require a webhook for each repository. Polling can run alone or alongside webhooks.
 
-When GitHub cannot reach the controller, install `dispatch-relay` on a public node. The relay saves each request before returning `202 Accepted`. Dispatch polls it, verifies the signature and acknowledges the event after processing it. If the lease expires before acknowledgment, the relay sends the event again.
+When GitHub cannot reach the controller, install `dispatch-relay` on a public node. The relay saves each request before returning `202 Accepted`. Doodship polls it, verifies the signature and acknowledges the event after processing it. If the lease expires before acknowledgment, the relay sends the event again.
 
 Create a relay under **Servers > Add server > Webhook relay**. The installer can use SSH or a command copied to the relay host. Use the Docker Compose option to run the relay in a container.
 
@@ -83,8 +83,8 @@ The legacy shared webhook endpoint remains available at `/api/v1/events/github` 
 
 See [Kubernetes and K3s targets](kubernetes-targets.md) for registration checks, namespace limits and validation status.
 
-Kubernetes targets accept pasted, uploaded, or controller-mounted kubeconfig files. Stored kubeconfigs and CA bundles are write-only through the API. Dispatch creates a mode `0600` temporary file for each operation and removes it afterward.
+Kubernetes targets accept pasted, uploaded, or controller-mounted kubeconfig files. Stored kubeconfigs and CA bundles are write-only through the API. Doodship creates a mode `0600` temporary file for each operation and removes it afterward.
 
-OpenShift setup accepts a non-interactive `oc login` command or username and password. Dispatch parses the login data and calls the OpenShift API. It does not execute `oc`. Setup creates a `dispatch-controller` service account in `dispatch-system`, grants `cluster-admin`, and stores only the managed service-account kubeconfig.
+OpenShift setup accepts a non-interactive `oc login` command or username and password. Doodship parses the login data and calls the OpenShift API. It does not execute `oc`. Setup creates a `dispatch-controller` service account in `dispatch-system`, grants `cluster-admin`, and stores only the managed service-account kubeconfig.
 
-The managed OpenShift credential has cluster-wide privileges. Protect Dispatch storage and owner accounts as cluster-administrator credentials.
+The managed OpenShift credential has cluster-wide privileges. Protect Doodship storage and owner accounts as cluster-administrator credentials.

@@ -1,6 +1,6 @@
 # DNS providers
 
-Hosted Dispatch uses an operator-created root record and wildcard for each
+Hosted Doodship uses an operator-created root record and wildcard for each
 installation. Create `doodship.com` and `*.doodship.com` pointing to production,
 plus `local.doodship.com` and `*.local.doodship.com` pointing to development.
 Tenant creation and deployments do not consume DNS records.
@@ -10,12 +10,12 @@ Tenant consoles use `agentops.doodship.com`. Preview addresses use
 with the same PR number. All workload names fit one label under the installation
 root, so the installation wildcard certificate covers them too.
 
-Dispatch calls a DNS provider only for DNS-01 challenges and cleanup of its old
+Doodship calls a DNS provider only for DNS-01 challenges and cleanup of its old
 per-tenant records. It does not run a DNS server. Custom DNS editing is disabled.
 
 ## Cloudflare configuration
 
-Add these settings to the controller's environment when Dispatch renews its own
+Add these settings to the controller's environment when Doodship renews its own
 certificate:
 
 ```dotenv
@@ -37,7 +37,7 @@ and secrets separately. Certificate renewal runs independently of deployments.
 
 ## Record ownership and retries
 
-Dispatch-owned Cloudflare records have a `dispatch:<record-id>` comment. The
+Doodship-owned Cloudflare records have a `dispatch:<record-id>` comment. The
 provider updates or deletes only records with the matching marker. It preserves
 unrelated records and TXT proofs from other certificate issuances.
 
@@ -45,7 +45,7 @@ Challenge writes and cleanup are saved before publication. Provider outages leav
 the operation pending for retry after recovery or restart. Delayed cleanup cannot
 remove a newer challenge. Tenant creation needs no provider API request.
 
-On upgrade, Dispatch retires only its old tenant console and workload wildcard
+On upgrade, Doodship retires only its old tenant console and workload wildcard
 records. Operator records and existing tenant custom records survive. Old nested
 workload addresses need an explicit route cleanup and redeployment to move to
 flat addresses. The controller does not silently rewrite a published route.
@@ -53,7 +53,7 @@ flat addresses. The controller does not silently rewrite a published route.
 ## Routing and TLS
 
 Point the installation wildcard at the control-plane ingress. DNS-only records
-allow that ingress to terminate HTTPS directly. Dispatch checks hostname ownership
+allow that ingress to terminate HTTPS directly. Doodship checks hostname ownership
 and the current published deployment before forwarding to the operator-configured
 workload gateway. It never uses a worker's private loopback address as a central
 proxy destination.

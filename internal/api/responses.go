@@ -27,7 +27,7 @@ func (a *API) notFoundOrInternal(w http.ResponseWriter, err error, resource stri
 
 func (a *API) internal(w http.ResponseWriter, err error) {
 	a.logger.Error("api request failed", "error", err)
-	problem(w, http.StatusInternalServerError, "Request failed", "Dispatch could not complete the request. Check the controller log and retry.")
+	problem(w, http.StatusInternalServerError, "Request failed", "Doodship could not complete the request. Check the controller log and retry.")
 }
 
 func (a *API) logRequest(next http.Handler) http.Handler {

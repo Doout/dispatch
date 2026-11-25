@@ -35,7 +35,7 @@ type Resolver struct {
 func FieldAAD(id, field string) string { return "service:" + id + ":" + field }
 
 // ParsePostgresURL deliberately excludes driver options that can reference local
-// files or change the endpoint behind the fields displayed in Dispatch.
+// files or change the endpoint behind the fields displayed in Doodship.
 func ParsePostgresURL(raw string) (map[string]string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Hostname() == "" || u.Fragment != "" {
@@ -211,7 +211,7 @@ func (r Resolver) Check(ctx context.Context, s core.Service) core.ServiceCheck {
 	}
 	if err == nil && result.State != "untested" {
 		result.State = "succeeded"
-		result.Message = "Connection succeeded from the Dispatch controller."
+		result.Message = "Connection succeeded from the Doodship controller."
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		result.Message = "Connection test timed out after 10 seconds."

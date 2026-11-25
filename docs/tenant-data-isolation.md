@@ -49,7 +49,7 @@ apply to the embedded arrangement. The application-level account and membership
 rules also apply to connected instances, but their local access requires the
 additional owner-approved user mapping.
 
-Hosted Dispatch uses a central catalog for account identities, tenant metadata,
+Hosted Doodship uses a central catalog for account identities, tenant metadata,
 memberships, sessions, invitations, usage totals, DNS records and provisioning
 status. Tenant operational data lives in a separate database for each tenant.
 

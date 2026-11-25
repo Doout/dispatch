@@ -68,6 +68,6 @@ remain later candidates. This release does not activate them. Infrastructure wor
 remains in [the roadmap](roadmap.md).
 
 Provisioning arbitrary external services and connecting existing Argo CD
-installations remain outside this scope. Dispatch can provision and recover
+installations remain outside this scope. Doodship can provision and recover
 approved owned PostgreSQL services on Docker. Services also accept existing
 connection information regardless of how the dependency was created.

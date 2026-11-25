@@ -64,7 +64,7 @@ func checkRunFailure(err error, creating bool) error {
 			return &CheckRunError{Message: "GitHub rejected the captured check identity or commit. Inspect the resolved source commit and App installation."}
 		}
 	}
-	return &CheckRunError{Message: "GitHub check reporting is unavailable. Dispatch will retry reconciliation without changing the workflow outcome.", CreateUncertain: creating, cause: err}
+	return &CheckRunError{Message: "GitHub check reporting is unavailable. Doodship will retry reconciliation without changing the workflow outcome.", CreateUncertain: creating, cause: err}
 }
 
 func (m *Manager) checkRunRequestFailure(r core.WorkflowCheckReport, err error, creating bool) error {
@@ -160,7 +160,7 @@ func (m *Manager) PublishCheckRun(ctx context.Context, r core.WorkflowCheckRepor
 		return response, m.checkRunRequestFailure(r, err, create)
 	}
 	if !checkRunMatches(response, r) {
-		return CheckRun{}, &CheckRunError{Message: "GitHub returned a check with a different identity. Dispatch will reconcile the accepted check before continuing.", CreateUncertain: create}
+		return CheckRun{}, &CheckRunError{Message: "GitHub returned a check with a different identity. Doodship will reconcile the accepted check before continuing.", CreateUncertain: create}
 	}
 	return response, nil
 }

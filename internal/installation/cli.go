@@ -50,7 +50,7 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 		return true, nil
 	}
 	if args[0] == "version" || args[0] == "--version" {
-		fmt.Fprintln(out, "Dispatch", Version)
+		fmt.Fprintln(out, "Doodship", Version)
 		return true, nil
 	}
 	command := args[0]

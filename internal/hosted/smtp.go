@@ -78,7 +78,7 @@ func (c SMTPConfig) SendVerification(ctx context.Context, email, link string) er
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(writer, "From: %s\r\nTo: %s\r\nSubject: Verify your Dispatch email\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nVerify your email to use Dispatch:\r\n%s\r\n\r\nThis link expires in 30 minutes.\r\n", sender.String(), recipient.String(), link)
+	_, err = fmt.Fprintf(writer, "From: %s\r\nTo: %s\r\nSubject: Verify your Doodship email\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nVerify your email to use Doodship:\r\n%s\r\n\r\nThis link expires in 30 minutes.\r\n", sender.String(), recipient.String(), link)
 	closeErr := writer.Close()
 	if err != nil {
 		return err

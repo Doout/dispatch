@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the standalone doodship workflow CLI.
+# Install the Doodship CLI for local workflows and controller automation.
 set -euo pipefail
 
 usage() {

@@ -1,4 +1,4 @@
-# Install and upgrade Dispatch
+# Install and upgrade Doodship
 
 The managed installer runs the controller in Docker on Linux (amd64 or arm64). It requires a local Docker engine and Compose 2.30 or newer. It does not install Docker or manage Kubernetes.
 
@@ -73,17 +73,17 @@ The installer requires the selected Docker engine to match `--docker-socket`. If
 
 Copy optional settings into the managed installation with `--env-file`. Each line is a literal `KEY=value` entry; do not add shell quotes or variable substitutions. The file is copied with mode `0600` and can be edited at `/opt/dispatch/dispatch.env` afterward. It can contain administrator credentials, provider credentials, and other controller settings.
 
-Configure a [GitHub App proxy](../README.md#github-app-proxy) in the controller UI. Workers receive the saved route when Dispatch prepares a repository checkout. If an older Compose installation uses `.env.proxy`, copy the proxy URL and bypass list into the UI before recreating the controller.
+Configure a [GitHub App proxy](../README.md#github-app-proxy) in the controller UI. Workers receive the saved route when Doodship prepares a repository checkout. If an older Compose installation uses `.env.proxy`, copy the proxy URL and bypass list into the UI before recreating the controller.
 
 The managed controller uses SQLite in its data volume. The installer fixes the database location, master-key path, Docker socket, listener, executor, repository-cache location, and public URL so the upgrade backup includes the database and encryption key. These values override entries in the environment file. External PostgreSQL installations are not managed by this installer.
 
-To connect a fresh Dispatch installation to an existing Traefik proxy:
+To connect a fresh Doodship installation to an existing Traefik proxy:
 
 ```sh
 sudo dispatch install \
-  --public-url https://dispatch.example.com \
+  --public-url https://doodship.example.com \
   --proxy-network web \
-  --hostname dispatch.example.com \
+  --hostname doodship.example.com \
   --tls-resolver letsencrypt
 ```
 
@@ -93,10 +93,10 @@ For an already installed controller, run the installer's `route` command on the 
 
 ```sh
 "$HOME/.doodship/bin/dispatch" route \
-  --hostname dispatch.example.com --proxy-network proxy --tls-resolver "$TRAEFIK_CERT_RESOLVER"
+  --hostname doodship.example.com --proxy-network proxy --tls-resolver "$TRAEFIK_CERT_RESOLVER"
 ```
 
-Set `TRAEFIK_CERT_RESOLVER` to the resolver configured on your Traefik instance and use its existing Docker network. The installer recreates the controller with its current image and data volume and waits for its local health check. The command sets one managed hostname and preserves the loopback listener and public URL used for callbacks. Run `dispatch status` to see the hostname. Verify HTTPS separately with `curl --fail https://dispatch.example.com/healthz`. Use `dispatch route --clear` to remove the route.
+Set `TRAEFIK_CERT_RESOLVER` to the resolver configured on your Traefik instance and use its existing Docker network. The installer recreates the controller with its current image and data volume and waits for its local health check. The command sets one managed hostname and preserves the loopback listener and public URL used for callbacks. Run `dispatch status` to see the hostname. Verify HTTPS separately with `curl --fail https://doodship.example.com/healthz`. Use `dispatch route --clear` to remove the route.
 
 If your installed CLI does not recognize `route`, update it using the release installer above with `DISPATCH_BIN_DIR="$HOME/.doodship/bin"`.
 

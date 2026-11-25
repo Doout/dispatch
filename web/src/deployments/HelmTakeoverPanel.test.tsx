@@ -3,7 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "../api";
-import { HelmTakeoverPanel } from "./HelmTakeoverPanel";
+import { hasHelmOwnershipConflict, HelmTakeoverPanel } from "./HelmTakeoverPanel";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -28,4 +28,13 @@ it("requires a new inspection and explicit confirmation after the release change
   await user.click(screen.getByRole("button", { name: "Take over release" }));
   expect((await screen.findByRole("status")).textContent).toContain("slot1 now belongs to");
   expect(accept.mock.calls).toEqual([["current", "first"], ["current", "second"]]);
+});
+
+it.each(["Dispatch", "Doodship"])("recognizes ownership conflicts recorded under %s", product => {
+  expect(hasHelmOwnershipConflict(`Deployment failed: The Helm release does not belong to this ${product} application and namespace. Check the release name.`)).toBe(true);
+});
+
+it("does not offer takeover for unrelated deployment failures", () => {
+  expect(hasHelmOwnershipConflict("Helm release upgrade failed.")).toBe(false);
+  expect(hasHelmOwnershipConflict()).toBe(false);
 });

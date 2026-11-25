@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Dispatch hosted API
+  title: Doodship hosted API
   version: 0.1.0
   description: Hosted identity, metadata-only platform administration, tenant membership and registered tenant console hosts. Custom DNS editing is unavailable. Browser mutations require an exact Origin when cookies are present. No CORS access is granted
     to sibling workload hosts. Tenant operational endpoints are documented separately in openapi.yaml.
@@ -402,7 +402,7 @@ paths:
           type: string
       responses:
         '303':
-          description: Redirect to Dispatch with a host-only session cookie on success, or to sign-in with an error.
+          description: Redirect to Doodship with a host-only session cookie on success, or to sign-in with an error.
         default:
           $ref: '#/components/responses/Problem'
   /tenants/{id}/join-requests:

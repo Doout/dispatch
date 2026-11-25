@@ -255,3 +255,15 @@ spec:
 	}
 
 }
+
+func TestAutomationSubcommand(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	if code := execute(t.Context(), []string{"automation", "--help"}, strings.NewReader(""), &out, &diagnostics); code != 0 || !strings.Contains(diagnostics.String(), "auth status") {
+		t.Fatalf("automation help failed with %d: %s", code, &diagnostics)
+	}
+	t.Setenv("DOODSHIP_TOKEN_FILE", filepath.Join(t.TempDir(), "missing"))
+	diagnostics.Reset()
+	if code := execute(t.Context(), []string{"automation", "auth", "status"}, strings.NewReader(""), &out, &diagnostics); code != 2 || !strings.Contains(out.String(), `"code":"configuration"`) {
+		t.Fatalf("automation did not preserve its JSON failure and exit code: %d %s", code, &out)
+	}
+}

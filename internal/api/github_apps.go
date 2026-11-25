@@ -562,7 +562,7 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	manifest := map[string]interface{}{
 		"name":                     input.Name,
 		"url":                      origin,
-		"description":              "Provides repository access for Dispatch.",
+		"description":              "Provides repository access for Doodship.",
 		"redirect_url":             callbackURL,
 		"setup_url":                setupURL,
 		"setup_on_update":          true,

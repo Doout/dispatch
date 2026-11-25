@@ -36,7 +36,7 @@ func main() {
 
 func run(ctx context.Context, args []string, out io.Writer, logger *slog.Logger) error {
 	if len(args) > 0 && (args[0] == "version" || args[0] == "--version") {
-		_, err := fmt.Fprintln(out, "Dispatch platform", installation.Version)
+		_, err := fmt.Fprintln(out, "Doodship platform", installation.Version)
 		return err
 	}
 	if len(args) > 0 && args[0] == "bootstrap-user" {

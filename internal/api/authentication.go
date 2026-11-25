@@ -101,7 +101,7 @@ func (a *API) authorizedContext(w http.ResponseWriter, r *http.Request, actor co
 		return ctx, true
 	}
 	if actor.SystemRole != core.UserRoleOwner {
-		problem(w, http.StatusForbidden, "Impersonation denied", "Controller owner access is required to view Dispatch as another user.")
+		problem(w, http.StatusForbidden, "Impersonation denied", "Controller owner access is required to view Doodship as another user.")
 		return nil, false
 	}
 	target, err := a.store.GetUser(r.Context(), targetID)
@@ -181,7 +181,7 @@ func secureEqual(left, right string) bool {
 
 func unauthorized(w http.ResponseWriter, setupRequired bool) {
 	if setupRequired {
-		problem(w, http.StatusUnauthorized, "Administrator setup required", "Create the first administrator account before using Dispatch.")
+		problem(w, http.StatusUnauthorized, "Administrator setup required", "Create the first administrator account before using Doodship.")
 		return
 	}
 	problem(w, http.StatusUnauthorized, "Authentication required", "Sign in to continue.")

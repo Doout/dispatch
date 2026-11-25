@@ -25,7 +25,7 @@ grants and audit history. Only one concurrent rotation of a credential can succe
 `PUT /automation-accounts/{id}` with `name`, `description` and `state: disabled`
 disables all of the account's tokens. Authentication checks current account state,
 revocation and expiry on every request. Revocation does not claim to undo work
-already accepted by Dispatch.
+already accepted by Doodship.
 
 Owner-only account and credential lists contain expiry, revocation and last-use
 timestamps. They never contain token values or hashes. Mutation audit records

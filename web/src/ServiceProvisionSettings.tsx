@@ -14,16 +14,16 @@ export function ServiceProvisionSettings({ docker, helm, overview, serviceType, 
   </select></label>
   {!servers.length && <p className="service-help">Add a {docker ? "local Docker deployment" : "Kubernetes or OpenShift"} server in Infrastructure → Servers.</p>}
   {docker ? <>
-   {serviceType === "postgresql" ? <p className="service-help">Dispatch starts PostgreSQL with a persistent volume, generates its password, and waits until it is ready. The service name becomes the database name.</p> : <p className="service-help">Edit environment values, readiness commands and connection mappings in YAML.</p>}
+   {serviceType === "postgresql" ? <p className="service-help">Doodship starts PostgreSQL with a persistent volume, generates its password, and waits until it is ready. The service name becomes the database name.</p> : <p className="service-help">Edit environment values, readiness commands and connection mappings in YAML.</p>}
    <details className="service-advanced"><summary>Docker settings</summary>
     <label>Image<input placeholder="postgres:17-bookworm" value={docker.image ?? ""} onChange={e => onDocker({ ...docker, image: e.target.value })} /></label>
     <label>Network<input placeholder="dispatch-services" value={docker.network ?? ""} onChange={e => onDocker({ ...docker, network: e.target.value })} /></label>
-    <p className="service-help">Dispatch connects bound Docker applications to this network. The database has no published host port. Defaults are 512 MiB memory and 0.5 CPU.</p>
+    <p className="service-help">Doodship connects bound Docker applications to this network. The database has no published host port. Defaults are 512 MiB memory and 0.5 CPU.</p>
    </details>
   </> : <>
    <label>Namespace<input placeholder="Server default namespace" value={helm?.namespace ?? ""} onChange={e => onHelm({ ...helm!, namespace: e.target.value })} /></label>
    {helm?.chart ? <p className="service-help">Custom chart: {helm.chart}. Edit its values and connection mappings in YAML.</p> : <>
-    <p className="service-help">Dispatch installs its PostgreSQL chart with persistent storage, generated credentials, and a readiness check. Applications connect through an internal cluster address.</p>
+    <p className="service-help">Doodship installs its PostgreSQL chart with persistent storage, generated credentials, and a readiness check. Applications connect through an internal cluster address.</p>
     <details className="service-advanced"><summary>Helm settings</summary>
      <label>Image<input placeholder="postgres:17-bookworm" value={helm?.image ?? ""} onChange={e => onHelm({ ...helm!, image: e.target.value })} /></label>
      <div className="service-form-grid"><label>Storage<input placeholder="10Gi" value={helm?.storage ?? ""} onChange={e => onHelm({ ...helm!, storage: e.target.value })} /></label><label>Storage class<input placeholder="Cluster default" value={helm?.storageClass ?? ""} onChange={e => onHelm({ ...helm!, storageClass: e.target.value })} /></label></div>

@@ -303,7 +303,7 @@ func (a *API) markRelayError(ctx context.Context, server core.Server, err error)
 func (a *API) processRelayDelivery(ctx context.Context, server core.Server, delivery relay.Delivery) (string, string) {
 	endpoint, err := a.store.GetRelayWebhookByRemoteID(ctx, server.ID, delivery.HookID)
 	if err != nil {
-		return "dead", "No Dispatch webhook binding exists for this relay endpoint."
+		return "dead", "No Doodship webhook binding exists for this relay endpoint."
 	}
 	endpoint.LastDeliveryAt = &delivery.ReceivedAt
 	endpoint.UpdatedAt = time.Now().UTC()

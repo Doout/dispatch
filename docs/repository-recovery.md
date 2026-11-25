@@ -1,7 +1,7 @@
 # Repository access and recovery
 
 GitHub configuration sources save the repository's numeric ID as well as its
-name. Before a sync or a new workflow resolves sources, Dispatch checks the
+name. Before a sync or a new workflow resolves sources, Doodship checks the
 App's current repository catalog. A renamed, archived, disabled, or inaccessible
 configuration repository blocks that work. Existing deployments and accepted
 workflow revisions keep their saved configuration and commit records.
@@ -14,7 +14,7 @@ the identities of every additional source declared by an Application.
 ## Recover a source
 
 Edit the configuration source and select **Check repository access**. The result
-shows what Dispatch observed and how to recover. Checking access does not sync
+shows what Doodship observed and how to recover. Checking access does not sync
 configuration or deploy an application.
 
 | Result | Next step |
@@ -32,7 +32,7 @@ never replaces the branch you entered, even when loading fails or the repository
 has no branches. A repository with more than 1,000 branches requires entering the
 exact branch name. Saving checks current identity and access again.
 
-After access returns, sync to validate the configuration. Dispatch retains the
+After access returns, sync to validate the configuration. Doodship retains the
 last accepted configuration if that sync fails. A successful sync resumes the
 source's existing automatic deployment behavior.
 
@@ -43,7 +43,7 @@ Owners can list repositories for the selected GitHub App. Project members with
 These source routes do not expose the App's other repositories or credential IDs.
 
 GitHub can return 404 for a private repository when authentication is missing or
-insufficient. Dispatch reports missing access as inaccessible, not deleted.
+insufficient. Doodship reports missing access as inaccessible, not deleted.
 See [GitHub's API troubleshooting guide](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
 
 The deleted state requires saved evidence for the same App and repository ID
