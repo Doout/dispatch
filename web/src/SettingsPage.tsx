@@ -8,7 +8,7 @@ import {
 import { request, type ControllerSettings, type Overview } from "./api";
 import "./SettingsPage.css";
 import { RepositoryProxySettings } from "./RepositoryProxySettings";
-import { useHostedTenant } from "./hosted/context";
+import { useHostedTenant, usesSelfHostedController } from "./hosted/context";
 import {
   InterfaceSettings,
   type InterfaceSettingsProps,
@@ -133,7 +133,7 @@ function SettingsContent({
             observed={JSON.stringify(overview.controllerSettings)}
             onChanged={onChanged}
           />
-          {!hosted && <RepositoryProxySettings />}
+          {usesSelfHostedController(hosted) && <RepositoryProxySettings />}
         </div>
       ) : (
         <section className="settings-access" role="status">

@@ -96,9 +96,11 @@ describe("connections page", () => {
     expect(onAddRelay).toHaveBeenCalledOnce();
   });
 
-  it("sends an App proxy when starting GitHub registration", async () => {
+  it.each([null, "connected"] as const)("sends the selected proxy during registration (backend %s)", async backendMode => {
     const start = vi.spyOn(api, "startGitHubAppManifest").mockRejectedValue(new Error("Registration fixture"));
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<HostedTenantContext.Provider value={backendMode ? { mode: "tenant", backendMode } as HostedTenant : null}>
+      <ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />
+    </HostedTenantContext.Provider>);
 
     fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
     fireEvent.change(screen.getByLabelText("Registration owner"), { target: { value: "personal" } });
@@ -109,6 +111,49 @@ describe("connections page", () => {
     await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
       proxy: { url: "http://proxy.example.test:3128", noProxy: ".internal.test" },
     })));
+  });
+
+  const appWithProxy: Overview["githubApps"][number] = {
+    id: "app-1", name: "Dispatch", webUrl: "https://github.com", apiUrl: "https://api.github.com", appId: 42,
+    privateKeyConfigured: true, webhookSecretConfigured: true, state: "ready", createdAt: "", updatedAt: "",
+    proxy: { url: "http://proxy.example.test", noProxy: "" },
+  };
+
+  it.each([
+    { action: "edits the bypass list", mode: "app", url: "", expected: { noProxy: ".internal.test" } },
+    { action: "replaces the proxy", mode: "app", url: "https://replacement.example.test", expected: { url: "https://replacement.example.test", noProxy: ".internal.test" } },
+    { action: "switches to controller settings", mode: "controller", url: "", expected: { url: "" } },
+  ])("$action on a connected controller", async ({ mode, url, expected }) => {
+    const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(appWithProxy));
+    render(<HostedTenantContext.Provider value={{ mode: "tenant", backendMode: "connected" } as HostedTenant}>
+      <ConnectionsPage overview={{ ...overview, githubApps: [appWithProxy] }} notice="" onNotice={() => undefined} onChanged={async () => undefined} />
+    </HostedTenantContext.Provider>);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const address = screen.getByRole("textbox", { name: /Proxy URL/ }) as HTMLInputElement;
+    expect(address.value).toBe("");
+    expect(address.placeholder).toBe(appWithProxy.proxy!.url);
+    fireEvent.change(screen.getByLabelText(/Bypass list/), { target: { value: ".internal.test" } });
+    if (url) fireEvent.change(address, { target: { value: url } });
+    fireEvent.change(screen.getByLabelText(/Outbound proxy/), { target: { value: mode } });
+    fireEvent.click(screen.getByRole("button", { name: "Save connection" }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith("/api/v1/github-apps/app-1", expect.objectContaining({ method: "PUT" })));
+    const saved = JSON.parse(String(send.mock.calls[0][1]?.body));
+    expect(saved.proxy).toEqual(expected);
+    expect(saved).not.toHaveProperty("privateKey");
+    expect(saved).not.toHaveProperty("webhookSecret");
+  });
+
+  it.each(["embedded", undefined] as const)("omits proxy settings when editing a hosted App (backend %s)", async backendMode => {
+    const connection = appWithProxy;
+    const update = vi.spyOn(api, "updateGitHubApp").mockResolvedValue(connection);
+    render(<HostedTenantContext.Provider value={{ mode: "tenant", backendMode } as HostedTenant}>
+      <ConnectionsPage overview={{ ...overview, githubApps: [connection] }} notice="" onNotice={() => undefined} onChanged={async () => undefined} />
+    </HostedTenantContext.Provider>);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.queryByLabelText(/Outbound proxy/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save connection" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1]).not.toHaveProperty("proxy");
   });
 
   it("creates a read-only GitHub App without event delivery", async () => {

@@ -1,5 +1,5 @@
 import { InstanceConnectionSettings } from "./InstanceConnectionSettings";
-import { useHostedTenant } from "./hosted/context";
+import { useHostedTenant, usesSelfHostedController } from "./hosted/context";
 import "./SettingsPage.css";
 import { destructiveRequest } from "./api";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
@@ -75,6 +75,7 @@ function githubAppInstallURL(connection: GitHubAppConnection) {
 
 export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnection = () => {}, notice, onNotice, onChanged, onAddRelay = () => {} }: { overview: Overview; selectedConnectionID?: string; onOpenConnection?: (id: string | null) => void; notice: string; onNotice: (value: string) => void; onChanged: () => Promise<void>; onAddRelay?: () => void }) {
   const hosted = useHostedTenant();
+  const supportsProxy = usesSelfHostedController(hosted);
   const showDoodship = overview.identity?.systemRole === "owner" && !hosted;
 	const edgeNetworks = (overview.privateNetworks ?? []).filter((network) => network.driver === "dispatch_agent");
   const [creating, setCreating] = useState(false);
@@ -182,11 +183,11 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
     setBusyID(editing?.id || "create");
     try {
       const delivery = readOnly ? "none" : eventDelivery;
-      const proxy = !hosted && useAppProxy ? { url: proxyURL.trim() || undefined, noProxy: proxyBypass }
+      const proxy = useAppProxy ? { url: proxyURL.trim() || undefined, noProxy: proxyBypass }
         : editing?.proxy?.url ? { url: "" } : undefined;
       if (method === "manifest" && !editing) {
 		if (!ownerType) throw new Error("Choose the GitHub App owner.");
-		const flow = await api.startGitHubAppManifest({ name, webUrl: webURL, apiUrl: apiURL, ownerType, owner: ownerType === "organization" ? owner : "", readOnly, eventDelivery: delivery, relayServerId: delivery === "relay" ? relayServerID : undefined, privateNetworkId: privateNetworkID || undefined, ...(proxy ? { proxy } : {}) });
+		const flow = await api.startGitHubAppManifest({ name, webUrl: webURL, apiUrl: apiURL, ownerType, owner: ownerType === "organization" ? owner : "", readOnly, eventDelivery: delivery, relayServerId: delivery === "relay" ? relayServerID : undefined, privateNetworkId: privateNetworkID || undefined, ...(supportsProxy && proxy ? { proxy } : {}) });
         const form = document.createElement("form");
         form.method = "post";
         form.action = flow.action;
@@ -207,7 +208,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
       };
       if (!editing) body.readOnly = readOnly;
       if (!editing && delivery === "relay") body.relayServerId = relayServerID;
-      if (proxy) body.proxy = proxy;
+      if (supportsProxy && proxy) body.proxy = proxy;
       if (privateKey || (!readOnly && webhookSecret)) {
         body.privateKey = privateKey;
         if (!readOnly) body.webhookSecret = webhookSecret;
@@ -301,7 +302,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
             <label><span>App ID</span><input inputMode="numeric" value={appID} onChange={(event) => setAppID(event.target.value)} placeholder="123456" required /></label>
           </>}
         </div>
-        {!hosted && <div className="connection-grid">
+        {supportsProxy && <div className="connection-grid">
           <label><span>Outbound proxy</span><select value={useAppProxy ? "app" : "controller"} onChange={event => setUseAppProxy(event.target.value === "app")}>
             <option value="controller">Use controller settings</option><option value="app">Use an App proxy</option>
           </select><small>Routes this App’s API calls and HTTPS Git checkouts.</small></label>

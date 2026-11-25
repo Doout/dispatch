@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import * as client from "./api";
 import { type ControllerSettings, type Overview } from "./api";
+import { HostedTenantContext } from "./hosted/context";
+import type { HostedTenant } from "./hosted/client";
 import { SettingsPage } from "./SettingsPage";
 import { uiFeatures } from "./featureFlags";
 
@@ -33,7 +35,7 @@ it("does not request or expose controller settings to a non-owner", () => {
  expect(screen.getByText("Owner access required")).toBeTruthy(); expect(screen.queryByRole("switch")).toBeNull(); expect(request).not.toHaveBeenCalled();
 });
 
-it("saves a repository proxy and removes it from Settings", async () => {
+it.each([null, "connected"] as const)("saves and removes the controller proxy (backend %s)", async backendMode => {
   const endpoint = "/api/v1/settings/repository-proxy";
   const request = vi.spyOn(client, "request").mockImplementation(async <T,>(path: string, init?: RequestInit) => {
     if (path !== endpoint) return { operationsEnabled: false } as T;
@@ -41,7 +43,7 @@ it("saves a repository proxy and removes it from Settings", async () => {
     return { url: input.url || "", noProxy: input.noProxy || "", authenticated: false } as T;
   });
   const user = userEvent.setup();
-  render(<SettingsPage overview={owner} />);
+  render(<HostedTenantContext.Provider value={backendMode ? { mode: "tenant", backendMode } as HostedTenant : null}><SettingsPage overview={owner} /></HostedTenantContext.Provider>);
   await user.click(screen.getByText("Repository proxy"));
   const url = await screen.findByRole("textbox", { name: /Proxy URL/ });
   await user.type(url, "http://proxy.example.test:3128");
