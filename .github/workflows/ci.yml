@@ -247,6 +247,11 @@ jobs:
         working-directory: release
         run: |
           sha256sum -c SHA256SUMS
+          empty_root=$(mktemp -d)
+          for binary in dispatch dispatch-platform; do
+            tar -xzf "${binary}-linux-amd64.tar.gz" -C "$empty_root" "$binary"
+            sudo chroot "$empty_root" "/$binary" version
+          done
           for os in darwin linux; do
             for arch in amd64 arm64; do
               tar -tzf "doodship-$os-$arch.tar.gz" doodship LICENSE

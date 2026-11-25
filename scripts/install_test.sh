@@ -35,4 +35,12 @@ if sh "$repo/scripts/install.sh" > "$scratch/output" 2>&1; then
  exit 1
 fi
 test "$("$scratch/target/dispatch")" = test-dispatch
-echo 'Bootstrap checksum validation and existing-binary preservation passed.'
+printf '#!/bin/sh\nexit 1\n' > "$scratch/payload/dispatch"
+tar -czf "$scratch/assets/$archive" -C "$scratch/payload" dispatch
+(cd "$scratch/assets" && sha256sum "$archive" > SHA256SUMS)
+if sh "$repo/scripts/install.sh" > "$scratch/output" 2>&1; then
+ echo 'Installer replaced the existing CLI with a binary that failed to run' >&2
+ exit 1
+fi
+test "$("$scratch/target/dispatch")" = test-dispatch
+echo 'Bootstrap checksum, executable compatibility and existing-binary preservation passed.'

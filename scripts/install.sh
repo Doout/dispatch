@@ -23,6 +23,10 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$base/$
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$base/SHA256SUMS" -o "$scratch/SHA256SUMS"
 (cd "$scratch" && awk -v file="$archive" '$2 == file { print }' SHA256SUMS > selected.sha256 && test -s selected.sha256 && sha256sum -c selected.sha256)
 tar -xzf "$scratch/$archive" -C "$scratch" dispatch
+"$scratch/dispatch" version >/dev/null || {
+  echo 'The downloaded Dispatch CLI cannot run on this host. Keeping the existing CLI.' >&2
+  exit 1
+}
 if [ -w "$bin_dir" ] || [ "$(id -u)" = 0 ]; then
   install -d "$bin_dir"
   install -m 0755 "$scratch/dispatch" "$bin_dir/dispatch"

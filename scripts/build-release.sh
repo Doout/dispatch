@@ -4,6 +4,7 @@ source_dir=$(pwd)
 version=${1:-development}
 output=${2:-release}
 case "$version" in *[!a-zA-Z0-9._-]*|'') echo 'Invalid release version.' >&2; exit 1 ;; esac
+native_ldflags="-s -w -linkmode=external -extldflags=-static -X github.com/doout/dispatch/internal/installation.Version=$version"
 mkdir -p "$output/edge" "$output/relay"
 for arch in amd64 arm64; do
   mkdir -p "$output/$arch"
@@ -11,8 +12,15 @@ for arch in amd64 arm64; do
     amd64) compiler=x86_64-linux-gnu-gcc; cpp_compiler=x86_64-linux-gnu-g++ ;;
     arm64) compiler=aarch64-linux-gnu-gcc; cpp_compiler=aarch64-linux-gnu-g++ ;;
   esac
-  CGO_ENABLED=1 CC="$compiler" CXX="$cpp_compiler" GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/doout/dispatch/internal/installation.Version=$version" -o "$output/$arch/dispatch" ./cmd/dispatch
-  CGO_ENABLED=1 CC="$compiler" CXX="$cpp_compiler" GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/doout/dispatch/internal/installation.Version=$version" -o "$output/$arch/dispatch-platform" ./cmd/dispatch-platform
+  CGO_ENABLED=1 CC="$compiler" CXX="$cpp_compiler" GOOS=linux GOARCH="$arch" go build -trimpath -tags netgo,osusergo -ldflags="$native_ldflags" -o "$output/$arch/dispatch" ./cmd/dispatch
+  CGO_ENABLED=1 CC="$compiler" CXX="$cpp_compiler" GOOS=linux GOARCH="$arch" go build -trimpath -tags netgo,osusergo -ldflags="$native_ldflags" -o "$output/$arch/dispatch-platform" ./cmd/dispatch-platform
+  for binary in dispatch dispatch-platform; do
+    elf=$(LC_ALL=C readelf -lWd "$output/$arch/$binary")
+    if printf '%s\n' "$elf" | grep -Eq '(^[[:space:]]*INTERP[[:space:]]|\(NEEDED\))'; then
+      echo "$binary ($arch) requires a dynamic loader or shared library" >&2
+      exit 1
+    fi
+  done
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatch-worker" ./cmd/dispatch-worker
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatch-hook" ./cmd/dispatch-hook
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/edge/linux-$arch" ./cmd/dispatch-agent
