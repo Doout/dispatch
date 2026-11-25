@@ -92,7 +92,7 @@ describe("connections page", () => {
 
     expect((screen.getByRole("switch", { name: "Webhook events" }) as HTMLInputElement).checked).toBe(false);
     fireEvent.click(screen.getByRole("switch", { name: "Webhook events" }));
-    fireEvent.click(screen.getByRole("radio", { name: /Add a relay server/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Add a relay server/ }));
     expect(onAddRelay).toHaveBeenCalledOnce();
   });
 
@@ -174,6 +174,22 @@ describe("connections page", () => {
 
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true, eventDelivery: "none" }));
+  });
+
+  it("keeps Enterprise endpoints together and preserves a custom API URL", () => {
+    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
+    const host = screen.getByLabelText("GitHub URL") as HTMLInputElement;
+    const apiURL = screen.getByLabelText("API URL") as HTMLInputElement;
+    const endpoints = host.closest("details")!;
+    expect(endpoints.open).toBe(false);
+    expect(endpoints.contains(apiURL)).toBe(true);
+    fireEvent.click(endpoints.querySelector("summary")!);
+    fireEvent.change(host, { target: { value: "https://ghe.example.test" } });
+    expect(apiURL.value).toBe("https://ghe.example.test/api/v3");
+    fireEvent.change(apiURL, { target: { value: "https://api.example.test/v3" } });
+    fireEvent.change(host, { target: { value: "https://ghe2.example.test" } });
+    expect(apiURL.value).toBe("https://api.example.test/v3");
   });
 
   it("uses the GitHub Enterprise installation path", () => {

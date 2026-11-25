@@ -1,6 +1,7 @@
 import { InstanceConnectionSettings } from "./InstanceConnectionSettings";
 import { useHostedTenant, usesSelfHostedController } from "./hosted/context";
 import "./SettingsPage.css";
+import "./GitHubAppForm.css";
 import { destructiveRequest } from "./api";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import {
@@ -279,69 +280,188 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
 		/></div>;
 	}
 
+  const registering = method === "manifest" && !editing;
+  const customEndpoints = editing && (editing.webUrl !== defaultGitHubWebURL || editing.apiUrl !== defaultGitHubAPIURL);
+  let endpointHost = "";
+  try {
+    endpointHost = new URL(webURL).host;
+  } catch {
+    // Keep the endpoint fields accessible while the address is incomplete.
+  }
+
   return <div className="page-layout connections-page">
-	<PageHeader view="connections" trailing={creating || creatingSecretStore || creatingPrivateNetwork || creatingLanewayNetwork
+	<PageHeader view="connections" trailing={creating ? null : creatingSecretStore || creatingPrivateNetwork || creatingLanewayNetwork
       ? <button type="button" className="quiet-button" onClick={closeEditor}><X size={16} weight="bold" />Cancel</button>
 			: <ConnectionAddMenu onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />} />
     {notice && <div className="connection-notice" role="status"><CheckCircle size={18} weight="fill" /><span>{notice}</span><button aria-label="Dismiss message" onClick={() => onNotice("")}><X size={15} /></button></div>}
-    {error && <p className="form-error connection-error" role="alert">{error}</p>}
+    {error && !creating && <p className="form-error connection-error" role="alert">{error}</p>}
     {showDoodship && <InstanceConnectionSettings key={overview.identity?.id} active={!creating && !creatingSecretStore && !creatingPrivateNetwork && !creatingLanewayNetwork} />}
-    {creating ? <section className="inline-create connection-editor" aria-labelledby="connection-editor-title">
-      <header><div><h2 id="connection-editor-title">{editing ? "Edit GitHub App" : "Add GitHub App"}</h2></div></header>
-      {!editing && <div className="connection-method" role="radiogroup" aria-label="GitHub App setup method">
-        <button type="button" role="radio" aria-checked={method === "manifest"} className={method === "manifest" ? "active" : ""} onClick={() => setMethod("manifest")}><GithubLogo size={19} weight="fill" /><span><strong>Create in GitHub</strong><small>Set up permissions and webhooks.</small></span></button>
-        <button type="button" role="radio" aria-checked={method === "manual"} className={method === "manual" ? "active" : ""} onClick={() => setMethod("manual")}><Key size={19} /><span><strong>Existing App</strong><small>Use an App ID and credentials.</small></span></button>
-      </div>}
-      <form className="connection-form" onSubmit={submit} aria-busy={busyID === (editing?.id || "create")}>
-        <div className="connection-grid">
-          <label><span>GitHub App name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Dispatch-a1b2c3d4" maxLength={34} required /></label>
-          <label><span>GitHub URL</span><input value={webURL} onChange={(event) => changeWebURL(event.target.value)} placeholder="https://github.example.com" required spellCheck={false} /></label>
-          <label><span>App access</span><select value={readOnly ? "read" : "automation"} onChange={(event) => setReadOnly(event.target.value === "read")} disabled={!!editing}><option value="automation">Repositories and PR automation</option><option value="read">Read-only repository access</option></select>{readOnly && <small>Uses Contents: read for repository checkouts.</small>}</label>
-			<label><span>Route</span><select value={privateNetworkID} onChange={(event) => setPrivateNetworkID(event.target.value)}><option value="">Direct</option>{edgeNetworks.map((network) => <option key={network.id} value={network.id}>Edge · {network.name}{network.state === "ready" ? "" : ` (${network.state})`}</option>)}</select></label>
-          {method === "manifest" && !editing ? <><label><span>Registration owner</span><select value={ownerType} onChange={(event) => { const value = event.target.value as "" | "personal" | "organization"; setOwnerType(value); if (value !== "organization") setOwner(""); }} required><option value="">Choose an account type</option><option value="personal">My personal account</option><option value="organization">GitHub organization</option></select></label>{ownerType === "organization" && <label><span>Organization login</span><input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="platform-team" required spellCheck={false} /></label>}</> : <>
-            <label><span>App ID</span><input inputMode="numeric" value={appID} onChange={(event) => setAppID(event.target.value)} placeholder="123456" required /></label>
-          </>}
-        </div>
-        {supportsProxy && <div className="connection-grid">
-          <label><span>Outbound proxy</span><select value={useAppProxy ? "app" : "controller"} onChange={event => setUseAppProxy(event.target.value === "app")}>
-            <option value="controller">Use controller settings</option><option value="app">Use an App proxy</option>
-          </select><small>Routes this App’s API calls and HTTPS Git checkouts.</small></label>
-          {useAppProxy && <>
-            <label><span>Proxy URL</span><input type="url" autoComplete="off" spellCheck={false} maxLength={2048}
-              value={proxyURL} onChange={event => setProxyURL(event.target.value)} required={!editing?.proxy?.url}
-              placeholder={editing?.proxy?.url ?? "http://proxy.example.com:3128"} />
-              {editing?.proxy?.url && <small>Leave blank to keep the saved address and credentials.</small>}</label>
-            <label><span>Bypass list</span><input value={proxyBypass} onChange={event => setProxyBypass(event.target.value)}
-              spellCheck={false} maxLength={2048} placeholder=".internal.example.com" />
-              <small>Optional comma-separated hosts, domains, or IP ranges.</small></label>
-          </>}
+    {creating ? <section className="inline-create connection-editor github-app-form" aria-labelledby="connection-editor-title">
+      <header>
+        <h2 id="connection-editor-title">{editing ? "Edit GitHub App" : "Add GitHub App"}</h2>
+        {!editing && <div className="github-app-methods" role="radiogroup" aria-label="GitHub App setup method">
+          <label>
+            <input type="radio" name="github-setup-method" value="manifest" checked={method === "manifest"} onChange={() => setMethod("manifest")} />
+            <span><GithubLogo size={16} weight="fill" />Create in GitHub</span>
+          </label>
+          <label>
+            <input type="radio" name="github-setup-method" value="manual" checked={method === "manual"} onChange={() => setMethod("manual")} />
+            <span><Key size={16} />Existing App</span>
+          </label>
         </div>}
-        {!editing && !readOnly && <section className="connection-delivery" aria-labelledby="event-delivery-title">
-          <div className="connection-webhook-toggle">
-            <span><strong id="event-delivery-title">Event delivery</strong><small>{eventDelivery === "none" ? "Polling only" : "Webhooks enabled"}</small></span>
-            <label className="connection-toggle-control"><input type="checkbox" role="switch" aria-label="Webhook events" checked={eventDelivery !== "none"} onChange={(event) => setEventDelivery(event.target.checked ? "direct" : "none")} /><span /></label>
+      </header>
+      <form className="connection-form" onSubmit={submit} aria-busy={busyID === (editing?.id || "create")}>
+        <section className="github-app-section" aria-labelledby="github-app-details-title">
+          <h3 className="github-app-section-heading" id="github-app-details-title">App details</h3>
+          <div className="github-app-fields">
+            <label>
+              <span>GitHub App name</span>
+              <input value={name} onChange={event => setName(event.target.value)} maxLength={registering ? 34 : 80} title="Enter a name for this GitHub App." required pattern={".*\\S.*"} />
+            </label>
+            {registering ? <div className="github-app-owner">
+              <label>
+                <span>Registration owner</span>
+                <select value={ownerType} required onChange={event => {
+                  const value = event.target.value as typeof ownerType;
+                  setOwnerType(value);
+                  if (value !== "organization") setOwner("");
+                }}>
+                  <option value="">Choose an account type</option>
+                  <option value="personal">My personal account</option>
+                  <option value="organization">GitHub organization</option>
+                </select>
+              </label>
+              {ownerType === "organization" && <label>
+                <span>Organization login</span>
+                <input value={owner} onChange={event => setOwner(event.target.value)} placeholder="platform-team" title="Enter the organization login from GitHub." spellCheck={false} required pattern={".*\\S.*"} />
+              </label>}
+            </div> : <label>
+              <span>App ID</span>
+              <input value={appID} onChange={event => setAppID(event.target.value)} inputMode="numeric" pattern="[0-9]*[1-9][0-9]*" title="Enter the numeric App ID from GitHub." placeholder="123456" required />
+            </label>}
+            <label>
+              <span>App access</span>
+              <select value={readOnly ? "read" : "automation"} onChange={event => setReadOnly(event.target.value === "read")} disabled={!!editing} aria-describedby="github-app-permissions">
+                <option value="automation">Repositories and PR automation</option>
+                <option value="read">Read-only repository access</option>
+              </select>
+            </label>
+            <p className="github-app-permissions" id="github-app-permissions">
+              {readOnly ? "Requests read access to Contents and Metadata." : "Reads repository contents and metadata. Can write pull request comments, issues, and commit statuses."}
+            </p>
           </div>
-          {eventDelivery !== "none" && <div className="connection-delivery-route">
-            <div className="connection-route-options" role="radiogroup" aria-label="Webhook route">
-              <button type="button" role="radio" aria-checked={eventDelivery === "direct"} className={eventDelivery === "direct" ? "selected" : ""} onClick={() => setEventDelivery("direct")}><strong>Direct</strong><small>This controller</small></button>
-              {relayServers.length ? <button type="button" role="radio" aria-checked={eventDelivery === "relay"} className={eventDelivery === "relay" ? "selected" : ""} onClick={() => setEventDelivery("relay")}><strong>Relay</strong><small>Public relay</small></button> : <button type="button" role="radio" aria-checked="false" className="add-relay-option" onClick={onAddRelay}><strong>Relay</strong><small>Add a relay server</small></button>}
+        </section>
+
+        <section className="github-app-section" aria-labelledby="github-app-network-title">
+          <h3 className="github-app-section-heading" id="github-app-network-title">Network access</h3>
+          <div className="github-app-fields">
+            {supportsProxy && <label>
+              <span>Outbound proxy</span>
+              <select aria-label="Outbound proxy" aria-describedby="github-app-proxy-help" value={useAppProxy ? "app" : "controller"} onChange={event => setUseAppProxy(event.target.value === "app")}>
+                <option value="controller">Use controller settings</option>
+                <option value="app">Use an App proxy</option>
+              </select>
+              <small id="github-app-proxy-help">Applies to this App’s GitHub API calls and workers’ HTTPS Git checkouts.</small>
+            </label>}
+            <label>
+              <span>Network route</span>
+              <select aria-label="Network route" aria-describedby="github-app-route-help" value={privateNetworkID} onChange={event => setPrivateNetworkID(event.target.value)}>
+                <option value="">Direct</option>
+                {edgeNetworks.map(network => <option key={network.id} value={network.id}>Edge · {network.name}{network.state === "ready" ? "" : ` (${network.state})`}</option>)}
+              </select>
+              <small id="github-app-route-help">{supportsProxy ? "Used for GitHub API calls that connect without a proxy." : "Connect to the GitHub API directly or through an edge node."}</small>
+            </label>
+            {supportsProxy && useAppProxy && <>
+              <label>
+                <span>Proxy URL</span>
+                <input type="url" autoComplete="off" spellCheck={false} maxLength={2048}
+                  aria-label="Proxy URL" aria-describedby={editing?.proxy?.url ? "github-app-saved-proxy" : undefined}
+                  value={proxyURL} onChange={event => setProxyURL(event.target.value)} required={!editing?.proxy?.url}
+                  placeholder={editing?.proxy?.url ?? "http://proxy.example.com:3128"} />
+                {editing?.proxy?.url && <small id="github-app-saved-proxy">Leave blank to keep the saved address and credentials.</small>}
+              </label>
+              <label>
+                <span>Bypass list</span>
+                <input aria-label="Bypass list" aria-describedby="github-app-bypass-help" value={proxyBypass} onChange={event => setProxyBypass(event.target.value)}
+                  spellCheck={false} maxLength={2048} placeholder=".internal.example.com" />
+                <small id="github-app-bypass-help">Optional. Separate hosts, domains, or IP ranges with commas.</small>
+              </label>
+            </>}
+          </div>
+          <details className="github-app-details" open={Boolean(customEndpoints)} onInvalidCapture={event => { event.currentTarget.open = true; }}>
+            <summary>GitHub endpoints <span>{endpointHost || "Enter a GitHub URL"}{apiURL && apiURL !== githubAPIFor(webURL) ? " · Custom API" : ""}</span></summary>
+            <div className="github-app-fields">
+              <label>
+                <span>GitHub URL</span>
+                <input type="url" value={webURL} onChange={event => changeWebURL(event.target.value)} placeholder="https://github.example.com" required spellCheck={false} />
+              </label>
+              <label>
+                <span>API URL</span>
+                <input type="url" value={apiURL} onChange={event => setAPIURL(event.target.value)} placeholder="https://github.example.com/api/v3" required spellCheck={false} />
+              </label>
             </div>
-            {eventDelivery === "relay" && <label className="relay-delivery-server"><span>Relay server</span><select value={relayServerID} onChange={(event) => setRelayServerID(event.target.value)} required><option value="">Select a relay</option>{relayServers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></label>}
+          </details>
+        </section>
+
+        {!editing && !readOnly && <section className="github-app-section" aria-labelledby="event-delivery-title">
+          <div className="connection-webhook-toggle">
+            <div><h3 className="github-app-section-heading" id="event-delivery-title">Event delivery</h3><small id="github-app-webhook-help">{eventDelivery === "none" ? "Polling only. Enable webhooks to receive events from GitHub." : "GitHub sends webhook events to your selected route."}</small></div>
+            <label className="connection-toggle-control">
+              <input type="checkbox" role="switch" aria-label="Webhook events" aria-describedby="github-app-webhook-help" checked={eventDelivery !== "none"} onChange={event => setEventDelivery(event.target.checked ? "direct" : "none")} />
+              <span />
+            </label>
+          </div>
+          {eventDelivery !== "none" && <div className="github-app-fields">
+            <label>
+              <span>Webhook route</span>
+              <select value={eventDelivery} onChange={event => setEventDelivery(event.target.value === "relay" ? "relay" : "direct")}>
+                <option value="direct">Direct to controller</option>
+                {relayServers.length > 0 && <option value="relay">Public relay</option>}
+              </select>
+            </label>
+            {relayServers.length === 0 && <button type="button" className="quiet-button github-app-add-relay" onClick={onAddRelay}><Plus size={15} />Add a relay server</button>}
+            {eventDelivery === "relay" && <label>
+              <span>Relay server</span>
+              <select value={relayServerID} onChange={event => setRelayServerID(event.target.value)} required>
+                <option value="">Select a relay</option>
+                {relayServers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}
+              </select>
+            </label>}
           </div>}
         </section>}
-        <details className="connection-advanced"><summary>Advanced GitHub settings <span>Custom Enterprise API</span></summary><div className="connection-grid">
-          <label><span>API URL</span><input value={apiURL} onChange={(event) => setAPIURL(event.target.value)} placeholder="https://github.example.com/api/v3" required spellCheck={false} /></label>
-          {(method === "manual" || editing) && <><label><span>App slug</span><input value={slug} onChange={(event) => setSlug(event.target.value)} placeholder="Filled during verification" spellCheck={false} /></label><label><span>Client ID</span><input value={clientID} onChange={(event) => setClientID(event.target.value)} placeholder="Optional" spellCheck={false} /></label></>}
-        </div></details>
-        {(method === "manual" || !!editing) && <div className="connection-credentials">
-          <div className="credential-heading"><div><strong>App credentials</strong>{editing && <small>Leave blank to keep the current credentials.</small>}</div><><input ref={privateKeyFile} className="sr-only" type="file" accept=".pem,.key,application/x-pem-file,text/plain" onChange={(event) => void loadPrivateKey(event)} /><button type="button" className="quiet-button" onClick={() => privateKeyFile.current?.click()}><UploadSimple size={15} />Upload PEM</button></></div>
-          <div className="connection-grid">
-            {!readOnly && (editing || eventDelivery !== "none") && <label><span>Webhook secret</span><input type="password" value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} placeholder={editing ? "Leave blank to keep the secret" : "At least 16 characters"} required={!editing} autoComplete="new-password" /></label>}
-            <label className="private-key-field"><span>Private key</span><textarea value={privateKey} onChange={(event) => setPrivateKey(event.target.value)} placeholder={editing ? "Leave blank to keep the key" : "Paste the RSA private key PEM"} required={!editing} spellCheck={false} /></label>
+
+        {!registering && <section className="github-app-section" aria-labelledby="github-app-credentials-title">
+          <div className="credential-heading">
+            <div>
+              <h3 className="github-app-section-heading" id="github-app-credentials-title">App credentials</h3>
+              {editing && <small>{readOnly ? "Leave the key blank to keep it." : "Leave both fields blank to keep the saved credentials, or replace both together."}</small>}
+            </div>
+            <input ref={privateKeyFile} hidden type="file" accept=".pem,.key,application/x-pem-file,text/plain" onChange={event => void loadPrivateKey(event)} />
+            <button type="button" className="quiet-button" onClick={() => privateKeyFile.current?.click()}><UploadSimple size={15} />Upload PEM</button>
           </div>
-        </div>}
-        {method === "manifest" && !editing && <div className="manifest-summary"><LockSimple size={18} /><p>{readOnly ? "Requests read access to Contents and Metadata." : "Repository access: Contents read, Pull requests write for PR comments, Issues write, Commit statuses write. Metadata read is included."}</p></div>}
-        <div className="connection-actions"><button type="button" className="quiet-button" onClick={reset}>Cancel</button><button className="primary-button" disabled={!!busyID || !name.trim() || !webURL.trim() || !apiURL.trim() || (!editing && !readOnly && eventDelivery === "relay" && !relayServerID) || (method === "manifest" && !editing && (!ownerType || (ownerType === "organization" && !owner.trim()))) || ((method === "manual" || !!editing) && (!appID || (!editing && (!privateKey.trim() || (!readOnly && eventDelivery !== "none" && !webhookSecret.trim()))))) }>{busyID ? "Working..." : method === "manifest" && !editing ? "Continue to GitHub" : editing ? "Save connection" : "Add connection"}</button></div>
+          <div className="github-app-fields">
+            <label className="github-app-wide">
+              <span>Private key</span>
+              <textarea value={privateKey} onChange={event => setPrivateKey(event.target.value)} placeholder={editing ? "Leave blank to keep the key" : "Paste the RSA private key PEM"} required={!editing || Boolean(webhookSecret)} spellCheck={false} />
+            </label>
+            {!readOnly && (editing || eventDelivery !== "none") && <label className="github-app-wide">
+              <span>Webhook secret</span>
+              <input type="password" value={webhookSecret} onChange={event => setWebhookSecret(event.target.value)} placeholder={editing ? "Leave blank to keep the secret" : "At least 16 characters"} required={!editing || Boolean(privateKey)} minLength={16} autoComplete="new-password" />
+            </label>}
+          </div>
+          <details className="github-app-details">
+            <summary>Optional App identifiers</summary>
+            <div className="github-app-fields">
+              <label><span>App slug</span><input value={slug} onChange={event => setSlug(event.target.value)} placeholder="Filled during verification" spellCheck={false} /></label>
+              <label><span>Client ID</span><input value={clientID} onChange={event => setClientID(event.target.value)} spellCheck={false} /></label>
+            </div>
+          </details>
+        </section>}
+        {error && <p className="form-error connection-group-error" role="alert">{error}</p>}
+        <div className="connection-actions github-app-actions">
+          <button type="button" className="quiet-button" onClick={reset} disabled={!!busyID}>Cancel</button>
+          <button type="submit" className="primary-button" disabled={!!busyID}>{busyID ? "Working..." : registering ? "Continue to GitHub" : editing ? "Save connection" : "Add connection"}</button>
+        </div>
       </form>
 	</section> : creatingSecretStore ? <SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={allPrivateNetworks} creating editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} /> : creatingPrivateNetwork ? <PrivateNetworksSection networks={privateNetworks} stores={secretStores} githubApps={overview.githubApps} creating editing={editingPrivateNetwork} initialDriver={privateNetworkDriver} onCreatingChange={setCreatingPrivateNetwork} onEditingChange={setEditingPrivateNetwork} onChanged={onChanged} /> : creatingLanewayNetwork ? <LanewayNetworksSection networks={lanewayNetworks} creating onCreatingChange={setCreatingLanewayNetwork} onChanged={onChanged} /> : hasConnections ? <div className="connections-inventory">
       <section className="connection-provider-group" aria-labelledby="github-connections-title">
