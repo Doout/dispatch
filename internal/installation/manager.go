@@ -692,6 +692,9 @@ func (m *Manager) Status(ctx context.Context) error {
 		return err
 	}
 	fmt.Fprintf(m.Out, "Installation: %s\nImage: %s\nInstalled image: %s\nData volume: %s\n", c.Name, c.Image, c.ImageID, c.Volume)
+	if c.Hostname != "" {
+		fmt.Fprintf(m.Out, "Traefik hostname: %s (network %s)\n", c.Hostname, c.ProxyNetwork)
+	}
 	if _, err = os.Stat(m.path("upgrade.json")); err == nil {
 		fmt.Fprintln(m.Out, "Interrupted upgrade: run dispatch recover")
 	}

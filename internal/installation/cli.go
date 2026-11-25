@@ -23,6 +23,7 @@ const help = `Usage: dispatch <command> [options]
   import                 Create an installation from an export archive
   verify                 Check an export archive, database and master key
   upgrade                Pull and apply a controller upgrade
+  route                  Configure Traefik for an installed controller
   status                 Show the managed installation and its health
   recover                Recover an interrupted install or upgrade
   auto-upgrade enable    Enable a Docker updater container
@@ -83,6 +84,7 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 	var pull *bool
 	var check *bool
 	var c Config
+	var clearRoute bool
 	var envFile *string
 	var interval *time.Duration
 	var registryConfig *string
@@ -118,6 +120,11 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 		if command == "install" {
 			envFile = fs.String("env-file", "", "file of literal KEY=value controller settings to copy")
 		}
+	case "route":
+		fs.StringVar(&c.ProxyNetwork, "proxy-network", "", "existing Traefik Docker network")
+		fs.StringVar(&c.Hostname, "hostname", "", "hostname for the Traefik route")
+		fs.StringVar(&c.TLSResolver, "tls-resolver", "", "Traefik certificate resolver (optional)")
+		fs.BoolVar(&clearRoute, "clear", false, "remove the managed Traefik route")
 	case "export":
 		archive = fs.String("output", "", "archive destination; must not already exist")
 		container = fs.String("container", "", "export an existing self-hosted Docker container, including mounted configuration directories")
@@ -195,6 +202,8 @@ func Run(ctx context.Context, args []string, out io.Writer) (bool, error) {
 			return m.Install(ctx, c, *envFile, *pull)
 		case "upgrade":
 			return m.Upgrade(ctx, *image, *pull, *check)
+		case "route":
+			return m.ConfigureRoute(ctx, c.Hostname, c.ProxyNetwork, c.TLSResolver, clearRoute)
 		case "status":
 			return m.Status(ctx)
 		case "recover":
