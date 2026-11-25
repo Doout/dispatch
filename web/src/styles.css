@@ -1159,6 +1159,9 @@
 .connection-empty-group small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .connection-empty-group button > svg { color: #778692; }
 .connection-notice { display: flex; align-items: center; gap: 9px; min-height: 44px; margin: -10px 0 16px; padding: 9px 12px; color: #145f3d; background: var(--green-soft); border: 1px solid #bedfcd; border-radius: 8px; font-size: 12px; font-weight: 620; }
+.connection-notice[role="alert"] { color: var(--red); background: var(--red-soft); border-color: #edc0c5; }
+.connection-notice[role="alert"] button { color: inherit; }
+.connection-notice[role="alert"] button:hover { background: #f8d9dc; }
 .connection-notice span { flex: 1; }
 .connection-notice button { display: grid; width: 28px; height: 28px; padding: 0; color: #476657; background: transparent; border: 0; border-radius: 6px; cursor: pointer; place-items: center; }
 .connection-notice button:hover { background: rgba(22,121,74,.08); }

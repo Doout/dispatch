@@ -255,3 +255,27 @@
     outline-offset: -1px;
   }
 }
+
+.github-app-test,
+.github-app-test > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.github-app-test {
+  flex-wrap: wrap;
+}
+
+.github-app-test > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.github-app-test svg {
+  flex-shrink: 0;
+}
+
+.github-app-test-success { color: var(--green); }
+.github-app-test-error { color: var(--red); }

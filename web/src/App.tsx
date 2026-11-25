@@ -23,7 +23,7 @@ import {
 } from "./api";
 import { AppRoute, isNewInterfaceRoute, readRoute, resourceSections, routePath, View } from "./routes";
 import { ApplicationsPage } from "./ApplicationsPage";
-import { ConnectionsPage } from "./ConnectionsPage";
+import { ConnectionsPage, type ConnectionNotice } from "./ConnectionsPage";
 import { PageHeader, pageTitles } from "./PageHeader";
 import { ServerRuntime } from "./deployments/RuntimeTopology";
 import { AccessPage } from "./AccessPage";
@@ -94,7 +94,7 @@ export default function DispatchApp() {
   const [loading, setLoading] = useState(true);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
-  const [connectionNotice, setConnectionNotice] = useState("");
+  const [connectionNotice, setConnectionNotice] = useState<ConnectionNotice>();
   const [changingPassword, setChangingPassword] = useState(false);
   const [viewingAccountProfile, setViewingAccountProfile] = useState(() =>
     new URLSearchParams(window.location.search).has("accountLink"),
@@ -259,7 +259,9 @@ export default function DispatchApp() {
 	const lanewayStatus = params.get("lanewayStatus");
 	if (lanewayStatus) {
 	  navigateRoute({ view: "connections" }, { replace: true });
-	  setConnectionNotice(lanewayStatus === "connected" ? "Laneway network connected." : params.get("detail") || "Laneway connection failed.");
+	  setConnectionNotice(lanewayStatus === "connected"
+        ? { kind: "success", message: "Laneway network connected." }
+        : { kind: "error", message: params.get("detail") || "Laneway connection failed." });
 	  void load(true);
 	} else if (setupID && installationID > 0) {
       navigateRoute({ view: "connections" }, { replace: true });
@@ -270,20 +272,18 @@ export default function DispatchApp() {
             await api.updateGitHubApp(setupID, { installationId: installationID });
           }
           await api.verifyGitHubApp(setupID);
-          setConnectionNotice("GitHub App installation connected. Existing organizations remain connected.");
+          setConnectionNotice({ kind: "success", message: "GitHub App installation connected. Existing organizations remain connected." });
           await load(true);
         } catch (cause) {
-          setConnectionNotice((cause as Error).message);
+          setConnectionNotice({ kind: "error", message: (cause as Error).message });
         }
       })();
     } else if (createdID) {
       navigateRoute({ view: "connections" }, { replace: true });
-      setConnectionNotice(
-        "GitHub App created. Install it on an account to finish the connection.",
-      );
+      setConnectionNotice({ kind: "success", message: "GitHub App created. Install it on an account to finish the connection." });
     } else if (callbackStatus === "error") {
       navigateRoute({ view: "connections" }, { replace: true });
-      setConnectionNotice(params.get("detail") || "GitHub App setup failed.");
+      setConnectionNotice({ kind: "error", message: params.get("detail") || "GitHub App setup failed." });
     }
   }, [load, navigateRoute, needsAuth, overview]);
 
@@ -722,7 +722,7 @@ export default function DispatchApp() {
               selectedConnectionID={route.connectionID}
               onOpenConnection={(id) => navigateRoute({ view: "connections", connectionID: id ?? undefined })}
               notice={connectionNotice}
-              onNotice={setConnectionNotice}
+              onDismissNotice={() => setConnectionNotice(undefined)}
               onChanged={async () => {
                 await load();
               }}

@@ -3,7 +3,10 @@ import ReactDOM from "react-dom/client";
 import { DestructiveConfirmations } from "./DestructiveConfirmations";
 import { HostedGate } from "./hosted/HostedGate";
 import { UiPreviewToolbar, uiPreviewConfiguration } from "./UiPreviewToolbar";
+import { sanitizeLegacyGitHubManifestRedirect } from "./githubManifestCallback";
 import "./base.css";
+
+sanitizeLegacyGitHubManifestRedirect();
 
 const App = React.lazy(() => import("./App"));
 const preview = uiPreviewConfiguration();

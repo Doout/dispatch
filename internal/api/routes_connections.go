@@ -59,6 +59,7 @@ func (a *API) connectionsRoutes(r chi.Router) {
 		r.Get("/github-apps/{id}/installations", a.listGitHubAppInstallations)
 		r.Get("/github-apps/{id}/repositories", a.listGitHubAppRepositories)
 		r.Get("/github-apps/{id}/branches", a.listGitHubAppBranches)
+		r.Post("/github-apps/test-connection", a.testGitHubAppConnection)
 		r.Post("/github-apps/manifest", a.startGitHubAppManifest)
 	})
 	r.Route("/servers", func(r chi.Router) {

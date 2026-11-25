@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -396,9 +397,12 @@ func TestHealthDoesNotRequireToken(t *testing.T) {
 }
 
 func TestGitHubAppManifestIsPublic(t *testing.T) {
-	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{})
+	github := newGitHubAPIRootFixture(t)
+	manager := githubapp.New(nil, webhookTestVault(t))
+	manager.Client = github.Client()
+	handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{GitHubApps: manager})
 	defer cleanup()
-	body := bytes.NewBufferString(`{"name":"Dispatch-test","webUrl":"https://github.example.com","ownerType":"personal","eventDelivery":"none"}`)
+	body := bytes.NewBufferString(`{"name":"Dispatch-test","webUrl":"` + github.URL + `","ownerType":"personal","eventDelivery":"none"}`)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, tokenRequest(http.MethodPost, "/api/v1/github-apps/manifest", body))
 	if response.Code != http.StatusOK {
@@ -419,6 +423,46 @@ func TestGitHubAppManifestIsPublic(t *testing.T) {
 	}
 }
 
+func TestGitHubAppManifestCallbackKeepsCodeOutOfDiagnostics(t *testing.T) {
+	const code = "fixture/code+secret"
+	const tlsCause = "proxyconnect tcp: tls: failed to verify certificate: x509: certificate signed by unknown authority"
+	for _, tc := range []struct{ name, cause, want string }{
+		{"TLS verification", tlsCause, "does not trust the HTTPS proxy certificate"},
+		{"edge echoed path", "edge failed: /app-manifests/" + url.PathEscape(code) + "/conversions", "connection request failed"},
+		{"upstream echoed code", "", "HTTP 403"},
+		{"nested transport echoed credentials", "proxy diagnostic: " + url.QueryEscape(url.PathEscape(code)), "connection request failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := githubapp.New(nil, webhookTestVault(t))
+			manager.Client = &http.Client{Transport: hostedOAuthTransport(func(r *http.Request) (*http.Response, error) {
+				if !strings.Contains(r.URL.EscapedPath(), url.PathEscape(code)) {
+					t.Fatal("conversion request did not contain the fixture code")
+				}
+				if tc.cause != "" {
+					return nil, errors.New(tc.cause)
+				}
+				return &http.Response{StatusCode: http.StatusForbidden, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"` + code + `"}`))}, nil
+			})}
+			handler, cleanup := testHandlerWithEventConfig(t, AuthConfig{AdminToken: "secret"}, false, EventConfig{GitHubApps: manager})
+			defer cleanup()
+			handler.(*API).manifestStates["state"] = githubAppManifestState{APIURL: "https://github.example.test/api/v3", ExpiresAt: time.Now().Add(time.Minute)}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/github-apps/manifest/callback?state=state&code="+url.QueryEscape(code), nil))
+			target, err := url.Parse(w.Header().Get("Location"))
+			if err != nil || w.Code != http.StatusSeeOther || target.Query().Get("githubAppStatus") != "error" {
+				t.Fatalf("unexpected callback result: %d", w.Code)
+			}
+			detail := target.Query().Get("detail")
+			if !strings.Contains(detail, tc.want) || strings.Contains(detail, "fixture") || strings.Contains(detail, "/app-manifests/") {
+				t.Errorf("unexpected diagnostic %q", detail)
+			}
+			if strings.Contains(w.Body.String(), "fixture") || w.Header().Get("Referrer-Policy") != "no-referrer" || w.Header().Get("Cache-Control") != "no-store" {
+				t.Error("callback response exposed or retained the registration request")
+			}
+		})
+	}
+}
+
 func TestReadOnlyGitHubAppManifestAndCallback(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -426,6 +470,10 @@ func TestReadOnlyGitHubAppManifestAndCallback(t *testing.T) {
 	}
 	privateKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	github := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v3/app-manifests/setup/conversions" {
 			t.Errorf("unexpected GitHub request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)

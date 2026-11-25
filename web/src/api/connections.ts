@@ -99,7 +99,21 @@ export type GitHubAppManifest = {
   manifest: Record<string, unknown>;
 };
 
+export type GitHubAppNetworkSettings = {
+  id?: string;
+  webUrl: string;
+  apiUrl: string;
+  privateNetworkId: string;
+  proxy?: { url?: string; noProxy?: string };
+};
+
 export const connectionsApi = {
+  testGitHubAppConnection: (body: GitHubAppNetworkSettings, signal: AbortSignal) =>
+    request<{ reachable: boolean }>("/api/v1/github-apps/test-connection", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
   githubApps: () => request<GitHubAppConnection[]>("/api/v1/github-apps"),
   createGitHubApp: (body: Record<string, unknown>) =>
     request<GitHubAppConnection>("/api/v1/github-apps", {

@@ -135,6 +135,14 @@ func (s *Service) resolveSettings(settings core.RepositoryProxySettings, appID s
 
 func (s *Service) Transport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// net/http returns only the proxy's arbitrary reason phrase on failed CONNECT.
+	// Keep 407 identifiable even if the proxy supplies a custom status text.
+	transport.OnProxyConnectResponse = func(_ context.Context, _ *url.URL, _ *http.Request, response *http.Response) error {
+		if response.StatusCode == http.StatusProxyAuthRequired {
+			return errors.New("proxy authentication required")
+		}
+		return nil
+	}
 	transport.Proxy = func(request *http.Request) (*url.URL, error) {
 		selectProxy, err := s.proxyFunc(request.Context())
 		if err != nil {

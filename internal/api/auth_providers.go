@@ -202,6 +202,8 @@ func (a *API) startAuthProviderManifest(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *API) completeAuthProviderManifest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	state, code := strings.TrimSpace(r.URL.Query().Get("state")), strings.TrimSpace(r.URL.Query().Get("code"))
 	a.manifestMu.Lock()
 	pending, ok := a.authManifestStates[state]

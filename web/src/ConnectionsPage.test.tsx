@@ -34,7 +34,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("connections page", () => {
   it("shows one compact provider chooser without duplicate add actions", () => {
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
     expect(screen.getByRole("heading", { name: "No connections" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Add connection" })).toHaveLength(1);
@@ -44,7 +44,7 @@ describe("connections page", () => {
   });
 
   it("groups connection types without binding secret stores to one provider", () => {
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Add connection" }), { button: 0, ctrlKey: false });
 
@@ -55,7 +55,7 @@ describe("connections page", () => {
   });
 
   it("opens secret-store setup from the provider chooser", () => {
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
     fireEvent.click(screen.getByRole("button", { name: /Secret store/ }));
 
@@ -64,7 +64,7 @@ describe("connections page", () => {
   });
 
   it("opens edge-node deployment from the network group", () => {
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
     fireEvent.click(screen.getByRole("button", { name: /Edge node/ }));
 
@@ -74,7 +74,7 @@ describe("connections page", () => {
   });
 
   it("opens the Laneway network authorization flow", () => {
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
     fireEvent.click(screen.getByRole("button", { name: /Laneway network/ }));
 
@@ -86,7 +86,7 @@ describe("connections page", () => {
 
   it("allows polling without a webhook and opens relay setup", () => {
     const onAddRelay = vi.fn();
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} onAddRelay={onAddRelay} />);
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} onAddRelay={onAddRelay} />);
 
     fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
 
@@ -99,7 +99,7 @@ describe("connections page", () => {
   it.each([null, "connected"] as const)("sends the selected proxy during registration (backend %s)", async backendMode => {
     const start = vi.spyOn(api, "startGitHubAppManifest").mockRejectedValue(new Error("Registration fixture"));
     render(<HostedTenantContext.Provider value={backendMode ? { mode: "tenant", backendMode } as HostedTenant : null}>
-      <ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />
+      <ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />
     </HostedTenantContext.Provider>);
 
     fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
@@ -111,6 +111,32 @@ describe("connections page", () => {
     await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
       proxy: { url: "http://proxy.example.test:3128", noProxy: ".internal.test" },
     })));
+  });
+
+  it("tests the App proxy before asking GitHub to register the App", async () => {
+    const probe = vi.spyOn(api, "testGitHubAppConnection").mockResolvedValue({ reachable: true });
+    const start = vi.spyOn(api, "startGitHubAppManifest");
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
+    fireEvent.change(screen.getByLabelText("Outbound proxy"), { target: { value: "app" } });
+    const button = screen.getByRole("button", { name: "Test connection" });
+    fireEvent.click(button);
+    expect(screen.getByRole("alert").textContent).toMatch(/Enter the proxy URL/);
+    expect(probe).not.toHaveBeenCalled();
+    const url = screen.getByLabelText("Proxy URL") as HTMLInputElement;
+    fireEvent.change(url, { target: { value: "https://proxy.example.test:3129" } });
+    probe.mockRejectedValueOnce(new Error("The proxy certificate is not trusted."));
+    fireEvent.click(button);
+    expect((await screen.findByRole("alert")).textContent).toContain("certificate is not trusted");
+    expect(url.value).toBe("https://proxy.example.test:3129");
+    fireEvent.click(button);
+    await screen.findByText("The controller reached the GitHub API.");
+    expect(probe).toHaveBeenCalledWith(expect.objectContaining({
+      apiUrl: "https://api.github.com", proxy: { url: "https://proxy.example.test:3129", noProxy: "" },
+    }), expect.any(AbortSignal));
+    expect(start).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Bypass list"), { target: { value: "api.github.com" } });
+    expect(screen.queryByText("The controller reached the GitHub API.")).toBeNull();
   });
 
   const appWithProxy: Overview["githubApps"][number] = {
@@ -126,7 +152,7 @@ describe("connections page", () => {
   ])("$action on a connected controller", async ({ mode, url, expected }) => {
     const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(appWithProxy));
     render(<HostedTenantContext.Provider value={{ mode: "tenant", backendMode: "connected" } as HostedTenant}>
-      <ConnectionsPage overview={{ ...overview, githubApps: [appWithProxy] }} notice="" onNotice={() => undefined} onChanged={async () => undefined} />
+      <ConnectionsPage overview={{ ...overview, githubApps: [appWithProxy] }} onDismissNotice={() => undefined} onChanged={async () => undefined} />
     </HostedTenantContext.Provider>);
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     const address = screen.getByRole("textbox", { name: /Proxy URL/ }) as HTMLInputElement;
@@ -147,7 +173,7 @@ describe("connections page", () => {
     const connection = appWithProxy;
     const update = vi.spyOn(api, "updateGitHubApp").mockResolvedValue(connection);
     render(<HostedTenantContext.Provider value={{ mode: "tenant", backendMode } as HostedTenant}>
-      <ConnectionsPage overview={{ ...overview, githubApps: [connection] }} notice="" onNotice={() => undefined} onChanged={async () => undefined} />
+      <ConnectionsPage overview={{ ...overview, githubApps: [connection] }} onDismissNotice={() => undefined} onChanged={async () => undefined} />
     </HostedTenantContext.Provider>);
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     expect(screen.queryByLabelText(/Outbound proxy/)).toBeNull();
@@ -163,7 +189,7 @@ describe("connections page", () => {
       expect(new FormData(this).get("manifest")).toBe(JSON.stringify(manifest));
       this.remove();
     });
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
     fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
     fireEvent.change(screen.getByRole("combobox", { name: /App access/ }), { target: { value: "read" } });
@@ -177,7 +203,7 @@ describe("connections page", () => {
   });
 
   it("keeps Enterprise endpoints together and preserves a custom API URL", () => {
-    render(<ConnectionsPage overview={overview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={overview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: /GitHub App/ }));
     const host = screen.getByLabelText("GitHub URL") as HTMLInputElement;
     const apiURL = screen.getByLabelText("API URL") as HTMLInputElement;
@@ -209,7 +235,7 @@ describe("connections page", () => {
         updatedAt: "2026-08-27T00:00:00Z",
       }],
     };
-    render(<ConnectionsPage overview={enterpriseOverview} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={enterpriseOverview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
     const installLink = screen.getByRole("link", { name: /Install App/ });
     expect(installLink.getAttribute("href"))
@@ -233,7 +259,7 @@ describe("connections page", () => {
       missingAppPermissions: [{ name: "pull_requests", required: "write", granted: "read" }],
       missingInstallationPermissions: [{ name: "pull_requests", required: "write", granted: "read" }],
     } });
-    render(<ConnectionsPage overview={{ ...overview, githubApps: [connection] }} selectedConnectionID="app-1" notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+    render(<ConnectionsPage overview={{ ...overview, githubApps: [connection] }} selectedConnectionID="app-1" onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
     await waitFor(() => expect((screen.getByRole("button", { name: "Verify permissions" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Verify permissions" }));
@@ -249,7 +275,7 @@ describe("connections page", () => {
 it("labels legacy edge credentials and reviews rotation before invalidating the node", async () => {
  const network: PrivateNetwork = { id: "node", name: "Private node", driver: "dispatch_agent", config: {}, details: {}, state: "ready", createdAt: "2026-09-20T00:00:00Z", updatedAt: "2026-09-20T00:00:00Z" };
  const rotate = vi.spyOn(api,"rotatePrivateNetworkToken").mockResolvedValue({...network,enrollmentToken:"one-time-token",details:{credentialMode:"short_session"}});
- render(<ConnectionsPage overview={{...overview,privateNetworks:[network]}} notice="" onNotice={() => undefined} onChanged={async () => undefined} />);
+ render(<ConnectionsPage overview={{...overview,privateNetworks:[network]}} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
  expect(screen.getByText("Legacy token · re-enroll to upgrade")).toBeTruthy();
  fireEvent.click(screen.getByRole("button",{name:"Create install token for Private node"}));
  expect(screen.getByRole("group",{name:"Confirm node credential change"})).toBeTruthy();expect(rotate).not.toHaveBeenCalled();
@@ -273,12 +299,12 @@ it("shows both organization installations without replacing the current connecti
   {id: "trigger", appId: "app", githubAppId: "app", provider: "github" as const, repository: "Alpha/service", command: "/preview", enabled: true, secretIds: [], createdAt: "", updatedAt: ""},
   {id: "missing", appId: "app", githubAppId: "app", provider: "github" as const, repository: "Gamma/docs", command: "/preview", enabled: true, secretIds: [], createdAt: "", updatedAt: ""},
  ] };
- const page = render(<ConnectionsPage overview={watched} notice="" onNotice={() => undefined} onChanged={async () => undefined} onOpenConnection={open} />);
+ const page = render(<ConnectionsPage overview={watched} onDismissNotice={() => undefined} onChanged={async () => undefined} onOpenConnection={open} />);
  expect(screen.getByRole("link", {name: "View details"}).getAttribute("href")).toBe("/connections/app");
  expect(screen.queryByText("Connected accounts")).toBeNull();
  fireEvent.click(screen.getByRole("link", {name: "View details"}));
  expect(open).toHaveBeenCalledWith("app");
- page.rerender(<ConnectionsPage overview={watched} selectedConnectionID="app" notice="" onNotice={() => undefined} onChanged={async () => undefined} onOpenConnection={open} />);
+ page.rerender(<ConnectionsPage overview={watched} selectedConnectionID="app" onDismissNotice={() => undefined} onChanged={async () => undefined} onOpenConnection={open} />);
  expect(await screen.findByRole("heading", {name: "Connected accounts"})).toBeTruthy();
  expect(screen.getByText(/All repositories · 1 accessible/)).toBeTruthy();
  expect(screen.getByText(/Selected repositories · 1 accessible/)).toBeTruthy();
@@ -295,16 +321,16 @@ it("shows both organization installations without replacing the current connecti
 it("offers Doodship setup only to local installation owners", () => {
   const owner = { ...overview, identity: { id: "local-owner", systemRole: "owner" } } as Overview;
   const request = vi.spyOn(client, "request");
-  const page = render(<ConnectionsPage overview={owner} notice="" onNotice={() => {}} onChanged={async () => {}} />);
+  const page = render(<ConnectionsPage overview={owner} onDismissNotice={() => {}} onChanged={async () => {}} />);
   expect(screen.getByRole("heading", { name: "Doodship" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Providers and networks" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Manage connection" })).toBeTruthy();
   expect(request).not.toHaveBeenCalled();
   page.rerender(<HostedTenantContext.Provider value={{ mode: "tenant" } as HostedTenant}>
-    <ConnectionsPage overview={owner} notice="" onNotice={() => {}} onChanged={async () => {}} />
+    <ConnectionsPage overview={owner} onDismissNotice={() => {}} onChanged={async () => {}} />
   </HostedTenantContext.Provider>);
   expect(screen.queryByRole("heading", { name: "Doodship" })).toBeNull();
-  page.rerender(<ConnectionsPage overview={{ ...owner, identity: { ...owner.identity!, systemRole: "member" } }} notice="" onNotice={() => {}} onChanged={async () => {}} />);
+  page.rerender(<ConnectionsPage overview={{ ...owner, identity: { ...owner.identity!, systemRole: "member" } }} onDismissNotice={() => {}} onChanged={async () => {}} />);
   expect(screen.queryByRole("heading", { name: "Doodship" })).toBeNull();
   expect(request).not.toHaveBeenCalled();
 });

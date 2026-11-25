@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +52,24 @@ func TestManifestRedirectRechecksAppRoute(t *testing.T) {
 	_, err := manager.ConvertAppManifest(t.Context(), connection, "fixture")
 	if err == nil || !strings.Contains(err.Error(), "edge routing is not configured") || redirects != 1 {
 		t.Fatalf("redirect did not require the selected edge: redirects=%d, error=%v", redirects, err)
+	}
+}
+
+func TestConnectionDiagnosticOmitsPrivateRequestData(t *testing.T) {
+	const privateURL = "https://fixture:secret@github.example.test/app-manifests/private-code/conversions"
+	for _, tc := range []struct {
+		cause error
+		want  string
+	}{
+		{errors.New("proxyconnect tcp: Proxy Authentication Required"), "proxy authentication required"},
+		{errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority"), "x509: certificate signed by unknown authority"},
+		{&net.DNSError{Err: "unexpected resolver response", Name: privateURL}, "DNS lookup failed."},
+		{context.DeadlineExceeded, "context deadline exceeded"},
+		{errors.New("unexpected upstream failure: " + privateURL), "The connection request failed."},
+	} {
+		if got := ConnectionDiagnostic(&url.Error{Op: "Post", URL: privateURL, Err: tc.cause}).Error(); (!strings.Contains(got, tc.want) || strings.Contains(got, "fixture") || strings.Contains(got, "private-code")) {
+			t.Errorf("unexpected diagnostic %q, wanted %q", got, tc.want)
+		}
 	}
 }
 

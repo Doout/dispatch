@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -205,7 +206,7 @@ func NormalizeEndpoints(webURL, apiURL string) (string, string, error) {
 		}
 	}
 	api, err := url.Parse(apiURL)
-	if err != nil || api.Scheme != "https" || api.Host == "" || api.User != nil {
+	if err != nil || api.Scheme != "https" || api.Hostname() == "" || api.User != nil || api.RawQuery != "" || api.ForceQuery || api.Fragment != "" {
 		return "", "", errors.New("enter a valid HTTPS GitHub API URL")
 	}
 	return webURL, apiURL, nil
@@ -753,7 +754,7 @@ func (m *Manager) ConvertAppManifest(ctx context.Context, connection core.GitHub
 		} `json:"owner"`
 	}
 	if err := m.request(ctx, http.MethodPost, endpoint, "", nil, &result, connection); err != nil {
-		return ManifestConversion{}, err
+		return ManifestConversion{}, fmt.Errorf("GitHub App registration failed: %w", ConnectionDiagnostic(err))
 	}
 	if result.ID < 1 || result.PEM == "" {
 		return ManifestConversion{}, errors.New("GitHub returned an incomplete App manifest conversion")
@@ -761,6 +762,59 @@ func (m *Manager) ConvertAppManifest(ctx context.Context, connection core.GitHub
 	return ManifestConversion{AppID: result.ID, ClientID: result.ClientID, ClientSecret: result.ClientSecret, Name: result.Name, Slug: result.Slug,
 		RegistrationOwner: result.Owner.Login, RegistrationOwnerType: result.Owner.Type,
 		PrivateKey: result.PEM, WebhookSecret: result.WebhookSecret}, nil
+}
+
+// ConnectionDiagnostic describes a transport or HTTP failure without exposing
+// request URLs, proxy credentials or upstream response bodies to the user.
+func ConnectionDiagnostic(err error) error {
+	var upstream *sourceerror.HTTPError
+	if errors.As(err, &upstream) {
+		return fmt.Errorf("GitHub returned HTTP %d.", upstream.StatusCode)
+	}
+	var requestError *url.Error
+	if errors.As(err, &requestError) {
+		err = requestError.Err
+	}
+	// Edge transports can relay error text as strings. Even the nested cause
+	// may echo the URL or credentials, so only return recognized diagnostics.
+	cause := strings.ToLower(err.Error())
+	if strings.Contains(cause, "x509: certificate signed by unknown authority") {
+		if strings.Contains(cause, "proxyconnect") {
+			return errors.New("The controller does not trust the HTTPS proxy certificate (x509: certificate signed by unknown authority). Check the proxy certificate chain and the controller host’s trusted CAs.")
+		}
+		return errors.New("The GitHub API certificate was signed by an unknown authority (x509: certificate signed by unknown authority). Check the API certificate chain and any TLS-inspection CA on the controller or selected edge node.")
+	}
+	if strings.Contains(cause, "proxy authentication required") {
+		return errors.New("The proxy rejected the connection (proxy authentication required). Check the proxy credentials.")
+	}
+	if strings.Contains(cause, "private integration addresses require an enrolled relay") {
+		return errors.New("Select an enrolled edge node to reach a private GitHub API address.")
+	}
+	for _, diagnostic := range []string{
+		"x509: certificate has expired or is not yet valid",
+		"tls: first record does not look like a tls handshake",
+		"tls handshake timeout",
+		"tls: handshake failure",
+		"tls: failed to verify certificate",
+		"connection refused",
+		"connection reset by peer",
+		"no such host",
+		"context deadline exceeded",
+		"edge routing is not configured",
+	} {
+		if strings.Contains(cause, diagnostic) {
+			return errors.New(diagnostic)
+		}
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return errors.New("DNS lookup failed.")
+	}
+	var network net.Error
+	if errors.As(err, &network) && network.Timeout() {
+		return errors.New("The connection timed out.")
+	}
+	return errors.New("The connection request failed.")
 }
 
 func (m *Manager) appJWT(connection core.GitHubAppConnection) (string, error) {

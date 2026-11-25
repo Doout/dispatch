@@ -44,22 +44,32 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(logger); err != nil {
+	if err := run(ctx, logger); err != nil {
 		logger.Error("dispatch stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(ctx context.Context, logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	// Go caches its system certificate pool on the first TLS request. Set up
+	// managed Docker host trust before opening the database or any clients.
+	if cfg.Executor == "docker" && dockerSocketAvailable(cfg.DockerSocket) {
+		probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		cleanup, trustErr := installation.SetupControllerHostTrust(probeCtx, cfg.DockerSocket)
+		cancel()
+		defer cleanup()
+		if trustErr != nil {
+			logger.Warn("using the controller's existing CA trust", "error", trustErr)
+		}
 	}
 	vault, err := secretcrypto.OpenFile(cfg.MasterKeyFile)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 	data, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -114,7 +124,7 @@ func run(logger *slog.Logger) error {
 		deployments.ConfigureSourceResolution(sourceAuth)
 		deployments.ConfigureRuntimeRollback(deploy.RemoteExecutor{Local: dockerExecutor, Broker: runtimeBroker})
 	}
-	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	shutdownCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	connectionFile := os.Getenv("DISPATCH_INSTANCE_CONNECTION_FILE")
 	if connectionFile == "" {
