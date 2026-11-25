@@ -77,7 +77,7 @@ Configure a [GitHub App proxy](../README.md#github-app-proxy) in the controller 
 
 The managed controller uses SQLite in its data volume. The installer fixes the database location, master-key path, Docker socket, listener, executor, repository-cache location, and public URL so the upgrade backup includes the database and encryption key. These values override entries in the environment file. External PostgreSQL installations are not managed by this installer.
 
-For an existing Traefik installation:
+To connect a fresh Dispatch installation to an existing Traefik proxy:
 
 ```sh
 sudo dispatch install \
@@ -88,6 +88,17 @@ sudo dispatch install \
 ```
 
 The proxy network and certificate resolver must already exist. Without proxy flags, no Traefik labels or external network are required. You can also use another reverse proxy forwarding to the loopback port.
+
+For an already installed controller, run the installer's `route` command on the controller host. Set the hostname in DNS to the address of Traefik first.
+
+```sh
+"$HOME/.doodship/bin/dispatch" route \
+  --hostname dispatch.example.com --proxy-network proxy --tls-resolver "$TRAEFIK_CERT_RESOLVER"
+```
+
+Set `TRAEFIK_CERT_RESOLVER` to the resolver configured on your Traefik instance and use its existing Docker network. The installer recreates the controller with its current image and data volume and waits for its local health check. The command sets one managed hostname and preserves the loopback listener and public URL used for callbacks. Run `dispatch status` to see the hostname. Verify HTTPS separately with `curl --fail https://dispatch.example.com/healthz`. Use `dispatch route --clear` to remove the route.
+
+If your installed CLI does not recognize `route`, update it using the release installer above with `DISPATCH_BIN_DIR="$HOME/.doodship/bin"`.
 
 The generated `compose.json` is managed by the CLI. It refuses upgrades if that file was manually changed. To apply an environment-file edit, run `dispatch recover` when there is no interrupted upgrade; this reconciles and starts the existing pinned image.
 
