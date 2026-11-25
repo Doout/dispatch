@@ -185,3 +185,39 @@ test("A project can switch a named repository connection from a PAT to an instal
     { method: "PUT", path: "/api/v1/repository-connections/repository", body: { ...identity, githubAppId: app.id } },
   ]);
 });
+
+for (const width of [390, 1440]) {
+  test(`Helm ownership review at ${width}px`, async t => {
+    const message = "The Helm release does not belong to this Dispatch application and namespace.";
+    const resource = { id: "resource", kind: "Application", name: "Order service", path: "orders.yaml", active: true };
+    const revision = { id: "run", resourceId: resource.id, state: "failed", trigger: "manual", error: `stage development: Deployment failed: ${message}`, createdAt: "2026-01-01T00:00:00Z" };
+    const review = { release: "orders", namespace: "development", target: "Preview cluster", revision: 12, previousAppId: "previous-workflow-application", previousProjectId: "previous-project", version: "review" };
+    const page = await openPage(t, width, {
+      overview: { ...overview, workflowResources: [resource], workflowRevisions: [revision] },
+      "workflow/revisions": [revision],
+      "workflow/resources/resource/topology": { nodes: [], edges: [], columns: [] },
+      "workflow/revisions/run/stages": [{ stageName: "development", state: "failed", error: message, deploymentIds: ["deployment"] }],
+      "deployments/deployment": { id: "deployment", appId: "current-workflow-application", state: "failed", message },
+      "apps/current-workflow-application/helm-takeover": review,
+    });
+    await page.goto(new URL("/applications/resource/topology", origin).href);
+    const panel = page.getByRole("region", { name: "Helm release ownership" });
+    await panel.getByRole("button", { name: "Inspect release ownership" }).click();
+    await panel.getByRole("heading", { name: "Take over orders?" }).waitFor();
+    assert.equal(await page.getByText(revision.error, { exact: false }).count(), 0);
+    assert.equal(await panel.getByText("Order service", { exact: true }).isVisible(), true);
+    assert.equal(await panel.getByText(review.previousAppId).isVisible(), false);
+    const confirm = panel.getByRole("button", { name: "Take over release" });
+    assert.equal(await confirm.isDisabled(), true);
+    await panel.getByText("Ownership details").click();
+    assert.equal(await panel.getByText(review.previousAppId).isVisible(), true);
+    await panel.getByRole("checkbox").check();
+    assert.equal(await confirm.isEnabled(), true);
+    const box = await panel.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= width + 1, "Review fits in the viewport");
+    await panel.getByText("Ownership details").click();
+    await panel.getByRole("button", { name: "Cancel" }).click();
+    await panel.getByRole("button", { name: "Inspect release ownership" }).click();
+    assert.equal(await confirm.isDisabled(), true);
+  });
+}

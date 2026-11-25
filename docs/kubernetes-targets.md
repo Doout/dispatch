@@ -25,7 +25,7 @@ For K3s, copy the intended context into a scoped kubeconfig rather than distribu
 
 ## Take over a release after moving controllers
 
-Stop the old controller from managing the release. On the new self-hosted controller, sign in as an owner and open the failed Helm deployment’s **Summary** or the workflow application with the failed run. Select **Inspect release ownership**, then check the target, namespace, release name, deployed revision and previous application and project IDs. Confirm that the old controller has stopped managing it and select **Take over release**. Retry the deployment or run the workflow again.
+Stop the old controller from managing the release. On the new self-hosted controller, sign in as an owner and open the failed Helm deployment’s **Summary** or the workflow application with the failed run. Select **Inspect release ownership**, then check the target, namespace, release name and deployed revision. Expand **Ownership details** to see the previous application and project IDs. Confirm that the old controller has stopped managing it and select **Take over release**. Retry the deployment or run the workflow again.
 
 Takeover updates the current Helm storage record. Running workloads and earlier revisions keep their state. The next deployment reconciles the live resources. Dispatch requires a deployed revision with verifiable Dispatch ownership and rejects a previous application that still exists on this controller. If the reviewed record changes, inspect it again. Both Kubernetes Secret and ConfigMap Helm storage are supported.
 
