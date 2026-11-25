@@ -198,6 +198,8 @@ jobs:
       - run: pnpm --dir web typecheck
       - run: pnpm --dir web test --maxWorkers=2
       - run: pnpm --dir web build
+      - run: pnpm --dir web exec playwright install chromium --only-shell
+      - run: pnpm --dir web test:browser
       - uses: actions/upload-artifact@v4
         with:
           name: web-dist

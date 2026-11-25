@@ -1,7 +1,7 @@
 .github-app-form.connection-editor {
   container-type: inline-size;
   width: 100%;
-  max-width: 54rem;
+  min-width: 0;
   color: var(--ink);
   background: var(--paper);
 }
@@ -222,6 +222,27 @@
   padding: 14px 24px;
   background: var(--surface-subtle);
   border-top: 1px solid var(--rule);
+}
+
+@container (min-width: 64rem) {
+  .github-app-form .connection-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .github-app-form .connection-form > * {
+    grid-column: 1 / -1;
+  }
+
+  .github-app-form .github-app-registration,
+  .github-app-form .github-app-network {
+    grid-column: span 1;
+    align-content: start;
+  }
+
+  .github-app-registration + .github-app-network {
+    border-top: 0;
+    border-inline-start: 1px solid var(--rule);
+  }
 }
 
 @container (max-width: 36rem) {
