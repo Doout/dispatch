@@ -48,6 +48,8 @@ func (a *API) applicationsRoutes(r chi.Router) {
 				r.Post("/deployments", a.startDeployment)
 				r.Post("/release-preview", a.previewApplicationRelease)
 			})
+			r.With(a.directUserOnly, a.ownerOnly).Get("/helm-takeover", a.helmTakeover)
+			r.With(a.directUserOnly, a.ownerOnly, a.idleAppMutation).Post("/helm-takeover", a.helmTakeover)
 			r.With(a.requireOperationsEnabled, a.appPermission(core.PermissionProjectConfigure)).Put("/owner", a.setApplicationOwner)
 		})
 	})

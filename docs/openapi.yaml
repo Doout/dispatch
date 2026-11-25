@@ -1815,6 +1815,57 @@ paths:
           $ref: '#/components/responses/Problem'
         '409':
           $ref: '#/components/responses/Problem'
+  /apps/{id}/helm-takeover:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: reviewHelmTakeover
+      description: An owner inspects the deployed Helm revision at the application's configured Kubernetes target.
+      responses:
+        '200':
+          description: Reviewed Helm revision and previous owner.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HelmTakeoverReview'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: acceptHelmTakeover
+      description: An owner transfers the reviewed release after a controller migration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, previousControllerStopped]
+              properties:
+                version: {type: string, minLength: 64, maxLength: 64}
+                previousControllerStopped: {type: boolean, enum: [true]}
+      responses:
+        '200':
+          description: Reviewed Helm revision and previous owner.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HelmTakeoverReview'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+        '400':
+          $ref: '#/components/responses/Problem'
   /apps/{id}/release-preview:
     parameters:
     - name: id
@@ -7789,6 +7840,17 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         closedAt: { type: string, format: date-time }
+    HelmTakeoverReview:
+      type: object
+      required: [release, namespace, target, revision, previousAppId, previousProjectId, version]
+      properties:
+        release: {type: string}
+        namespace: {type: string}
+        target: {type: string}
+        revision: {type: integer}
+        previousAppId: {type: string}
+        previousProjectId: {type: string}
+        version: {type: string}
     Deployment:
       type: object
       required: [id, appId, commitSha, specDigest, state, message, createdAt]

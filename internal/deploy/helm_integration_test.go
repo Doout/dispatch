@@ -119,6 +119,50 @@ func TestKubernetesLifecycleIntegration(t *testing.T) {
 			}}
 		})
 	})
+	t.Run("reviewed controller migration", func(t *testing.T) {
+		old, deployment, client := fixture(t)
+		if err := client().UpgradeInstall(ctx, old.HelmRelease, old, deployment, nil); err != nil {
+			t.Fatal(err)
+		}
+		next := old
+		next.ID, next.ProjectID = "new-"+old.ID, "new-project"
+		if err := client().UpgradeInstall(ctx, next.HelmRelease, next, deployment, nil); err == nil {
+			t.Fatal("release owned by a different app was accepted")
+		}
+		logical := next
+		logical.SourceRepo, logical.HelmChart = "https://example.org/team/charts", "charts/application"
+		allow := func(string) error { return nil }
+		review, err := TransferHelmRelease(ctx, logical, server, "", allow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resources := admin.AppsV1().Deployments(namespace)
+		before, err := resources.Get(ctx, old.HelmRelease, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := TransferHelmRelease(ctx, logical, server, review.Version, allow); err != nil {
+			t.Fatal(err)
+		}
+		after, err := resources.Get(ctx, old.HelmRelease, metav1.GetOptions{})
+		if err != nil || before.UID != after.UID || before.Generation != after.Generation || after.Labels["dispatch.app/app-id"] != old.ID {
+			t.Fatal("takeover modified the running workload", err)
+		}
+		deployment.ID = "new-deployment"
+		if err := client().UpgradeInstall(ctx, next.HelmRelease, next, deployment, nil); err != nil {
+			t.Fatal(err)
+		}
+		after, err = resources.Get(ctx, old.HelmRelease, metav1.GetOptions{})
+		if err != nil || before.UID != after.UID || after.Labels["dispatch.app/app-id"] != next.ID {
+			t.Fatal("retry failed to reconcile workload ownership", err)
+		}
+		if err := client().Uninstall(ctx, old.HelmRelease, old); err == nil {
+			t.Fatal("old owner could remove transferred release")
+		}
+		if err := client().Uninstall(ctx, next.HelmRelease, next); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("readiness logs restart and retained rollback", func(t *testing.T) {
 		app, deployment, client := fixture(t)
 		if err := client().UpgradeInstall(ctx, app.HelmRelease, app, deployment, nil); err != nil {

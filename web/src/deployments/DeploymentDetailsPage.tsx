@@ -1,4 +1,6 @@
 import { ApplicationRoutePanel } from "../ApplicationRoute";
+import { HelmTakeoverPanel, hasHelmOwnershipConflict } from "./HelmTakeoverPanel";
+import { useHostedTenant, usesSelfHostedController } from "../hosted/context";
 import { DeploymentHealth } from "../DeploymentHealth";
 import { ReleaseTools } from "./ReleaseTools";
 import { DeploymentIdentity } from "./DeploymentCatalog";
@@ -42,6 +44,7 @@ export function DeploymentDetailsPage({
   onCancel: () => void;
   canCancel?: boolean;
 }) {
+  const selfHosted = usesSelfHostedController(useHostedTenant());
   const titleID = `${deploymentEvidenceID(deployment.id)}-title`;
   return (
     <div className="page-layout deployment-details-page">
@@ -108,6 +111,8 @@ export function DeploymentDetailsPage({
           />
         </section>
       )}
+      {section === "summary" && selfHosted && overview?.identity?.systemRole === "owner" && deployment.state === "failed" && hasHelmOwnershipConflict(deployment.message) &&
+        <HelmTakeoverPanel key={deployment.id} appId={deployment.appId} appName={deployment.app?.name} />}
       {section === "summary" && <DeploymentHealth health={deployment.health} />}
       {overview && deployment.app && !deployment.app.template && <ApplicationRoutePanel appID={deployment.appId} canConfigure={canManageProject(overview, deployment.app.projectId, "project.configure")} />}
       {overview && deployment.app && !deployment.app.template && <RuntimeSyncDisclosure key={`sync:${deployment.appId}`} application={deployment.app} overview={overview} />}
