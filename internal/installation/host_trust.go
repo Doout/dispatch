@@ -9,9 +9,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 )
 
@@ -89,13 +89,8 @@ func validPublicCABundle(data []byte) bool {
 	return true
 }
 
-func knownHostCABundle(path string) bool {
-	return slices.Contains(hostCABundlePaths, path)
-}
-
-// SetupControllerHostTrust supplies legacy CLI-managed controllers with the
-// daemon host's trust on first startup after an upgrade. It never rewrites the
-// installer files, data volume, or updater. A new installation has a bind mount.
+// SetupControllerHostTrust supplements the image CA bundle with certificates
+// from the Docker host for this CLI-managed controller process.
 func SetupControllerHostTrust(ctx context.Context, socket string) (func(), error) {
 	hostname, err := os.Hostname()
 	if err != nil || socket != "/var/run/docker.sock" {
@@ -104,10 +99,10 @@ func SetupControllerHostTrust(ctx context.Context, socket string) (func(), error
 	run := func(ctx context.Context, name string, args ...string) (string, error) {
 		return Command(ctx, name, append([]string{"--host", "unix://" + socket}, args...)...)
 	}
-	return setupControllerHostTrust(ctx, hostname, run)
+	return setupControllerHostTrust(ctx, hostname, controllerCABundle, run)
 }
 
-func setupControllerHostTrust(ctx context.Context, hostname string, run Runner) (func(), error) {
+func setupControllerHostTrust(ctx context.Context, hostname, imagePath string, run Runner) (func(), error) {
 	noop := func() {}
 	if (len(hostname) != 12 && len(hostname) != 64) || os.Getenv("SSL_CERT_DIR") != "" {
 		return noop, nil
@@ -151,8 +146,8 @@ func setupControllerHostTrust(ctx context.Context, hostname string, run Runner) 
 	var hasSocket bool
 	for _, mount := range mounts {
 		switch mount.Destination {
-		case controllerCABundle:
-			return noop, nil // Both operator mounts and installer mounts take precedence.
+		case controllerCABundle, "/etc/ssl/certs", "/etc/ssl", "/etc":
+			return noop, nil // Preserve an operator's mounted trust store.
 		case "/data":
 			if mount.Type == "volume" && mount.RW {
 				volume = mount.Name
@@ -170,6 +165,12 @@ func setupControllerHostTrust(ctx context.Context, hostname string, run Runner) 
 	}
 	_, certs, err := findHostCABundle(ctx, run, fields[1])
 	if err != nil || len(certs) == 0 {
+		return noop, err
+	}
+	// Keep private CAs installed by a customized controller image. Git and
+	// Go both use the combined bundle in this process and its Git children.
+	certs, err = combineControllerCAs(imagePath, certs)
+	if err != nil {
 		return noop, err
 	}
 	dir, err := os.MkdirTemp("", "dispatch-host-ca-")
@@ -196,4 +197,32 @@ func setupControllerHostTrust(ctx context.Context, hostname string, run Runner) 
 		}
 	}
 	return cleanup, nil
+}
+
+// Preserve comments supported by distribution CA files without transferring
+// them or any non-certificate PEM objects into the controller's trust file.
+func combineControllerCAs(imagePath string, host []byte) ([]byte, error) {
+	f, err := os.Open(imagePath)
+	if err != nil {
+		return nil, errors.New("could not open the controller image CA bundle")
+	}
+	defer f.Close()
+	const maxBundle = 4 << 20
+	image, err := io.ReadAll(io.LimitReader(f, maxBundle+1))
+	if err != nil || len(image) > maxBundle {
+		return nil, errors.New("could not read the controller image CA bundle")
+	}
+	var certs bytes.Buffer
+	for line := range bytes.Lines(image) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 && trimmed[0] != '#' {
+			certs.Write(trimmed)
+			certs.WriteByte('\n')
+		}
+	}
+	if !validPublicCABundle(certs.Bytes()) {
+		return nil, errors.New("invalid controller image CA bundle")
+	}
+	certs.Write(host)
+	return certs.Bytes(), nil
 }

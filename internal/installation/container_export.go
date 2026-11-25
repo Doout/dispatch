@@ -164,10 +164,6 @@ func exportContainerConfig(c exportContainer) (Config, containerMount, []contain
 			config.Socket = mount.Source
 			continue
 		}
-		// The destination installer discovers its own host trust.
-		if mount.Destination == controllerCABundle && mount.Type == "bind" && !mount.RW && knownHostCABundle(mount.Source) {
-			continue
-		}
 		if mount.Destination == "/data" {
 			data = mount
 			continue

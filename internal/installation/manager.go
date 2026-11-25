@@ -42,7 +42,6 @@ type Config struct {
 	ProxyNetwork  string      `json:"proxyNetwork,omitempty"`
 	Hostname      string      `json:"hostname,omitempty"`
 	TLSResolver   string      `json:"tlsResolver,omitempty"`
-	HostCABundle  string      `json:"hostCaBundle,omitempty"`
 	DataMounts    []DataMount `json:"dataMounts,omitempty"`
 	InstalledAt   time.Time   `json:"installedAt"`
 	UpdatedAt     time.Time   `json:"updatedAt"`
@@ -232,26 +231,20 @@ func (m *Manager) composeData(c Config) ([]byte, error) {
 			"DISPATCH_REPOSITORY_CACHE": "/data/repositories",
 			"DISPATCH_PUBLIC_URL":       c.PublicURL,
 		},
-		"ports": []any{map[string]any{"target": 8080, "published": fmt.Sprint(c.Port), "host_ip": c.Bind}},
+		"ports":   []any{map[string]any{"target": 8080, "published": fmt.Sprint(c.Port), "host_ip": c.Bind}},
+		"volumes": []string{"data:/data", c.Socket + ":/var/run/docker.sock"},
 	}
 	spec := map[string]any{
 		"services": map[string]any{"dispatch": service},
 		"volumes":  map[string]any{"data": map[string]any{"external": true, "name": c.Volume}},
 	}
-	volumes := []any{"data:/data", c.Socket + ":/var/run/docker.sock"}
-	for _, mount := range c.DataMounts {
-		volumes = append(volumes, map[string]any{"type": "volume", "source": "data", "target": mount.Target, "read_only": mount.ReadOnly, "volume": map[string]any{"subpath": mount.Subpath, "nocopy": true}})
-	}
-	if c.HostCABundle != "" {
-		if !knownHostCABundle(c.HostCABundle) {
-			return nil, errors.New("invalid host CA bundle path")
+	if len(c.DataMounts) > 0 {
+		volumes := []any{"data:/data", c.Socket + ":/var/run/docker.sock"}
+		for _, mount := range c.DataMounts {
+			volumes = append(volumes, map[string]any{"type": "volume", "source": "data", "target": mount.Target, "read_only": mount.ReadOnly, "volume": map[string]any{"subpath": mount.Subpath, "nocopy": true}})
 		}
-		volumes = append(volumes, map[string]any{
-			"type": "bind", "source": c.HostCABundle, "target": controllerCABundle,
-			"read_only": true, "bind": map[string]bool{"create_host_path": false},
-		})
+		service["volumes"] = volumes
 	}
-	service["volumes"] = volumes
 
 	if c.ProxyNetwork != "" {
 		service["networks"] = []string{"default", "proxy"}
@@ -445,14 +438,6 @@ func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bo
 	if err != nil {
 		return err
 	}
-	hostBundle, _, err := findHostCABundle(ctx, m.Run, c.ImageID)
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if err != nil {
-		fmt.Fprintln(m.Out, "Host CA bundle unavailable. The controller will use its image certificates.")
-	}
-	c.HostCABundle = hostBundle
 	random := make([]byte, 16)
 	if _, err = rand.Read(random); err != nil {
 		return err

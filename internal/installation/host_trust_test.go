@@ -2,14 +2,21 @@ package installation
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHostCABundleProbeAcceptsOnlyPublicCertificates(t *testing.T) {
@@ -45,19 +52,25 @@ func TestHostCABundleProbeAcceptsOnlyPublicCertificates(t *testing.T) {
 	}
 }
 
-func TestExistingContainerExportLeavesHostTrustForDestination(t *testing.T) {
-	c := existingContainerFixture()
-	c.Mounts = append(c.Mounts, containerMount{Type: "bind", Source: controllerCABundle, Destination: controllerCABundle})
-	config, _, extra, _, err := exportContainerConfig(c)
-	if err != nil || config.HostCABundle != "" || len(extra) != 1 || extra[0].Destination != "/kubeconfigs" {
-		t.Fatal("export included source-host trust", err)
-	}
-}
-
 func TestOldManagedControllerUsesHostCAWithoutInstallerChanges(t *testing.T) {
 	server := httptest.NewTLSServer(nil)
 	server.Close()
 	bundle := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
+	// A customized image can include a root absent from its Docker host.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "Image-only root"}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imagePEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	imagePath := filepath.Join(t.TempDir(), "image.crt")
+	if err := os.WriteFile(imagePath, []byte("# customized image roots\n"+imagePEM), 0600); err != nil {
+		t.Fatal(err)
+	}
 	labels := strings.Repeat("b", 32)
 	selfID := strings.Repeat("a", 64)
 	image := "sha256:" + strings.Repeat("c", 64)
@@ -106,7 +119,7 @@ func TestOldManagedControllerUsesHostCAWithoutInstallerChanges(t *testing.T) {
 					return "", nil
 				}
 			}
-			cleanup, err := setupControllerHostTrust(context.Background(), selfID[:12], run)
+			cleanup, err := setupControllerHostTrust(context.Background(), selfID[:12], imagePath, run)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +135,7 @@ func TestOldManagedControllerUsesHostCAWithoutInstallerChanges(t *testing.T) {
 			}
 			path := os.Getenv("SSL_CERT_FILE")
 			got, err := os.ReadFile(path)
-			if err != nil || string(got) != bundle || os.Getenv("GIT_SSL_CAINFO") != path || os.Getenv("GIT_PROXY_SSL_CAINFO") != path {
+			if err != nil || !strings.Contains(string(got), bundle) || !strings.Contains(string(got), imagePEM) || !validPublicCABundle(got) || os.Getenv("GIT_SSL_CAINFO") != path || os.Getenv("GIT_PROXY_SSL_CAINFO") != path {
 				t.Fatal("CA file or trust environment did not match", err)
 			}
 			st, err := os.Stat(path)
