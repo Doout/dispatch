@@ -1,12 +1,12 @@
 # PostgreSQL workload backups
 
-Dispatch can back up an owned PostgreSQL 17 or newer service provisioned on a
+Doodship can back up an owned PostgreSQL 17 or newer service provisioned on a
 Docker target. The Services page has a Backups tab for creating an archive,
 verifying it in isolation, reviewing a restore destination, and deleting retained
 archive bytes. Project viewers can inspect history. Mutations require
 `project.configure` and `deployment.run`.
 
-Dispatch supports native PostgreSQL custom-format dumps, encrypted export to a
+Doodship supports native PostgreSQL custom-format dumps, encrypted export to a
 registered S3-compatible store, and reviewed restore to another owned Docker
 target in the same project. Generic volume archives, Helm databases, and other
 database engines remain outside this path.
@@ -68,7 +68,7 @@ registration. An interval of zero disables scheduled verification; one through
 8760 hours enables it. The controller checks due policies once a minute and
 records each verification through the same durable operation store. Schedules
 survive restart. They verify the retained archive; they do not create new backups.
-At most 16 single SELECT assertions are accepted. Dispatch executes each in a
+At most 16 single SELECT assertions are accepted. Doodship executes each in a
 read-only transaction and compares its output with the encrypted expected value.
 
 With `Idempotency-Key`, create, verify, restore and delete return the shared
@@ -89,7 +89,7 @@ Verification never connects to the live source database.
 
 Select a ready owned PostgreSQL destination in the same project and on the same
 target. The source itself can be selected deliberately. Detach all consumers
-first, including saved deployment bindings and workflow references. Dispatch
+first, including saved deployment bindings and workflow references. Doodship
 blocks new bindings while a restore is running or its outcome is unknown.
 
 Request `POST /api/v1/workload-backups/{id}/restore/{destinationRunId}/preview`.

@@ -1,6 +1,6 @@
 # Infrastructure providers
 
-As the controller owner, register a provider with `POST /api/v1/infrastructure/providers`. Supply the adapter endpoint, optional `privateNetworkId` for an existing edge node, and optional `credentialSecretId` for a stored secret. Dispatch stores the secret reference. Credential values remain write-only and are resolved only for a provider request.
+As the controller owner, register a provider with `POST /api/v1/infrastructure/providers`. Supply the adapter endpoint, optional `privateNetworkId` for an existing edge node, and optional `credentialSecretId` for a stored secret. Doodship stores the secret reference. Credential values remain write-only and are resolved only for a provider request.
 
 HTTPS is required. A direct loopback endpoint may use HTTP for the local mock. A private route always uses the selected edge node and verified HTTPS. There is no direct fallback when that node is unavailable.
 

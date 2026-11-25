@@ -4,10 +4,10 @@ set -euo pipefail
 
 usage() {
   cat <<'HELP'
-Usage: install-cli.sh [--dispatchctl] [--version vX.Y.Z | --list-versions]
+Usage: install-cli.sh [--doodshipctl] [--version vX.Y.Z | --list-versions]
 
 With no arguments, install the latest stable doodship release.
---dispatchctl installs the automation API client for CI jobs and agents.
+--doodshipctl installs the automation API client for CI jobs and agents.
 --version accepts a release number with or without the leading v.
 --list-versions lists stable releases available for this platform (requires jq).
 Set DOODSHIP_BIN_DIR to change the install directory (default: ~/.local/bin).
@@ -24,8 +24,8 @@ fetch() {
 }
 
 tool=doodship
-if [[ ${1:-} == --dispatchctl ]]; then
-  tool=dispatchctl
+if [[ ${1:-} == --doodshipctl ]]; then
+  tool=doodshipctl
   shift
 fi
 

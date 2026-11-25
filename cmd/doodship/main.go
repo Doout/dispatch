@@ -252,7 +252,7 @@ func load(o options) (wf.ApplicationDocument, []string, error) {
 		}
 	}
 	if len(doc.Spec.PreviewServices) > 0 {
-		return doc, nil, errors.New("preview services require a Dispatch controller")
+		return doc, nil, errors.New("preview services require a Doodship controller")
 	}
 	for _, jobs := range []map[string]wf.JobSpec{doc.Spec.Jobs, doc.Spec.Finally} {
 		for name, job := range jobs {

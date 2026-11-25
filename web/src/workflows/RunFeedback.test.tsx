@@ -13,7 +13,7 @@ it("shows PR links, tested commits, skip reasons and actionable reporting errors
  expect(screen.getByText("a".repeat(12)).getAttribute("title")).toBe("a".repeat(40));
  expect(screen.getByText("PR has newer commits")).not.toBeNull();
  expect(screen.getByRole("alert").textContent).toContain("Grant Pull requests: write");
- expect(screen.getByRole("alert").textContent).toContain("Dispatch will retry");
+ expect(screen.getByRole("alert").textContent).toContain("Doodship will retry");
 });
 it("leaves reviews disabled by default and distinguishes pending reporting", () => {
  render(<RunFeedback feedback={{ ...feedback, reviewOnSuccess: undefined, targets: [{ ...feedback.targets[0], status: undefined, review: undefined, skipReason: undefined, error: undefined }] }} overview={overview} />);

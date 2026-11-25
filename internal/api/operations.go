@@ -256,7 +256,7 @@ func (a *API) saveTeamMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := a.store.GetTeam(r.Context(), m.TeamID); err != nil {
-		problem(w, 400, "Invalid team", "Choose a Dispatch team.")
+		problem(w, 400, "Invalid team", "Choose a Doodship team.")
 		return
 	}
 	if err := data.SaveIdentityTeamMapping(r.Context(), m); err != nil {

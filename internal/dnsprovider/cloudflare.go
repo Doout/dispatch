@@ -220,7 +220,7 @@ func (c *Cloudflare) Ensure(ctx context.Context, record Record) error {
 				continue
 			}
 			if entry.Type == "CNAME" || r.Type == "CNAME" || entry.Type == "NS" || entry.Type == r.Type && r.Type != "TXT" {
-				return errors.New("DNS name has a conflicting record not owned by this Dispatch record")
+				return errors.New("DNS name has a conflicting record not owned by this Doodship record")
 			}
 			if entry.Type == "TXT" && r.Type == "TXT" {
 				for _, value := range r.Values {

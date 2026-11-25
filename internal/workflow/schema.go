@@ -232,7 +232,7 @@ func parseDocuments(path string, contents []byte, importing bool) ([]Document, e
 		items = append(items, item)
 	}
 	if len(items) == 0 && !skippedPreview {
-		return nil, fmt.Errorf("%s does not contain a Dispatch resource", path)
+		return nil, fmt.Errorf("%s does not contain a Doodship resource", path)
 	}
 	return items, nil
 }

@@ -185,7 +185,7 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 	if kind == "relay-webhook" {
 		id = chi.URLParam(r, "webhookId")
 	}
-	out := destructiveReview{ResourceID: id, ResourceType: kind, Action: action, Resources: []string{}, Summary: "Remove this registration and its access from Dispatch. This action cannot be undone."}
+	out := destructiveReview{ResourceID: id, ResourceType: kind, Action: action, Resources: []string{}, Summary: "Remove this registration and its access from Doodship. This action cannot be undone."}
 	var record, extra any
 	var err error
 	switch kind {
@@ -311,7 +311,7 @@ func (a *API) destructiveReview(ctx context.Context, r *http.Request, kind, acti
 		if item.Target.Provider == "neon" {
 			out.StoragePolicy = "delete"
 			out.Summary = "Permanently delete this owned Neon branch, its compute and all branch data. The parent branch and other services remain. Detach all consumers first."
-			out.Resources = []string{"Delete owned Neon branch: " + inspected.ResourceID, "Branch data cannot be recovered from this Dispatch operation history"}
+			out.Resources = []string{"Delete owned Neon branch: " + inspected.ResourceID, "Branch data cannot be recovered from this Doodship operation history"}
 			if neverStartedNeonReplacement(item) {
 				out.StoragePolicy = "retain"
 				out.Summary = "Cancel this replacement before any branch create was attempted. The original preview branch and connection remain. This performs no provider mutation."

@@ -2,7 +2,8 @@
 
 build: web doodship
 	go build -trimpath -o dispatch ./cmd/dispatch
-	go build -trimpath -o dispatchctl ./cmd/dispatchctl
+	go build -trimpath -o doodshipctl ./cmd/doodshipctl
+	cp doodshipctl dispatchctl
 	go build -trimpath -o dispatch-agent ./cmd/dispatch-agent
 	go build -trimpath -o dispatch-relay ./cmd/dispatch-relay
 
@@ -24,4 +25,4 @@ dev: web
 
 clean:
 	go clean
-	rm -f dispatch dispatch-agent dispatch-relay dispatchctl doodship
+	rm -f dispatch dispatch-agent dispatch-relay dispatchctl doodshipctl doodship

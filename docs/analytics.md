@@ -1,6 +1,6 @@
 # Embedded historical analytics
 
-Dispatch keeps operational state in SQLite or PostgreSQL and runs DuckDB inside
+Doodship keeps operational state in SQLite or PostgreSQL and runs DuckDB inside
 the controller process. No Python dependency or additional service is required.
 The Analytics page shows completed deployments, workflow durations, and job reuse
 for 7, 30, or 90 days.

@@ -1,6 +1,6 @@
 # Repository configuration
 
-Dispatch loads Applications and Pipelines from YAML or JSON in a GitHub repository. Add the repository from **Applications > Add > GitHub configuration**. The default path is `.dispatch`.
+Doodship loads Applications and Pipelines from YAML or JSON in a GitHub repository. Add the repository from **Applications > Add > GitHub configuration**. The default path is `.dispatch`.
 
 Each sync reads every `.yaml`, `.yml`, and `.json` file below that path. The parser rejects unknown fields, invalid references, and duplicate resource names. A rejected sync does not replace the last valid configuration.
 
@@ -14,11 +14,11 @@ Imported Applications start their first deployment automatically when an active 
 
 Automatic sync, push, and polling first check the files a Helm deployment uses. For sources used only by Helm, commits outside the chart directory and selected values files do not create a new run. Packaged chart dependencies are included. Unscoped build jobs and explicit source-commit expressions still observe repository revisions; symlinked inputs fall back to commit matching.
 
-When those inputs change, Dispatch merges values files in order, applies inline values and stage expressions, and maps build outputs before rendering. It compares the resulting resources with the currently deployed Helm release. This catches changes in shared values files that do not affect the selected chart, including values overridden by later files or build-output mappings. YAML formatting and resource document order do not count as changes; removed resources, removed fields, image changes, labels, and annotations do.
+When those inputs change, Doodship merges values files in order, applies inline values and stage expressions, and maps build outputs before rendering. It compares the resulting resources with the currently deployed Helm release. This catches changes in shared values files that do not affect the selected chart, including values overridden by later files or build-output mappings. YAML formatting and resource document order do not count as changes; removed resources, removed fields, image changes, labels, and annotations do.
 
 An unchanged render reuses the real deployment. It creates no deployment record or Helm revision and preserves the retained deployment's saved values, source commits, credentials, and drift observations. The generated application's desired values can still update. A stage that does need to run can show **Unchanged** beside a reused deployment, and its configured checks still run.
 
-Dispatch can compare before creating a workflow run when the latest workflow succeeded, the Application definition is unchanged, only Helm source inputs changed, all stages are automatic, there are no stage checks or finally jobs, and every build has a matching reusable result. The application then shows its checked source commits under **No deployment changes**, keeping executions out of history when nothing was applied. This records the last successful unchanged comparison, keeping its original timestamp when reused. It is hidden when its saved inputs or release baseline no longer validate; it is not continuous runtime health.
+Doodship can compare before creating a workflow run when the latest workflow succeeded, the Application definition is unchanged, only Helm source inputs changed, all stages are automatic, there are no stage checks or finally jobs, and every build has a matching reusable result. The application then shows its checked source commits under **No deployment changes**, keeping executions out of history when nothing was applied. This records the last successful unchanged comparison, keeping its original timestamp when reused. It is hidden when its saved inputs or release baseline no longer validate; it is not continuous runtime health.
 
 Comparison requires a pinned Git chart revision and a matching, successful installed release. Missing evidence, chart or application hooks, service credential bindings, nondeterministic templates, and unsuccessful comparisons retain normal deployment behavior. Manual **Run**, deploy, and reapply remain explicit actions. No YAML flag or additional path mappings are required for Helm-only sources.
 
@@ -167,7 +167,7 @@ Application jobs default to `reuse: onInputMatch`. Matching jobs share successfu
 
 Sources inherit the connection or saved credential that reads the workflow YAML. For a GitHub-managed preview template, that default is the GitHub App that syncs the template file. Inline previews inherit their selected repository access source.
 
-Set `connection` on a source to select a named repository connection in its project or a GitHub App by its name in **Connections**. The App must be installed for that repository and verified in Dispatch. Use a read-only App to fetch a chart or other dependency. Treat write access to the workflow configuration as permission to select its source connections.
+Set `connection` on a source to select a named repository connection in its project or a GitHub App by its name in **Connections**. The App must be installed for that repository and verified in Doodship. Use a read-only App to fetch a chart or other dependency. Treat write access to the workflow configuration as permission to select its source connections.
 
 ```yaml
 spec:
@@ -181,7 +181,7 @@ spec:
       connection: charts-reader
 ```
 
-For a source using a GitHub App, a short repository name uses the App's GitHub host. An HTTPS URL must match that host, including when the source inherits its App. An override pins the connection and commit for the run. Dispatch uses the App's saved proxy for source checkout and Helm inputs. PR comments, links, and reports use the GitHub App selected on the preview trigger. Offline `doodship` continues to use local checkouts.
+For a source using a GitHub App, a short repository name uses the App's GitHub host. An HTTPS URL must match that host, including when the source inherits its App. An override pins the connection and commit for the run. Doodship uses the App's saved proxy for source checkout and Helm inputs. PR comments, links, and reports use the GitHub App selected on the preview trigger. Offline `doodship` continues to use local checkouts.
 
 #### Switch a workflow repository from a PAT to a GitHub App
 
@@ -218,13 +218,13 @@ jobs:
 
 The job's shell and source checkout remain on the controller. Docker commands use a pinned SSH connection to a builder daemon; Docker sends the build context to that host. Avoid host volume mounts and commands that require the daemon to see controller file paths. A job waits for a free builder slot and can be cancelled while waiting. Builder capacity is coordinated within one controller process.
 
-Dispatch prefers the same available builder for a configuration and its source repositories across commits and preview instances. This keeps Docker layer caches warm. If that builder is full, Dispatch uses another available builder. Jobs on the controller use its existing Docker daemon and cache. Dispatch enables BuildKit and does not prune layer caches after jobs. Recreating a builder or pruning its cache removes those layers. Registry cache export and Dockerfile package cache mounts remain options for the build script; Dispatch does not add flags to arbitrary commands. Layers whose inputs change still rebuild.
+Doodship prefers the same available builder for a configuration and its source repositories across commits and preview instances. This keeps Docker layer caches warm. If that builder is full, Doodship uses another available builder. Jobs on the controller use its existing Docker daemon and cache. Doodship enables BuildKit and does not prune layer caches after jobs. Recreating a builder or pruning its cache removes those layers. Registry cache export and Dockerfile package cache mounts remain options for the build script; Doodship does not add flags to arbitrary commands. Layers whose inputs change still rebuild.
 
 The run details show elapsed time, the job and stage phases, individual durations, and reused job results. For Docker BuildKit output, expand **Slowest Docker steps** under a job log to see its three longest recorded steps and the number of steps marked `CACHED`. These counts come from the saved build log, so they do not include package manager caches or builds that do not emit BuildKit progress lines.
 
 The fingerprint includes the job definition, declared source revisions, inputs, resolved secrets, and controller platform. Changing a secret invalidates the result. Separate configuration sources do not share results.
 
-If only the service repository changes, `build-ui` reuses its latest successful result. Dispatch runs the job when there is no prior result, a declared output is missing, or an input changed. Pipeline and `finally` jobs always run.
+If only the service repository changes, `build-ui` reuses its latest successful result. Doodship runs the job when there is no prior result, a declared output is missing, or an input changed. Pipeline and `finally` jobs always run.
 
 A job receives source variables only for its `runFrom` and `sources` declarations. Reusable jobs must produce outputs from those declared inputs. Set `reuse: never` for jobs that depend on per-run IDs, time, or external mutable state.
 
@@ -243,13 +243,13 @@ build-service:
 
 Paths are relative to that source's `path`, or its repository root when no `path` is set. List files or directories, without glob patterns. Include every file the job reads, including build scripts and dependency configuration. Job sources without a path declaration keep commit-based matching. Sources used only by Helm automatically track the referenced chart directories and values files.
 
-Dispatch hashes the selected Git objects at the recorded commit. For the application-level check it also includes the Helm chart and values files referenced from that source. Adding another slot's YAML does not invalidate an existing slot. Changing its values can trigger a deployment while reusing unchanged builds. If the application definition and all source inputs match the latest revision, automatic sync, push, and polling create no new run. Manual runs remain available for retries.
+Doodship hashes the selected Git objects at the recorded commit. For the application-level check it also includes the Helm chart and values files referenced from that source. Adding another slot's YAML does not invalidate an existing slot. Changing its values can trigger a deployment while reusing unchanged builds. If the application definition and all source inputs match the latest revision, automatic sync, push, and polling create no new run. Manual runs remain available for retries.
 
-Successful builds recorded before path matching was enabled can be reused after Dispatch verifies the old input contents and unchanged job definition, credentials, and other sources. Missing historical inputs cause a rebuild. Results are never shared across configuration sources.
+Successful builds recorded before path matching was enabled can be reused after Doodship verifies the old input contents and unchanged job definition, credentials, and other sources. Missing historical inputs cause a rebuild. Results are never shared across configuration sources.
 
 A scoped job must not depend on undeclared files, the scoped repository's commit metadata, or mutable external state. Explicit commit templates retain commit matching. Use `reuse: never` for side effects or inputs that cannot be represented by the declared source files. Missing selected paths fail with an error rather than silently skipping work.
 
-Open an application on the Deployments page and expand **Build logs** to read output before deployment starts. Dispatch saves running command output about once per second. The viewer streams changed text, closes its connection when collapsed, and supports following output or scrolling back. Bound secret values are masked, and each job retains up to 1 MiB of output. Commands that buffer their own output may not print immediately.
+Open an application on the Deployments page and expand **Build logs** to read output before deployment starts. Doodship saves running command output about once per second. The viewer streams changed text, closes its connection when collapsed, and supports following output or scrolling back. Bound secret values are masked, and each job retains up to 1 MiB of output. Commands that buffer their own output may not print immediately.
 
 Jobs receive `DISPATCH_OUTPUT_FILE` and `GITHUB_OUTPUT`. Write either JSON:
 
@@ -264,7 +264,7 @@ imageRepository=registry.example.com/storefront/api
 imageTag=sha-123
 ```
 
-Dispatch keeps only names declared under `outputs`. It resolves secrets when the job starts and passes them only to that process.
+Doodship keeps only names declared under `outputs`. It resolves secrets when the job starts and passes them only to that process.
 
 Every run snapshots the exact commit for every source. Stages deploy that same revision in order. A failed deployment or check stops promotion. `approval: required` pauses before the stage deploys.
 
@@ -293,13 +293,13 @@ spec:
       run: ./scripts/upload-results.sh
 ```
 
-A stage check starts a named active Pipeline and waits for it. Pipeline jobs stay serial by default. Set `spec.maxParallelJobs` to enable parallel jobs, with the same isolation and `needs` rules as Applications. Pipeline `finally` jobs run after the main jobs, including after a failure. Pipeline jobs that only use inputs can omit `runFrom`; Dispatch runs them in an empty working directory.
+A stage check starts a named active Pipeline and waits for it. Pipeline jobs stay serial by default. Set `spec.maxParallelJobs` to enable parallel jobs, with the same isolation and `needs` rules as Applications. Pipeline `finally` jobs run after the main jobs, including after a failure. Pipeline jobs that only use inputs can omit `runFrom`; Doodship runs them in an empty working directory.
 
 ## Event delivery
 
-The default update mode uses webhooks and polling. Dispatch processes `push` deliveries and compares the configuration branch and each referenced source branch on a schedule. Polling still detects a change when the controller is private or GitHub misses a webhook delivery.
+The default update mode uses webhooks and polling. Doodship processes `push` deliveries and compares the configuration branch and each referenced source branch on a schedule. Polling still detects a change when the controller is private or GitHub misses a webhook delivery.
 
-The GitHub App registration must subscribe to `push` for webhook updates and grant Contents read, Pull requests write for PR comments, Issues write, and Commit statuses write. Metadata read is included. The Dispatch manifest requests these permissions. Connections > Verify lists any missing registration, installation, or issued-token grants. Update the App permissions in GitHub before approving the installation change or reinstalling it.
+The GitHub App registration must subscribe to `push` for webhook updates and grant Contents read, Pull requests write for PR comments, Issues write, and Commit statuses write. Metadata read is included. The Doodship manifest requests these permissions. Connections > Verify lists any missing registration, installation, or issued-token grants. Update the App permissions in GitHub before approving the installation change or reinstalling it.
 
 Polling checks each imported source at its configured interval. The minimum interval is 30 seconds. A configuration may use only webhooks or only polling.
 
@@ -464,15 +464,15 @@ sync the new template and verify their IDs before resuming them.
 
 ### Partial configuration sync
 
-A malformed configuration file does not prevent other files from syncing. Dispatch retains the affected file's last accepted resources and marks them invalid until the file is fixed. Duplicate application names reject both conflicting files. Template expansion errors retain that template file's previous resources.
+A malformed configuration file does not prevent other files from syncing. Doodship retains the affected file's last accepted resources and marks them invalid until the file is fixed. Duplicate application names reject both conflicting files. Template expansion errors retain that template file's previous resources.
 
 An unavailable source branch rejects only the application that references it. Healthy applications continue syncing and deploying. The source shows a sync warning with the failing file and source; polling retries rejected configurations even when the configuration commit has not changed. Existing deployments remain in place, and rejected definitions do not start new runs.
 
-## PR previews saved in Dispatch
+## PR previews saved in Doodship
 
-To create one preview for a specific PR, choose **Add > One-off PR preview**. Pick an active repository configuration only to supply repository access. Then paste the Application YAML or enter a YAML file path from the primary PR branch and choose **Load YAML from PR**. Set the installed GitHub App, primary PR, comment command, and public preview URL. Dispatch stores the YAML and command settings in its database. The preview appears under **PR previews**, separate from the repository configuration and its slots. No change to the configuration repository is needed. Loading a PR file copies its current contents into the editor; later PR commits require another load and save.
+To create one preview for a specific PR, choose **Add > One-off PR preview**. Pick an active repository configuration only to supply repository access. Then paste the Application YAML or enter a YAML file path from the primary PR branch and choose **Load YAML from PR**. Set the installed GitHub App, primary PR, comment command, and public preview URL. Doodship stores the YAML and command settings in its database. The preview appears under **PR previews**, separate from the repository configuration and its slots. No change to the configuration repository is needed. Loading a PR file copies its current contents into the editor; later PR commits require another load and save.
 
-To create a reusable Application template, choose **Add > PR preview template**. Configure the GitHub App, PR repository, command, HTTPS URL pattern, and Application YAML. Put `{{ instance.id }}` in the Application name, every Helm release name, and the URL. You can copy the YAML and settings from a saved preview or load YAML from a sample PR branch. When a trusted user posts `/preview` on an open PR in a watched repository, Dispatch creates an instance with the PR number as its ID and starts the workflow. If the preferred name or Helm release is already in use, Dispatch adds a short unique suffix. Later `/preview` comments on the same PR reuse its instance; `/preview with ui=#123` links a UI PR. The GitHub App reports the URL, source commits, and deployed images on the PR. The poller reads repository issue comments in one paginated stream and works even when the GitHub webhook is unavailable. Editing a template changes future instances; pause it to stop creating new instances. Deleting a template leaves existing instances running, which can each be deleted from their own row.
+To create a reusable Application template, choose **Add > PR preview template**. Configure the GitHub App, PR repository, command, HTTPS URL pattern, and Application YAML. Put `{{ instance.id }}` in the Application name, every Helm release name, and the URL. You can copy the YAML and settings from a saved preview or load YAML from a sample PR branch. When a trusted user posts `/preview` on an open PR in a watched repository, Doodship creates an instance with the PR number as its ID and starts the workflow. If the preferred name or Helm release is already in use, Doodship adds a short unique suffix. Later `/preview` comments on the same PR reuse its instance; `/preview with ui=#123` links a UI PR. The GitHub App reports the URL, source commits, and deployed images on the PR. The poller reads repository issue comments in one paginated stream and works even when the GitHub webhook is unavailable. Editing a template changes future instances; pause it to stop creating new instances. Deleting a template leaves existing instances running, which can each be deleted from their own row.
 
 ### Helm values from PR comments
 
@@ -497,9 +497,9 @@ there is one deployment.
 Each values comment replaces the saved overrides for that deployment. The values
 remain attached to later manual deployments, automatic deployments and live
 reload. Other previews and the shared template keep their configured values.
-Dispatch merges values files first, then inline Application values, then these
+Doodship merges values files first, then inline Application values, then these
 comment overrides. Build output bindings still supply the final image values.
-Comment values are literal Helm data, so Dispatch does not evaluate workflow
+Comment values are literal Helm data, so Doodship does not evaluate workflow
 expressions inside them.
 
 Post `/preview values clear` to remove all comment overrides and redeploy, or
@@ -538,7 +538,7 @@ spec:
   # jobs, deployments, and stages use the Application schema
 ```
 
-The template uses the Application `spec` schema for sources, jobs, deployments, and stages. `spec.triggers.pullRequestComment` declares the comment command and the source aliases whose PR comments can create instances. For a service/UI workflow, use `sources: [service, ui]`; other sources remain dependencies and can still accept explicit linked-PR overrides. The GitHub App and repository access connection are selected in Dispatch. `WorkflowTemplate` itself does not imply a PR trigger.
+The template uses the Application `spec` schema for sources, jobs, deployments, and stages. `spec.triggers.pullRequestComment` declares the comment command and the source aliases whose PR comments can create instances. For a service/UI workflow, use `sources: [service, ui]`; other sources remain dependencies and can still accept explicit linked-PR overrides. The GitHub App and repository access connection are selected in Doodship. `WorkflowTemplate` itself does not imply a PR trigger.
 
 Preview source trust is independent of the comment author's permission. The default
 `sourceTrustPolicy: same_repository` permits PR code only when GitHub reports that
@@ -565,7 +565,7 @@ hour. The API permits an explicit expiry up to 24 hours. Approval does not start
 run. Retry the preview after approval. Approval cannot be transferred to another
 instance, PR link, commit, configuration, credential scope or environment.
 
-Dispatch rechecks source trust when accepting a run, before each job, before
+Doodship rechecks source trust when accepting a run, before each job, before
 stage checks and deployment, and when resuming an approved stage. On-demand tests
 must still match the current PR heads and saved configuration. Expiry, revocation
 or loss of the approving user's owner role blocks subsequent execution. Credentials
@@ -587,23 +587,23 @@ Preview lifetime defaults to `ttl: 0` (no time limit). Set `ttl: 1d` or `ttl: 24
 - `/preview extend 1d` adds one day to its existing deadline without rebuilding. Set a finite lifetime before extending an unlimited preview.
 - `/preview ttl 0` removes the deadline.
 
-Dispatch checks deadlines every 30 seconds, independently of GitHub availability. Expiry records cleanup intent, cancels queued and running work, and removes owned workloads while retaining the definition, run history and protected data. Cleanup failures remain visible and retry. After cleanup, a new `/preview` redeploys the same instance and renews its configured lifetime. An extension changes the current deadline; it does not change the duration used by a later deployment. Duplicate deliveries do not apply an extension twice.
+Doodship checks deadlines every 30 seconds, independently of GitHub availability. Expiry records cleanup intent, cancels queued and running work, and removes owned workloads while retaining the definition, run history and protected data. Cleanup failures remain visible and retry. After cleanup, a new `/preview` redeploys the same instance and renews its configured lifetime. An extension changes the current deadline; it does not change the duration used by a later deployment. Duplicate deliveries do not apply an extension twice.
 
 PR closure also removes the Helm deployments once the primary PR and all linked PRs are closed. An open linked PR keeps the preview alive until it closes or the lifetime expires.
 
 Set `commentOnOpen: true` under `spec.triggers.pullRequestComment` to post a preview panel on new PRs in the watched sources. It defaults to false. Opening a PR posts controls without deploying. Polling discovers new open PRs at repository level; signed webhooks handle `opened` and `reopened` events.
 
-The panel shows status and the preview URL, with deployment details and commands collapsed. Check **Deploy latest commits**, **Run configured checks**, or **Extend lifetime by one day** to request an action. Actions reset after acceptance. **Live reload** stays checked until disabled. The extension control appears only when the preview has a time limit. GitHub App Issues write and Pull requests read access are required. Dispatch verifies the current editor and repository write access before accepting checkbox edits. Existing slash commands still work.
+The panel shows status and the preview URL, with deployment details and commands collapsed. Check **Deploy latest commits**, **Run configured checks**, or **Extend lifetime by one day** to request an action. Actions reset after acceptance. **Live reload** stays checked until disabled. The extension control appears only when the preview has a time limit. GitHub App Issues write and Pull requests read access are required. Doodship verifies the current editor and repository write access before accepting checkbox edits. Existing slash commands still work.
 
 Linking a source PR creates a panel there with the same preview status, commits, and controls. Commands from either PR operate on the same preview. Unlinking marks the former PR panel as unlinked. Explicit deletion or closure of all linked PRs removes the preview from Applications after cleanup succeeds and updates its panels. Run history remains available. Lifetime expiry stops the deployment; a new preview command can redeploy it.
 
-Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` or `liveReload: true` is set. `autoDeploy` limits updates to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Dispatch waits and deploys the newest head after capacity opens. `liveReload` deploys every detected new commit without that cap. A new `/preview` comment always starts a run. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
+Preview instances deploy when someone posts `/preview`. New commits do not deploy automatically unless `autoDeploy: true` or `liveReload: true` is set. `autoDeploy` limits updates to `maxAutoRunsPerHour` per preview in a rolling hour (default 2, allowed 1–12); when the limit is reached, Doodship waits and deploys the newest head after capacity opens. `liveReload` deploys every detected new commit without that cap. A new `/preview` comment always starts a run. A newer PR head or manual run cancels older queued or running preview work. The same policy is editable on a one-off preview in the UI.
 
 Post `/preview live on` on an existing preview PR to enable live reload for that instance. Post `/preview live off` to return to its configured `autoDeploy` policy. These commands change the update mode without starting a deployment. GitHub webhook updates are handled immediately; polling detects changes on its next check. The deployment report keeps its URL and status visible and puts command options in a collapsed section.
 
-Post `/preview without ui` to remove the linked UI PR, restore its configured branch or ref, and redeploy the same preview. Other PR links remain attached. Use commas to unlink several sources, such as `/preview without ui,worker`. An optional PR number, `/preview without ui=#123`, checks that the saved link still points to that PR before removing it. The primary PR cannot be unlinked. Dispatch saves source defaults before pinning PR commits. Existing template instances recover missing defaults from their saved reusable template; for an older one-off preview without saved defaults, set the source's default branch in **Edit YAML & PR** before unlinking.
+Post `/preview without ui` to remove the linked UI PR, restore its configured branch or ref, and redeploy the same preview. Other PR links remain attached. Use commas to unlink several sources, such as `/preview without ui,worker`. An optional PR number, `/preview without ui=#123`, checks that the saved link still points to that PR before removing it. The primary PR cannot be unlinked. Doodship saves source defaults before pinning PR commits. Existing template instances recover missing defaults from their saved reusable template; for an older one-off preview without saved defaults, set the source's default branch in **Edit YAML & PR** before unlinking.
 
-Set `when: onDemand` on an expensive stage check to keep it out of deployments. A trusted `/preview test` comment runs on-demand checks on stages that completed in the latest preview deployment. A later stage may still be waiting for approval. The command uses that deployment's source commits and URL. It starts no builds or Helm upgrades, and a repeated test command cancels the older test run without cancelling a pending promotion. Dispatch replies on the PR when checks start and updates that reply with the result. Check logs appear in the preview's run history. Checks without `when` run during deployment as before; `when: automatic` makes that choice explicit.
+Set `when: onDemand` on an expensive stage check to keep it out of deployments. A trusted `/preview test` comment runs on-demand checks on stages that completed in the latest preview deployment. A later stage may still be waiting for approval. The command uses that deployment's source commits and URL. It starts no builds or Helm upgrades, and a repeated test command cancels the older test run without cancelling a pending promotion. Doodship replies on the PR when checks start and updates that reply with the result. Check logs appear in the preview's run history. Checks without `when` run during deployment as before; `when: automatic` makes that choice explicit.
 
 For example, pair a cheap deployment check with a QA pipeline that runs only on request:
 
@@ -658,7 +658,7 @@ Register the real E2E Pipeline before adding its check. Its jobs should execute 
 
 Use the instance ID in resource and Helm release names. Quote YAML scalars that consist entirely of an expression. Unknown instance or trigger variables fail validation; source and job expressions remain available for runtime resolution. Trigger variables require the corresponding trigger context.
 
-Dispatch replaces `{{ instance.id }}` and creates an `Application` for each preview. Existing saved templates using `kind: Application` remain supported.
+Doodship replaces `{{ instance.id }}` and creates an `Application` for each preview. Existing saved templates using `kind: Application` remain supported.
 
 
 #### Commit statuses and PR reviews after QA
@@ -675,11 +675,11 @@ spec:
     reviewOnFailure: requestChanges
 ```
 
-For a concrete Application, replace the template expression with its instance name or ID. Omit either review setting, or set it to `none`, to disable that decision. Interrupted runs issue no review. A failed QA run can request changes; Dispatch leaves the PR open and never merges it. Only trusted PR commenters can start QA through the configured comment command.
+For a concrete Application, replace the template expression with its instance name or ID. Omit either review setting, or set it to `none`, to disable that decision. Interrupted runs issue no review. A failed QA run can request changes; Doodship leaves the PR open and never merges it. Only trusted PR commenters can start QA through the configured comment command.
 
-Dispatch captures linked PR identities when the deployment is scheduled. Later changes to PR links do not redirect an earlier QA result. Before reviewing, every linked PR must be open, non-draft, and still point to its tested commit. Newer deployments and QA runs supersede older pending feedback. Older deployments created before PR identity capture need a new `/preview` deployment before reviews can be enabled. Results on older commits remain visible as commit statuses. Enable GitHub's dismissal of stale approvals in branch protection if approval must be invalidated whenever a new commit arrives.
+Doodship captures linked PR identities when the deployment is scheduled. Later changes to PR links do not redirect an earlier QA result. Before reviewing, every linked PR must be open, non-draft, and still point to its tested commit. Newer deployments and QA runs supersede older pending feedback. Older deployments created before PR identity capture need a new `/preview` deployment before reviews can be enabled. Results on older commits remain visible as commit statuses. Enable GitHub's dismissal of stale approvals in branch protection if approval must be invalidated whenever a new commit arrives.
 
-Statuses link to the QA run in Dispatch. **GitHub results** in run details shows each PR, tested commit, status, review decision, and reporting errors. Reporting retries after GitHub outages and controller restarts, independently of PR comment delivery. Successful reviews are recovered by their result marker and the App's bot identity to avoid duplicate reviews after a restart. Dismissed reviews are not recreated by a retry. A database lease prevents multiple controllers from reporting the same preview simultaneously.
+Statuses link to the QA run in Doodship. **GitHub results** in run details shows each PR, tested commit, status, review decision, and reporting errors. Reporting retries after GitHub outages and controller restarts, independently of PR comment delivery. Successful reviews are recovered by their result marker and the App's bot identity to avoid duplicate reviews after a restart. Dismissed reviews are not recreated by a retry. A database lease prevents multiple controllers from reporting the same preview simultaneously.
 
 The GitHub App needs **Commit statuses: write** and **Pull requests: write** for the affected repositories. The manifest already requests both. **Connections > Verify** checks registration and installation grants. After changing App permissions, accept the installation update or reinstall it. Feedback reporting uses installation tokens and never falls back to a personal token.
 
@@ -691,9 +691,9 @@ The contexts are `Dispatch/build/<application>/<job>` for each job, `Dispatch/st
 
 The App needs **Checks: write** on the source repositories. The generated manifest requests it. For an existing App, update its repository permissions and accept the installation permission update, or reinstall it, then use **Connections > Verify**. A missing grant appears in **GitHub Check Runs** in run details and does not change deployment success or failure. GitHub documents the installation-token permission and request fields in its [Check Runs API](https://docs.github.com/en/rest/checks/runs?apiVersion=2022-11-28).
 
-Each reporting receipt stores its own external identity and GitHub check ID. Controller restarts retry updates to that same check. If a create response is lost, Dispatch searches the captured App and commit for the accepted external identity before continuing. If it remains absent, the receipt stays pending reconciliation and sends no second create request. A new workflow run receives a new reporting identity, even on the same commit.
+Each reporting receipt stores its own external identity and GitHub check ID. Controller restarts retry updates to that same check. If a create response is lost, Doodship searches the captured App and commit for the accepted external identity before continuing. If it remains absent, the receipt stays pending reconciliation and sends no second create request. A new workflow run receives a new reporting identity, even on the same commit.
 
-Check summaries contain a fixed outcome message, a link to the Dispatch run and the tested preview URL when configured. Job logs, secret values and upstream error bodies stay out of GitHub summaries. Run details show permission and network reporting errors separately from execution results.
+Check summaries contain a fixed outcome message, a link to the Doodship run and the tested preview URL when configured. Job logs, secret values and upstream error bodies stay out of GitHub summaries. Run details show permission and network reporting errors separately from execution results.
 
 #### Full logs in GitHub
 
@@ -709,13 +709,13 @@ spec:
   githubLogs: true
 ```
 
-Dispatch runs `doodship-logs.yml` on each source repository's default branch. It discovers that branch automatically, even when building a different branch. Multiple source aliases pointing to the same repository and commit share one collector for the run. Omit `githubLogs` or set it to `false` to disable collection. Build and deployment checks still report their results.
+Doodship runs `doodship-logs.yml` on each source repository's default branch. It discovers that branch automatically, even when building a different branch. Multiple source aliases pointing to the same repository and commit share one collector for the run. Omit `githubLogs` or set it to `false` to disable collection. Build and deployment checks still report their results.
 
-Discovery failures retry without blocking builds. Once Dispatch starts a collector, it saves the selected branch so a later default-branch change cannot redirect that run's log access.
+Discovery failures retry without blocking builds. Once Doodship starts a collector, it saves the selected branch so a later default-branch change cannot redirect that run's log access.
 
 GitHub Enterprise Server requires a self-hosted Actions runner. Change `runs-on` in the workflow to its labels and make sure it has Python 3 and can reach `DOODSHIP_URL`. GitHub.com can use its hosted runner or your own runner.
 
-The collector authenticates with GitHub's short-lived OIDC token. Access is bound to the captured GitHub App, repository, workflow file, branch, Actions run and reporting receipt. It accepts no Dispatch administrator token. Connected installations use their outbound WebSocket connection, including when remote browser access is disabled. Update both the control plane and the installation to forward this route.
+The collector authenticates with GitHub's short-lived OIDC token. Access is bound to the captured GitHub App, repository, workflow file, branch, Actions run and reporting receipt. It accepts no Doodship administrator token. Connected installations use their outbound WebSocket connection, including when remote browser access is disabled. Update both the control plane and the installation to forward this route.
 
 Full build output is kept outside the database in temporary private files. Delivery files expire after 24 hours, with a 1 GiB limit per installation and a 64 MiB limit per job. Lines over 64 KiB are withheld. The regular local viewer keeps its existing 1 MiB limit. Updated workflow workers transfer full logs in acknowledged chunks; update both the worker and its pinned execution image. Older workers still execute jobs, but their collector reports that full log delivery is unavailable.
 
@@ -725,7 +725,7 @@ A GitHub outage or archive-capacity failure does not change the build result. Th
 
 #### Promoting a template through stages
 
-A `WorkflowTemplate` retains the full ordered `spec.stages` list when Dispatch creates its Application. Each run builds once and promotes the same source commits and build outputs through those stages. A stage finishes after its deployments and automatic checks succeed. A failed deployment or automatic check stops promotion; `approval: required` pauses before the next environment deploys.
+A `WorkflowTemplate` retains the full ordered `spec.stages` list when Doodship creates its Application. Each run builds once and promotes the same source commits and build outputs through those stages. A stage finishes after its deployments and automatic checks succeed. A failed deployment or automatic check stops promotion; `approval: required` pauses before the next environment deploys.
 
 For example, extend the stage list with:
 
@@ -753,7 +753,7 @@ spec:
       approval: required
 ```
 
-The target names must match registered Dispatch targets, and each `pipelineRef` must identify a saved Pipeline. These are example names. Choose the actual staging target, namespace, values, and checks before enabling promotion. If environments need different Helm namespaces or values, declare separate deployments and reference the appropriate deployment from each stage. Within a stage, checks run after its deployments. Without checks, success means the deployment completed; it does not imply an evaluation or end-to-end test passed.
+The target names must match registered Doodship targets, and each `pipelineRef` must identify a saved Pipeline. These are example names. Choose the actual staging target, namespace, values, and checks before enabling promotion. If environments need different Helm namespaces or values, declare separate deployments and reference the appropriate deployment from each stage. Within a stage, checks run after its deployments. Without checks, success means the deployment completed; it does not imply an evaluation or end-to-end test passed.
 
 Updates to the reusable definition apply to new instances; existing instances keep their saved stage configuration.
 
@@ -763,21 +763,21 @@ To version a template in your deployment repository, choose **GitHub repository 
 
 A GitHub App connection uses all of its installations. The template repository,
 watched PR repositories, and linked PRs can belong to different organizations.
-Dispatch discovers the installation for each repository and keeps its token
+Doodship discovers the installation for each repository and keeps its token
 separate from tokens for other installations. In **Connections**, each
 installation has its own access-settings link and permission warnings. Installing
 the App in another organization preserves existing access. Repository pickers
 include repositories across installations. A missing or suspended installation
-fails with a repository-specific error; Dispatch does not substitute another
+fails with a repository-specific error; Doodship does not substitute another
 organization's token.
 
-Dispatch resolves the branch every 30 seconds and reads the file at that immutable commit. Saving or manually choosing **Sync from GitHub** also fetches and validates the file. The template row shows the source and synced commit. Choose **Edit template** to change its settings, or **Edit YAML in GitHub** to review changes through a pull request. The YAML owns its source defaults, watched source aliases, and comment command. Dispatch stores the GitHub App connection, repository access source, and Git file location.
+Doodship resolves the branch every 30 seconds and reads the file at that immutable commit. Saving or manually choosing **Sync from GitHub** also fetches and validates the file. The template row shows the source and synced commit. Choose **Edit template** to change its settings, or **Edit YAML in GitHub** to review changes through a pull request. The YAML owns its source defaults, watched source aliases, and comment command. Doodship stores the GitHub App connection, repository access source, and Git file location.
 
 Invalid YAML and failed GitHub reads preserve the last valid definition and block creation of new previews until a successful sync. Pending command comments are retried after recovery. Existing instances retain their saved YAML. Each new preview records its template commit in the GitHub App report. Creating an individual preview requires no commit to the deployment repository.
 
 
-Use `{{ instance.id }}` in the YAML for the Application name, Helm release, and workload identity. The editor uses the PR number by default and allocates a suffix if that identity is already in use. Each preview row links to its primary PR and any linked PRs. Choose **Edit YAML & PR** on the row to change the saved YAML or command settings. Changing the primary PR clears the old report comment and linked PRs. The next comment with `/preview` starts a run; `/preview with ui=#123` links a UI PR and keeps that link for later runs. A successful run posts the preview URL, commits, and images through the GitHub App. The row menu can also delete a preview. Dispatch records cleanup intent, cancels active work and removes owned workloads while retaining run history and protected data. Partial cleanup resumes after restart; uncertain runtime work must be inspected before it can continue. See [preview lifecycle](preview-lifecycle.md).
+Use `{{ instance.id }}` in the YAML for the Application name, Helm release, and workload identity. The editor uses the PR number by default and allocates a suffix if that identity is already in use. Each preview row links to its primary PR and any linked PRs. Choose **Edit YAML & PR** on the row to change the saved YAML or command settings. Changing the primary PR clears the old report comment and linked PRs. The next comment with `/preview` starts a run; `/preview with ui=#123` links a UI PR and keeps that link for later runs. A successful run posts the preview URL, commits, and images through the GitHub App. The row menu can also delete a preview. Doodship records cleanup intent, cancels active work and removes owned workloads while retaining run history and protected data. Partial cleanup resumes after restart; uncertain runtime work must be inspected before it can continue. See [preview lifecycle](preview-lifecycle.md).
 
 ## Service connections
 
-Deployment `serviceBindings` select project-scoped Services registered in Dispatch. Stage `serviceBindings` map an alias to a different service for that environment. Generated applications keep these bindings read-only in the UI. See [services](services.md#repository-managed-applications) for the schema and a PostgreSQL promotion example.
+Deployment `serviceBindings` select project-scoped Services registered in Doodship. Stage `serviceBindings` map an alias to a different service for that environment. Generated applications keep these bindings read-only in the UI. See [services](services.md#repository-managed-applications) for the schema and a PostgreSQL promotion example.

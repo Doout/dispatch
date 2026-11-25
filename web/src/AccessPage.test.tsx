@@ -292,7 +292,7 @@ describe("access page", () => {
     expect(screen.queryByRole("button", { name: "Change password" })).toBeNull();
   });
 
-  it("lets the owner view Dispatch as another active user", async () => {
+  it("lets the owner view Doodship as another active user", async () => {
     const user = userEvent.setup();
     const onImpersonate = vi.fn();
     vi.spyOn(api, "access").mockResolvedValue(access);

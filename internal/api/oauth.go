@@ -193,14 +193,14 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := a.linkExternalIdentity(r.Context(), provider, profile, state.LinkUserID); err != nil {
-			message := "Dispatch could not link this account."
+			message := "Doodship could not link this account."
 			switch {
 			case errors.Is(err, errExternalIdentityOwned):
-				message = "This GitHub account belongs to another Dispatch user. Ask an owner to merge the accounts."
+				message = "This GitHub account belongs to another Doodship user. Ask an owner to merge the accounts."
 			case errors.Is(err, errExternalProviderUsed):
 				message = "Another account from this sign-in method is already linked."
 			case errors.Is(err, store.ErrNotFound):
-				message = "Your Dispatch user no longer exists."
+				message = "Your Doodship user no longer exists."
 			default:
 				a.logger.Error("link external identity", "provider", provider.ID, "user", state.LinkUserID, "error", err)
 			}
@@ -221,7 +221,7 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 				a.redirectOAuthError(w, r, "Your account is waiting for tenant owner approval.")
 				return
 			}
-			a.redirectOAuthError(w, r, "This account could not request access. If you already have a Dispatch account, sign in and link this method from your profile.")
+			a.redirectOAuthError(w, r, "This account could not request access. If you already have a Doodship account, sign in and link this method from your profile.")
 			return
 		}
 		if err != nil || a.auth.Hosted.CompleteExternal == nil {
@@ -246,7 +246,7 @@ func (a *API) completeOAuth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.logger.Error("resolve OAuth user", "provider", provider.ID, "error", err)
-		a.redirectOAuthError(w, r, "Dispatch could not finish signing you in.")
+		a.redirectOAuthError(w, r, "Doodship could not finish signing you in.")
 		return
 	}
 	if err := a.syncLoginTeams(r.Context(), provider.ID, user.ID, profile.Groups); err != nil {

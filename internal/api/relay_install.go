@@ -147,7 +147,7 @@ chmod 0600 "$config_root/relay.env"
 
 cat > /etc/systemd/system/dispatch-relay.service <<'EOF'
 [Unit]
-Description=Dispatch durable webhook relay
+Description=Doodship durable webhook relay
 After=network-online.target
 Wants=network-online.target
 

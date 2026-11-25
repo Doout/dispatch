@@ -310,7 +310,7 @@ function ProviderEditor({
                   <GithubLogo size={19} weight="fill" />
                   <span>
                     <strong>Create in GitHub</strong>
-                    <small>Dispatch configures the App.</small>
+                    <small>Doodship configures the App.</small>
                   </span>
                 </button>
                 <button
@@ -514,8 +514,8 @@ function ProviderEditor({
                 </select>
                 <small>
                   {provisioning === "approval"
-                    ? "Dispatch creates a pending account. An owner must approve it before sign-in."
-                    : "Only GitHub accounts already linked to a Dispatch member can sign in."}
+                    ? "Doodship creates a pending account. An owner must approve it before sign-in."
+                    : "Only GitHub accounts already linked to a Doodship member can sign in."}
                 </small>
               </label>
               <div className="signin-toggles">

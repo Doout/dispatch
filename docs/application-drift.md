@@ -5,14 +5,14 @@ The four indicators describe different things:
 
 | Indicator | Meaning |
 | --- | --- |
-| Configuration sync | The last repository configuration accepted by Dispatch, including paused or invalid sources. Directly configured applications show Not applicable. |
-| Deployment revision | The successful deployed revision compared with the configuration and workflow revisions already observed by Dispatch. It does not fetch Git when opening the page. |
+| Configuration sync | The last repository configuration accepted by Doodship, including paused or invalid sources. Directly configured applications show Not applicable. |
+| Deployment revision | The successful deployed revision compared with the configuration and workflow revisions already observed by Doodship. It does not fetch Git when opening the page. |
 | Runtime drift | Whether live Kubernetes resources match the fields saved with the last successful deployment. |
 | Resource health | Readiness observed during the check, independent of configuration differences. |
 
 ## Checks
 
-Project admins and operators can select **Check now**. Checks run from the Dispatch
+Project admins and operators can select **Check now**. Checks run from the Doodship
 controller with a 30-second deadline. Viewers and deployers can inspect saved
 results. Each observation records its time, location, and the last successful
 check time. An unreachable target, denied resource read, or ownership conflict
@@ -30,21 +30,21 @@ health.
 
 With vault storage configured, successful Helm deployments on Kubernetes and
 OpenShift save an encrypted copy of their rendered resources. This includes
-Dispatch-owned service binding Secrets. The copy is separate from public deployment
+Doodship-owned service binding Secrets. The copy is separate from public deployment
 snapshots, and is bound to the deployment ID by authenticated encryption.
 
 If baseline capture fails, the deployment remains successful and its log records a
-sanitized warning. On the next manual check, Dispatch tries to recover the original
+sanitized warning. On the next manual check, Doodship tries to recover the original
 rendered resources from retained Helm release history. It requires exactly one
 successful revision matching the deployment's saved values, target, release, and
 completion interval. The recovered baseline is encrypted. Live resource
 configuration is never adopted as the desired configuration.
 
 Older deployments can therefore be checked without redeploying. If no retained
-revision can be uniquely matched, Dispatch still inspects resource readiness but
+revision can be uniquely matched, Doodship still inspects resource readiness but
 reports Unknown for drift with the reason. Deployments with service bindings need
 their original credential baseline or a new deployment; Helm history alone cannot
-recover Dispatch-owned service Secrets. Before the first check the UI shows
+recover Doodship-owned service Secrets. Before the first check the UI shows
 Not checked. Failed checks preserve their timestamp and explain why the result is
 unavailable. Docker/Compose runtimes and
 workflow jobs/hooks are outside this feature. Helm hook resources are excluded.
@@ -59,7 +59,7 @@ Equivalent Kubernetes CPU and memory quantities compare equal.
 
 Explicitly configured replica counts are compared, including when an autoscaler
 changes them. Omit replicas from the chart manifest when an autoscaler should own
-that field. Dispatch does not prune resources absent from the saved manifest.
+that field. Doodship does not prune resources absent from the saved manifest.
 
 Images and ordinary numeric/boolean differences are readable. Potentially
 sensitive fields and other string values are masked, including ConfigMap values,
@@ -92,7 +92,7 @@ ownership is checked. A resource claimed by another Helm release is not replaced
 The application cannot deploy or clean up concurrently with its check or repair.
 
 Kubernetes does not provide a transaction across resources. A conflict or outage
-between preflight and writes can leave a partial repair. Dispatch stops, records
+between preflight and writes can leave a partial repair. Doodship stops, records
 the failure, and checks the resulting state. Reapply history records the actor,
 deployment, time, and outcome. Saved Helm release history is not modified.
 
@@ -153,8 +153,8 @@ defaults do appear when they change a saved resource. Added, removed, and change
 fields have before/after values and a path filter.
 
 This comparison excludes live cluster changes, Helm hooks, and generated tracking
-metadata such as resource UIDs and Dispatch deployment IDs. Sensitive contents are
-hidden. Missing or unreadable resources show **Comparison unavailable**. Dispatch
+metadata such as resource UIDs and Doodship deployment IDs. Sensitive contents are
+hidden. Missing or unreadable resources show **Comparison unavailable**. Doodship
 does not rebuild old manifests from today's chart or substitute raw inputs.
 
 Choose **Saved inputs** to inspect supplied chart values, release settings, code

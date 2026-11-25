@@ -96,7 +96,7 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
  if (loading) return <div className="page-layout services-page"><PageHeader view="services" title="Service template" action={{ label: "Back", tone: "quiet", icon: <ArrowLeft size={16} />, onClick: onBack }} /><p role="status">Loading template…</p></div>;
  return <div className="page-layout services-page editor-page">
   <PageHeader view="services" title={readOnly ? item.name : item ? "Edit service template" : "Create service template"} action={{ label: "Back", tone: "quiet", icon: <ArrowLeft size={16} />, onClick: onBack }} />
-  <p className="service-intro">{item?.managedBy === "gitops" ? "This template is managed in a repository. Edit its YAML there." : "Choose how Dispatch creates the service and where it runs."}</p>
+  <p className="service-intro">{item?.managedBy === "gitops" ? "This template is managed in a repository. Edit its YAML there." : "Choose how Doodship creates the service and where it runs."}</p>
   <form className="service-form service-template-editor" onSubmit={e => void save(e)}>
    <fieldset disabled={readOnly || busy || loadFailed} className="service-template-basics">
     <label>Project<select disabled={!!item} value={projectId} onChange={e => { setProject(e.target.value); setSourceId(""); }}>{(readOnly ? overview.projects : allowed).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
@@ -136,7 +136,7 @@ export function ServiceTemplateEditor({ item, overview, initialProject, onBack, 
       </div>)}
       <button type="button" className="quiet-button" disabled={provider === "neon"} onClick={addInput}>Add input</button>
      </section>
-     <section className="service-template-section"><h2>Outputs</h2><p className="service-help">Dispatch saves these fields on the new service and hides sensitive values.</p>
+     <section className="service-template-section"><h2>Outputs</h2><p className="service-help">Doodship saves these fields on the new service and hides sensitive values.</p>
       {definition.spec.serviceType === "postgresql" && <label>Connection format<select value={"connectionUrl" in definition.spec.outputs ? "url" : "fields"} onChange={e => outputs(Object.entries(e.target.value === "url" ? { connectionUrl: { sensitive: true } } : pgOutputs))}><option value="url">PostgreSQL connection URL</option><option value="fields">Individual connection fields</option></select></label>}
       {Object.entries(definition.spec.outputs).map(([name, field], i) => <div className="service-template-output" key={i}>
        {definition.spec.serviceType === "generic" ? <label>Field name<input required aria-label={`Output ${i + 1} name`} value={name} onChange={e => {

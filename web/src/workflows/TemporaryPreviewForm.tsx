@@ -86,7 +86,7 @@ export function TemporaryPreviewForm({ overview, resource, onCancel, onSaved }: 
   }
 
   return <form className="resource-form temporary-preview-form" onSubmit={(event) => void save(event)} aria-busy={busy}>
-    <p className="wide temporary-preview-intro">Dispatch stores this Application here. The repository source supplies access to its Git repositories, and the GitHub App watches PR comments. The preview appears in its own group in Applications.</p>
+    <p className="wide temporary-preview-intro">Doodship stores this Application here. The repository source supplies access to its Git repositories, and the GitHub App watches PR comments. The preview appears in its own group in Applications.</p>
     <label><span>Repository access source</span><select value={sourceId} disabled={Boolean(resource || created)} onChange={(event) => setSourceId(event.target.value)} required><option value="">Choose a configuration source</option>{sources.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.repository}</option>)}</select><small>Used for credentials only. The preview is listed separately.</small></label>
     {!resource && <label><span>Preview ID</span><input value={previewId} onChange={(event) => setPreviewId(event.target.value)} placeholder={pullRequestNumber ? String(pullRequestNumber) : "PR number"} spellCheck={false} /><small>Replaces <code>{previewIDVariable}</code> in the YAML. Defaults to the PR number; collisions get a suffix.</small></label>}
     <label><span>GitHub App for comments</span><select value={githubAppId} onChange={(event) => setGithubAppId(event.target.value)} required><option value="">Choose an installed App</option>{apps.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>

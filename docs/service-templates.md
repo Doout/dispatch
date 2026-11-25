@@ -1,12 +1,12 @@
 # Service templates
 
-A `ServiceTemplate` defines the information Dispatch needs to create a Service. The provisioner owns how the resource is created. Applications see the same PostgreSQL or generic Service fields regardless of whether the provider is Docker, an existing cluster, or a cloud API.
+A `ServiceTemplate` defines the information Doodship needs to create a Service. The provisioner owns how the resource is created. Applications see the same PostgreSQL or generic Service fields regardless of whether the provider is Docker, an existing cluster, or a cloud API.
 
-Open **Services → Templates → Create template** to save a template in Dispatch. Choose Docker or Helm and select a deployment server. PostgreSQL uses built-in defaults for credentials, storage, and readiness. Image, network, and storage settings are optional. Custom scripts are an advanced provider option. Switch to YAML for custom charts, images, input mappings, or repository sources. Built-in providers do not need a repository connection. If the template fetches sources, select a repository configuration in the same project for access.
+Open **Services → Templates → Create template** to save a template in Doodship. Choose Docker or Helm and select a deployment server. PostgreSQL uses built-in defaults for credentials, storage, and readiness. Image, network, and storage settings are optional. Custom scripts are an advanced provider option. Switch to YAML for custom charts, images, input mappings, or repository sources. Built-in providers do not need a repository connection. If the template fetches sources, select a repository configuration in the same project for access.
 
-You can also place a `ServiceTemplate` YAML file inside a synced repository configuration path. The Templates tab lists both kinds and labels repository templates as GitOps. Edit or delete saved templates in Dispatch; change GitOps templates in their source repository. Deleting a template leaves its existing Services and run history in place. The YAML view uses the same document format, so you can copy a saved definition into a repository for version control.
+You can also place a `ServiceTemplate` YAML file inside a synced repository configuration path. The Templates tab lists both kinds and labels repository templates as GitOps. Edit or delete saved templates in Doodship; change GitOps templates in their source repository. Deleting a template leaves its existing Services and run history in place. The YAML view uses the same document format, so you can copy a saved definition into a repository for version control.
 
-To provision a resource, open **Services → Add service**, choose a template, and fill in its inputs. Dispatch saves the returned connection fields as a Service. Saving a template or syncing its repository does not run the provisioner.
+To provision a resource, open **Services → Add service**, choose a template, and fill in its inputs. Doodship saves the returned connection fields as a Service. Saving a template or syncing its repository does not run the provisioner.
 
 ## Docker
 
@@ -24,11 +24,11 @@ spec:
       serverRef: local-server-id
 ```
 
-Dispatch starts `postgres:17-bookworm`, generates a password, creates a labeled persistent volume, and waits for the container's health check. The Service name becomes the database name, and the database user is `dispatch`. Add optional inputs named `database` or `username` to change these per request. The image, `network`, and `storageMountPath` can be configured under `docker`.
+Doodship starts `postgres:17-bookworm`, generates a password, creates a labeled persistent volume, and waits for the container's health check. The Service name becomes the database name, and the database user is `dispatch`. Add optional inputs named `database` or `username` to change these per request. The image, `network`, and `storageMountPath` can be configured under `docker`.
 
-The default network is `dispatch-services`. The database publishes no host port; Dispatch automatically joins bound Dockerfile containers and the named Compose services to this network. Existing application networks are preserved. The saved host is the unique container name, with port 5432 and `sslmode=disable`. Docker currently requires a local enrolled deployment server. Builder servers run builds and cannot host these services. Each container gets 512 MiB memory and 0.5 CPU.
+The default network is `dispatch-services`. The database publishes no host port; Doodship automatically joins bound Dockerfile containers and the named Compose services to this network. Existing application networks are preserved. The saved host is the unique container name, with port 5432 and `sslmode=disable`. Docker currently requires a local enrolled deployment server. Builder servers run builds and cannot host these services. Each container gets 512 MiB memory and 0.5 CPU.
 
-The image must support the official PostgreSQL initialization variables. Dispatch sets `PGDATA` explicitly to `/var/lib/postgresql/data/pgdata`; the default volume mounts at `/var/lib/postgresql/data`. See the [official image documentation](https://hub.docker.com/_/postgres) before changing the image or storage layout.
+The image must support the official PostgreSQL initialization variables. Doodship sets `PGDATA` explicitly to `/var/lib/postgresql/data/pgdata`; the default volume mounts at `/var/lib/postgresql/data`. See the [official image documentation](https://hub.docker.com/_/postgres) before changing the image or storage layout.
 
 ## Helm
 
@@ -45,7 +45,7 @@ spec:
       namespace: databases
 ```
 
-Dispatch installs its bundled PostgreSQL chart with the existing Helm SDK. It creates a Secret, a 10 GiB persistent volume claim, a StatefulSet, and an internal ClusterIP Service. Helm waits for readiness and rolls back failed installs. Release metadata links the resource to its template and provision run. The database name and user follow the same defaults as Docker.
+Doodship installs its bundled PostgreSQL chart with the existing Helm SDK. It creates a Secret, a 10 GiB persistent volume claim, a StatefulSet, and an internal ClusterIP Service. Helm waits for readiness and rolls back failed installs. Release metadata links the resource to its template and provision run. The database name and user follow the same defaults as Docker.
 
 The namespace defaults to the server's configured namespace, then `default`. Optional settings are `image`, `storage`, and `storageClass`. The cluster must have a storage provisioner, or specify an available storage class. Applications connect through the saved internal cluster address. The default chart does not configure TLS or external access. It requests 100m CPU and 128 MiB memory, with limits of 500m CPU and 512 MiB memory.
 

@@ -128,7 +128,7 @@ The following setup and execution instructions apply only when
 which the control plane owns per-instance operational databases and runtimes.
 They do not describe the connected default.
 
-Hosted Dispatch runs as a separate `dispatch-platform` process. The existing
+Hosted Doodship runs as a separate `dispatch-platform` process. The existing
 `dispatch` binary keeps its single-installation behavior. Use a new data directory
 and catalog for hosted mode. This change does not convert or deploy the existing
 server.
@@ -207,12 +207,12 @@ and projects with the same PR number. Development uses the same layout below
 as is `local`. Long tenant names are shortened to keep the workload label within
 63 characters; the stable ID is preserved.
 
-Dispatch stores hostname ownership in the catalog. Deployment destinations and
+Doodship stores hostname ownership in the catalog. Deployment destinations and
 configuration stay in the tenant database. Only registered hosts with a published
 route reach the workload gateway. Unknown names return 404, even if DNS resolves
 them. Custom tenant DNS records and custom Docker application domains are not
 available. Existing custom DNS records survive migration, but cannot be edited
-through Dispatch.
+through Doodship.
 
 Set `DISPATCH_HOSTED_WORKLOAD_GATEWAY` to the operator's shared workload ingress.
 It accepts the original Host and routes it to the target's published workload.
@@ -229,7 +229,7 @@ See [DNS providers](dns-providers.md) for credentials, ownership and TLS.
 ### Preparing a new installation
 
 These commands are for the new installation host. They are not an upgrade or a
-migration procedure for an existing Dispatch data directory.
+migration procedure for an existing Doodship data directory.
 
 Build the hosted controller image from the repository root:
 
@@ -392,7 +392,7 @@ Issuance runs independently of the TLS serving mode. Keep certificate or proxy
 mode during staging tests, because staging certificates are not publicly trusted.
 ACME serving mode rejects the Let's Encrypt staging directory.
 After DNS-01 works, switch to the production directory and verify issuance. Then
-use `DISPATCH_HOSTED_TLS_MODE=acme` if Dispatch should serve and renew the console
+use `DISPATCH_HOSTED_TLS_MODE=acme` if Doodship should serve and renew the console
 certificate itself. Without a bootstrap certificate, ACME serving becomes
 available after the first successful issuance.
 

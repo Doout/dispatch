@@ -101,7 +101,7 @@ func (m *Manager) Export(ctx context.Context, output string) (err error) {
 			err = errors.Join(err, restart())
 		}
 	}()
-	fmt.Fprintln(m.Out, "Stopping Dispatch to export its data. Wait for active deployments to finish before moving the installation.")
+	fmt.Fprintln(m.Out, "Stopping Doodship to export its data. Wait for active deployments to finish before moving the installation.")
 	if _, err = m.compose(ctx, c, "stop", "--timeout", "30", "dispatch"); err != nil {
 		return err
 	}

@@ -41,7 +41,7 @@ func (s *SQLStore) CheckMigrationCompatibility(ctx context.Context) error {
 			return err
 		}
 		if !known[version] {
-			return fmt.Errorf("unknown database migration %q; use a newer Dispatch version", version)
+			return fmt.Errorf("unknown database migration %q; use a newer Doodship version", version)
 		}
 	}
 	return rows.Err()

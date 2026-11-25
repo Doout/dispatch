@@ -14,7 +14,7 @@ import (
 // Reusing a release name never grants ownership. Older Dispatch releases may
 // lack a project ID; their globally unique application ID still has to match.
 func requireHelmReleaseOwner(release *helmrelease.Release, app core.App, namespace string) error {
-	conflict := &runtimecontract.Error{Code: runtimecontract.OwnershipConflict, Message: "The Helm release does not belong to this Dispatch application and namespace. Choose another release name or inspect its ownership before retrying."}
+	conflict := &runtimecontract.Error{Code: runtimecontract.OwnershipConflict, Message: "The Helm release does not belong to this Doodship application and namespace. Choose another release name or inspect its ownership before retrying."}
 	if release == nil || release.Info == nil || app.ID == "" || release.Name != helmReleaseName(app) || release.Namespace != namespace {
 		return conflict
 	}

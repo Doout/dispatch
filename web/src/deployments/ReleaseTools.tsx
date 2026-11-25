@@ -146,7 +146,7 @@ function ReleaseWorkbench({ deployment, canDeploy, canConfigure, onDeployment, o
       </div>}
 
       {tool === "diagnosis" && <div className="release-diagnosis">
-        <div className="release-panel-heading"><div><h3>Workload diagnosis</h3><small>Current pods and events · Dispatch controller</small></div><button type="button" className="quiet-button" disabled={Boolean(busy)} onClick={() => void perform("Inspecting workloads", async () => { const value = await releaseClient.diagnosis(selected); if (alive.current) setDiagnosis(value); })}><MagnifyingGlass size={14} />{diagnosis ? "Inspect again" : "Inspect now"}</button></div>
+        <div className="release-panel-heading"><div><h3>Workload diagnosis</h3><small>Current pods and events · Doodship controller</small></div><button type="button" className="quiet-button" disabled={Boolean(busy)} onClick={() => void perform("Inspecting workloads", async () => { const value = await releaseClient.diagnosis(selected); if (alive.current) setDiagnosis(value); })}><MagnifyingGlass size={14} />{diagnosis ? "Inspect again" : "Inspect now"}</button></div>
         {!diagnosis ? <p className="release-empty">Check failing containers and get the next steps to investigate.</p> : <DiagnosisResult diagnosis={diagnosis} />}
       </div>}
 

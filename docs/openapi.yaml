@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Dispatch controller API
+  title: Doodship controller API
   version: 0.1.0
   description: Project-scoped application deployment and operations API.
 servers:
@@ -1560,7 +1560,7 @@ paths:
     - { name: id, in: path, required: true, schema: { type: string } }
     post:
       operationId: reconcileStorage
-      description: Controller-owner inspection of runtime volumes and consumers. Adopts only verified Dispatch ownership. Unavailable inspection never marks data absent.
+      description: Controller-owner inspection of runtime volumes and consumers. Adopts only verified Doodship ownership. Unavailable inspection never marks data absent.
       responses:
         '200': { description: Updated inventory for the target. }
         '403': { $ref: '#/components/responses/Problem' }
@@ -1807,7 +1807,7 @@ paths:
         type: string
     post:
       operationId: checkApplicationObservations
-      description: Requires project.configure. Manual bounded workload and HTTP/TLS check from Dispatch controller;
+      description: Requires project.configure. Manual bounded workload and HTTP/TLS check from Doodship controller;
         results are observations of that location only. Active runtime operations return conflict.
       responses:
         '200':
@@ -2432,7 +2432,7 @@ paths:
   /identity-team-mappings:
     get:
       operationId: listIdentityTeamMappings
-      description: Controller owner only. List mappings from verified GitHub team memberships to Dispatch teams.
+      description: Controller owner only. List mappings from verified GitHub team memberships to Doodship teams.
         Requires Operations to be enabled; otherwise returns 403 Operations disabled.
         Existing mapping enforcement and managed memberships remain active while management is disabled.
       responses:
@@ -3409,7 +3409,7 @@ paths:
                 driver: { type: string, enum: [dispatch_agent, laneway_connector, laneway], default: dispatch_agent }
                 socketPath: { type: string, description: Used only by a legacy Laneway route. }
                 authority: { type: string, format: uri, description: Laneway control-plane HTTPS origin used by a managed Connector. }
-                route: { type: string, description: Private Dispatch IP or CIDR published through the managed Connector. }
+                route: { type: string, description: Private Doodship IP or CIDR published through the managed Connector. }
       responses:
         "201": { description: Private network connection created. }
   /private-networks/{edgeNodeId}/install-connector:
@@ -3523,7 +3523,7 @@ paths:
                 installMode: { type: string, enum: [docker_compose, systemd] }
       responses:
         "201":
-          description: Installer command. Dispatch does not store this response.
+          description: Installer command. Doodship does not store this response.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LanewayNodeInstaller" }
@@ -3644,7 +3644,7 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
     delete:
       operationId: deleteGitHubApp
-      description: Removes encrypted credentials from Dispatch only. The GitHub-owned App registration is not deleted.
+      description: Removes encrypted credentials from Doodship only. The GitHub-owned App registration is not deleted.
       responses:
         "204": { description: Unused GitHub App connection deleted. }
         "409": { $ref: "#/components/responses/Problem" }
@@ -3766,7 +3766,7 @@ paths:
         "200": { $ref: "#/components/responses/JSONList" }
     post:
       operationId: createConfigSource
-      description: Imports strict Dispatch YAML or JSON from a GitHub repository and configures its update mode.
+      description: Imports strict Doodship YAML or JSON from a GitHub repository and configures its update mode.
       requestBody:
         required: true
         content:
@@ -3915,7 +3915,7 @@ paths:
       description: >-
         Loads one YAML or JSON file from the current head of an open pull request
         using an installed GitHub App. Returns its contents for review in the editor;
-        saving the preview stores a snapshot in Dispatch. Owner access is required.
+        saving the preview stores a snapshot in Doodship. Owner access is required.
       requestBody:
         required: true
         content:
@@ -4260,7 +4260,7 @@ paths:
   /workflow/revisions/{revisionId}/preview-report:
     post:
       operationId: reportWorkflowPreview
-      description: Posts or updates a GitHub comment for a successful preview revision. Requires a GitHub App with PR automation access. If the App cannot write comments, Dispatch can retry with the controller token for the same GitHub API endpoint. The report includes the URL, target, full source commits, and built images. Owner access is required.
+      description: Posts or updates a GitHub comment for a successful preview revision. Requires a GitHub App with PR automation access. If the App cannot write comments, Doodship can retry with the controller token for the same GitHub API endpoint. The report includes the URL, target, full source commits, and built images. Owner access is required.
       parameters:
         - { in: path, name: revisionId, required: true, schema: { type: string } }
       requestBody:
@@ -4623,7 +4623,7 @@ paths:
     delete:
       operationId: deleteRelayWebhook
       responses:
-        "204": { description: Webhook endpoint removed from Dispatch and the relay. }
+        "204": { description: Webhook endpoint removed from Doodship and the relay. }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
   /apps:
@@ -7690,7 +7690,7 @@ components:
           type: string
           writeOnly: true
           maxLength: 4194304
-          description: Kubeconfig YAML saved in Dispatch storage. Omit during updates to retain the stored value.
+          description: Kubeconfig YAML saved in Doodship storage. Omit during updates to retain the stored value.
         certificateAuthority:
           type: string
           writeOnly: true
@@ -7699,7 +7699,7 @@ components:
         loginCommand:
           type: string
           writeOnly: true
-          description: Non-interactive oc login syntax. Dispatch parses it and calls OpenShift APIs directly; the command is never executed or stored.
+          description: Non-interactive oc login syntax. Doodship parses it and calls OpenShift APIs directly; the command is never executed or stored.
         kubeconfigStored:
           type: boolean
           readOnly: true

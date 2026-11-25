@@ -186,7 +186,7 @@ func ParseLoginCommand(command string) (Login, error) {
 		case strings.HasPrefix(value, "--insecure-skip-tls-verify="):
 			login.InsecureSkipTLSVerify = strings.EqualFold(strings.TrimPrefix(value, "--insecure-skip-tls-verify="), "true")
 		case value == "--kubeconfig" || strings.HasPrefix(value, "--kubeconfig="):
-			return Login{}, fmt.Errorf("%w: kubeconfig overrides are managed by Dispatch", ErrInvalidLoginCommand)
+			return Login{}, fmt.Errorf("%w: kubeconfig overrides are managed by Doodship", ErrInvalidLoginCommand)
 		case strings.HasPrefix(value, "-"):
 			return Login{}, fmt.Errorf("%w: unsupported oc login option %s", ErrInvalidLoginCommand, optionName(value))
 		case login.Server == "":

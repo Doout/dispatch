@@ -111,7 +111,7 @@ func New(options Options) (*Mock, error) {
 }
 
 func (m *Mock) Manifest(context.Context) (provider.Manifest, error) {
-	manifest := provider.Manifest{APIVersion: provider.APIVersion, Name: "dispatch-mock", DisplayName: "Dispatch mock provider", Version: "2.0.0", Capabilities: []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete, provider.CapabilityOwnership}, ConfigurationSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"testLabel":{"type":"string","maxLength":80}},"additionalProperties":false}`)}
+	manifest := provider.Manifest{APIVersion: provider.APIVersion, Name: "dispatch-mock", DisplayName: "Doodship mock provider", Version: "2.0.0", Capabilities: []string{provider.CapabilityCreate, provider.CapabilityInspect, provider.CapabilityDelete, provider.CapabilityOwnership}, ConfigurationSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"testLabel":{"type":"string","maxLength":80}},"additionalProperties":false}`)}
 	manifest.Capabilities = append(manifest.Capabilities, provider.CapabilityPowerStart, provider.CapabilityPowerStop, provider.CapabilityPowerReboot)
 	if !m.options.DisableSnapshots {
 		manifest.Capabilities = append(manifest.Capabilities, provider.CapabilitySnapshotCreate, provider.CapabilitySnapshotInspect, provider.CapabilitySnapshotDelete, provider.CapabilityRestore, provider.CapabilityPromote)

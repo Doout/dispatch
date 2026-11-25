@@ -291,11 +291,11 @@ func workflowPreviewTestReport(revision core.WorkflowRevision, stages []core.Wor
 				fmt.Fprintf(&body, "\n%s #%d: %s\n", target.Repository, target.Number, target.SkipReason)
 			}
 			if target.Error != "" {
-				fmt.Fprintf(&body, "\nGitHub reporting for %s #%d is pending. Open the run in Dispatch for the error.\n", target.Repository, target.Number)
+				fmt.Fprintf(&body, "\nGitHub reporting for %s #%d is pending. Open the run in Doodship for the error.\n", target.Repository, target.Number)
 			}
 		}
 	}
-	body.WriteString("\nOpen the preview run in Dispatch for check logs.\n")
+	body.WriteString("\nOpen the preview run in Doodship for check logs.\n")
 	return body.String()
 }
 

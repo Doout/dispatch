@@ -1,6 +1,6 @@
 # Services
 
-A Service registers a connection to an existing dependency. Dispatch does not create or delete that dependency. PostgreSQL may run on a VM, in Kubernetes, or with a cloud provider; registration is the same.
+A Service registers a connection to an existing dependency. Doodship does not create or delete that dependency. PostgreSQL may run on a VM, in Kubernetes, or with a cloud provider; registration is the same.
 
 ## Register and test
 
@@ -12,27 +12,27 @@ Generic services expose named string fields. Mark credentials sensitive. A URL c
 
 Sensitive fields are encrypted, write-only, and separate from controller-wide secrets. An omitted field is preserved during updates. To clear a field, submit `{ "remove": true }`; supplying an empty string explicitly replaces the value with an empty string. Only the controller owner can attach global secret references, including external secret references. Operators can preserve or remove an existing reference or replace it with a local value.
 
-Expand a service to edit it or run **Test connection**. Connection fields and application impact are available in separate expandable sections. The check runs from the Dispatch controller with a ten-second timeout. PostgreSQL checks authentication and executes `SELECT 1`; generic checks establish a TCP connection. Results show the check location and time. They do not prove application-network reachability or continuous health. A private service can be registered even when the controller cannot reach it.
+Expand a service to edit it or run **Test connection**. Connection fields and application impact are available in separate expandable sections. The check runs from the Doodship controller with a ten-second timeout. PostgreSQL checks authentication and executes `SELECT 1`; generic checks establish a TCP connection. Results show the check location and time. They do not prove application-network reachability or continuous health. A private service can be registered even when the controller cannot reach it.
 
 ## Bind applications
 
 Open an application's **Services** action and choose **Connect service**. Give the dependency an alias and select fields to deliver:
 
 - Dockerfile applications map fields to environment variables. Credentials are supplied only at container startup through a protected temporary environment file. Newlines and NUL are not supported by this delivery format.
-- Compose applications name each receiving Compose service and its environment variables. Dispatch generates a protected override file, escapes interpolation, and leaves unselected containers unchanged. Unknown Compose service names fail before `compose up`.
+- Compose applications name each receiving Compose service and its environment variables. Doodship generates a protected override file, escapes interpolation, and leaves unselected containers unchanged. Unknown Compose service names fail before `compose up`.
 - Helm applications map fields to Kubernetes Secret keys, then map the Secret name and optional key names to chart value paths. Paths use dotted object keys; array-index destinations are not supported. The chart must support existing Secret references. Raw credentials are never inserted into Helm values.
 
 Service mappings override their configured runtime destinations. Duplicate or overlapping destinations, including conflicts with workflow job output bindings, are rejected. Bindings are project-scoped. Service credentials are not automatically available to image builds, workflow jobs, hooks, or preview templates.
 
 Saving a service or binding does not restart applications. Connection changes increment the service revision and reset the check result. The Services page shows affected applications as **Redeployment required** by comparing their current bindings with their latest successful deployment.
 
-Dispatch snapshots bindings and encrypted local service values when it accepts a deployment. External references resolve once before runtime changes. A later edit does not change the captured local values for an accepted deployment. External rotations take effect on the next deployment; they are not polled automatically.
+Doodship snapshots bindings and encrypted local service values when it accepts a deployment. External references resolve once before runtime changes. A later edit does not change the captured local values for an accepted deployment. External rotations take effect on the next deployment; they are not polled automatically.
 
-Each Helm deployment creates a separate immutable Kubernetes Secret. Previous Secrets remain available for release history and rollback, including after a failed upgrade. Removing the release cleans up only Secrets labeled as owned by Dispatch for that application and release. Service registrations cannot be removed while bound, referenced by repository configuration, or used by an active deployment.
+Each Helm deployment creates a separate immutable Kubernetes Secret. Previous Secrets remain available for release history and rollback, including after a failed upgrade. Removing the release cleans up only Secrets labeled as owned by Doodship for that application and release. Service registrations cannot be removed while bound, referenced by repository configuration, or used by an active deployment.
 
 ## Repository-managed applications
 
-Register the services in Dispatch first. Add bindings under a deployment and override service selection by alias in each stage. Names resolve only within the configuration source's project. Defaults and every effective stage binding are validated before a configuration sync is accepted.
+Register the services in Doodship first. Add bindings under a deployment and override service selection by alias in each stage. Names resolve only within the configuration source's project. Defaults and every effective stage binding are validated before a configuration sync is accepted.
 
 ```yaml
 apiVersion: dispatch/v1alpha1

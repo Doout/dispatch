@@ -10,7 +10,7 @@ Security fixes target the latest release. Older versions do not have a separate 
 
 ## Trust model
 
-Dispatch controls deployment infrastructure and runs repository-defined scripts. Only grant configuration access to people you trust to execute code with the credentials and infrastructure access assigned to those jobs. Review pull request code before running a preview that has secrets or access to private services.
+Doodship controls deployment infrastructure and runs repository-defined scripts. Only grant configuration access to people you trust to execute code with the credentials and infrastructure access assigned to those jobs. Review pull request code before running a preview that has secrets or access to private services.
 
 The Docker executor and managed updater mount the Docker socket. Access to that socket can grant control of the Docker host. A container boundary does not make an untrusted job safe to run there.
 

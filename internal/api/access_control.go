@@ -594,7 +594,7 @@ type passwordChangeRequest struct {
 func (a *API) changePassword(w http.ResponseWriter, r *http.Request) {
 	identity := currentIdentity(r.Context())
 	if identity.ID == "" || identity.ID == "controller-owner" {
-		problem(w, http.StatusConflict, "Password managed outside Dispatch", "Change the controller credentials in the server configuration.")
+		problem(w, http.StatusConflict, "Password managed outside Doodship", "Change the controller credentials in the server configuration.")
 		return
 	}
 	var input passwordChangeRequest

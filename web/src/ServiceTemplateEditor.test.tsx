@@ -117,7 +117,7 @@ it("lists saved and GitOps templates with deletion only for saved definitions", 
  render(<ServicesPage overview={overview} onChanged={async () => {}} />);
  const user = userEvent.setup();
  await user.click(screen.getByRole("button", { name: "Templates" }));
- expect(await screen.findByText("Saved in Dispatch")).toBeTruthy();
+ expect(await screen.findByText("Saved in Doodship")).toBeTruthy();
  expect(screen.getByText("GitOps")).toBeTruthy();
  expect(screen.getAllByRole("button", { name: "Delete template" })).toHaveLength(1);
  await user.click(screen.getByRole("button", { name: "Delete template" }));

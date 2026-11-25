@@ -312,7 +312,7 @@ func (a *API) reconcileTemporaryEnvironment(ctx context.Context, data *store.SQL
 		e.State, e.Message = "deploying", "Accepted deployment is waiting for the assigned runtime."
 		if errors.Is(jobErr, store.ErrNotFound) {
 			if err = a.deploy.DispatchAccepted(ctx, d.ID); err != nil {
-				e.Message = "Dispatch is unavailable; the accepted operation will be reconciled."
+				e.Message = "Doodship is unavailable; the accepted operation will be reconciled."
 			}
 		}
 	}

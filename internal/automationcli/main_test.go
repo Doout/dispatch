@@ -1,4 +1,4 @@
-package main
+package automationcli
 
 import (
 	"bytes"
@@ -294,12 +294,29 @@ func TestCLIAuthStatus(t *testing.T) {
 		io.WriteString(w, `{"identity":{"id":"ci-reader"},"grants":[]}`)
 	}))
 	defer server.Close()
-	t.Setenv("DISPATCH_URL", server.URL)
-	t.Setenv("DISPATCH_TOKEN_FILE", path)
+	t.Setenv("DISPATCH_URL", "http://invalid.test")
+	t.Setenv("DISPATCH_TOKEN_FILE", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("DOODSHIP_URL", server.URL)
+	t.Setenv("DOODSHIP_TOKEN_FILE", path)
 	var out, diagnostics bytes.Buffer
 	code := run(context.Background(), []string{"auth", "status"}, strings.NewReader(""), &out, &diagnostics)
 	var result automationclient.Result
 	if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK || !strings.Contains(string(result.Data), "ci-reader") {
 		t.Fatal("expected authenticated identity", code, out.String(), diagnostics.String())
+	}
+}
+
+func TestUnsetDoodshipSettingUsesLegacyValue(t *testing.T) {
+	t.Setenv("DISPATCH_TOKEN_FILE", "legacy-token-file")
+	const primary = "DOODSHIP_TOKEN_FILE"
+	t.Setenv(primary, "")
+	if got := credentialSetting(primary, "DISPATCH_TOKEN_FILE"); got != "" {
+		t.Fatal("explicit empty setting unexpectedly selected legacy credential")
+	}
+	if err := os.Unsetenv(primary); err != nil {
+		t.Fatal(err)
+	}
+	if got := credentialSetting(primary, "DISPATCH_TOKEN_FILE"); got != "legacy-token-file" {
+		t.Fatal("existing credential setting was ignored")
 	}
 }

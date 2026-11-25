@@ -24,7 +24,7 @@ func TestWorkflowPreviewReportListsDeployedSourcesAndImages(t *testing.T) {
 			t.Fatalf("preview report omitted %q: %s", want, body)
 		}
 	}
-	for _, unwanted := range []string{"**Dispatch revision:**", "**Dispatch controller:**"} {
+	for _, unwanted := range []string{"**Dispatch revision:**", "**Doodship controller:**"} {
 		if strings.Contains(body, unwanted) {
 			t.Fatalf("preview report included %q: %s", unwanted, body)
 		}

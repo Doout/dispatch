@@ -2,7 +2,7 @@
 
 A provider is a separate HTTP service. Its source, private fixtures, cloud
 credentials, build pipeline, registry, and release ownership stay in its own
-repository. Dispatch registers an endpoint and a secret reference and depends
+repository. Doodship registers an endpoint and a secret reference and depends
 only on `dispatch.provider/v1`. The public mock and conformance runner are the
 executable example; the mock allocates no real infrastructure.
 
@@ -13,7 +13,7 @@ running controller's network namespace and listens only on its loopback address.
 It exposes no additional host port and mounts only its own persistent state
 volume. This example targets Linux containers with Docker Compose.
 
-From a checkout of Dispatch:
+From a checkout of Doodship:
 
 ```sh
 export DISPATCH_CONTAINER=$(docker compose -f compose.yml ps -q dispatch)
@@ -42,7 +42,7 @@ a separately installed agent before it becomes a deployment target.
 
 For authenticated provider packages, inject `DISPATCH_PROVIDER_TOKEN` through
 the provider operator's private deployment environment or secret manager before
-starting the mock. Save the same value as a write-only Dispatch secret and use
+starting the mock. Save the same value as a write-only Doodship secret and use
 its ID as `credentialSecretId` in registration. Never put its value in the
 registration body or checked-in Compose files. A separate adapter can use its
 own native secret mount or credential mechanism; keep cloud credentials inside

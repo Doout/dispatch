@@ -1,6 +1,6 @@
 # Neon preview databases
 
-Dispatch can create an isolated PostgreSQL branch in an existing Neon project.
+Doodship can create an isolated PostgreSQL branch in an existing Neon project.
 It does not install or provision a Neon cluster. The initial adapter supports
 schema-only preview branches, read-write compute, branch-specific credentials,
 reconciliation, reviewed schema-only replacement and branch deletion. Live Neon account validation is
@@ -13,7 +13,7 @@ owner can add a project provider by selecting an encrypted Neon API key and
 entering its API endpoint, Neon project ID and parent branch ID. Use a key
 restricted to that Neon project. Defaults use
 `https://console.neon.tech/api/v2`; compatible endpoints must use HTTPS and may
-not redirect. The saved endpoint, credential reference and Dispatch project
+not redirect. The saved endpoint, credential reference and Doodship project
 assignment are immutable. Register a new provider to change them. Owners can
 review removal of an unused registration; template references and owned service
 history block removal so recovery retains its provider identity.
@@ -41,7 +41,7 @@ spec:
 ```
 
 The selected database must exist on the parent. Schema-only copies its schema,
-without parent rows. Dispatch creates a new deterministic role on the owned
+without parent rows. Doodship creates a new deterministic role on the owned
 branch and refuses to reuse a role that exists on the source. It requests the
 connection URI with an explicit branch, compute, database and role; provider
 defaults cannot select the production connection. The accepted API key and
@@ -51,13 +51,13 @@ in errors, logs or public operation records.
 A manual service provision may use `parent-data` only when a controller owner
 submits `confirmDataCopy: "Copy parent rows into SERVICE_NAME"` with the named
 provision request. Automatic preview databases reject that mode. No masking is
-performed by Dispatch; a separate, reviewed masked seed process is required
+performed by Doodship; a separate, reviewed masked seed process is required
 before any copied rows are suitable for preview use.
 
 ## Bind a database to a preview
 
 Declare `previewServices` in the Application rendered by your WorkflowTemplate.
-Use a ServiceTemplate ID from the same Dispatch project. The controller prepares
+Use a ServiceTemplate ID from the same Doodship project. The controller prepares
 the database after checking the complete preview source revision and before
 running jobs. The source approval includes the selected template digest and
 provider identity. Fork approvals cannot authorize a later template change.
@@ -111,7 +111,7 @@ and does not undo database schema or data changes.
 One durable link connects each preview resource and alias to its current
 ServiceRun. New commits and controller restarts reuse that branch and its rows.
 Changing the referenced template configuration requires a reviewed replacement;
-Dispatch does not silently recreate or change an existing preview database.
+Doodship does not silently recreate or change an existing preview database.
 Stable production and staging services remain ordinary project service bindings
 and can coexist with these preview bindings.
 
@@ -121,20 +121,20 @@ Owned-service history shows the provider phase, preview identity and safe
 recovery timing. The accepted create checkpoint is saved before a provider POST.
 Recovery uses the captured branch ID when available. If the create response was
 lost before an ID was saved, reconciliation searches the exact deterministic
-branch name. It verifies the branch's Dispatch project, run, preview,
+branch name. It verifies the branch's Doodship project, run, preview,
 configuration and generation annotations, then completes missing compute and
 role setup on that branch. It
 never repeats branch creation after an uncertain create whose branch cannot be
 found. Inspect the original run and provider; do not repeatedly submit new runs.
 
-Dispatch refuses source, default and protected branches, and branches whose
+Doodship refuses source, default and protected branches, and branches whose
 ownership changed.
 Active preview references and application consumers block deletion. Retain is the
 default cleanup policy. In the owned resource panel, review and select retain,
 suspend or delete for this branch. Every change requires current project
 configuration and deployment permissions plus the shared typed confirmation.
 Delete explicitly approves permanent loss of this branch's data when the preview
-closes or expires. Dispatch saves the selected policy and approving actor before cleanup.
+closes or expires. Doodship saves the selected policy and approving actor before cleanup.
 
 Preview close and expiry capture each linked branch, its policy and a stable
 operation ID in the existing preview cleanup intent. Database cleanup runs only
@@ -185,11 +185,11 @@ idempotency receipt when a key is supplied. Template YAML continues to use
 of the created branch. A deleted preview branch needs a new preview identity.
 
 Neon schema-only branches are independent roots. The provider restore API copies
-schema and data, so Dispatch does not use it for reset.
+schema and data, so Doodship does not use it for reset.
 
 ## Current limits
 
-Native Dispatch workload backups currently support owned PostgreSQL/Docker
+Native Doodship workload backups currently support owned PostgreSQL/Docker
 services, not Neon branches. Use the provider's supported recovery facilities
 and independently verify your recovery procedure before explicitly deleting
 valuable branch data. Retained deployment artifacts do not back up this database.

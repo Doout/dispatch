@@ -1,6 +1,6 @@
 # Target agent installation and recovery
 
-Dispatch can place a reviewed cloud-init installer in a provider machine request, or install and recover an existing Docker target through verified SSH. Both paths install the same pinned agent and use its enrolled runtime for deployments, logs and lifecycle operations.
+Doodship can place a reviewed cloud-init installer in a provider machine request, or install and recover an existing Docker target through verified SSH. Both paths install the same pinned agent and use its enrolled runtime for deployments, logs and lifecycle operations.
 
 Set `DISPATCH_PUBLIC_URL` to the controller's public HTTPS origin. Install the release agent binaries under `DISPATCH_EDGE_BINARY_ROOT`, which defaults to `/usr/local/lib/dispatch-edge`, with filenames `linux-amd64` and `linux-arm64`. The review records the selected binary's SHA-256 and its content-addressed download URL. If that binary is replaced while a review or installer is pending, the old URL returns 404. Restore the reviewed binary or create a fresh review; the installer never accepts a different download or an HTTP redirect.
 
@@ -14,7 +14,7 @@ The exact user-data is encrypted with the provider request. Public reviews conta
 
 The installer requests its short-lived enrollment token over HTTPS after allocation and prerequisite checks. A lost reply returns the same encrypted token receipt. An expired, unused token can be replaced for that same target without allocating another machine. The installation claim expires after 24 hours; individual enrollment tokens expire after 15 minutes. Treat provider user-data as sensitive and restrict provider access accordingly.
 
-Allocation, installation, enrollment and runtime readiness are separate. An IP address or generic agent heartbeat does not make a target ready. Dispatch waits for the intended enrolled key, the reviewed agent artifact, and a fresh authenticated runtime check. The agent checks the Docker daemon, Compose v2 and Git before advertising its deployment runtime.
+Allocation, installation, enrollment and runtime readiness are separate. An IP address or generic agent heartbeat does not make a target ready. Doodship waits for the intended enrolled key, the reviewed agent artifact, and a fresh authenticated runtime check. The agent checks the Docker daemon, Compose v2 and Git before advertising its deployment runtime.
 
 ## Verified SSH installation
 

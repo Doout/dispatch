@@ -235,7 +235,7 @@ func (m *StorageManager) RefreshLocked(ctx context.Context, server core.Server) 
 			item.Message = "Runtime ownership matches more than one resource. Resolve the conflict before deleting data."
 		}
 		if item.Ownership == "unverified" {
-			item.Message = "No verified Dispatch owner. Storage remains protected."
+			item.Message = "No verified Doodship owner. Storage remains protected."
 		}
 		if err := m.Store.ObserveStorage(ctx, item); err != nil {
 			return err

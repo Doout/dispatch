@@ -165,7 +165,7 @@ func (p *FilePublisher) Prepare(ctx context.Context, plan core.ApplicationRoute)
 				continue
 			}
 			if entry.IsDir() {
-				return errors.New("the managed route directory must contain only Dispatch route files")
+				return errors.New("the managed route directory must contain only Doodship route files")
 			}
 			raw, err := os.ReadFile(filepath.Join(p.Directory, entry.Name()))
 			if err != nil {
@@ -173,7 +173,7 @@ func (p *FilePublisher) Prepare(ctx context.Context, plan core.ApplicationRoute)
 			}
 			first, _, ok := bytes.Cut(raw, []byte("\n"))
 			if !ok || !strings.HasPrefix(string(first), evidencePrefix) {
-				return errors.New("the managed route directory contains configuration not owned by Dispatch")
+				return errors.New("the managed route directory contains configuration not owned by Doodship")
 			}
 			record, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(string(first), evidencePrefix))
 			var existing core.ApplicationRoute

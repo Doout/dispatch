@@ -323,7 +323,7 @@ function Evidence({
           <p className="log-state">Loading log entries...</p>
         ) : logsError ? (
           <p className="log-state error">
-            Dispatch could not load logs. Retrying automatically.
+            Doodship could not load logs. Retrying automatically.
           </p>
         ) : logs.length ? (
           logs.map((entry) => (

@@ -597,7 +597,7 @@ function HelmSourceValues({ application, canEdit = true, onChanged }: { applicat
   }
 
   if (loading) return <section className="helm-values-loading" aria-busy="true"><CircleNotch size={20} weight="bold" /><div><strong>Loading chart values</strong><span>Reading values from the chart.</span></div></section>;
-  if (!inspection) return <section className="helm-values-error"><WarningCircle size={20} weight="fill" /><div><strong>Dispatch could not load chart values</strong><p>{error}</p><button className="quiet-button" onClick={() => setReload((value) => value + 1)}>Try again</button></div></section>;
+  if (!inspection) return <section className="helm-values-error"><WarningCircle size={20} weight="fill" /><div><strong>Doodship could not load chart values</strong><p>{error}</p><button className="quiet-button" onClick={() => setReload((value) => value + 1)}>Try again</button></div></section>;
   const changed = JSON.stringify(values) !== JSON.stringify(savedValues);
   return <div className="helm-values-editor-page">
     <div className="helm-values-savebar"><div><strong>Chart values</strong><span>{canEdit ? "Blue marks values that differ from the chart defaults." : "Read-only access."}</span></div><div>{notice && <span className="save-notice" role="status"><CheckCircle size={15} weight="fill" />{notice}</span>}{canEdit && <button className="primary-button" disabled={saving || !changed} onClick={() => void save()}>{saving ? "Saving..." : "Save values"}</button>}</div></div>

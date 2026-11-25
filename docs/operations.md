@@ -104,7 +104,7 @@ on every authorization decision, including existing sessions. The Access editor
 can set, preserve, or clear an expiry. An expired grant remains visible to owners
 for review but grants no access.
 
-GitHub sign-in providers can map `organization/team-slug` to a Dispatch team.
+GitHub sign-in providers can map `organization/team-slug` to a Doodship team.
 When a provider has mappings, sign-in requests `read:org`, verifies the complete
 team list through the provider API, and refreshes only memberships managed by that
 provider. Manual memberships remain separate. Removed mappings revoke their own
@@ -122,7 +122,7 @@ resets the connection check. Saving never deploys consumers automatically.
 
 The impact table allows operators with deployment permission to select consumers
 and confirm a redeployment. Multiple bindings for one application create one
-selected consumer. Dispatch validates all selected consumers before accepting
+selected consumer. Doodship validates all selected consumers before accepting
 work. Applications with active deployments, no successful release, or changed
 application inputs must be reviewed separately. Accepted runs use the last
 successful source revision, current application configuration, and newly captured

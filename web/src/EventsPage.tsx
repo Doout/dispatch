@@ -416,7 +416,7 @@ export function EventsListPage({
                 </h3>
                 <p>
                   New commits, preview commands, and PR closures appear here
-                  when Dispatch processes them. Routine checks are shown on the
+                  when Doodship processes them. Routine checks are shown on the
                   Rules tab.
                 </p>
               </div>

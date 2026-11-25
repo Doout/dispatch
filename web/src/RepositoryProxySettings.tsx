@@ -71,7 +71,7 @@ function RepositoryProxyForm() {
             placeholder={settings.url || "http://proxy.example.com:3128"} onChange={event => setURL(event.target.value)} />
           <small>{settings.url
             ? `Saved proxy ${settings.url}${settings.authenticated ? " with authentication." : "."} Enter a new URL to replace it.`
-            : "Dispatch uses the controller environment until you save a proxy here."}</small>
+            : "Doodship uses the controller environment until you save a proxy here."}</small>
         </label>
         <label>Bypass list
           <input type="text" spellCheck={false} maxLength={2048} value={noProxy} disabled={saving}

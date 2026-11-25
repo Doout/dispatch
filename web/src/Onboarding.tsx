@@ -173,7 +173,7 @@ export function ServerForm({ onChanged, onCancel, server, repairing = false, sec
 
   if (repairing && server) {
     return <form className="resource-form server-form" onSubmit={submit} aria-busy={busy}>
-      <div className="openshift-warning wide"><strong>Fresh administrator login required</strong><p>Dispatch replaces the cluster connection and discards this login.</p></div>
+      <div className="openshift-warning wide"><strong>Fresh administrator login required</strong><p>Doodship replaces the cluster connection and discards this login.</p></div>
       <label className="wide openshift-login-field"><span>oc login command</span><textarea placeholder="oc login --token=… --server=https://api.cluster.example:6443" value={loginCommand} onChange={(event) => setLoginCommand(event.target.value)} required spellCheck={false} /></label>
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="dialog-actions">{onCancel && <button type="button" className="quiet-button" onClick={onCancel}>Cancel</button>}<button className="primary-button" disabled={busy || !loginCommand.trim()}>{busy ? "Repairing connection..." : "Repair connection"}</button></div>
@@ -229,13 +229,13 @@ export function ServerForm({ onChanged, onCancel, server, repairing = false, sec
       <small className="wide">The SSH user needs Docker access. {savedSSHKeys.length ? "Use a key without a passphrase." : "Add an SSH private key under Variables first."}</small>
       <label className="wide"><span>SSH host public key</span><textarea placeholder="ssh-ed25519 AAAA..." value={builderHostKey} onChange={(event) => { setBuilderHostKey(event.target.value); setBuilderFingerprint(""); }} required spellCheck={false} /></label>
       <div className="wide relay-host-key"><div><strong>Host key fingerprint</strong><code>{builderFingerprint || "Check the host, or paste a verified key"}</code></div><button type="button" className="quiet-button" disabled={scanningBuilder || !remoteAddress.trim()} onClick={() => void scanBuilderHost()}>{scanningBuilder ? "Checking..." : "Check host"}</button></div>
-      <small className="wide">Compare the fingerprint with the builder host before saving. Dispatch pins the public key for Docker connections.</small>
+      <small className="wide">Compare the fingerprint with the builder host before saving. Doodship pins the public key for Docker connections.</small>
     </> : runtime === "docker" ? <>
       <label><span>Connection</span><select value="remote" disabled><option value="remote">Remote server</option></select></label>
       <label><span>Address</span><input placeholder="docker-host.example.com" value={remoteAddress} onChange={(event) => setRemoteAddress(event.target.value)} required spellCheck={false} /></label>
     </> : runtime === "openshift" ? <>
       {editing ? <div className="openshift-managed wide"><strong>Managed OpenShift connection</strong><dl><div><dt>Service account</dt><dd>{server?.kubernetes?.openShift?.serviceAccount ?? "dispatch-controller"}</dd></div><div><dt>Namespace</dt><dd>{server?.kubernetes?.openShift?.serviceAccountNamespace ?? "dispatch-system"}</dd></div><div><dt>API server</dt><dd>{server?.address}</dd></div></dl><small>Use Repair from the server list when the token, API address, or CA changes.</small></div> : <>
-        <div className="openshift-warning wide"><strong>Creates a cluster administrator</strong><p>The temporary login must be allowed to create a service account and cluster-admin binding. Dispatch stores the service-account kubeconfig, not this login command.</p></div>
+        <div className="openshift-warning wide"><strong>Creates a cluster administrator</strong><p>The temporary login must be allowed to create a service account and cluster-admin binding. Doodship stores the service-account kubeconfig, not this login command.</p></div>
         <label className="wide openshift-login-field"><span>oc login command</span><textarea placeholder="oc login --token=… --server=https://api.cluster.example:6443" value={loginCommand} onChange={(event) => setLoginCommand(event.target.value)} required spellCheck={false} /><small>Paste the non-interactive login command supplied by OpenShift.</small></label>
       </>}
       <label><span>Deployment namespace</span><input placeholder="default" value={namespace} onChange={(event) => setNamespace(event.target.value)} spellCheck={false} /></label>

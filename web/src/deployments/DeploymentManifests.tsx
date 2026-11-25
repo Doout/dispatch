@@ -64,7 +64,7 @@ function AddResourceGuide({ data, onClose }: { data: ManifestData; onClose: () =
   const templates = joinRef(origin.chartRepository || origin.repository, joinRef(origin.chartPath, "templates/"));
   return <section className="manifest-add-guide" aria-labelledby="manifest-add-title">
     <span className="manifest-add-icon"><FolderOpen size={19} /></span>
-    <div><strong id="manifest-add-title">Add a Kubernetes resource</strong><p>Add a template under <code>{templates}</code>, then push to <code>{origin.branch || "the configured branch"}</code>. Dispatch picks up the commit and creates a new deployment.</p>{origin.configPath && <p>Change stages, targets, or chart bindings in <code>{joinRef(origin.repository, origin.configPath)}</code>.</p>}</div>
+    <div><strong id="manifest-add-title">Add a Kubernetes resource</strong><p>Add a template under <code>{templates}</code>, then push to <code>{origin.branch || "the configured branch"}</code>. Doodship picks up the commit and creates a new deployment.</p>{origin.configPath && <p>Change stages, targets, or chart bindings in <code>{joinRef(origin.repository, origin.configPath)}</code>.</p>}</div>
     <button type="button" aria-label="Close add resource guide" onClick={onClose}><X size={16} /></button>
   </section>;
 }

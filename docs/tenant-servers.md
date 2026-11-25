@@ -2,7 +2,7 @@
 
 Doodship's control plane serves the UI, accounts, instance membership, public
 addresses and external events. Each connected instance runs a complete
-self-hosted Dispatch installation. That installation keeps its databases,
+self-hosted Doodship installation. That installation keeps its databases,
 credentials, queues, logs, artifacts and analytics, and runs its own jobs.
 
 The self-hosted installation initiates an authenticated WebSocket over HTTPS.

@@ -71,7 +71,7 @@ func validateBuiltinProvision(spec ServiceTemplateSpec) error {
 				return fmt.Errorf("invalid Docker environment name %s", name)
 			}
 			if spec.ServiceType == "postgresql" && (strings.HasPrefix(name, "POSTGRES_") || name == "PGDATA") {
-				return errors.New("PostgreSQL initialization variables are managed by Dispatch")
+				return errors.New("PostgreSQL initialization variables are managed by Doodship")
 			}
 			if err := check(value); err != nil {
 				return err

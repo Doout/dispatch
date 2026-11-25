@@ -58,7 +58,7 @@ function checkHostedImage(
     ]).trimEnd();
     if (
       version !==
-      `Dispatch ${product === "platform" ? "platform " : ""}main-${sha}`
+      `Doodship ${product === "platform" ? "platform " : ""}main-${sha}`
     ) {
       throw new Error(
         `The Linux ${platform.architecture} image reports an unexpected version.`,

@@ -103,7 +103,7 @@ func probeEndpoint(ctx context.Context, raw string, client *http.Client) core.En
 		return result
 	}
 	result.State = "unreachable"
-	result.Message = "The endpoint could not be reached from the Dispatch controller."
+	result.Message = "The endpoint could not be reached from the Doodship controller."
 	u, err := validateURL(raw, false)
 	if err != nil {
 		result.Message = "The configured endpoint is not a permitted public URL."
@@ -150,7 +150,7 @@ func probeEndpoint(ctx context.Context, raw string, client *http.Client) core.En
 	switch {
 	case res.StatusCode >= 200 && res.StatusCode < 300:
 		result.State = "reachable"
-		result.Message = "The endpoint responded successfully from the Dispatch controller."
+		result.Message = "The endpoint responded successfully from the Doodship controller."
 	case res.StatusCode >= 300 && res.StatusCode < 400:
 		result.State = "redirect"
 		result.Message = "The endpoint returned a redirect. Configure the final URL; redirects are not followed."
