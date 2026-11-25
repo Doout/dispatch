@@ -486,3 +486,53 @@ func TestRepositoryIdentityAcceptsCloneURLForms(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewTrustTracksNamedRepositoryCredential(t *testing.T) {
+	f, _ := sourceTrustFixture(t)
+	ctx := t.Context()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	parent, err := f.data.GetGitHubApp(ctx, f.source.GitHubAppID)
+	must(err)
+	url, err := core.CanonicalRepositoryURL(parent.WebURL + "/example/gitops")
+	must(err)
+	now := time.Now().UTC()
+	secret := core.Secret{ID: "gitops-pat", Name: "Read charts", Type: core.SecretTypeGitHubToken, CreatedAt: now, UpdatedAt: now}
+	must(f.data.CreateSecret(ctx, secret))
+	binding := core.RepositoryConnection{ID: "charts", ProjectID: f.source.ProjectID, Name: "gitops-read", RepositoryURL: url, CredentialSecretID: secret.ID, UpdatedAt: now}
+	must(f.data.CreateRepositoryConnection(ctx, binding))
+
+	docs, err := Parse(f.resource.Path, []byte(f.resource.Document))
+	must(err)
+	chart := docs[0].Spec.Sources["gitops"]
+	chart.Connection = binding.Name
+	docs[0].Spec.Sources["gitops"] = chart
+	encoded, err := docs[0].MarshalYAML()
+	must(err)
+	f.resource.Document = string(encoded)
+	f.resource.SpecDigest, err = docs[0].Digest()
+	must(err)
+	revision := f.previous
+	revision.SpecDigest = f.resource.SpecDigest
+	pinned := revision.Sources["gitops"]
+	pinned.GitHubAppID, pinned.RepositoryConnectionID, pinned.CredentialSecretID, pinned.CloneURL = "", binding.ID, secret.ID, url
+	revision.Sources["gitops"] = pinned
+	initial, err := f.service.SourceTrust(ctx, f.resource, revision)
+	must(err)
+	secret.UpdatedAt = now.Add(time.Minute)
+	must(f.data.UpdateSecret(ctx, secret))
+	rotated, err := f.service.SourceTrust(ctx, f.resource, revision)
+	must(err)
+	if !rotated.Allowed || initial.Digest == rotated.Digest {
+		t.Fatal("PAT rotation must change preview approval evidence")
+	}
+	binding.CredentialSecretID, binding.GitHubAppID, binding.UpdatedAt = "", parent.ID, now.Add(time.Hour)
+	must(f.data.UpdateRepositoryConnection(ctx, binding))
+	if _, err := f.service.SourceTrust(ctx, f.resource, revision); !errors.Is(err, ErrPreviewSourceTrust) {
+		t.Fatalf("stale PAT revision after App switch: %v", err)
+	}
+}

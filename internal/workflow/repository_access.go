@@ -40,7 +40,7 @@ func (s *Service) repositoryHead(ctx context.Context, source core.ConfigSource, 
 		if s.GitHub == nil {
 			return "", errors.New("GitHub App access is not configured")
 		}
-		return s.GitHub.RepositoryHead(ctx, source.GitHubAppID, repository, branch)
+		return s.GitHub.RepositoryHead(githubapp.WithRepositoryConnection(ctx, source.RepositoryConnectionID), source.GitHubAppID, repository, branch)
 	}
 	access, err := s.repositoryAccess(ctx, source, repository)
 	if err != nil {
@@ -192,6 +192,14 @@ func (s *Service) repositoryFiles(ctx context.Context, source core.ConfigSource,
 	return items, nil
 }
 
+func (s *Service) resolveSourceProxy(ctx context.Context, source core.ConfigSource) (string, string, error) {
+	app := source.GitHubAppID
+	if app == "" {
+		app = source.RepositoryProxyAppID
+	}
+	return s.RepositoryProxy.Resolve(repositoryproxy.WithGitHubApp(ctx, app))
+}
+
 func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource, repository string) (repositoryAccess, error) {
 	prepareEnvironment := deploy.PrepareGitEnvironment
 	if s.RequireRemote {
@@ -204,15 +212,15 @@ func (s *Service) repositoryAccess(ctx context.Context, source core.ConfigSource
 	if err != nil {
 		return repositoryAccess{}, err
 	}
-	app := core.App{SourceRepo: repositoryURL}
+	app := core.App{SourceRepo: repositoryURL, RepositoryConnectionID: source.RepositoryConnectionID}
 	if repositoryproxy.IsHTTPRepository(repositoryURL) {
-		app.SourceProxyURL, app.SourceNoProxy, err = s.RepositoryProxy.Resolve(repositoryproxy.WithGitHubApp(ctx, source.GitHubAppID))
+		app.SourceProxyURL, app.SourceNoProxy, err = s.resolveSourceProxy(ctx, source)
 		if err != nil {
 			return repositoryAccess{}, err
 		}
 	}
 	if source.GitHubAppID != "" {
-		token, err := s.GitHub.RepositoryToken(ctx, source.GitHubAppID, repository)
+		token, err := s.GitHub.RepositoryToken(githubapp.WithRepositoryConnection(ctx, source.RepositoryConnectionID), source.GitHubAppID, repository)
 		if err != nil {
 			return repositoryAccess{}, err
 		}

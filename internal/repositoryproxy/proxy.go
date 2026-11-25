@@ -2,6 +2,7 @@ package repositoryproxy
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
@@ -217,16 +218,37 @@ func IsHTTPRepository(repository string) bool {
 }
 
 func RedactGitOutput(output string, environment []string) string {
-	for i := len(environment) - 1; i >= 0; i-- {
-		raw, ok := strings.CutPrefix(environment[i], "https_proxy=")
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
 		if !ok {
 			continue
 		}
-		if address, err := url.Parse(raw); err == nil && address.User != nil {
-			address.User = nil
-			return strings.ReplaceAll(output, raw, address.String())
+		if key == "https_proxy" {
+			if address, err := url.Parse(value); err == nil && address.User != nil {
+				password, _ := address.User.Password()
+				address.User = nil
+				output = strings.ReplaceAll(output, value, address.String())
+				if password != "" {
+					output = strings.ReplaceAll(output, password, "[REDACTED]")
+				}
+			}
 		}
-		break
+		if !strings.HasPrefix(key, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		if token, ok := strings.CutPrefix(value, "Authorization: Bearer "); ok && token != "" {
+			output = strings.ReplaceAll(output, token, "[REDACTED]")
+		}
+		if encoded, ok := strings.CutPrefix(value, "Authorization: Basic "); ok && encoded != "" {
+			output = strings.ReplaceAll(output, encoded, "[REDACTED]")
+			raw, err := base64.StdEncoding.DecodeString(encoded)
+			if err == nil {
+				if _, token, ok := strings.Cut(string(raw), ":"); ok && token != "" {
+					output = strings.ReplaceAll(output, token, "[REDACTED]")
+				}
+			}
+			clear(raw)
+		}
 	}
 	return output
 }

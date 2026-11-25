@@ -27,6 +27,11 @@ export DISPATCH_WORKER_IMAGE=<image>@sha256:<digest>
 export DISPATCH_WORKER_MODE=tenant
 ```
 
+For named repository connections and Git checkouts that use an explicit proxy,
+upgrade both the worker binary and the pinned execution image. On startup the
+worker checks the image's protocol. The controller can keep sending other jobs
+to older workers during a rolling upgrade.
+
 The state directory must be private and persistent. The worker saves its identity,
 receipt encryption key and operation receipts there. After enrollment it uses
 short-lived sessions obtained with the saved key. Remove the enrollment token

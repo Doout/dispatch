@@ -223,7 +223,7 @@ func ValidateRepositoryHost(repository, webURL string) error {
 	if err != nil || github.Host == "" {
 		return errors.New("GitHub App has an invalid GitHub URL")
 	}
-	if !strings.EqualFold(repo.Host, github.Host) {
+	if core.RepositoryHostPort(repo) != core.RepositoryHostPort(github) {
 		return fmt.Errorf("repository host %s does not match GitHub App host %s", repo.Host, github.Host)
 	}
 	return nil
@@ -866,7 +866,11 @@ func (m *Manager) request(ctx context.Context, method, endpoint, token string, b
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	response, err := m.routedClient(appTransport{connection: &connection}).Do(request)
+	client := m.routedClient(appTransport{connection: &connection})
+	if _, bound := ctx.Value(repositoryConnectionKey{}).(string); bound {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}

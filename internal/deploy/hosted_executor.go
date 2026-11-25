@@ -16,6 +16,7 @@ import (
 )
 
 type HostedDeploymentStore interface {
+	repositoryConnectionReader
 	GetApp(context.Context, string) (core.App, error)
 	GetServer(context.Context, string) (core.Server, error)
 	GetDeployment(context.Context, string) (core.Deployment, error)
@@ -123,6 +124,11 @@ func (e *HostedExecutor) AuthorizeRequest(ctx context.Context, request workflowr
 	if err != nil {
 		return err
 	}
+	if op.Operation == "deploy" || op.SourceCredential != "" {
+		if err := checkDeploymentRepositoryConnection(ctx, e.Store, app); err != nil {
+			return err
+		}
+	}
 	if app.ProjectID != request.ProjectID || app.ServerID != op.Server.ID || app.Name != op.App.Name || app.Template != op.App.Template || app.Generated != op.App.Generated || app.SpecDigest() != op.AppSpecDigest {
 		return errors.New("deployment application changed")
 	}
@@ -184,8 +190,9 @@ func (e *HostedExecutor) execute(ctx context.Context, operation string, d core.D
 			revision = "cleanup-" + ulid.Make().String()
 		}
 	}
-	op := &workflowrunner.Deployment{Operation: operation, Deployment: d, App: app, Server: server, AppSpecDigest: app.SpecDigest(), ServerDigest: hostedServerDigest(server), SourceCredential: app.SourceCredential, ComposeContent: app.ComposeContent, HelmValues: app.HelmValues, HelmGeneratedValues: app.HelmGeneratedValues, HelmGroupValues: app.HelmGroupValues, HelmProvenance: app.HelmProvenance, Snapshot: d.Snapshot, ServiceRuntime: app.ServiceRuntime}
+	op := &workflowrunner.Deployment{Operation: operation, Deployment: d, App: app, Server: server, AppSpecDigest: app.SpecDigest(), ServerDigest: hostedServerDigest(server), SourceCredential: app.SourceCredential, SourceProxyURL: app.SourceProxyURL, SourceNoProxy: app.SourceNoProxy, ComposeContent: app.ComposeContent, HelmValues: app.HelmValues, HelmGeneratedValues: app.HelmGeneratedValues, HelmGroupValues: app.HelmGroupValues, HelmProvenance: app.HelmProvenance, Snapshot: d.Snapshot, ServiceRuntime: app.ServiceRuntime}
 	request := workflowrunner.Request{Version: workflowrunner.Version, ProjectID: app.ProjectID, ResourceID: app.ID, RevisionID: revision, Mode: "tenant", Deployment: op}
+	request.Version = request.RequiredVersion()
 	if operation == "deploy" && len(app.HookEnvironment) > 0 {
 		resolved, err := e.hookEnvironment(ctx, app)
 		if err != nil {

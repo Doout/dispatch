@@ -67,7 +67,7 @@ func TestConnectionDiagnosticOmitsPrivateRequestData(t *testing.T) {
 		{context.DeadlineExceeded, "context deadline exceeded"},
 		{errors.New("unexpected upstream failure: " + privateURL), "The connection request failed."},
 	} {
-		if got := ConnectionDiagnostic(&url.Error{Op: "Post", URL: privateURL, Err: tc.cause}).Error(); (!strings.Contains(got, tc.want) || strings.Contains(got, "fixture") || strings.Contains(got, "private-code")) {
+		if got := ConnectionDiagnostic(&url.Error{Op: "Post", URL: privateURL, Err: tc.cause}).Error(); !strings.Contains(got, tc.want) || strings.Contains(got, "fixture") || strings.Contains(got, "private-code") {
 			t.Errorf("unexpected diagnostic %q, wanted %q", got, tc.want)
 		}
 	}
@@ -413,5 +413,41 @@ func TestWorkflowRepositoryOperations(t *testing.T) {
 	}
 	if !webhookConfigured.Load() || !statusPublished.Load() {
 		t.Fatal("workflow repository operations were not sent")
+	}
+}
+
+func TestValidateRepositoryHostNormalizesHTTPSDefaultPort(t *testing.T) {
+	for _, tc := range []struct {
+		repositoryHost, appHost string
+		match                   bool
+	}{
+		{"GITHUB.example:443", "github.example", true},
+		{"github.example", "github.example:443", true},
+		{"[::1]:443", "[::1]", true},
+		{"[::1]:8443", "[::1]:443", false},
+		{"github.example:8443", "github.example", false},
+	} {
+		err := ValidateRepositoryHost("https://"+tc.repositoryHost+"/org/repo", "https://"+tc.appHost)
+		if (err == nil) != tc.match {
+			t.Errorf("repository %s, App %s: %v", tc.repositoryHost, tc.appHost, err)
+		}
+	}
+}
+
+func TestNamedRepositoryAPIRequestsStopWhenGitHubReportsAMove(t *testing.T) {
+	var unexpected atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved" {
+			unexpected.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Redirect(w, r, "/moved", http.StatusMovedPermanently)
+	}))
+	defer server.Close()
+	manager := &Manager{Client: server.Client()}
+	err := manager.request(WithRepositoryConnection(t.Context(), "gitops"), http.MethodGet, server.URL+"/repos/team/chart/installation", "fixture-token", nil, nil, core.GitHubAppConnection{ID: "app"})
+	if err == nil || unexpected.Load() {
+		t.Fatalf("named repository API followed a redirect: %v", err)
 	}
 }

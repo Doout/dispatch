@@ -450,14 +450,16 @@ func scanEdgeJob(row scanner) (core.EdgeJob, error) {
 }
 
 func (s *SQLStore) CreateGitHubApp(ctx context.Context, item core.GitHubAppConnection) error {
-	_, err := s.db.ExecContext(ctx, s.q(`INSERT INTO github_apps(
+	return s.writeConnectionName(ctx, item.Name, `SELECT EXISTS(SELECT 1 FROM repository_connections WHERE name=?)`, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, s.q(`INSERT INTO github_apps(
 		id,name,web_url,api_url,app_id,client_id,slug,registration_owner,registration_owner_type,installation_id,installation_account,installation_url,webhook_url,
 		relay_webhook_id,private_network_id,encrypted_private_key,encrypted_webhook_secret,state,last_verified_at,created_at,updated_at,read_only,proxy_url,no_proxy,proxy_userinfo)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), item.ID, item.Name, item.WebURL, item.APIURL, item.AppID,
-		item.ClientID, item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL,
-		item.RelayWebhookID, item.PrivateNetworkID, item.EncryptedPrivateKey, item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt),
-		stamp(item.CreatedAt), stamp(item.UpdatedAt), item.ReadOnly, item.Proxy.URL, item.Proxy.NoProxy, item.Proxy.EncryptedUserinfo)
-	return err
+			item.ClientID, item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL,
+			item.RelayWebhookID, item.PrivateNetworkID, item.EncryptedPrivateKey, item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt),
+			stamp(item.CreatedAt), stamp(item.UpdatedAt), item.ReadOnly, item.Proxy.URL, item.Proxy.NoProxy, item.Proxy.EncryptedUserinfo)
+		return err
+	})
 }
 
 func (s *SQLStore) UpdateGitHubApp(ctx context.Context, item core.GitHubAppConnection, edit *GitHubAppProxyEdit) error {
@@ -468,15 +470,17 @@ func (s *SQLStore) UpdateGitHubApp(ctx context.Context, item core.GitHubAppConne
 	if edit != nil && edit.Bypass {
 		bypass = &item.Proxy.NoProxy
 	}
-	result, err := s.db.ExecContext(ctx, s.q(`UPDATE github_apps SET name=?,web_url=?,api_url=?,app_id=?,client_id=?,slug=?,
+	return s.writeConnectionName(ctx, item.Name, `SELECT EXISTS(SELECT 1 FROM repository_connections WHERE name=?)`, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, s.q(`UPDATE github_apps SET name=?,web_url=?,api_url=?,app_id=?,client_id=?,slug=?,
 		registration_owner=?,registration_owner_type=?,installation_id=?,installation_account=?,installation_url=?,webhook_url=?,relay_webhook_id=?,private_network_id=?,encrypted_private_key=?,encrypted_webhook_secret=?,state=?,
 		last_verified_at=?,updated_at=?,read_only=?,proxy_url=COALESCE(?,proxy_url),
 		no_proxy=CASE WHEN COALESCE(?,proxy_url)='' THEN '' ELSE COALESCE(?,no_proxy) END,
 		proxy_userinfo=COALESCE(?,proxy_userinfo) WHERE id=?`), item.Name, item.WebURL, item.APIURL, item.AppID, item.ClientID,
-		item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL, item.RelayWebhookID, item.PrivateNetworkID, item.EncryptedPrivateKey,
-		item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ReadOnly,
-		address, address, bypass, userinfo, item.ID)
-	return changed(result, err)
+			item.Slug, item.RegistrationOwner, item.RegistrationOwnerType, item.InstallationID, item.InstallationAccount, item.InstallationURL, item.WebhookURL, item.RelayWebhookID, item.PrivateNetworkID, item.EncryptedPrivateKey,
+			item.EncryptedWebhookSecret, item.State, nullTime(item.LastVerifiedAt), stamp(item.UpdatedAt), item.ReadOnly,
+			address, address, bypass, userinfo, item.ID)
+		return changed(result, err)
+	})
 }
 
 func (s *SQLStore) DeleteGitHubApp(ctx context.Context, id string) error {

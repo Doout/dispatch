@@ -13,6 +13,8 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	"github.com/doout/dispatch/internal/deploy"
+	"github.com/doout/dispatch/internal/githubapp"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/runlog"
 	"github.com/doout/dispatch/internal/store"
 	"github.com/doout/dispatch/internal/workflowrunner"
@@ -23,6 +25,17 @@ type workerSource = workflowrunner.Source
 func (s *Service) AuthorizeWorkerRequest(ctx context.Context, request workflowrunner.Request) error {
 	if request.Workflow == nil {
 		return errors.New("workflow request is required")
+	}
+	for _, input := range request.Workflow.Sources {
+		if input.Revision.RepositoryConnectionID != "" {
+			binding, err := s.pinnedRepositoryConnection(ctx, request.ProjectID, input.Revision)
+			if err != nil {
+				return err
+			}
+			if input.URL != binding.RepositoryURL {
+				return errors.New("worker source no longer matches its repository connection")
+			}
+		}
 	}
 	if request.Workflow.ServiceRunID != "" {
 		return s.authorizeWorkerService(ctx, request)
@@ -80,7 +93,8 @@ func (r *jobRuntime) runRemoteJob(ctx context.Context, job JobSpec, secrets map[
 	if mode == "" {
 		mode = "tenant"
 	}
-	request := workflowrunner.Request{Version: workflowrunner.Version, ProjectID: r.source.ProjectID, ResourceID: r.revision.ResourceID, RevisionID: r.revision.ID, Mode: mode, Workflow: &workflowrunner.Workflow{Job: raw, Sources: sources, Inputs: r.inputs, Secrets: secrets}}
+	request := workflowrunner.Request{ProjectID: r.source.ProjectID, ResourceID: r.revision.ResourceID, RevisionID: r.revision.ID, Mode: mode, Workflow: &workflowrunner.Workflow{Job: raw, Sources: sources, Inputs: r.inputs, Secrets: secrets}}
+	request.Version = request.RequiredVersion()
 	if r.serviceTemplate != nil {
 		request.Workflow.ServiceRunID = r.serviceRunID
 		digest := sha256.Sum256([]byte(r.serviceTemplate.Document))
@@ -105,12 +119,18 @@ func (s *Service) workerSource(ctx context.Context, source core.ConfigSource, re
 		return workerSource{}, errors.New("hosted repositories must use HTTPS or SSH")
 	}
 	item := workerSource{Revision: revision, URL: url}
+	if repositoryproxy.IsHTTPRepository(url) {
+		item.ProxyURL, item.NoProxy, err = s.resolveSourceProxy(ctx, source)
+		if err != nil {
+			return item, err
+		}
+	}
 	if source.GitHubAppID != "" {
 		if s.GitHub == nil {
 			return item, errors.New("GitHub App access is not configured")
 		}
 		item.AuthType = deploy.SourceAuthGitHubApp
-		item.Credential, err = s.GitHub.RepositoryToken(ctx, source.GitHubAppID, repository)
+		item.Credential, err = s.GitHub.RepositoryToken(githubapp.WithRepositoryConnection(ctx, source.RepositoryConnectionID), source.GitHubAppID, repository)
 		return item, err
 	}
 	if source.CredentialSecretID == "" || s.Secrets == nil {
@@ -213,7 +233,7 @@ func (r *jobRuntime) checkoutWorkerSource(ctx context.Context, alias string) (st
 	if !commitRefPattern.MatchString(source.Revision.CommitSHA) {
 		return "", errors.New("worker source requires an immutable commit")
 	}
-	environment, cleanup, err := deploy.PrepareGitEnvironment(core.App{SourceAuthType: source.AuthType, SourceCredential: source.Credential})
+	environment, cleanup, err := deploy.PrepareGitEnvironment(core.App{SourceRepo: url, RepositoryConnectionID: source.Revision.RepositoryConnectionID, SourceAuthType: source.AuthType, SourceCredential: source.Credential, SourceProxyURL: source.ProxyURL, SourceNoProxy: source.NoProxy})
 	if err != nil {
 		return "", err
 	}

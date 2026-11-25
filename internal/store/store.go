@@ -160,6 +160,11 @@ type Store interface {
 	CreateGitHubApp(context.Context, core.GitHubAppConnection) error
 	UpdateGitHubApp(context.Context, core.GitHubAppConnection, *GitHubAppProxyEdit) error
 	DeleteGitHubApp(context.Context, string) error
+	ListRepositoryConnections(context.Context) ([]core.RepositoryConnection, error)
+	GetRepositoryConnection(context.Context, string) (core.RepositoryConnection, error)
+	GetRepositoryConnectionByName(context.Context, string, string) (core.RepositoryConnection, error)
+	CreateRepositoryConnection(context.Context, core.RepositoryConnection) error
+	UpdateRepositoryConnection(context.Context, core.RepositoryConnection) error
 	ListGitHubApps(context.Context) ([]core.GitHubAppConnection, error)
 	GetGitHubApp(context.Context, string) (core.GitHubAppConnection, error)
 	CreateConfigSource(context.Context, core.ConfigSource) error

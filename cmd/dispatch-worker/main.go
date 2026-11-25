@@ -35,6 +35,10 @@ func main() {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) == 2 && os.Args[1] == "protocol-version" {
+		_, err := fmt.Fprintln(os.Stdout, workflowrunner.RepositoryAccessVersion)
+		return err
+	}
 	if len(os.Args) > 1 && os.Args[1] == "execute" {
 		return execute(ctx, os.Stdin, os.Stdout)
 	}
@@ -79,7 +83,17 @@ func run() error {
 		}
 		return fmt.Errorf("runtime worker request returned HTTP %d", response.StatusCode)
 	}}
+	var retryProtocolAt time.Time
 	for ctx.Err() == nil {
+		if client.MaxVersion == "" && !time.Now().Before(retryProtocolAt) {
+			version, probeErr := executor.ProtocolVersion(ctx)
+			if probeErr != nil {
+				slog.Warn("cannot determine execution image protocol", "error", probeErr)
+				retryProtocolAt = time.Now().Add(time.Minute)
+			} else {
+				client.MaxVersion = version
+			}
+		}
 		busy, err := client.Poll(ctx, worker)
 		if err == nil && !busy && runtimeWorker != nil {
 			job, leaseErr := typed.Lease(ctx)

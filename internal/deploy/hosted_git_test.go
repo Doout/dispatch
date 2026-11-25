@@ -112,3 +112,34 @@ func TestHostedGitUsesOnlyExplicitTenantCredential(t *testing.T) {
 		t.Fatal("tenant key persisted after cleanup", err)
 	}
 }
+
+func TestNamedRepositoryGitCredentialsAreScopedToTheirHTTPSRepository(t *testing.T) {
+	repository := "https://github.example.test/team/chart.git"
+	app := core.App{SourceRepo: repository, SourceAuthType: SourceAuthGitHubToken, SourceCredential: "temporary-pat", RepositoryConnectionID: "gitops"}
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, prepare := range []func(core.App) ([]string, func(), error){PrepareGitEnvironment, PrepareIsolatedGitEnvironment} {
+		env, cleanup, err := prepare(app)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanup()
+		config := func(key, address string) (string, error) {
+			cmd := exec.Command("git", "config", "--get-urlmatch", key, address)
+			cmd.Env = env
+			out, err := cmd.Output()
+			return strings.TrimSpace(string(out)), err
+		}
+		if header, err := config("http.extraHeader", repository); err != nil || !strings.HasPrefix(header, "Authorization: Basic ") {
+			t.Fatal("the bound repository is missing its HTTP credential")
+		}
+		for _, address := range []string{"https://different.example.test/team/chart.git", "https://github.example.test/team/other.git"} {
+			if header, _ := config("http.extraHeader", address); header != "" {
+				t.Fatal("Git selected a credential for an unrelated repository")
+			}
+		}
+		if follow, err := config("http.followRedirects", repository); err != nil || follow != "false" {
+			t.Fatal("named repository Git authentication allows redirects")
+		}
+	}
+}

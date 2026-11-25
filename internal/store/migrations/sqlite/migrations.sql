@@ -1843,3 +1843,17 @@ ALTER TABLE controller_settings ADD COLUMN repository_proxy_userinfo TEXT NOT NU
 ALTER TABLE github_apps ADD COLUMN proxy_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE github_apps ADD COLUMN no_proxy TEXT NOT NULL DEFAULT '';
 ALTER TABLE github_apps ADD COLUMN proxy_userinfo TEXT NOT NULL DEFAULT '';
+
+-- dispatch:migration 109_repository_connections
+CREATE TABLE repository_connections (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    repository_url TEXT NOT NULL,
+    github_app_id TEXT REFERENCES github_apps(id) ON DELETE RESTRICT,
+    credential_secret_id TEXT REFERENCES secrets(id) ON DELETE RESTRICT,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, name),
+    CHECK ((github_app_id IS NULL) <> (credential_secret_id IS NULL))
+);
+CREATE INDEX repository_connections_name ON repository_connections(name);

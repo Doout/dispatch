@@ -9,26 +9,29 @@ const (
 )
 
 type ConfigSource struct {
-	ID                  string            `json:"id"`
-	ProjectID           string            `json:"projectId"`
-	GitHubAppID         string            `json:"githubAppId,omitempty"`
-	CredentialSecretID  string            `json:"credentialSecretId,omitempty"`
-	Name                string            `json:"name"`
-	Repository          string            `json:"repository"`
-	RepositoryID        int64             `json:"repositoryId,omitempty"`
-	RepositoryStatus    *RepositoryStatus `json:"repositoryStatus,omitempty"`
-	Branch              string            `json:"branch"`
-	Path                string            `json:"path"`
-	SyncMode            string            `json:"syncMode"`
-	PollIntervalSeconds int               `json:"pollIntervalSeconds"`
-	Active              bool              `json:"active"`
-	State               string            `json:"state"`
-	LastSeenSHA         string            `json:"lastSeenSha,omitempty"`
-	LastSyncedAt        *time.Time        `json:"lastSyncedAt,omitempty"`
-	LastPolledAt        *time.Time        `json:"lastPolledAt,omitempty"`
-	LastError           string            `json:"lastError,omitempty"`
-	CreatedAt           time.Time         `json:"createdAt"`
-	UpdatedAt           time.Time         `json:"updatedAt"`
+	// Set only on copies used to check out a workflow source.
+	RepositoryConnectionID string            `json:"-"`
+	RepositoryProxyAppID   string            `json:"-"`
+	ID                     string            `json:"id"`
+	ProjectID              string            `json:"projectId"`
+	GitHubAppID            string            `json:"githubAppId,omitempty"`
+	CredentialSecretID     string            `json:"credentialSecretId,omitempty"`
+	Name                   string            `json:"name"`
+	Repository             string            `json:"repository"`
+	RepositoryID           int64             `json:"repositoryId,omitempty"`
+	RepositoryStatus       *RepositoryStatus `json:"repositoryStatus,omitempty"`
+	Branch                 string            `json:"branch"`
+	Path                   string            `json:"path"`
+	SyncMode               string            `json:"syncMode"`
+	PollIntervalSeconds    int               `json:"pollIntervalSeconds"`
+	Active                 bool              `json:"active"`
+	State                  string            `json:"state"`
+	LastSeenSHA            string            `json:"lastSeenSha,omitempty"`
+	LastSyncedAt           *time.Time        `json:"lastSyncedAt,omitempty"`
+	LastPolledAt           *time.Time        `json:"lastPolledAt,omitempty"`
+	LastError              string            `json:"lastError,omitempty"`
+	CreatedAt              time.Time         `json:"createdAt"`
+	UpdatedAt              time.Time         `json:"updatedAt"`
 }
 
 type WorkflowResource struct {
@@ -130,14 +133,16 @@ type WorkflowPreviewTemplate struct {
 }
 
 type WorkflowSourceRevision struct {
-	ContentHashes map[string]string `json:"contentHashes,omitempty"`
-	Alias         string            `json:"alias"`
-	Repository    string            `json:"repository"`
-	Branch        string            `json:"branch"`
-	CommitSHA     string            `json:"commitSha"`
-	Path          string            `json:"path,omitempty"`
-	GitHubAppID   string            `json:"githubAppId,omitempty"`
-	CloneURL      string            `json:"cloneUrl,omitempty"`
+	RepositoryConnectionID string            `json:"repositoryConnectionId,omitempty"`
+	CredentialSecretID     string            `json:"credentialSecretId,omitempty"`
+	ContentHashes          map[string]string `json:"contentHashes,omitempty"`
+	Alias                  string            `json:"alias"`
+	Repository             string            `json:"repository"`
+	Branch                 string            `json:"branch"`
+	CommitSHA              string            `json:"commitSha"`
+	Path                   string            `json:"path,omitempty"`
+	GitHubAppID            string            `json:"githubAppId,omitempty"`
+	CloneURL               string            `json:"cloneUrl,omitempty"`
 }
 
 // WorkflowPullRequest captures the PR identity when a deployment is scheduled.

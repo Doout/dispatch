@@ -163,11 +163,11 @@ spec:
 
 Application jobs default to `reuse: onInputMatch`. Matching jobs share successful results across Applications in the same repository configuration. Concurrent requests for identical inputs wait for the first build. This coordination works within one controller; it does not coordinate multiple controller replicas.
 
-### GitHub Apps for source repositories
+### Credentials for source repositories
 
 Sources inherit the connection or saved credential that reads the workflow YAML. For a GitHub-managed preview template, that default is the GitHub App that syncs the template file. Inline previews inherit their selected repository access source.
 
-Set `connection` on a source to select a different connected GitHub App by its name in **Connections**. The App must be installed for that repository and verified in Dispatch. Use a read-only App to fetch a chart or other dependency. Treat write access to the workflow configuration as permission to select its source connections.
+Set `connection` on a source to select a named repository connection in its project or a GitHub App by its name in **Connections**. The App must be installed for that repository and verified in Dispatch. Use a read-only App to fetch a chart or other dependency. Treat write access to the workflow configuration as permission to select its source connections.
 
 ```yaml
 spec:
@@ -182,6 +182,25 @@ spec:
 ```
 
 For a source using a GitHub App, a short repository name uses the App's GitHub host. An HTTPS URL must match that host, including when the source inherits its App. An override pins the connection and commit for the run. Dispatch uses the App's saved proxy for source checkout and Helm inputs. PR comments, links, and reports use the GitHub App selected on the preview trigger. Offline `doodship` continues to use local checkouts.
+
+#### Switch a workflow repository from a PAT to a GitHub App
+
+1. In **Settings → Variables**, save the personal access token as a **GitHub token** with read access to the dependency repository.
+2. In **Settings → Connections**, add a **Repository connection**. Select the project, give the connection a name such as `gitops-read`, enter the repository’s HTTPS clone URL, and select the saved token.
+3. In each workflow that reads this repository, set the source’s `connection` to that name.
+
+```yaml
+spec:
+  sources:
+    gitops:
+      repository: example/gitops
+      ref: helm-resources
+      connection: gitops-read
+```
+
+A connection applies to one repository. Workflows in the same project can share it. Rotate an expiring PAT in Variables. Once the GitHub App is installed for that repository, edit the connection and select the App. Sync the repository configuration and start a new run to pick up the new credentials. The YAML keeps the same name. PR comments and preview triggers continue to use their configured GitHub App.
+
+For a PAT, a configuration read through a GitHub App on the same host uses that App’s proxy. Other PAT checkouts use the controller’s repository proxy settings. After a switch to App authentication, checkouts use the selected App’s proxy.
 
 ### Docker builders
 

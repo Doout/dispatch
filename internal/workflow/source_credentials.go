@@ -14,6 +14,20 @@ import (
 
 func (s *Service) resolveWorkflowSource(ctx context.Context, config core.ConfigSource, templateAppID, alias string, spec SourceSpec) (core.WorkflowSourceRevision, error) {
 	item := core.WorkflowSourceRevision{Alias: alias, Repository: spec.Repository, Branch: sourceRevisionRef(spec), Path: spec.Path}
+	binding, found, err := s.lookupWorkflowRepositoryConnection(ctx, config.ProjectID, spec)
+	if err != nil {
+		return item, err
+	}
+	if found {
+		item.RepositoryConnectionID, item.CredentialSecretID = binding.ID, binding.CredentialSecretID
+		item.CloneURL, item.GitHubAppID = binding.RepositoryURL, binding.GitHubAppID
+		source, err := s.boundSourceConfig(ctx, config, binding)
+		if err != nil {
+			return item, err
+		}
+		item.CommitSHA, err = s.repositoryHead(ctx, source, item.CloneURL, item.Branch)
+		return item, err
+	}
 	connection, err := s.workflowSourceApp(ctx, config.GitHubAppID, templateAppID, spec.Connection)
 	if err != nil {
 		return item, err
@@ -32,6 +46,90 @@ func (s *Service) resolveWorkflowSource(ctx context.Context, config core.ConfigS
 	}
 	item.CommitSHA, err = s.GitHub.RepositoryHead(ctx, connection.ID, item.CloneURL, item.Branch)
 	return item, err
+}
+
+// A workflow may spell its repository as owner/name or as an absolute HTTPS URL.
+func matchesBoundRepository(binding core.RepositoryConnection, repository string) bool {
+	candidate := repository
+	if !isCloneURL(repository) {
+		origin, err := url.Parse(binding.RepositoryURL)
+		if err != nil {
+			return false
+		}
+		candidate = "https://" + origin.Host + "/" + repository
+	}
+	normalized, err := core.CanonicalRepositoryURL(candidate)
+	return err == nil && normalized == binding.RepositoryURL
+}
+
+func (s *Service) lookupWorkflowRepositoryConnection(ctx context.Context, projectID string, spec SourceSpec) (core.RepositoryConnection, bool, error) {
+	if spec.Connection == "" {
+		return core.RepositoryConnection{}, false, nil
+	}
+	binding, err := s.Store.GetRepositoryConnectionByName(ctx, projectID, spec.Connection)
+	if errors.Is(err, store.ErrNotFound) {
+		return binding, false, nil
+	}
+	if err != nil {
+		return binding, false, err
+	}
+	if binding.ProjectID != projectID || !matchesBoundRepository(binding, spec.Repository) {
+		return binding, false, fmt.Errorf("repository does not match connection %q in this project", spec.Connection)
+	}
+	return binding, true, nil
+}
+
+func (s *Service) pinnedRepositoryConnection(ctx context.Context, projectID string, revision core.WorkflowSourceRevision) (core.RepositoryConnection, error) {
+	binding, err := s.Store.GetRepositoryConnection(ctx, revision.RepositoryConnectionID)
+	if err != nil {
+		return binding, fmt.Errorf("source %s repository connection: %w", revision.Alias, err)
+	}
+	if binding.ProjectID != projectID || revision.CloneURL != binding.RepositoryURL || !matchesBoundRepository(binding, revision.Repository) ||
+		binding.GitHubAppID != revision.GitHubAppID || binding.CredentialSecretID != revision.CredentialSecretID {
+		return binding, fmt.Errorf("source %s repository connection changed; sync and run a new revision", revision.Alias)
+	}
+	return binding, nil
+}
+
+func (s *Service) boundSourceConfig(ctx context.Context, config core.ConfigSource, binding core.RepositoryConnection) (core.ConfigSource, error) {
+	config.RepositoryProxyAppID = ""
+	if (binding.GitHubAppID == "") == (binding.CredentialSecretID == "") {
+		return config, fmt.Errorf("repository connection %q requires exactly one credential", binding.Name)
+	}
+	if binding.GitHubAppID != "" {
+		app, err := s.Store.GetGitHubApp(ctx, binding.GitHubAppID)
+		if err != nil {
+			return config, err
+		}
+		if app.State != "ready" || app.InstallationID < 1 {
+			return config, fmt.Errorf("GitHub App for connection %q must be installed and verified", binding.Name)
+		}
+		if err := githubapp.ValidateRepositoryHost(binding.RepositoryURL, app.WebURL); err != nil {
+			return config, err
+		}
+	} else {
+		secret, err := s.Store.GetSecret(ctx, binding.CredentialSecretID)
+		if err != nil {
+			return config, err
+		}
+		if secret.Type != core.SecretTypeGitHubToken {
+			return config, fmt.Errorf("repository connection %q requires a GitHub token secret", binding.Name)
+		}
+	}
+	if binding.CredentialSecretID != "" && config.GitHubAppID != "" {
+		parent, err := s.Store.GetGitHubApp(ctx, config.GitHubAppID)
+		if err != nil {
+			return config, err
+		}
+		if githubapp.ValidateRepositoryHost(binding.RepositoryURL, parent.WebURL) == nil {
+			config.RepositoryProxyAppID = parent.ID
+		}
+	}
+	config.RepositoryConnectionID = binding.ID
+	config.GitHubAppID, config.CredentialSecretID = binding.GitHubAppID, binding.CredentialSecretID
+	// GitHub's numeric repository ID on the parent belongs to the config repository.
+	config.Repository, config.RepositoryID = binding.RepositoryURL, 0
+	return config, nil
 }
 
 func (s *Service) workflowSourceApp(ctx context.Context, configAppID, templateAppID, name string) (core.GitHubAppConnection, error) {
@@ -79,6 +177,17 @@ func githubAppSourceURL(connection core.GitHubAppConnection, repository string) 
 // The revision carries the resolved connection and host so later stage and
 // worker checkouts can use the same binding even after an App is renamed.
 func (s *Service) workflowSourceAccess(ctx context.Context, config core.ConfigSource, revision core.WorkflowSourceRevision) (core.ConfigSource, string, error) {
+	if revision.RepositoryConnectionID != "" {
+		binding, err := s.pinnedRepositoryConnection(ctx, config.ProjectID, revision)
+		if err != nil {
+			return config, "", err
+		}
+		config, err = s.boundSourceConfig(ctx, config, binding)
+		return config, binding.RepositoryURL, err
+	}
+	if revision.CredentialSecretID != "" {
+		return config, "", errors.New("pinned repository credential is missing its named connection")
+	}
 	if revision.GitHubAppID == "" {
 		return config, revision.Repository, nil
 	}
