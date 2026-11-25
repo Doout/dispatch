@@ -3497,6 +3497,57 @@ paths:
               schema: { $ref: "#/components/schemas/LanewayRoute" }
         "400": { $ref: "#/components/responses/Problem" }
         "502": { $ref: "#/components/responses/Problem" }
+  /repository-connections:
+    get:
+      operationId: listRepositoryConnections
+      description: Lists named workflow repository connections for the instance owner.
+      responses:
+        "200":
+          description: Project-scoped bindings with credential references.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RepositoryConnection" } }
+    post:
+      operationId: createRepositoryConnection
+      description: Binds a YAML connection name in a project to one HTTPS repository using an existing GitHub token secret or an installed GitHub App.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/RepositoryConnectionInput" }
+                - { required: [projectId, name, repositoryUrl] }
+      responses:
+        "201":
+          description: Repository connection created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepositoryConnection" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /repository-connections/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateRepositoryConnection
+      description: Switches the credential while preserving the saved project, name, and repository URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepositoryConnectionInput" }
+      responses:
+        "200":
+          description: Updated repository connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepositoryConnection" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /github-apps:
     get:
       operationId: listGitHubApps
@@ -7475,6 +7526,25 @@ components:
         relayServerId: { type: string, description: Optional relay server used for durable outbound event delivery. }
         privateNetworkId: { type: string, description: Optional edge node used for GitHub API requests. }
         proxy: { $ref: '#/components/schemas/GitHubAppProxyInput' }
+    RepositoryConnectionInput:
+      type: object
+      properties:
+        projectId: { type: string }
+        name: { type: string, maxLength: 80 }
+        repositoryUrl: { type: string, format: uri }
+        githubAppId: { type: string, description: Installed GitHub App on this repository host. }
+        credentialSecretId: { type: string, description: Reference to a github_token secret. }
+      oneOf:
+        - { required: [githubAppId] }
+        - { required: [credentialSecretId] }
+    RepositoryConnection:
+      allOf:
+        - { $ref: "#/components/schemas/RepositoryConnectionInput" }
+        - type: object
+          required: [id, projectId, name, repositoryUrl, updatedAt]
+          properties:
+            id: { type: string }
+            updatedAt: { type: string, format: date-time }
     GitHubAppConnection:
       type: object
       required: [id, name, webUrl, apiUrl, appId, privateKeyConfigured, webhookSecretConfigured, state, createdAt, updatedAt]

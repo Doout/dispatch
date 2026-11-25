@@ -240,6 +240,9 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(input.Source) != "" {
 		secretSource = normalizeSecretSource(input.Source)
 	}
+	if item.Type == core.SecretTypeGitHubToken && secretType != item.Type && !a.repositoryCredentialUnused(w, r, "", item.ID) {
+		return
+	}
 	if !core.PlainSecretType(secretType) && a.eventConfig.Vault == nil {
 		problem(w, http.StatusServiceUnavailable, "Secret storage is not configured", "Set DISPATCH_MASTER_KEY_FILE before saving credentials.")
 		return
@@ -368,6 +371,9 @@ func (a *API) updateSecret(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !a.repositoryCredentialUnused(w, r, "", id) {
+		return
+	}
 	if !a.providerCredentialUnused(w, r, id) {
 		return
 	}

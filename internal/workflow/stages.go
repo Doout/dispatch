@@ -278,9 +278,9 @@ func (s *Service) prepareHelmDeployment(ctx context.Context, resource core.Workf
 	if err != nil {
 		return prepared, err
 	}
-	app.HelmProvenance = core.HelmProvenance{WorkflowResourceID: resource.ID, WorkflowRevisionID: revision.ID, Sources: map[string]core.WorkflowSourceRevision{}}
+	app.HelmProvenance = core.HelmProvenance{RepositoryConnectionID: chart.RepositoryConnectionID, RepositoryProxyAppID: chartSource.RepositoryProxyAppID, WorkflowResourceID: resource.ID, WorkflowRevisionID: revision.ID, Sources: map[string]core.WorkflowSourceRevision{}}
 	for alias, pinned := range revision.Sources {
-		app.HelmProvenance.Sources[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: pinned.Repository, Branch: pinned.Branch, CommitSHA: pinned.CommitSHA, GitHubAppID: pinned.GitHubAppID, CloneURL: pinned.CloneURL}
+		app.HelmProvenance.Sources[alias] = core.WorkflowSourceRevision{Alias: alias, Repository: pinned.Repository, Branch: pinned.Branch, CommitSHA: pinned.CommitSHA, RepositoryConnectionID: pinned.RepositoryConnectionID, CredentialSecretID: pinned.CredentialSecretID, GitHubAppID: pinned.GitHubAppID, CloneURL: pinned.CloneURL}
 	}
 	if resource.Temporary {
 		triggers, err := s.Store.ListWorkflowPreviewTriggers(ctx)

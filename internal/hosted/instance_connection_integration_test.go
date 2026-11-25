@@ -112,6 +112,9 @@ func TestConnectedInstanceRoutesLiveTrafficAndRevokesStreams(t *testing.T) {
 	if w := f.request(t, host, "GET", "/api/v1/private", session, nil); w.Code != 200 || !strings.Contains(w.Body.String(), "owner-a") {
 		t.Fatalf("user request: %d %s", w.Code, w.Body.String())
 	}
+	if w := f.request(t, host, "PUT", "/api/v1/repository-connections/example", session, map[string]string{"credentialSecretId": "token-reference"}); w.Code != 200 || !strings.Contains(w.Body.String(), "owner-a") {
+		t.Fatalf("repository connection was not forwarded to the owner's controller: %d %s", w.Code, w.Body.String())
+	}
 	if w := f.request(t, other.Slug+"."+f.server.Config.RootDomain, "GET", "/api/v1/private", session, nil); w.Code != 403 && w.Code != 401 {
 		t.Fatalf("session crossed instances: %d", w.Code)
 	}

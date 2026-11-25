@@ -1,6 +1,7 @@
 package githubapp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +18,17 @@ func (m *Manager) ClientForApp(appID string, timeout time.Duration) *http.Client
 	client := m.routedClient(appTransport{id: appID})
 	client.Timeout = timeout
 	return client
+}
+
+type repositoryConnectionKey struct{}
+
+// WithRepositoryConnection keeps installation and repository API requests for a
+// named binding on their original endpoint, including when GitHub reports a move.
+func WithRepositoryConnection(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, repositoryConnectionKey{}, id)
 }
 
 func (m *Manager) routedClient(route appTransport) *http.Client {

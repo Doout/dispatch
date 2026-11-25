@@ -3,8 +3,10 @@ package workflowrunner
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -13,7 +15,10 @@ import (
 	"github.com/doout/dispatch/internal/core"
 )
 
+// The original handshake stays compatible with controllers and workers that only support v1.
 const Version = "dispatch.workflow-worker/v1"
+const RepositoryAccessVersion = "dispatch.workflow-worker/v2"
+const MaxVersionHeader = "X-Dispatch-Worker-Max-Version"
 const MaxPayload = 4 << 20
 const MaxLog = 1 << 20
 const LeaseDuration = 45 * time.Second
@@ -22,6 +27,8 @@ const MaxDuration = 30 * time.Minute
 var identifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Source struct {
+	ProxyURL   string                      `json:"proxyUrl,omitempty"`
+	NoProxy    string                      `json:"noProxy,omitempty"`
 	Revision   core.WorkflowSourceRevision `json:"revision"`
 	URL        string                      `json:"url"`
 	AuthType   string                      `json:"authType,omitempty"`
@@ -52,6 +59,8 @@ type Deployment struct {
 	HelmProvenance       core.HelmProvenance          `json:"helmProvenance,omitempty"`
 	Snapshot             core.DeploymentSnapshot      `json:"snapshot,omitempty"`
 	SourceCredential     string                       `json:"sourceCredential,omitempty"`
+	SourceProxyURL       string                       `json:"sourceProxyUrl,omitempty"`
+	SourceNoProxy        string                       `json:"sourceNoProxy,omitempty"`
 	ComposeContent       string                       `json:"composeContent,omitempty"`
 	HookEnvironment      map[string]string            `json:"hookEnvironment,omitempty"`
 	ServiceRuntime       []core.ServiceRuntimeBinding `json:"serviceRuntime,omitempty"`
@@ -164,6 +173,23 @@ func (r Request) Kind() string {
 	}
 	return "deployment"
 }
+
+// Readers of the original protocol must reject work that requires scoped
+// repository authorization or an explicit proxy.
+func (r Request) RequiredVersion() string {
+	if w := r.Workflow; w != nil {
+		for _, source := range w.Sources {
+			if source.Revision.RepositoryConnectionID != "" || source.ProxyURL != "" {
+				return RepositoryAccessVersion
+			}
+		}
+	}
+	if d := r.Deployment; d != nil && (d.HelmProvenance.RepositoryConnectionID != "" || d.SourceProxyURL != "") {
+		return RepositoryAccessVersion
+	}
+	return Version
+}
+
 func (r Request) Validate() error {
 	if p := r.StorageOperation; p != nil {
 		if r.Mode != "tenant" || r.ResourceID != p.Server.ID || r.ProjectID != p.Server.ProjectID || !core.IsKubernetesRuntime(p.Server.Runtime) || p.Server.Kubernetes == nil || p.Kubeconfig == "" {
@@ -173,7 +199,7 @@ func (r Request) Validate() error {
 			return errors.New("invalid worker storage resource")
 		}
 	}
-	if r.Version != Version || !identifier.MatchString(r.ProjectID) || !identifier.MatchString(r.ResourceID) || !identifier.MatchString(r.RevisionID) {
+	if r.Version != r.RequiredVersion() || !identifier.MatchString(r.ProjectID) || !identifier.MatchString(r.ResourceID) || !identifier.MatchString(r.RevisionID) {
 		return errors.New("invalid worker request identity")
 	}
 	if r.Mode != "tenant" && r.Mode != "managed" {
@@ -282,17 +308,29 @@ func (r Request) LogSecrets() []string {
 			secrets = append(secrets, value)
 		}
 		for _, src := range w.Sources {
-			secrets = append(secrets, src.Credential)
+			secrets = appendRepositorySecrets(secrets, src.Credential, src.ProxyURL)
 		}
 	}
 	if d := r.Deployment; d != nil {
-		secrets = append(secrets, d.SourceCredential, d.Kubeconfig)
+		secrets = appendRepositorySecrets(secrets, d.SourceCredential, d.SourceProxyURL)
+		secrets = append(secrets, d.Kubeconfig)
 		for _, binding := range d.ServiceRuntime {
 			secrets = append(secrets, binding.SensitiveValues...)
 		}
 		for _, value := range d.HookEnvironment {
 			secrets = append(secrets, value)
 		}
+	}
+	return secrets
+}
+
+func appendRepositorySecrets(secrets []string, credential, proxyURL string) []string {
+	if credential != "" {
+		secrets = append(secrets, credential, base64.StdEncoding.EncodeToString([]byte("x-access-token:"+credential)))
+	}
+	if proxy, err := url.Parse(proxyURL); err == nil && proxy.User != nil {
+		password, _ := proxy.User.Password()
+		secrets = append(secrets, proxyURL, proxy.User.String(), password)
 	}
 	return secrets
 }

@@ -136,16 +136,17 @@ const (
 )
 
 type App struct {
-	HealthPolicy       HealthPolicy            `json:"healthPolicy"`
-	ServiceRuntime     []ServiceRuntimeBinding `json:"-"`
-	ID                 string                  `json:"id"`
-	ProjectID          string                  `json:"projectId"`
-	ServerID           string                  `json:"serverId"`
-	Name               string                  `json:"name"`
-	SourceRepo         string                  `json:"sourceRepo"`
-	Branch             string                  `json:"branch"`
-	SourceAuthType     string                  `json:"sourceAuthType,omitempty"`
-	SourceCredentialID string                  `json:"sourceCredentialId,omitempty"`
+	RepositoryConnectionID string                  `json:"-"`
+	HealthPolicy           HealthPolicy            `json:"healthPolicy"`
+	ServiceRuntime         []ServiceRuntimeBinding `json:"-"`
+	ID                     string                  `json:"id"`
+	ProjectID              string                  `json:"projectId"`
+	ServerID               string                  `json:"serverId"`
+	Name                   string                  `json:"name"`
+	SourceRepo             string                  `json:"sourceRepo"`
+	Branch                 string                  `json:"branch"`
+	SourceAuthType         string                  `json:"sourceAuthType,omitempty"`
+	SourceCredentialID     string                  `json:"sourceCredentialId,omitempty"`
 	// SourceCredential is decrypted only for the duration of a deployment. It
 	// is never persisted, returned by the API, or included in the spec digest.
 	SourceCredential string    `json:"-"`
@@ -184,10 +185,12 @@ type App struct {
 // HelmProvenance is stored with a generated app so an asynchronous deployment
 // can carry its source and pull request identity into the cluster.
 type HelmProvenance struct {
-	WorkflowResourceID string                            `json:"workflowResourceId,omitempty"`
-	WorkflowRevisionID string                            `json:"workflowRevisionId,omitempty"`
-	Sources            map[string]WorkflowSourceRevision `json:"sources,omitempty"`
-	PullRequests       []HelmPullRequest                 `json:"pullRequests,omitempty"`
+	RepositoryProxyAppID   string                            `json:"repositoryProxyAppId,omitempty"`
+	RepositoryConnectionID string                            `json:"repositoryConnectionId,omitempty"`
+	WorkflowResourceID     string                            `json:"workflowResourceId,omitempty"`
+	WorkflowRevisionID     string                            `json:"workflowRevisionId,omitempty"`
+	Sources                map[string]WorkflowSourceRevision `json:"sources,omitempty"`
+	PullRequests           []HelmPullRequest                 `json:"pullRequests,omitempty"`
 }
 
 type HelmPullRequest struct {

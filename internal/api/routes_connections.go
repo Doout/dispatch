@@ -51,6 +51,9 @@ func (a *API) connectionsRoutes(r chi.Router) {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(a.ownerOnly)
+		r.Get("/repository-connections", a.listRepositoryConnections)
+		r.Post("/repository-connections", a.saveRepositoryConnection)
+		r.Put("/repository-connections/{id}", a.saveRepositoryConnection)
 		r.Get("/github-apps", a.listGitHubApps)
 		r.Post("/github-apps", a.createGitHubApp)
 		r.Put("/github-apps/{id}", a.updateGitHubApp)

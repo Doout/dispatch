@@ -15,15 +15,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/secretvalue"
 	"github.com/doout/dispatch/internal/store"
+	"github.com/doout/dispatch/internal/workflowrunner"
 )
 
 func TestRepositoryCloneURLUsesSavedCredentialHost(t *testing.T) {
@@ -164,12 +167,16 @@ func TestWorkflowCheckoutFetchesThroughSavedRepositoryProxy(t *testing.T) {
 		t.Fatalf("checked out %s, want %s", actual, commit)
 	}
 
+	var patRequests atomic.Int32
 	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, token, ok := r.BasicAuth()
-		if r.Host != "example.com" || !ok || user != "x-access-token" || token != "test-fixture" {
+		if r.Host != "example.com" || !ok || user != "x-access-token" || (token != "test-fixture" && token != "temporary-pat") {
 			t.Error("Git checkout did not use the App credential")
 			http.Error(w, "unexpected checkout", http.StatusBadRequest)
 			return
+		}
+		if token == "temporary-pat" {
+			patRequests.Add(1)
 		}
 		backend.ServeHTTP(w, r)
 	}))
@@ -205,6 +212,8 @@ func TestWorkflowCheckoutFetchesThroughSavedRepositoryProxy(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
+		case "/repos/team/source/commits/main":
+			fmt.Fprintf(w, `{"sha":%q}`, commit)
 		case "/repos/team/source/installation":
 			_, _ = fmt.Fprint(w, `{"id":2,"app_id":1}`)
 		case "/app/installations/2/access_tokens":
@@ -253,4 +262,79 @@ func TestWorkflowCheckoutFetchesThroughSavedRepositoryProxy(t *testing.T) {
 	if actual := gitOutput(t, path, "rev-parse", "HEAD"); actual != commit {
 		t.Fatalf("App checkout fetched %s, want %s", actual, commit)
 	}
+	t.Run("named PAT switches to an App with the same YAML", func(t *testing.T) {
+		encrypted, err := vault.Encrypt("secret:git-pat", []byte("temporary-pat"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := data.CreateSecret(ctx, core.Secret{ID: "git-pat", Name: "git-pat", EnvironmentVariable: "GIT_PAT", Type: core.SecretTypeGitHubToken, EncryptedValue: encrypted, CreatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		binding := core.RepositoryConnection{ID: "gitops", ProjectID: runtime.source.ProjectID, Name: "gitops-read", RepositoryURL: "https://example.com/team/source.git", CredentialSecretID: "git-pat", UpdatedAt: time.Now()}
+		if err := data.CreateRepositoryConnection(ctx, binding); err != nil {
+			t.Fatal(err)
+		}
+		spec := SourceSpec{Repository: "team/source", Branch: "main", Connection: binding.Name}
+		pat, err := runtime.service.resolveWorkflowSource(ctx, runtime.source, "", "gitops", spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pat.RepositoryConnectionID != binding.ID || pat.CredentialSecretID != binding.CredentialSecretID || pat.GitHubAppID != "" || pat.CommitSHA != commit || patRequests.Load() == 0 {
+			t.Fatalf("unexpected PAT snapshot: %+v", pat)
+		}
+		src, err := runtime.service.workerSource(ctx, runtime.source, pat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src.AuthType != deploy.SourceAuthGitHubToken || src.ProxyURL != appProxy.URL {
+			t.Fatal("worker did not receive the named PAT and parent repository proxy")
+		}
+		worker := &jobRuntime{root: t.TempDir(), paths: map[string]string{}, workerSources: map[string]workerSource{"gitops": src}}
+		defer worker.close()
+		dir, err := worker.checkoutWorkerSource(ctx, "gitops")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gitOutput(t, dir, "rev-parse", "HEAD") != commit {
+			t.Fatal("remote worker checkout did not match the snapshot")
+		}
+		for _, repository := range []string{"team/other", "https://elsewhere.test/team/source.git", "https://user@example.com/team/source.git", "git@example.com:team/source", "//elsewhere.test/team/source.git"} {
+			bad := spec
+			bad.Repository = repository
+			if _, err := runtime.service.resolveWorkflowSource(ctx, runtime.source, "", "gitops", bad); err == nil {
+				t.Fatalf("accepted a different repository %q", repository)
+			}
+		}
+		wrongProject := runtime.source
+		wrongProject.ProjectID = "another"
+		if _, err := runtime.service.workerSource(ctx, wrongProject, pat); err == nil {
+			t.Fatal("accepted another project's pinned repository credential")
+		}
+		binding.GitHubAppID, binding.CredentialSecretID = appID, ""
+		binding.UpdatedAt = time.Now()
+		if err := data.UpdateRepositoryConnection(ctx, binding); err != nil {
+			t.Fatal(err)
+		}
+		app, err := runtime.service.resolveWorkflowSource(ctx, runtime.source, "", "gitops", spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if app.GitHubAppID != appID || app.RepositoryConnectionID != pat.RepositoryConnectionID || app.CredentialSecretID != "" || app.CommitSHA != commit || sameSourceInput(pat, app) {
+			t.Fatalf("unexpected switched snapshot: %+v", app)
+		}
+		if _, err = runtime.service.workerSource(ctx, runtime.source, pat); err == nil {
+			t.Fatal("accepted an obsolete source credential")
+		}
+		if err = runtime.service.AuthorizeWorkerRequest(ctx, workflowrunner.Request{ProjectID: binding.ProjectID, Workflow: &workflowrunner.Workflow{Sources: map[string]workerSource{"gitops": src}}}); err == nil || !strings.Contains(err.Error(), "repository connection changed") {
+			t.Fatalf("stale worker request was not rejected on its binding: %v", err)
+		}
+		updated, err := runtime.service.workerSource(ctx, runtime.source, app)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.Credential != "test-fixture" || updated.AuthType != deploy.SourceAuthGitHubApp || updated.ProxyURL != appProxy.URL {
+			t.Fatal("worker did not switch to the App's installation credential and proxy")
+		}
+	})
+
 }

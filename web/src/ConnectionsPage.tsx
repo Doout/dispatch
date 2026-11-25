@@ -1,3 +1,4 @@
+import { RepositoryConnectionForm, RepositoryConnectionList } from "./RepositoryConnections";
 import { GitHubAppConnectionTest } from "./GitHubAppConnectionTest";
 import { InstanceConnectionSettings } from "./InstanceConnectionSettings";
 import { useHostedTenant, usesSelfHostedController } from "./hosted/context";
@@ -13,6 +14,7 @@ import {
   Cloud,
   Copy,
   GithubLogo,
+  GitBranch,
   Key,
   LockSimple,
   PencilSimple,
@@ -31,6 +33,7 @@ import {
   GitHubAppInstallation,
   Overview,
   PrivateNetwork,
+  RepositoryConnection,
   Secret,
   SecretStore,
 } from "./api";
@@ -79,7 +82,28 @@ export type ConnectionNotice = { kind: "success" | "error"; message: string };
 
 export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnection = () => {}, notice, onDismissNotice, onChanged, onAddRelay = () => {} }: { overview: Overview; selectedConnectionID?: string; onOpenConnection?: (id: string | null) => void; notice?: ConnectionNotice; onDismissNotice: () => void; onChanged: () => Promise<void>; onAddRelay?: () => void }) {
   const hosted = useHostedTenant();
-  const supportsProxy = usesSelfHostedController(hosted);
+  const selfHosted = usesSelfHostedController(hosted);
+  const canManageRepositories = overview.identity?.systemRole === "owner";
+  const [repositoryConnections, setRepositoryConnections] = useState<RepositoryConnection[] | null>(null);
+  const [repositoryEditor, setRepositoryEditor] = useState<RepositoryConnection | "new" | null>(null);
+  const [repositoryError, setRepositoryError] = useState("");
+  useEffect(() => {
+    if (!canManageRepositories || selectedConnectionID || repositoryEditor) return;
+    const controller = new AbortController();
+    setRepositoryError("");
+    void api.repositoryConnections(controller.signal).then(items => {
+      if (!controller.signal.aborted) setRepositoryConnections(items);
+    }).catch((cause: Error & { status?: number }) => {
+      if (!controller.signal.aborted) {
+        setRepositoryConnections(null);
+        setRepositoryError(cause.status === 404 || cause.status === 405
+          ? "Update the controller to manage named repository connections."
+          : `Could not load repository connections. ${cause.message}`);
+      }
+    });
+    return () => controller.abort();
+  }, [canManageRepositories, selectedConnectionID, repositoryEditor, overview.identity?.id]);
+  const addRepository = canManageRepositories && repositoryConnections ? () => setRepositoryEditor("new") : undefined;
   const showDoodship = overview.identity?.systemRole === "owner" && !hosted;
 	const edgeNetworks = (overview.privateNetworks ?? []).filter((network) => network.driver === "dispatch_agent");
   const [creating, setCreating] = useState(false);
@@ -185,9 +209,9 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
       : editing?.proxy?.url ? { url: "" } : undefined;
     return {
       id: editing?.id, webUrl: webURL, apiUrl: apiURL, privateNetworkId: privateNetworkID,
-      ...(supportsProxy && proxy ? { proxy } : {}),
+      ...(selfHosted && proxy ? { proxy } : {}),
     };
-  }, [editing, webURL, apiURL, privateNetworkID, supportsProxy, useAppProxy, proxyURL, proxyBypass]);
+  }, [editing, webURL, apiURL, privateNetworkID, selfHosted, useAppProxy, proxyURL, proxyBypass]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -267,7 +291,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
 	const allPrivateNetworks = overview.privateNetworks ?? [];
 	const lanewayNetworks = allPrivateNetworks.filter((network) => network.driver === "laneway_network");
 	const privateNetworks = allPrivateNetworks.filter((network) => network.driver !== "laneway_network");
-	const hasConnections = overview.githubApps.length + secretStores.length + allPrivateNetworks.length > 0;
+	const hasConnections = overview.githubApps.length + secretStores.length + allPrivateNetworks.length + (canManageRepositories ? repositoryConnections?.length ?? 0 : 0) > 0;
 	const closeEditor = () => {
     if (creating) reset();
     setCreatingSecretStore(false);
@@ -301,17 +325,23 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
   }
 
   return <div className="page-layout connections-page">
-	<PageHeader view="connections" trailing={creating ? null : creatingSecretStore || creatingPrivateNetwork || creatingLanewayNetwork
+	<PageHeader view="connections" trailing={creating || (canManageRepositories && repositoryEditor) ? null : creatingSecretStore || creatingPrivateNetwork || creatingLanewayNetwork
       ? <button type="button" className="quiet-button" onClick={closeEditor}><X size={16} weight="bold" />Cancel</button>
-			: <ConnectionAddMenu onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />} />
+			: <ConnectionAddMenu onRepository={addRepository} onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />} />
     {notice && <div className="connection-notice" role={notice.kind === "error" ? "alert" : "status"}>
       {notice.kind === "error" ? <WarningCircle size={18} weight="fill" aria-hidden="true" /> : <CheckCircle size={18} weight="fill" aria-hidden="true" />}
       <span>{notice.message}</span>
       <button aria-label="Dismiss message" onClick={onDismissNotice}><X size={15} /></button>
     </div>}
     {error && !creating && <p className="form-error connection-error" role="alert">{error}</p>}
-    {showDoodship && <InstanceConnectionSettings key={overview.identity?.id} active={!creating && !creatingSecretStore && !creatingPrivateNetwork && !creatingLanewayNetwork} />}
-    {creating ? <section className="inline-create connection-editor github-app-form" aria-labelledby="connection-editor-title">
+    {canManageRepositories && repositoryError && !creating && !repositoryEditor && <p className="form-error connection-error" role="alert">{repositoryError}</p>}
+    {showDoodship && <InstanceConnectionSettings key={overview.identity?.id} active={!repositoryEditor && !creating && !creatingSecretStore && !creatingPrivateNetwork && !creatingLanewayNetwork} />}
+    {canManageRepositories && repositoryEditor ? <RepositoryConnectionForm overview={overview}
+      connection={repositoryEditor === "new" ? undefined : repositoryEditor} onCancel={() => setRepositoryEditor(null)}
+      onSaved={saved => {
+        setRepositoryConnections(current => [...(current ?? []).filter(item => item.id !== saved.id), saved]);
+        setRepositoryEditor(null);
+      }} /> : creating ? <section className="inline-create connection-editor github-app-form" aria-labelledby="connection-editor-title">
       <header>
         <h2 id="connection-editor-title">{editing ? "Edit GitHub App" : "Add GitHub App"}</h2>
         {!editing && <div className="github-app-methods" role="radiogroup" aria-label="GitHub App setup method">
@@ -370,7 +400,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
         <section className="github-app-section github-app-network" aria-labelledby="github-app-network-title">
           <h3 className="github-app-section-heading" id="github-app-network-title">Network access</h3>
           <div className="github-app-fields">
-            {supportsProxy && <label>
+            {selfHosted && <label>
               <span>Outbound proxy</span>
               <select aria-label="Outbound proxy" aria-describedby="github-app-proxy-help" value={useAppProxy ? "app" : "controller"} onChange={event => setUseAppProxy(event.target.value === "app")}>
                 <option value="controller">Use controller settings</option>
@@ -384,9 +414,9 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
                 <option value="">Direct</option>
                 {edgeNetworks.map(network => <option key={network.id} value={network.id}>Edge · {network.name}{network.state === "ready" ? "" : ` (${network.state})`}</option>)}
               </select>
-              <small id="github-app-route-help">{supportsProxy ? "Used for GitHub API calls that connect without a proxy." : "Connect to the GitHub API directly or through an edge node."}</small>
+              <small id="github-app-route-help">{selfHosted ? "Used for GitHub API calls that connect without a proxy." : "Connect to the GitHub API directly or through an edge node."}</small>
             </label>
-            {supportsProxy && useAppProxy && <>
+            {selfHosted && useAppProxy && <>
               <label>
                 <span>Proxy URL</span>
                 <input type="url" autoComplete="off" spellCheck={false} maxLength={2048}
@@ -416,7 +446,7 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
               </label>
             </div>
           </details>
-          {supportsProxy && <GitHubAppConnectionTest settings={networkSettings} busy={Boolean(busyID)}
+          {selfHosted && <GitHubAppConnectionTest settings={networkSettings} busy={Boolean(busyID)}
             needsProxyURL={useAppProxy && !proxyURL.trim() && !editing?.proxy?.url} />}
         </section>
 
@@ -504,19 +534,21 @@ export function ConnectionsPage({ overview, selectedConnectionID, onOpenConnecti
       </section>;
     })}</div> : <div className="connection-provider-empty">No GitHub Apps</div>}
       </section>
+      {canManageRepositories && repositoryConnections && <RepositoryConnectionList overview={overview} connections={repositoryConnections} onEdit={setRepositoryEditor} />}
 		<SecretStoresSection stores={secretStores} secrets={overview.secrets} networks={allPrivateNetworks} creating={false} editing={editingSecretStore} onCreatingChange={setCreatingSecretStore} onEditingChange={setEditingSecretStore} onChanged={onChanged} />
 		<LanewayNetworksSection networks={lanewayNetworks} creating={false} onCreatingChange={setCreatingLanewayNetwork} onChanged={onChanged} />
 		<PrivateNetworksSection networks={privateNetworks} stores={secretStores} githubApps={overview.githubApps} creating={false} editing={editingPrivateNetwork} initialDriver={privateNetworkDriver} onCreatingChange={setCreatingPrivateNetwork} onEditingChange={setEditingPrivateNetwork} onChanged={onChanged} />
-	</div> : <ConnectionsEmpty title={showDoodship ? "Providers and networks" : undefined} onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />}
+	</div> : <ConnectionsEmpty onRepository={addRepository} title={showDoodship ? "Providers and networks" : undefined} onGitHub={() => setCreating(true)} onSecretStore={() => { setEditingSecretStore(null); setCreatingSecretStore(true); }} onPrivateNetwork={(driver) => { setPrivateNetworkDriver(driver); setEditingPrivateNetwork(null); setCreatingPrivateNetwork(true); }} onLanewayNetwork={() => setCreatingLanewayNetwork(true)} />}
   </div>;
 }
 
-function ConnectionAddMenu({ onGitHub, onSecretStore, onPrivateNetwork, onLanewayNetwork }: { onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void; onLanewayNetwork: () => void }) {
+function ConnectionAddMenu({ onRepository, onGitHub, onSecretStore, onPrivateNetwork, onLanewayNetwork }: { onRepository?: () => void; onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void; onLanewayNetwork: () => void }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild><button className="primary-button add-resource-menu" type="button"><Plus size={16} weight="bold" />Add connection</button></DropdownMenu.Trigger>
     <DropdownMenu.Portal><DropdownMenu.Content className="action-menu-list add-resource-options" align="end" sideOffset={6} collisionPadding={12}>
       <DropdownMenu.Label className="add-resource-group-label">Providers</DropdownMenu.Label>
       <DropdownMenu.Item className="action-menu-item" onSelect={onGitHub}><GithubLogo size={17} weight="fill" /><span><strong>GitHub App</strong><small>Source control</small></span></DropdownMenu.Item>
+      {onRepository && <DropdownMenu.Item className="action-menu-item" onSelect={onRepository}><GitBranch size={17} /><span><strong>Repository connection</strong><small>Named workflow access</small></span></DropdownMenu.Item>}
       <DropdownMenu.Item className="action-menu-item" onSelect={onSecretStore}><Cloud size={17} weight="fill" /><span><strong>Secret store</strong><small>External secrets</small></span></DropdownMenu.Item>
       <DropdownMenu.Separator className="action-menu-separator" />
       <DropdownMenu.Label className="add-resource-group-label">Network</DropdownMenu.Label>
@@ -526,12 +558,13 @@ function ConnectionAddMenu({ onGitHub, onSecretStore, onPrivateNetwork, onLanewa
   </DropdownMenu.Root>;
 }
 
-function ConnectionsEmpty({ title = "No connections", onGitHub, onSecretStore, onPrivateNetwork, onLanewayNetwork }: { title?: string; onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void; onLanewayNetwork: () => void }) {
+function ConnectionsEmpty({ title = "No connections", onRepository, onGitHub, onSecretStore, onPrivateNetwork, onLanewayNetwork }: { title?: string; onRepository?: () => void; onGitHub: () => void; onSecretStore: () => void; onPrivateNetwork: (driver: "dispatch_agent" | "laneway_connector") => void; onLanewayNetwork: () => void }) {
   return <section className="connections-empty" aria-labelledby="connections-empty-title">
 		<header className="connections-empty-head"><span><PlugsConnected size={20} /></span><div><h2 id="connections-empty-title">{title}</h2><p>Add a provider or edge route.</p></div></header>
 		<div className="connection-empty-groups">
 			<section className="connection-empty-group" aria-labelledby="provider-connections-title"><h3 id="provider-connections-title">Providers</h3><div>
 				<button type="button" onClick={onGitHub}><span className="connection-provider-icon github"><GithubLogo size={18} weight="fill" /></span><span><strong>GitHub App</strong><small>Source control</small></span><ArrowRight size={15} /></button>
+        {onRepository && <button type="button" onClick={onRepository}><span className="connection-provider-icon"><GitBranch size={18} /></span><span><strong>Repository connection</strong><small>Named workflow access</small></span><ArrowRight size={15} /></button>}
 				<button type="button" onClick={onSecretStore}><span className="connection-provider-icon cloud"><Cloud size={18} weight="fill" /></span><span><strong>Secret store</strong><small>External secrets</small></span><ArrowRight size={15} /></button>
 			</div></section>
 			<section className="connection-empty-group" aria-labelledby="network-connections-title"><h3 id="network-connections-title">Network</h3><div>

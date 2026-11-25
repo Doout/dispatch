@@ -14,6 +14,7 @@ import (
 )
 
 type hostedStoreFixture struct {
+	repositoryConnectionReader
 	app        core.App
 	server     core.Server
 	deployment core.Deployment

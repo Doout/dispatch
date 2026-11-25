@@ -1,5 +1,15 @@
 import { request, destructiveRequest } from "./transport";
 
+export type RepositoryConnectionSettings = {
+  projectId: string;
+  name: string;
+  repositoryUrl: string;
+  githubAppId?: string;
+  credentialSecretId?: string;
+};
+
+export type RepositoryConnection = RepositoryConnectionSettings & { id: string; updatedAt: string };
+
 export type RepositoryStatus = { state: "accessible" | "renamed" | "archived" | "disabled" | "inaccessible" | "deleted" | "identity_changed" | "unavailable"; repositoryId?: number; fullName?: string; detail: string; recovery: string; checkedAt: string };
 
 export type GitHubBranch = { name: string; sha: string; protected: boolean };
@@ -108,6 +118,12 @@ export type GitHubAppNetworkSettings = {
 };
 
 export const connectionsApi = {
+  repositoryConnections: (signal?: AbortSignal) =>
+    request<RepositoryConnection[]>("/api/v1/repository-connections", { signal }),
+  createRepositoryConnection: (body: RepositoryConnectionSettings) =>
+    request<RepositoryConnection>("/api/v1/repository-connections", { method: "POST", body: JSON.stringify(body) }),
+  updateRepositoryConnection: (id: string, body: RepositoryConnectionSettings) =>
+    request<RepositoryConnection>(`/api/v1/repository-connections/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) }),
   testGitHubAppConnection: (body: GitHubAppNetworkSettings, signal: AbortSignal) =>
     request<{ reachable: boolean }>("/api/v1/github-apps/test-connection", {
       method: "POST",

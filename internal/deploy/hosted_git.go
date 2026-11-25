@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/repositoryproxy"
 )
 
 // PrepareIsolatedGitEnvironment gives hosted source reads only the credential
@@ -64,11 +64,12 @@ func PrepareIsolatedGitEnvironment(app core.App) ([]string, func(), error) {
 			cleanup()
 			return nil, func() {}, errors.New("configured source credential is empty")
 		}
-		header := "Authorization: Bearer " + credential
-		if app.SourceAuthType == SourceAuthGitHubApp {
-			header = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+credential))
+		key, header, _, err := gitAuthorization(app, credential)
+		if err != nil {
+			cleanup()
+			return nil, func() {}, err
 		}
-		config = append(config, [2]string{"http.extraHeader", header})
+		config = append(config, [2]string{key, header})
 		ssh += " -o IdentityFile=none"
 	case SourceAuthSSHKey:
 		if credential == "" {
@@ -89,7 +90,7 @@ func PrepareIsolatedGitEnvironment(app core.App) ([]string, func(), error) {
 	for index, entry := range config {
 		environment = append(environment, "GIT_CONFIG_KEY_"+strconv.Itoa(index)+"="+entry[0], "GIT_CONFIG_VALUE_"+strconv.Itoa(index)+"="+entry[1])
 	}
-	return environment, cleanup, nil
+	return repositoryproxy.GitEnvironment(environment, app.SourceRepo, app.SourceProxyURL, app.SourceNoProxy), cleanup, nil
 }
 
 func gitShellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }

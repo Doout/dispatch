@@ -57,3 +57,15 @@ it("labels archived-only references and warns when the scan is incomplete", asyn
   fireEvent.click(screen.getByRole("button", { name: "View usage for App configuration" }));
   expect(screen.getByRole("alert").textContent).toContain("Broken workflow");
 });
+
+it("links a repository credential consumer to Connections", async () => {
+  vi.spyOn(api, "secretUsage").mockResolvedValue([{ ...usage, consumers: [
+    { id: "binding", kind: "repository_connection", name: "gitops-read", references: ["Repository checkout"], applications: [] },
+  ] }]);
+  page();
+  await screen.findByText("Used by 1");
+  fireEvent.click(screen.getByRole("button", { name: "View usage for App configuration" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Used by" }));
+  expect(dialog.getByText("Repository connection")).toBeTruthy();
+  expect(dialog.getByRole("link", { name: "gitops-read" }).getAttribute("href")).toBe("/connections");
+});

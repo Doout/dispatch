@@ -22,7 +22,7 @@ const overview = {
   previewGroups: [], previewGroupRuns: [], secrets: [], secretStores: [], githubApps: [], relayWebhooks: [],
 };
 
-async function openPage(t, width) {
+async function openPage(t, width, fixtureOverrides = {}) {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   t.after(() => page.close());
   page.setDefaultTimeout(7000);
@@ -35,8 +35,10 @@ async function openPage(t, width) {
       tenant: { id: "tenant", name: "Test", slug: "test", state: "ready" },
       connection: { state: "connected", remoteAccess: true, instanceUrl: "https://controller.example.test", backendMode: "connected" } },
     analytics: { state: "disabled" },
+    "repository-connections": [],
     "events/rules": [], "events/activity": { items: [], total: 0 }, "secrets/usage": [],
     overview: structuredClone(overview), settings, "deployment-catalog": { items: [] },
+    ...fixtureOverrides,
   };
   await page.route("**/api/v1/**", route => {
     const key = new URL(route.request().url()).pathname.slice("/api/v1/".length);
@@ -143,3 +145,43 @@ for (const width of [390, 1440]) {
     await page.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
   });
 }
+
+test("A project can switch a named repository connection from a PAT to an installed App", async t => {
+  const app = { id: "app", name: "Enterprise app", appId: 1, installationId: 2, webUrl: "https://github.example.test", state: "ready" };
+  const token = { id: "token", name: "Temporary access", type: "github_token" };
+  const page = await openPage(t, 390, {
+    overview: { ...overview, projects: [{ id: "project", name: "Example" }], githubApps: [app], secrets: [token] },
+    "github-apps/app/installations": [],
+  });
+  let saved;
+  const requests = [];
+  await page.route("**/api/v1/repository-connections{,/*}", route => {
+    const request = route.request();
+    if (request.method() === "GET") return route.fulfill({ json: saved ? [saved] : [] });
+    requests.push({ method: request.method(), path: new URL(request.url()).pathname, body: request.postDataJSON() });
+    saved = { ...request.postDataJSON(), id: "repository", updatedAt: "2026-01-01T00:00:00Z" };
+    return route.fulfill({ json: saved });
+  });
+
+  await page.goto(new URL("/connections", origin).href);
+  await page.getByRole("heading", { name: "Repository connections" }).waitFor();
+  await page.getByRole("button", { name: "Add connection" }).click();
+  await page.getByRole("menuitem", { name: /Repository connection/ }).click();
+  const create = page.getByRole("region", { name: "Add repository connection" });
+  await create.getByRole("textbox", { name: /^Connection name/ }).fill("gitops-read");
+  await create.getByRole("textbox", { name: /^Repository URL/ }).fill("https://github.example.test/team/service.git");
+  await create.getByRole("combobox", { name: /^Token variable/ }).selectOption(token.id);
+  await create.getByRole("button", { name: "Add connection" }).click();
+  await page.getByRole("button", { name: "Edit gitops-read" }).click();
+  const edit = page.getByRole("region", { name: "Edit repository connection" });
+  await edit.getByRole("combobox", { name: "Authentication" }).selectOption("app");
+  await edit.getByRole("combobox", { name: /^GitHub App/ }).selectOption(app.id);
+  await edit.getByRole("button", { name: "Save connection" }).click();
+  await page.reload();
+  await page.getByRole("region", { name: "Repository connections" }).getByText(app.name).waitFor();
+  const identity = { projectId: "project", name: "gitops-read", repositoryUrl: "https://github.example.test/team/service.git" };
+  assert.deepEqual(requests, [
+    { method: "POST", path: "/api/v1/repository-connections", body: { ...identity, credentialSecretId: token.id } },
+    { method: "PUT", path: "/api/v1/repository-connections/repository", body: { ...identity, githubAppId: app.id } },
+  ]);
+});

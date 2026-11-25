@@ -34,7 +34,15 @@ func (b *Broker) authorize(ctx context.Context, r Request) error {
 	return b.Authorize(ctx, r)
 }
 func NodeMode(node core.PrivateNetwork) string { return node.Config["workflowMode"] }
+func supportsRequestVersion(workerVersion, requestVersion string) bool {
+	return workerVersion == Version && requestVersion == Version ||
+		workerVersion == RepositoryAccessVersion && (requestVersion == Version || requestVersion == RepositoryAccessVersion)
+}
+
 func nodeAllows(node core.PrivateNetwork, r Request) bool {
+	if !supportsRequestVersion(node.Details["workerVersion"], r.Version) {
+		return false
+	}
 	needsDocker := false
 	if r.Workflow != nil {
 		var job struct {
@@ -116,11 +124,14 @@ func (b *Broker) Run(ctx context.Context, r Request, progress func(string)) (Res
 	available := []core.PrivateNetwork{}
 	for _, node := range nodes {
 		checked, e := time.Parse(time.RFC3339Nano, node.Details["workerCheckedAt"])
-		if nodeAllows(node, r) && node.Details["workerVersion"] == Version && e == nil && checked.After(time.Now().Add(-90*time.Second)) && checked.Before(time.Now().Add(10*time.Second)) {
+		if nodeAllows(node, r) && e == nil && checked.After(time.Now().Add(-90*time.Second)) && checked.Before(time.Now().Add(10*time.Second)) {
 			available = append(available, node)
 		}
 	}
 	if len(available) == 0 {
+		if r.Version == RepositoryAccessVersion {
+			return Result{}, errors.New("no compatible workflow worker is available for this project and execution mode; ensure the assigned worker is online and upgraded for named repository connections and proxies")
+		}
 		return Result{}, errors.New("no enrolled workflow worker is available for this project and execution mode")
 	}
 	selection := sha256.Sum256([]byte(id))
@@ -228,18 +239,23 @@ func (b *Broker) request(ctx context.Context, j core.WorkflowWorkerJob) (Request
 	}
 	return r, b.authorize(ctx, r)
 }
-func (b *Broker) Lease(ctx context.Context, node string, generation int64, mode string) (*LeasedJob, error) {
+func (b *Broker) Lease(ctx context.Context, node string, generation int64, mode, workerVersion string) (*LeasedJob, error) {
 	j, err := b.Store.LeaseWorkflowWorkerJob(ctx, node, generation, mode, time.Now().UTC())
 	if err != nil || j == nil {
 		return nil, err
 	}
 	r, err := b.request(ctx, *j)
+	reason := "Worker authorization changed before dispatch."
+	if r.Version != "" && !supportsRequestVersion(workerVersion, r.Version) {
+		err = store.ErrWorkerLease
+		reason = "Worker protocol changed before dispatch. Upgrade the worker to run this job."
+	}
 	if err != nil {
 		state := "cancelled"
 		if j.Attempt > 1 {
 			state = "unknown"
 		}
-		raw, _ := json.Marshal(Result{State: state, Error: "Worker authorization changed before dispatch."})
+		raw, _ := json.Marshal(Result{State: state, Error: reason})
 		encrypted, encryptionErr := b.Vault.Encrypt("workflow-worker:"+j.ID+":result", raw)
 		if encryptionErr == nil {
 			_ = b.Store.CompleteWorkflowWorkerJob(ctx, j.NodeID, j.ID, j.LeaseToken, state, encrypted, time.Now().UTC())

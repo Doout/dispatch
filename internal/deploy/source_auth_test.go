@@ -14,7 +14,10 @@ import (
 	"github.com/doout/dispatch/internal/runtimecontract"
 )
 
-type staticSecretReader struct{ secret core.Secret }
+type staticSecretReader struct {
+	repositoryConnectionReader
+	secret core.Secret
+}
 
 func (r staticSecretReader) GetSecret(context.Context, string) (core.Secret, error) {
 	return r.secret, nil
@@ -134,5 +137,50 @@ func TestInlineComposeOnlyResolvesGitHubAppForHooks(t *testing.T) {
 	app.PreDeployHook = "./prepare.sh"
 	if err := executor.Deploy(t.Context(), core.Deployment{}, app, core.Server{}, nil); err == nil {
 		t.Fatal("hook checkout skipped source credential resolution")
+	}
+}
+
+type namedCheckoutFixture struct {
+	binding core.RepositoryConnection
+	github  core.GitHubAppConnection
+}
+
+func (f namedCheckoutFixture) GetRepositoryConnection(context.Context, string) (core.RepositoryConnection, error) {
+	return f.binding, nil
+}
+func (f namedCheckoutFixture) GetGitHubApp(context.Context, string) (core.GitHubAppConnection, error) {
+	return f.github, nil
+}
+
+func TestGeneratedHelmCheckoutRequiresCurrentRepositoryBinding(t *testing.T) {
+	ctx := t.Context()
+	fixture := namedCheckoutFixture{
+		binding: core.RepositoryConnection{ID: "charts", ProjectID: "p", RepositoryURL: "https://git.example.test/team/charts.git", CredentialSecretID: "pat"},
+		github:  core.GitHubAppConnection{ID: "parent", WebURL: "https://git.example.test"},
+	}
+	app := core.App{ProjectID: "p", SourceAuthType: SourceAuthGitHubToken, SourceCredentialID: "pat", SourceRepo: fixture.binding.RepositoryURL,
+		HelmProvenance: core.HelmProvenance{RepositoryConnectionID: "charts", RepositoryProxyAppID: "parent"}}
+	if err := checkDeploymentRepositoryConnection(ctx, fixture, app); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*core.App){
+		func(a *core.App) { a.ProjectID = "other" },
+		func(a *core.App) { a.SourceRepo = "https://git.example.test/team/other.git" },
+		func(a *core.App) { a.SourceRepo = "https://elsewhere.test/team/charts.git" },
+		func(a *core.App) { a.SourceCredentialID = "old" },
+	} {
+		changed := app
+		change(&changed)
+		if err := checkDeploymentRepositoryConnection(ctx, fixture, changed); err == nil {
+			t.Fatal("accepted a mismatched checkout")
+		}
+	}
+	fixture.github.WebURL = "https://elsewhere.test"
+	if err := checkDeploymentRepositoryConnection(ctx, fixture, app); err == nil {
+		t.Fatal("accepted proxy from a retargeted parent App")
+	}
+	fixture.binding.GitHubAppID, fixture.binding.CredentialSecretID = "new-app", ""
+	if err := checkDeploymentRepositoryConnection(ctx, fixture, app); err == nil {
+		t.Fatal("accepted old PAT after provider switch")
 	}
 }

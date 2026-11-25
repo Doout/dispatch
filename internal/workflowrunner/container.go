@@ -51,6 +51,32 @@ func (e ContainerExecutor) Validate() error {
 	}
 	return nil
 }
+
+// ProtocolVersion asks the pinned executor image which requests it can handle.
+// The image and the polling agent can be upgraded independently.
+func (e ContainerExecutor) ProtocolVersion(ctx context.Context) (string, error) {
+	if err := e.Validate(); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--read-only", "--network", "none", "--user", "65532:65532",
+		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--env", "DISPATCH_EDGE_CONTROLLER_URL=",
+		"--entrypoint", "/usr/local/bin/dispatch-worker", e.Image, "protocol-version").Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		// A v1 worker treats unknown subcommands as agent startup and requires a controller URL.
+		return Version, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(output)) == RepositoryAccessVersion {
+		return RepositoryAccessVersion, nil
+	}
+	return Version, nil
+}
+
 func (e ContainerExecutor) arguments(name string) []string {
 	network := e.Network
 	if network == "" {

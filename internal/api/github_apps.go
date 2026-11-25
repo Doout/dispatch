@@ -182,6 +182,10 @@ func (a *API) createGitHubApp(w http.ResponseWriter, r *http.Request) {
 	}
 	item.State = githubapp.State(item)
 	if err := a.store.CreateGitHubApp(r.Context(), item); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			connectionNameConflict(w)
+			return
+		}
 		a.internal(w, err)
 		return
 	}
@@ -281,6 +285,10 @@ func (a *API) updateGitHubApp(w http.ResponseWriter, r *http.Request) {
 	}
 	item.State, item.UpdatedAt = githubapp.State(item), time.Now().UTC()
 	if err := a.store.UpdateGitHubApp(r.Context(), item, proxyUpdate); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			connectionNameConflict(w)
+			return
+		}
 		a.notFoundOrInternal(w, err, "GitHub App")
 		return
 	}
@@ -298,6 +306,10 @@ func (a *API) updateGitHubApp(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteGitHubApp(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !a.repositoryCredentialUnused(w, r, id, "") {
+		return
+	}
+
 	connection, connectionErr := a.store.GetGitHubApp(r.Context(), id)
 	if connectionErr != nil {
 		a.notFoundOrInternal(w, connectionErr, "GitHub App")

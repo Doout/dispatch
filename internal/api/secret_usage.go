@@ -99,6 +99,10 @@ func (a *API) secretUsageIndex(ctx context.Context) ([]secretUsage, error) {
 	if err != nil {
 		return nil, err
 	}
+	repositoryConnections, err := a.store.ListRepositoryConnections(ctx)
+	if err != nil {
+		return nil, err
+	}
 	sources, err := a.store.ListConfigSources(ctx)
 	if err != nil {
 		return nil, err
@@ -239,6 +243,9 @@ func (a *API) secretUsageIndex(ctx context.Context) ([]secretUsage, error) {
 	}
 	for _, template := range serviceTemplates {
 		document(template.Document, secretConsumer{ID: template.ID, Kind: "service_template", Name: template.Name}, false)
+	}
+	for _, connection := range repositoryConnections {
+		add(connection.CredentialSecretID, false, secretConsumer{ID: connection.ID, Kind: "repository_connection", Name: connection.Name}, false, "Workflow repository checkout")
 	}
 	for _, source := range sources {
 		add(source.CredentialSecretID, false, secretConsumer{ID: source.ID, Kind: "configuration", Name: source.Name, State: source.State}, false, "Configuration repository checkout")

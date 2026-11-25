@@ -97,3 +97,30 @@ func TestContainerLimitsDoNotDependOnRequest(t *testing.T) {
 		t.Fatal("managed host network accepted")
 	}
 }
+
+func TestContainerProtocolDependsOnPinnedExecutionImage(t *testing.T) {
+	executor := ContainerExecutor{Image: "sha256:" + strings.Repeat("a", 64), Mode: "tenant", MemoryMiB: 128, DiskMiB: 64, PIDs: 32, CPUs: 1}
+	directory := t.TempDir()
+	t.Setenv("PATH", directory)
+	docker := filepath.Join(directory, "docker")
+	for _, tc := range []struct {
+		name, script, want string
+		wantError          bool
+	}{
+		{"upgraded image", "echo " + RepositoryAccessVersion, RepositoryAccessVersion, false},
+		{"legacy image", "exit 1", Version, false},
+		{"unrecognized image", "echo unknown", Version, false},
+		{"docker unavailable", "exit 125", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := "#!/bin/sh\n" + tc.script + "\n"
+			if err := os.WriteFile(docker, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			got, err := executor.ProtocolVersion(context.Background())
+			if got != tc.want || (err != nil) != tc.wantError {
+				t.Fatalf("got protocol %q, error %v", got, err)
+			}
+		})
+	}
+}

@@ -1,6 +1,7 @@
 package repositoryproxy
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -57,5 +58,18 @@ func TestGitUsesSavedProxyForURLAndNamedRemote(t *testing.T) {
 				t.Fatalf("expected %s route, got %q", tc.want, output)
 			}
 		})
+	}
+}
+
+func TestRedactGitOutputRemovesRepositoryAndProxyCredentials(t *testing.T) {
+	token := "test-personal-access-token"
+	encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+	auth := "Authorization: Basic " + encoded
+	proxy := "https://user:proxy-pass@proxy.example.test:3129"
+	message := RedactGitOutput("remote: "+auth+" "+token+" via "+proxy,
+		[]string{"GIT_CONFIG_VALUE_0=" + auth, "https_proxy=" + proxy})
+	if strings.Contains(message, encoded) || strings.Contains(message, token) || strings.Contains(message, "proxy-pass") ||
+		!strings.Contains(message, "https://proxy.example.test:3129") {
+		t.Fatal("Git output did not redact both credentials while preserving the endpoint")
 	}
 }

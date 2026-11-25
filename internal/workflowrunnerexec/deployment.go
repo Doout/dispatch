@@ -70,7 +70,7 @@ func executeDeploymentUsing(ctx context.Context, request workflowrunner.Request,
 		return fail(errors.New("execution workspace must be a private directory"))
 	}
 	app, server, d := op.App, op.Server, op.Deployment
-	app.SourceCredential = op.SourceCredential
+	app.SourceCredential, app.SourceProxyURL, app.SourceNoProxy = op.SourceCredential, op.SourceProxyURL, op.SourceNoProxy
 	app.ComposeContent = op.ComposeContent
 	app.HookEnvironment = op.HookEnvironment
 	app.ServiceRuntime = op.ServiceRuntime

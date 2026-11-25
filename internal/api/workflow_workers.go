@@ -37,6 +37,12 @@ func (a *API) ConfigureWorkflowRunner(b *workflowrunner.Broker) {
 // MountWorkflowRunnerRoutes mounts beneath /api/v1 on the tenant's router. These
 // endpoints accept only key-bound enrolled sessions, never browser credentials.
 func (a *API) MountWorkflowRunnerRoutes(r chi.Router, b *workflowrunner.Broker) {
+	workerVersion := func(r *http.Request) string {
+		if r.Header.Get(workflowrunner.MaxVersionHeader) == workflowrunner.RepositoryAccessVersion {
+			return workflowrunner.RepositoryAccessVersion
+		}
+		return workflowrunner.Version
+	}
 	authenticate := func(w http.ResponseWriter, r *http.Request) (string, int64, string, bool) {
 		w.Header().Set("Cache-Control", "no-store")
 		node, ok := a.authenticateEdge(r)
@@ -59,7 +65,7 @@ func (a *API) MountWorkflowRunnerRoutes(r chi.Router, b *workflowrunner.Broker) 
 			problem(w, 422, "Worker configuration mismatch", "The worker must advertise its assigned protocol and execution mode.")
 			return "", 0, "", false
 		}
-		details := map[string]string{"workerDocker": "false", "workerVersion": workflowrunner.Version, "workerCheckedAt": time.Now().UTC().Format(time.RFC3339Nano)}
+		details := map[string]string{"workerDocker": "false", "workerVersion": workerVersion(r), "workerCheckedAt": time.Now().UTC().Format(time.RFC3339Nano)}
 		if mode == "tenant" && r.Header.Get("X-Dispatch-Worker-Docker") == "true" {
 			details["workerDocker"] = "true"
 		}
@@ -86,7 +92,7 @@ func (a *API) MountWorkflowRunnerRoutes(r chi.Router, b *workflowrunner.Broker) 
 		if !ok {
 			return
 		}
-		job, err := b.Lease(r.Context(), node, generation, mode)
+		job, err := b.Lease(r.Context(), node, generation, mode, workerVersion(r))
 		if err != nil {
 			problem(w, 409, "Worker job unavailable", "The operation or its authorization changed.")
 			return

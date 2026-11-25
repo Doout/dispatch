@@ -52,7 +52,7 @@ func TestEnrolledWorkflowWorkerStreamsAndCompletesEncryptedJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := workflowrunner.Client{HTTP: server.Client(), Identity: identity, Enrollment: token, Mode: "tenant"}
+	client := workflowrunner.Client{HTTP: server.Client(), Identity: identity, Enrollment: token, Mode: "tenant", MaxVersion: workflowrunner.RepositoryAccessVersion}
 	state := filepath.Join(t.TempDir(), "state")
 	continueJob := make(chan struct{})
 	worker, err := workflowrunner.OpenWorker(state, node.ID, func(ctx context.Context, r workflowrunner.Request, _ string, progress func(string)) workflowrunner.Result {
@@ -124,7 +124,7 @@ func TestEnrolledWorkflowWorkerStreamsAndCompletesEncryptedJob(t *testing.T) {
 		t.Fatalf("shared typed runtime poll: %v %v", job, err)
 	}
 	registered, err := a.store.GetPrivateNetwork(ctx, node.ID)
-	if err != nil || registered.Details["runtimeVersion"] != remoteruntime.APIVersion || registered.Details["workerVersion"] != workflowrunner.Version {
+	if err != nil || registered.Details["runtimeVersion"] != remoteruntime.APIVersion || registered.Details["workerVersion"] != workflowrunner.RepositoryAccessVersion {
 		t.Fatal("worker lost negotiated runtime capabilities", err)
 	}
 	// Durable local receipts contain encrypted output, not secret values.
@@ -160,6 +160,10 @@ func TestWorkflowWorkerRejectsLegacySessionAndModeEscalation(t *testing.T) {
 		if response.Code != test.status {
 			t.Fatalf("mode %s: %d %s", test.mode, response.Code, response.Body.String())
 		}
+	}
+	registered, err := a.store.GetPrivateNetwork(context.Background(), node.ID)
+	if err != nil || registered.Details["workerVersion"] != workflowrunner.Version {
+		t.Fatal("legacy worker did not retain v1 capability", err)
 	}
 	other := serviceTestAPI(t)
 	otherRoutes := chi.NewRouter()

@@ -45,10 +45,11 @@ export function VariableUsageButton({ secret, usage, loading, error, onClick }: 
 }
 const kindLabel: Record<string, string> = {
   application: "Application", workflow: "Workflow", preview_template: "Preview template", service_template: "Service template",
-  configuration: "Repository configuration", builder: "Builder", service: "Service", event_rule: "Event rule", preview_group: "Preview group",
+  repository_connection: "Repository connection", configuration: "Repository configuration", builder: "Builder", service: "Service", event_rule: "Event rule", preview_group: "Preview group",
 };
 function consumerLink(consumer: SecretConsumer) {
   if (consumer.kind === "workflow" || consumer.kind === "application") return `/applications/${encodeURIComponent(consumer.id)}/topology`;
+  if (consumer.kind === "repository_connection") return "/connections";
   if (consumer.kind === "configuration") return `/applications/configurations/${encodeURIComponent(consumer.id)}/topology`;
   if (consumer.kind === "builder") return `/servers/${encodeURIComponent(consumer.id)}/topology`;
   if (consumer.kind === "service" || consumer.kind === "service_template") return "/services";

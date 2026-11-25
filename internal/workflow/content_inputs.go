@@ -187,7 +187,8 @@ func (s *Service) hashSourceInputs(ctx context.Context, config core.ConfigSource
 
 func sameSourceInput(a, b core.WorkflowSourceRevision) bool {
 	if a.Repository != b.Repository || a.Branch != b.Branch || a.Path != b.Path || a.Alias != b.Alias ||
-		a.GitHubAppID != b.GitHubAppID || a.CloneURL != b.CloneURL {
+		a.GitHubAppID != b.GitHubAppID || a.CloneURL != b.CloneURL ||
+		a.RepositoryConnectionID != b.RepositoryConnectionID || a.CredentialSecretID != b.CredentialSecretID {
 		return false
 	}
 	if len(a.ContentHashes) > 0 && len(b.ContentHashes) > 0 {

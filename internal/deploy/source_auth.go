@@ -11,6 +11,7 @@ import (
 
 	"github.com/doout/dispatch/internal/core"
 	secretcrypto "github.com/doout/dispatch/internal/crypto"
+	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/repositoryproxy"
 	"github.com/doout/dispatch/internal/runtimecontract"
 )
@@ -22,6 +23,7 @@ const (
 )
 
 type secretReader interface {
+	repositoryConnectionReader
 	GetSecret(context.Context, string) (core.Secret, error)
 }
 
@@ -86,10 +88,15 @@ func (e SourceAuthExecutor) Cleanup(ctx context.Context, app core.App, server co
 // Resolve decrypts the application's scoped repository credential into a
 // transient App copy. Callers must never persist or serialize the result.
 func (e SourceAuthExecutor) Resolve(ctx context.Context, app core.App) (core.App, error) {
+	if err := checkDeploymentRepositoryConnection(ctx, e.Secrets, app); err != nil {
+		return app, err
+	}
 	if e.Proxy != nil && repositoryproxy.IsHTTPRepository(app.SourceRepo) {
 		proxyContext := ctx
 		if app.SourceAuthType == SourceAuthGitHubApp {
 			proxyContext = repositoryproxy.WithGitHubApp(ctx, app.SourceCredentialID)
+		} else if app.HelmProvenance.RepositoryConnectionID != "" {
+			proxyContext = repositoryproxy.WithGitHubApp(ctx, app.HelmProvenance.RepositoryProxyAppID)
 		}
 		proxyURL, noProxy, err := e.Proxy.Resolve(proxyContext)
 		if err != nil {
@@ -104,7 +111,7 @@ func (e SourceAuthExecutor) Resolve(ctx context.Context, app core.App) (core.App
 		if e.GitHubApps == nil {
 			return app, errors.New("GitHub App authentication is not configured")
 		}
-		token, err := e.GitHubApps.RepositoryToken(ctx, app.SourceCredentialID, app.SourceRepo)
+		token, err := e.GitHubApps.RepositoryToken(githubapp.WithRepositoryConnection(ctx, app.HelmProvenance.RepositoryConnectionID), app.SourceCredentialID, app.SourceRepo)
 		if err != nil {
 			return app, fmt.Errorf("create GitHub App installation token: %w", err)
 		}
@@ -117,6 +124,9 @@ func (e SourceAuthExecutor) Resolve(ctx context.Context, app core.App) (core.App
 	secret, err := e.Secrets.GetSecret(ctx, app.SourceCredentialID)
 	if err != nil {
 		return app, fmt.Errorf("load source credential: %w", err)
+	}
+	if app.HelmProvenance.RepositoryConnectionID != "" && secret.Type != core.SecretTypeGitHubToken {
+		return app, errors.New("repository connection requires a GitHub token")
 	}
 	if err := ValidateSourceCredentialType(app.SourceAuthType, secret.Type); err != nil {
 		return app, err
@@ -184,20 +194,15 @@ func prepareGitCredentials(app core.App) ([]string, func(), error) {
 		return nil, func() {}, errors.New("configured source credential is empty")
 	}
 	switch app.SourceAuthType {
-	case SourceAuthGitHubApp:
-		basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + credential))
-		environment = append(environment,
-			"GIT_CONFIG_COUNT=1",
-			"GIT_CONFIG_KEY_0=http.extraHeader",
-			"GIT_CONFIG_VALUE_0=Authorization: Basic "+basic,
-		)
-		return environment, func() {}, nil
-	case SourceAuthGitHubToken:
-		environment = append(environment,
-			"GIT_CONFIG_COUNT=1",
-			"GIT_CONFIG_KEY_0=http.extraHeader",
-			"GIT_CONFIG_VALUE_0=Authorization: Bearer "+credential,
-		)
+	case SourceAuthGitHubApp, SourceAuthGitHubToken:
+		key, header, bound, err := gitAuthorization(app, credential)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		environment = append(environment, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0="+key, "GIT_CONFIG_VALUE_0="+header)
+		if bound {
+			environment = append(environment, "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_1=http.followRedirects", "GIT_CONFIG_VALUE_1=false")
+		}
 		return environment, func() {}, nil
 	case SourceAuthSSHKey:
 		directory, err := os.MkdirTemp("", "dispatch-git-auth-")
@@ -215,6 +220,24 @@ func prepareGitCredentials(app core.App) ([]string, func(), error) {
 	default:
 		return nil, func() {}, fmt.Errorf("unsupported source authentication type %q", app.SourceAuthType)
 	}
+}
+
+// Named connections authorize exactly one HTTPS repository. Scope the header to
+// its Git URL and disable redirects so the credential cannot follow a move.
+func gitAuthorization(app core.App, credential string) (key, header string, bound bool, err error) {
+	bound = app.RepositoryConnectionID != "" || app.HelmProvenance.RepositoryConnectionID != ""
+	key = "http.extraHeader"
+	if bound {
+		repository, err := core.CanonicalRepositoryURL(app.SourceRepo)
+		if err != nil || repository != app.SourceRepo {
+			return "", "", true, errors.New("named repository authentication requires its bound HTTPS clone URL")
+		}
+		key = "http." + repository + ".extraHeader"
+	}
+	if bound || app.SourceAuthType == SourceAuthGitHubApp {
+		return key, "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+credential)), bound, nil
+	}
+	return key, "Authorization: Bearer " + credential, false, nil
 }
 
 func runGitForApp(ctx context.Context, app core.App, args ...string) error {

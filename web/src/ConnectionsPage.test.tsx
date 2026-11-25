@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionsPage } from "./ConnectionsPage";
 import { HostedTenantContext } from "./hosted/context";
@@ -26,6 +26,7 @@ const overview: Overview = {
 };
 
 beforeEach(() => {
+  vi.spyOn(api, "repositoryConnections").mockResolvedValue([]);
   vi.spyOn(api, "githubAppInstallations").mockResolvedValue([]);
   vi.spyOn(api, "githubAppRepositories").mockResolvedValue([]);
 });
@@ -333,4 +334,71 @@ it("offers Doodship setup only to local installation owners", () => {
   page.rerender(<ConnectionsPage overview={{ ...owner, identity: { ...owner.identity!, systemRole: "member" } }} onDismissNotice={() => {}} onChanged={async () => {}} />);
   expect(screen.queryByRole("heading", { name: "Doodship" })).toBeNull();
   expect(request).not.toHaveBeenCalled();
+});
+
+
+describe("named repository connections", () => {
+  const owner: Overview["identity"] = { id: "owner", username: "owner", displayName: "Owner", systemRole: "owner", permissions: [] };
+  const token: Overview["secrets"][number] = { id: "secret-1", type: "github_token", name: "GitOps access", environmentVariable: "GITHUB_TOKEN", createdAt: "", updatedAt: "" };
+  const project: Overview["projects"][number] = { id: "proj-1", name: "Build", description: "", createdAt: "" };
+  const saved = { id: "binding-1", projectId: project.id, name: "gitops-read", repositoryUrl: "https://github.example.test/team/service.git", credentialSecretId: token.id, updatedAt: "" };
+  const available: Overview = { ...overview, identity: owner, projects: [project], secrets: [token] };
+  const app = { id: "app-1", name: "Build App", webUrl: "https://github.example.test", apiUrl: "https://github.example.test/api/v3", appId: 1, installationId: 2, state: "ready", privateKeyConfigured: true, webhookSecretConfigured: false, createdAt: "", updatedAt: "" };
+  function mount(data = available, mode: "connected" | "embedded" | null = "connected") {
+    return render(<HostedTenantContext.Provider value={mode ? { mode: "tenant", backendMode: mode } as HostedTenant : null}>
+      <ConnectionsPage overview={data} onDismissNotice={() => {}} onChanged={async () => {}} />
+    </HostedTenantContext.Provider>);
+  }
+
+  it.each(["connected", null] as const)("creates a PAT connection from a stored secret reference in %s mode", async mode => {
+    const create = vi.spyOn(api, "createRepositoryConnection").mockResolvedValue(saved);
+    mount(available, mode);
+    fireEvent.click(await screen.findByRole("button", { name: /Repository connection/ }));
+    const form = within(screen.getByRole("region", { name: "Add repository connection" }));
+    expect(form.getByRole("link", { name: "Variables" }).getAttribute("href")).toBe("/variables");
+    fireEvent.change(form.getByRole("textbox", { name: /^Connection name/ }), { target: { value: saved.name } });
+    fireEvent.change(form.getByRole("textbox", { name: /^Repository URL/ }), { target: { value: saved.repositoryUrl } });
+    fireEvent.change(form.getByRole("combobox", { name: /^Token variable/ }), { target: { value: token.id } });
+    expect(form.getByText('connection: "gitops-read"')).toBeTruthy();
+    fireEvent.click(form.getByRole("button", { name: "Add connection" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith({ projectId: project.id, name: saved.name, repositoryUrl: saved.repositoryUrl, credentialSecretId: token.id }));
+    expect(document.querySelector('input[type="password"]')).toBeNull();
+  });
+
+  it("switches a saved PAT to a ready App on the repository host without changing its YAML name", async () => {
+    vi.mocked(api.repositoryConnections).mockResolvedValue([saved]);
+    const update = vi.spyOn(api, "updateRepositoryConnection").mockResolvedValue({ ...saved, credentialSecretId: undefined, githubAppId: app.id });
+    mount({ ...available, githubApps: [app, { ...app, id: "wrong-host", name: "Different host", webUrl: "https://external.example.test" }, { ...app, id: "uninstalled", name: "Uninstalled", installationId: undefined }] });
+    fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
+    const form = within(screen.getByRole("region", { name: "Edit repository connection" }));
+    expect((form.getByRole("textbox", { name: /^Connection name/ }) as HTMLInputElement).disabled).toBe(true);
+    expect((form.getByRole("textbox", { name: /^Repository URL/ }) as HTMLInputElement).disabled).toBe(true);
+    expect((form.getByRole("combobox", { name: "Project" }) as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.change(form.getByRole("combobox", { name: "Authentication" }), { target: { value: "app" } });
+    const apps = form.getByRole("combobox", { name: "GitHub App" });
+    expect(within(apps).queryByRole("option", { name: "Different host" })).toBeNull();
+    expect(within(apps).queryByRole("option", { name: "Uninstalled" })).toBeNull();
+    fireEvent.change(apps, { target: { value: app.id } });
+    fireEvent.click(form.getByRole("button", { name: "Save connection" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(saved.id, { name: saved.name, projectId: project.id, repositoryUrl: saved.repositoryUrl, githubAppId: app.id }));
+  });
+
+  it("explains that an older connected controller needs an update before starting setup", async () => {
+    vi.mocked(api.repositoryConnections).mockRejectedValue(Object.assign(new Error("Unavailable"), { status: 404 }));
+    mount();
+    expect(await screen.findByText("Update the controller to manage named repository connections.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Repository connection/ })).toBeNull();
+  });
+
+  it("shows named repository management to embedded tenant owners", async () => {
+    vi.mocked(api.repositoryConnections).mockResolvedValue([]);
+    mount(available, "embedded");
+    expect(await screen.findByRole("button", { name: /Repository connection/ })).toBeTruthy();
+  });
+
+  it("hides named repository management from members", () => {
+    mount({ ...available, identity: { ...owner, systemRole: "member" } }, "connected");
+    expect(screen.queryByRole("button", { name: /Repository connection/ })).toBeNull();
+    expect(api.repositoryConnections).not.toHaveBeenCalled();
+  });
 });

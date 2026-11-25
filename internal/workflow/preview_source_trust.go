@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doout/dispatch/internal/core"
+	"github.com/doout/dispatch/internal/deploy"
 	"github.com/doout/dispatch/internal/githubapp"
 	"github.com/doout/dispatch/internal/store"
 )
@@ -114,10 +115,20 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 		if !ok || normalizeRepository(configured.Repository) != normalizeRepository(pinned.Repository) || pinned.CommitSHA == "" {
 			return deny("Preview source " + alias + " no longer matches the saved configuration.")
 		}
-		if configured.Connection != "" && pinned.GitHubAppID == "" {
+		if pinned.RepositoryConnectionID != "" {
+			binding, err := s.pinnedRepositoryConnection(ctx, source.ProjectID, pinned)
+			if err != nil || binding.Name != configured.Connection {
+				return deny("Repository connection for preview source " + alias + " changed. Start a new run.")
+			}
+			scope, err := s.previewBindingScope(ctx, binding)
+			if err != nil {
+				return deny("Checkout credential for preview source " + alias + " is unavailable.")
+			}
+			sourceAppScopes = append(sourceAppScopes, scope...)
+		} else if configured.Connection != "" && pinned.GitHubAppID == "" {
 			return deny("Preview source " + alias + " is missing its checkout connection. Start a new run.")
 		}
-		if pinned.GitHubAppID != "" {
+		if pinned.GitHubAppID != "" && pinned.RepositoryConnectionID == "" {
 			connection, err := s.pinnedWorkflowSourceApp(ctx, pinned)
 			if err != nil {
 				return deny("Checkout connection for preview source " + alias + " is unavailable or its GitHub host changed.")
@@ -132,7 +143,7 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 		if number < 1 {
 			continue
 		}
-		if pinned.GitHubAppID != "" && verifier.ID != "" && githubapp.ValidateRepositoryHost(pinned.CloneURL, verifier.WebURL) != nil {
+		if (pinned.GitHubAppID != "" || pinned.RepositoryConnectionID != "") && verifier.ID != "" && githubapp.ValidateRepositoryHost(pinned.CloneURL, verifier.WebURL) != nil {
 			return deny("PR source " + alias + " uses a different GitHub host than the preview connection.")
 		}
 		if s.GitHub == nil && s.ResolvePreviewSource == nil {
@@ -218,6 +229,26 @@ func (s *Service) SourceTrust(ctx context.Context, resource core.WorkflowResourc
 }
 
 // Include metadata and references only. Approval does not decrypt credentials.
+// Include both the repository binding and the selected credential in approval evidence.
+func (s *Service) previewBindingScope(ctx context.Context, binding core.RepositoryConnection) ([]string, error) {
+	scopes := []string{"repository-connection:" + binding.ID + ":" + binding.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+	if binding.CredentialSecretID != "" {
+		secret, err := s.Store.GetSecret(ctx, binding.CredentialSecretID)
+		if err != nil {
+			return nil, err
+		}
+		if secret.Type != core.SecretTypeGitHubToken {
+			return nil, errors.New("repository connection requires a GitHub token")
+		}
+		return append(scopes, "secret:"+secret.ID+":"+secret.UpdatedAt.UTC().Format(time.RFC3339Nano)), nil
+	}
+	app, err := s.Store.GetGitHubApp(ctx, binding.GitHubAppID)
+	if err != nil {
+		return nil, err
+	}
+	return append(scopes, "source-checkout:"+app.ID+":"+app.UpdatedAt.UTC().Format(time.RFC3339Nano)), nil
+}
+
 func (s *Service) previewCredentialScope(ctx context.Context, source core.ConfigSource, doc Document) ([]string, []string, error) {
 	scopes := []string{"config-source:" + source.ID, "github-app:" + source.GitHubAppID, "repository-credential:" + source.CredentialSecretID}
 	if source.GitHubAppID != "" {
@@ -315,6 +346,18 @@ func (s *Service) previewCredentialScope(ctx context.Context, source core.Config
 					scopes = append(scopes, "repository-access:"+connection.ID+":"+connection.UpdatedAt.UTC().Format(time.RFC3339Nano))
 				}
 				for _, spec := range pd[0].Pipeline.Sources {
+					binding, found, err := s.lookupWorkflowRepositoryConnection(ctx, pipelineSource.ProjectID, spec)
+					if err != nil {
+						return nil, nil, err
+					}
+					if found {
+						scope, err := s.previewBindingScope(ctx, binding)
+						if err != nil {
+							return nil, nil, err
+						}
+						scopes = append(scopes, scope...)
+						continue
+					}
 					connection, err := s.workflowSourceApp(ctx, pipelineSource.GitHubAppID, "", spec.Connection)
 					if err != nil {
 						return nil, nil, err
@@ -464,6 +507,16 @@ func (s *Service) CheckDeploymentTrust(ctx context.Context, app core.App, commit
 	for _, pinned := range revision.Sources {
 		if normalizeRepository(pinned.Repository) != normalizeRepository(app.SourceRepo) {
 			continue
+		}
+		if pinned.RepositoryConnectionID != "" {
+			expected, err := core.CanonicalRepositoryURL(pinned.CloneURL)
+			actual, actualErr := core.CanonicalRepositoryURL(app.SourceRepo)
+			if err != nil || actualErr != nil || actual != expected {
+				continue
+			}
+			if pinned.CredentialSecretID != "" && (pinned.CredentialSecretID != app.SourceCredentialID || app.SourceAuthType != deploy.SourceAuthGitHubToken) {
+				continue
+			}
 		}
 		if pinned.GitHubAppID != "" && (pinned.GitHubAppID != app.SourceCredentialID ||
 			cloneRepositoryHost(pinned.CloneURL) != cloneRepositoryHost(app.SourceRepo)) {
