@@ -4,6 +4,8 @@ import { WorkflowTopology, WorkflowTopologyNode } from "../api";
 
 type DrawnEdge = { id: string; path: string; from: string; to: string; kind: string };
 
+const singularColumnLabels: Record<string, string> = { sources: "source", jobs: "job", deployments: "deployment" };
+
 export function TopologyCanvas({ topology, label = "Application topology", onNodeSelect, isNodeSelectable = () => true }: { topology: WorkflowTopology; label?: string; onNodeSelect?: (node: WorkflowTopologyNode) => void; isNodeSelectable?: (node: WorkflowTopologyNode) => boolean }) {
   const boardRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -45,7 +47,7 @@ export function TopologyCanvas({ topology, label = "Application topology", onNod
 
   return <section className="topology-surface" aria-label={label}>
     <div className="topology-toolbar">
-      <dl>{counts.map((column) => <div key={column.id}><dd>{column.count}</dd><dt>{column.label.toLowerCase()}</dt></div>)}</dl>
+      <dl>{counts.map((column) => <div key={column.id}><dd>{column.count}</dd><dt>{(column.count === 1 && singularColumnLabels[column.id]) || column.label.toLowerCase()}</dt></div>)}</dl>
       <div className="topology-zoom" aria-label="Topology zoom controls">
         <button aria-label="Zoom out" disabled={zoom <= .7} onClick={() => setZoom((value) => Math.max(.7, value - .1))}><Minus size={14} /></button>
         <button className="zoom-value" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>

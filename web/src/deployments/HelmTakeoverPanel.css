@@ -1,0 +1,41 @@
+.helm-takeover {
+  margin-block: 12px;
+  border: 1px solid var(--rule);
+  border-inline-start: 3px solid var(--amber, #a76213);
+  border-radius: 8px;
+  background: var(--surface, white);
+  padding: 16px 18px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.helm-takeover.is-complete { border-inline-start-color: var(--green); }
+.helm-takeover-header { display: flex; align-items: flex-start; gap: 10px; }
+.helm-takeover-header > svg { flex: none; color: var(--amber, #a76213); }
+.helm-takeover.is-complete .helm-takeover-header > svg { color: var(--green); }
+.helm-takeover-header > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.helm-takeover h3 { margin: 0; font-size: 15px; line-height: 20px; }
+.helm-takeover-header p { margin: 3px 0 0; color: var(--muted); }
+.helm-takeover-review { padding-inline-start: 30px; }
+.helm-takeover dl { margin: 0; }
+.helm-takeover dt { color: var(--muted); font-size: 12px; }
+.helm-takeover dd { margin: 0; overflow-wrap: anywhere; }
+.helm-takeover .helm-takeover-facts { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-block: 14px 10px; }
+.helm-takeover-facts dd { font-weight: 600; }
+.helm-takeover-ids summary { width: fit-content; cursor: pointer; font-weight: 550; }
+.helm-takeover-ids dl { display: grid; gap: 6px; margin-block: 8px; }
+.helm-takeover-ids dl > div { display: grid; grid-template-columns: minmax(0, 145px) minmax(0, 1fr); gap: 8px; }
+.helm-takeover-ids code { font: 12px var(--mono); }
+.helm-takeover-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 24px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.helm-takeover-footer label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.helm-takeover-footer input { flex: none; width: 16px; height: 16px; margin: 1px 0 0; }
+.helm-takeover-actions { display: flex; gap: 8px; margin-inline-start: auto; }
+.helm-takeover .form-error { margin: 10px 0 0; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .helm-takeover { padding: 12px; }
+  .helm-takeover-header { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+  .helm-takeover-header button { grid-column: 2; justify-self: start; }
+  .helm-takeover-review { padding-inline-start: 0; }
+  .helm-takeover-footer { align-items: start; flex-direction: column; }
+  .helm-takeover-actions { margin-inline-start: 0; }
+  .helm-takeover-ids dl > div { grid-template-columns: 1fr; gap: 0; }
+}

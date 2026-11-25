@@ -14,7 +14,9 @@ it("requires a new inspection and explicit confirmation after the release change
   const user = userEvent.setup();
   render(<HelmTakeoverPanel appId="current" />);
   await user.click(screen.getByRole("button", { name: "Inspect release ownership" }));
-  expect(screen.getByText("slots/slot1")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Take over slot1?" })).toBeTruthy();
+  expect(screen.getByText("slots")).toBeTruthy();
+  await user.click(screen.getByText("Ownership details"));
   expect(screen.getByText("old-project")).toBeTruthy();
   expect((screen.getByRole("button", { name: "Take over release" }) as HTMLButtonElement).disabled).toBe(true);
   await user.click(screen.getByRole("checkbox"));
@@ -24,6 +26,6 @@ it("requires a new inspection and explicit confirmation after the release change
   expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
   await user.click(screen.getByRole("checkbox"));
   await user.click(screen.getByRole("button", { name: "Take over release" }));
-  expect((await screen.findByRole("status")).textContent).toContain("Ownership transferred");
+  expect((await screen.findByRole("status")).textContent).toContain("slot1 now belongs to");
   expect(accept.mock.calls).toEqual([["current", "first"], ["current", "second"]]);
 });

@@ -219,7 +219,7 @@ describe("connections page", () => {
     expect(apiURL.value).toBe("https://api.example.test/v3");
   });
 
-  it("uses the GitHub Enterprise installation path", () => {
+  it("uses the GitHub Enterprise installation path", async () => {
     const enterpriseOverview: Overview = {
       ...overview,
       githubApps: [{
@@ -238,10 +238,36 @@ describe("connections page", () => {
     };
     render(<ConnectionsPage overview={enterpriseOverview} onDismissNotice={() => undefined} onChanged={async () => undefined} />);
 
-    const installLink = screen.getByRole("link", { name: /Install App/ });
+    const installLink = await screen.findByRole("link", { name: /Install App/ });
     expect(installLink.getAttribute("href"))
       .toBe("https://github.example.com/github-apps/dispatch-example/installations/new");
     expect(installLink.getAttribute("target")).toBeNull();
+  });
+
+  it("uses live installation access on the inventory and detail screens", async () => {
+    const app = { id: "app", name: "Read-only App", slug: "read-only", appId: 42, readOnly: true,
+      webUrl: "https://github.example.com", apiUrl: "https://github.example.com/api/v3",
+      privateKeyConfigured: true, webhookSecretConfigured: false, state: "needs_installation", createdAt: "", updatedAt: "" };
+    const account = { id: 1, account: "team", target: "Organization" };
+    const installations = vi.mocked(api.githubAppInstallations).mockResolvedValue([account]);
+    const props = { overview: { ...overview, githubApps: [app] }, onDismissNotice: () => {}, onChanged: async () => {} };
+    const page = render(<ConnectionsPage {...props} />);
+    expect(await screen.findByText("connected")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Install App" })).toBeNull();
+
+    page.rerender(<ConnectionsPage {...props} selectedConnectionID="app" />);
+    const header = within(screen.getByRole("heading", { name: app.name }).closest("header")!);
+    expect(await header.findByText("connected")).toBeTruthy();
+    expect(screen.getByText("team")).toBeTruthy();
+    for (const [suspended, expected] of [[true, "suspended"], [false, "needs installation"]] as const) {
+      installations.mockResolvedValue(suspended ? [{ ...account, suspended }] : []);
+      fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));
+      expect(await header.findByText(expected)).toBeTruthy();
+    }
+    installations.mockRejectedValue(new Error("GitHub offline"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));
+    expect(await header.findByText("unavailable")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("GitHub offline");
   });
 
   it("shows missing App and installation access after verification", async () => {
