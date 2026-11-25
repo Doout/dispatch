@@ -7,19 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/doout/dispatch/internal/automationclient"
 )
-
-func Main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
-}
 
 // credentialSetting preserves existing CI configurations when migrating to Doodship.
 func credentialSetting(name, legacy string) string {
@@ -29,15 +21,15 @@ func credentialSetting(name, legacy string) string {
 	return os.Getenv(legacy)
 }
 
-func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) int {
+func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) int {
 	emit := func(r automationclient.Result) int { _ = json.NewEncoder(out).Encode(r); return r.ExitCode() }
-	global := flag.NewFlagSet("doodshipctl", flag.ContinueOnError)
+	global := flag.NewFlagSet("doodship automation", flag.ContinueOnError)
 	global.SetOutput(diagnostics)
 	endpoint := global.String("url", credentialSetting("DOODSHIP_URL", "DISPATCH_URL"), "Controller origin, normally HTTPS")
 	tokenFile := global.String("token-file", credentialSetting("DOODSHIP_TOKEN_FILE", "DISPATCH_TOKEN_FILE"), "Mode 0600 file containing a scoped service-account token")
 	requestTimeout := global.Duration("request-timeout", 30*time.Second, "Timeout for each API request, maximum 10m")
 	global.Usage = func() {
-		fmt.Fprintln(diagnostics, "Usage: doodshipctl [--url URL --token-file FILE] <resource> <action> [flags]\n       doodshipctl [global flags] mcp\nAll commands return dispatch.client/v1 JSON. No owner token is needed.\nCommands:")
+		fmt.Fprintln(diagnostics, "Usage: doodship automation [--url URL --token-file FILE] <resource> <action> [flags]\n       doodship automation [global flags] mcp\nAll commands return dispatch.client/v1 JSON. No owner token is needed.\nCommands:")
 		for _, op := range automationclient.Operations {
 			fmt.Fprintln(diagnostics, "  "+strings.ReplaceAll(op.Name, "_", " ")+"  "+op.Description)
 		}

@@ -27,13 +27,13 @@ export function Credentials({ overview, showCLI }: { overview: Overview; showCLI
     <InventoryStatus {...accounts} error={accounts.error && `Could not load automation accounts. ${accounts.error}`} retry={accounts.refresh} />
     {!accounts.loading && !accounts.error && <ResourceRows items={accounts.items} label="Automation accounts" columns={["Account", "State", "Actions"]} rowKey={item => item.id} empty="No automation accounts." row={item => <><td><strong>{item.name}</strong><small>{item.description || item.id}</small></td><td><StatusLabel state={item.state} /></td><td><button type="button" className="table-action" aria-pressed={item.id === selected} onClick={() => setSelected(item.id)}>Manage {item.name}</button></td></>} />}
     {showCLI && <details className="resources-policy">
-      <summary>Use an account with doodshipctl</summary>
+      <summary>Use an account with the Doodship CLI</summary>
       <p>Give the account <code>project.view</code> on a project, issue a credential, and save the token in a file readable only by its owner (mode 0600). Set the file path and your controller’s HTTPS address on the machine running the CLI.</p>
       <pre>{`export DOODSHIP_URL=${window.location.protocol === "https:" ? window.location.origin : "https://doodship.example.com"}
 export DOODSHIP_TOKEN_FILE=/path/to/doodship-token
-doodshipctl auth status
-doodshipctl projects list`}</pre>
-      <a href="https://github.com/Doout/dispatch/blob/main/docs/automation-client.md">Install and use doodshipctl</a>
+doodship automation auth status
+doodship automation projects list`}</pre>
+      <a href="https://github.com/Doout/dispatch/blob/main/docs/automation-client.md">Install and use the Doodship CLI</a>
     </details>}
     {account && <AccountDetails key={account.id} account={account} overview={overview} onChanged={accounts.refresh} />}
   </>;

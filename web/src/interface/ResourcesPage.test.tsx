@@ -62,8 +62,8 @@ it("lets a controller owner retry a failed account list and find CLI setup", asy
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByText("No automation accounts.");
   expect(accounts).toHaveBeenCalledTimes(2);
-  fireEvent.click(screen.getByText("Use an account with doodshipctl"));
-  expect(screen.getByText(/export DOODSHIP_TOKEN_FILE/).textContent).toContain("doodshipctl auth status");
+  fireEvent.click(screen.getByText("Use an account with the Doodship CLI"));
+  expect(screen.getByText(/export DOODSHIP_TOKEN_FILE/).textContent).toContain("doodship automation auth status");
 });
 
 it("removes an open credential form when the controller disables the feature", async () => {

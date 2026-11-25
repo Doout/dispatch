@@ -23,8 +23,8 @@ Start with an already-owned disposable host to validate the remote runtime. Then
 use the selected real adapter to create a machine through the reviewed API.
 Follow its original operation through allocation, bootstrap and enrollment.
 
-Use `doodshipctl server get --server SERVER_ID` and
-`doodshipctl server wait --server SERVER_ID --timeout 120` to inspect readiness.
+Use `doodship automation server get --server SERVER_ID` and
+`doodship automation server wait --server SERVER_ID --timeout 120` to inspect readiness.
 An allocation receipt alone does not establish a usable workload target. A
 verified isolated snapshot clone must remain separate from deployable servers.
 After a wait timeout, resume with the same server ID.

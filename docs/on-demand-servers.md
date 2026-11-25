@@ -67,8 +67,8 @@ the server endpoint to check whether the intended node has enrolled and passed
 a fresh runtime check:
 
 ```sh
-doodshipctl server get --server SERVER_ID
-doodshipctl server wait --server SERVER_ID --timeout 120
+doodship automation server get --server SERVER_ID
+doodship automation server wait --server SERVER_ID --timeout 120
 ```
 
 `server_get` and `server_wait` are also MCP tools. They require current

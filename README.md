@@ -35,7 +35,7 @@ Or use wget:
 wget -qO- https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install-cli.sh | bash
 ```
 
-To query projects and run deployments from CI with an automation credential, install [the doodshipctl API client](docs/automation-client.md).
+To query projects and run deployments from CI with an automation credential, use [Doodship automation commands](docs/automation-client.md).
 
 The installer verifies the release checksum and installs `doodship` in `~/.local/bin`. If that directory is missing from your PATH, add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and run it in your terminal.
 

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/doout/dispatch/internal/automationcli"
 	wf "github.com/doout/dispatch/internal/workflowfile"
 	"gopkg.in/yaml.v3"
 )
@@ -23,7 +24,7 @@ import (
 const workflowUsage = "Usage: doodship workflow run --file FILE [--pr NUMBER] [--source alias=checkout] [--clone ssh|https|http] [--target ref=context]"
 
 const updateUsage = "Usage: doodship update"
-const usage = workflowUsage + "\n" + updateUsage
+const usage = workflowUsage + "\nUsage: doodship automation [flags] <resource> <action> (see doodship automation --help)\n" + updateUsage
 
 type options struct {
 	file, envFile, envExample, instance string
@@ -50,8 +51,15 @@ func mapping(m map[string]string) func(string) error {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "doodship:", err)
+	os.Exit(execute(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+func execute(ctx context.Context, args []string, in io.Reader, out, log io.Writer) int {
+	if len(args) > 0 && args[0] == "automation" {
+		return automationcli.Run(ctx, args[1:], in, out, log)
+	}
+	if err := run(ctx, args, out, log); err != nil {
+		fmt.Fprintln(log, "doodship:", err)
 		code := 1
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() > 0 {
@@ -60,8 +68,9 @@ func main() {
 		if ctx.Err() != nil {
 			code = 130
 		}
-		os.Exit(code)
+		return code
 	}
+	return 0
 }
 func run(ctx context.Context, args []string, out, log io.Writer) error {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {

@@ -25,16 +25,11 @@ for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatch-hook" ./cmd/dispatch-hook
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/edge/linux-$arch" ./cmd/dispatch-agent
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/relay/linux-$arch" ./cmd/dispatch-relay
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/doodshipctl" ./cmd/doodshipctl
+  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/$arch/dispatchctl" ./cmd/dispatchctl
 done
 for arch in amd64 arm64; do
-  mkdir -p "$output/darwin-$arch"
-  CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output/darwin-$arch/doodshipctl" ./cmd/doodshipctl
-  tar -czf "$output/doodshipctl-darwin-$arch.tar.gz" -C "$output/darwin-$arch" doodshipctl -C "$source_dir" LICENSE
-  tar -czf "$output/doodshipctl-linux-$arch.tar.gz" -C "$output/$arch" doodshipctl -C "$source_dir" LICENSE
-  cp "$output/$arch/doodshipctl" "$output/$arch/dispatchctl"
   tar -czf "$output/dispatch-linux-$arch.tar.gz" -C "$output/$arch" dispatch dispatchctl -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
   tar -czf "$output/dispatch-platform-linux-$arch.tar.gz" -C "$output/$arch" dispatch-platform dispatch-worker -C "$(cd "$output" && pwd)" edge -C "$source_dir" LICENSE -C "$source_dir/web/public/fonts" OFL-Manrope.txt
 done
 sh scripts/build-doodship-release.sh "$output" "$version"
-(cd "$output" && sha256sum dispatch-linux-*.tar.gz dispatch-platform-linux-*.tar.gz doodship-*.tar.gz doodshipctl-*.tar.gz > SHA256SUMS)
+(cd "$output" && sha256sum dispatch-linux-*.tar.gz dispatch-platform-linux-*.tar.gz doodship-*.tar.gz > SHA256SUMS)

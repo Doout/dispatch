@@ -29,13 +29,13 @@ func TestCLIJSONAndExplicitConfirmation(t *testing.T) {
 	defer server.Close()
 	var out, errout bytes.Buffer
 	prefix := []string{"--url", server.URL, "--token-file", path}
-	code := run(context.Background(), append(prefix, "projects", "list"), strings.NewReader(""), &out, &errout)
+	code := Run(context.Background(), append(prefix, "projects", "list"), strings.NewReader(""), &out, &errout)
 	var result automationclient.Result
 	if json.Unmarshal(out.Bytes(), &result) != nil || code != 0 || !result.OK || requests != 1 {
 		t.Fatal("CLI did not return JSON", code, out.String())
 	}
 	out.Reset()
-	code = run(context.Background(), append(prefix, "server", "delete", "--server", "server-1", "--key", "stable-key", "--input", "-"), strings.NewReader(`{"digest":"x"}`), &out, &errout)
+	code = Run(context.Background(), append(prefix, "server", "delete", "--server", "server-1", "--key", "stable-key", "--input", "-"), strings.NewReader(`{"digest":"x"}`), &out, &errout)
 	if code != 2 || requests != 1 || strings.Contains(out.String(), "dsa_cli_fixture") {
 		t.Fatal("CLI invented confirmation", code, out.String())
 	}
@@ -59,7 +59,7 @@ func TestCLIManagedServerReadinessCommands(t *testing.T) {
 		if command == "wait" {
 			args = append(args, "--timeout", "1")
 		}
-		code := run(context.Background(), args, strings.NewReader(""), &out, &diagnostics)
+		code := Run(context.Background(), args, strings.NewReader(""), &out, &diagnostics)
 		var result automationclient.Result
 		if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK || result.Continuation == nil || result.Continuation.ID != "server-1" || result.Continuation.OperationID != "original-operation" || !strings.Contains(string(result.Data), `"deployable":false`) {
 			t.Fatal("CLI lost isolated clone evidence", command, code, out.String(), diagnostics.String())
@@ -69,7 +69,7 @@ func TestCLIManagedServerReadinessCommands(t *testing.T) {
 
 func TestMCPConfigurationFailureKeepsStdoutProtocolOnly(t *testing.T) {
 	var out, errout bytes.Buffer
-	code := run(context.Background(), []string{"--url", "https://example.com", "--token-file", filepath.Join(t.TempDir(), "missing"), "mcp"}, strings.NewReader(""), &out, &errout)
+	code := Run(context.Background(), []string{"--url", "https://example.com", "--token-file", filepath.Join(t.TempDir(), "missing"), "mcp"}, strings.NewReader(""), &out, &errout)
 	if code != 2 || out.Len() != 0 || errout.Len() == 0 {
 		t.Fatal("MCP config wrote non-protocol output")
 	}
@@ -88,7 +88,7 @@ func TestCLIEnvironmentCleanupReviewUsesSelectedEnvironment(t *testing.T) {
 	}))
 	defer server.Close()
 	var out, errout bytes.Buffer
-	code := run(context.Background(), []string{"--url", server.URL, "--token-file", path, "environment", "cleanup", "review", "--environment", "environment-1"}, strings.NewReader(""), &out, &errout)
+	code := Run(context.Background(), []string{"--url", server.URL, "--token-file", path, "environment", "cleanup", "review", "--environment", "environment-1"}, strings.NewReader(""), &out, &errout)
 	var result automationclient.Result
 	if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK {
 		t.Fatal("cleanup review command failed", code, out.String(), errout.String())
@@ -123,7 +123,7 @@ func TestCLIRecoveryReviewAndOperationCommands(t *testing.T) {
 		{"backup", "operation", "get", "--operation", "op-1"},
 	} {
 		var out, diagnostics bytes.Buffer
-		if code := run(context.Background(), append(prefix, args...), strings.NewReader(""), &out, &diagnostics); code != 0 {
+		if code := Run(context.Background(), append(prefix, args...), strings.NewReader(""), &out, &diagnostics); code != 0 {
 			t.Fatalf("command %v failed: %s %s", args, out.String(), diagnostics.String())
 		}
 		var result automationclient.Result
@@ -136,7 +136,7 @@ func TestCLIRecoveryReviewAndOperationCommands(t *testing.T) {
 	}
 	var out, diagnostics bytes.Buffer
 	args := append(prefix, "backup", "restore", "--backup", "backup-1", "--destination", "destination-1", "--key", "stable-restore-key", "--input", "-")
-	code := run(context.Background(), args, strings.NewReader(`{"confirmation":{"resourceId":"backup-1","action":"restore","expectedVersion":"v2"}}`), &out, &diagnostics)
+	code := Run(context.Background(), args, strings.NewReader(`{"confirmation":{"resourceId":"backup-1","action":"restore","expectedVersion":"v2"}}`), &out, &diagnostics)
 	if code != 2 || calls != 3 {
 		t.Fatal("CLI supplied missing restore confirmation", code, calls, out.String())
 	}
@@ -189,7 +189,7 @@ func TestCLIApplicationConfigurationAndInfrastructureRecovery(t *testing.T) {
 		{[]string{"server", "retry", "--server", "server-1", "--operation", "operation-1"}, "", "managed_server"},
 	} {
 		var out, diagnostics bytes.Buffer
-		code := run(context.Background(), append(prefix, tc.args...), strings.NewReader(tc.input), &out, &diagnostics)
+		code := Run(context.Background(), append(prefix, tc.args...), strings.NewReader(tc.input), &out, &diagnostics)
 		var result automationclient.Result
 		if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK || result.Continuation == nil || result.Continuation.Kind != tc.kind {
 			t.Fatal("lost command continuation", tc.args, code, out.String(), diagnostics.String())
@@ -220,11 +220,11 @@ func TestCLIBackupPolicyPauseRequiresExplicitEnabled(t *testing.T) {
 	defer server.Close()
 	args := []string{"--url", server.URL, "--token-file", credential, "backup", "policy", "set", "--policy", "policy-1", "--input", "-"}
 	var out, diagnostics bytes.Buffer
-	if code := run(context.Background(), args, strings.NewReader(`{"revision":1,"confirmName":"daily-pg"}`), &out, &diagnostics); code != 2 || requests != 0 {
+	if code := Run(context.Background(), args, strings.NewReader(`{"revision":1,"confirmName":"daily-pg"}`), &out, &diagnostics); code != 2 || requests != 0 {
 		t.Fatal("CLI silently paused policy", code, requests)
 	}
 	out.Reset()
-	if code := run(context.Background(), args, strings.NewReader(`{"revision":1,"enabled":false,"confirmName":"daily-pg"}`), &out, &diagnostics); code != 0 || requests != 1 {
+	if code := Run(context.Background(), args, strings.NewReader(`{"revision":1,"enabled":false,"confirmName":"daily-pg"}`), &out, &diagnostics); code != 0 || requests != 1 {
 		t.Fatal("explicit pause failed", code, out.String())
 	}
 }
@@ -271,7 +271,7 @@ func TestCLIOffsiteSelectionAndContinuation(t *testing.T) {
 		{[]string{"backup", "verify", "--backup", "backup-1", "--key", "offsite-once", "--input", "-"}, `{"destinationRunId":"fresh-service"}`},
 	} {
 		var out, diagnostics bytes.Buffer
-		code := run(context.Background(), append(prefix, tc.args...), strings.NewReader(tc.input), &out, &diagnostics)
+		code := Run(context.Background(), append(prefix, tc.args...), strings.NewReader(tc.input), &out, &diagnostics)
 		var result automationclient.Result
 		if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK {
 			t.Fatal("offsite CLI failed", tc.args, out.String(), diagnostics.String())
@@ -299,7 +299,7 @@ func TestCLIAuthStatus(t *testing.T) {
 	t.Setenv("DOODSHIP_URL", server.URL)
 	t.Setenv("DOODSHIP_TOKEN_FILE", path)
 	var out, diagnostics bytes.Buffer
-	code := run(context.Background(), []string{"auth", "status"}, strings.NewReader(""), &out, &diagnostics)
+	code := Run(context.Background(), []string{"auth", "status"}, strings.NewReader(""), &out, &diagnostics)
 	var result automationclient.Result
 	if code != 0 || json.Unmarshal(out.Bytes(), &result) != nil || !result.OK || !strings.Contains(string(result.Data), "ci-reader") {
 		t.Fatal("expected authenticated identity", code, out.String(), diagnostics.String())

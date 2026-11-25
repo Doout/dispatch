@@ -75,7 +75,7 @@ rules within each domain when extracting shared code.
 | `internal/deploy` and `internal/agentruntime` | Execute bounded operations, record effects and cleanup evidence, and journal outcomes before acknowledging them. An interrupted mutation requires inspection. |
 | `internal/provider`, `internal/provision` and `internal/bootstrap` | Allocate through provider adapters, track the original operation and enroll pinned agent artifacts. Snapshot isolation and deployable target readiness have separate acceptance rules. |
 | `internal/workflow` | Capture source revisions, schedule jobs and stage promotion, and preserve the workflow's owned resources and outputs. |
-| `internal/automationclient` and `cmd/doodshipctl` | Use the public API contracts, retain continuation IDs and report approval or reconciliation requirements to callers. |
+| `internal/automationclient` and `cmd/doodship` | Use the public API contracts, retain continuation IDs and report approval or reconciliation requirements to callers. |
 
 SQL helpers may share a locked read or a compare-and-swap write. Their callers
 must continue to own the transaction, lock order and domain predicates. A helper
@@ -163,7 +163,7 @@ and public contract changes separate from behavior-preserving extraction.
 
 | Surface | What an upgrade preserves |
 | --- | --- |
-| Automation CLI | New installations use `doodshipctl`, `DOODSHIP_URL`, and `DOODSHIP_TOKEN_FILE`. Existing controller archives still provide `dispatchctl`. Both commands accept the previous environment names and return the same `dispatch.client/v1` JSON. |
+| Automation CLI | New installations use `doodship automation`, `DOODSHIP_URL`, and `DOODSHIP_TOKEN_FILE`. Existing controller archives still provide `dispatchctl`. Both commands accept the previous environment names and return the same `dispatch.client/v1` JSON. |
 | Installer and storage | The controller executable, GHCR image coordinates, Compose service, volumes, database filenames, backup members and agent service paths retain their names. Existing upgrades and restores use those identifiers to find data. |
 | Helm and GitHub | Helm ownership annotations and the `Dispatch provenance: ` history prefix identify existing releases. GitHub check names and status contexts such as `Dispatch/deployment` can be required by branch protection. |
 | Workflows and the API | Existing `dispatch/v1alpha1` YAML, `.dispatch` discovery paths, provider and worker protocols, and `X-Dispatch-*` headers continue to work across upgrades. |

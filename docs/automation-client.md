@@ -1,17 +1,17 @@
 # DevOps and agent client
 
-`doodshipctl` is a thin API client and stdio MCP server. It returns the same reviewed operations and durable receipts as the browser and REST API. It cannot approve a human gate or override a project grant, provider assignment, quota, source trust decision or data protection rule.
+`doodship automation` is a thin API client and stdio MCP server. It returns the same reviewed operations and durable receipts as the browser and REST API. It cannot approve a human gate or override a project grant, provider assignment, quota, source trust decision or data protection rule.
 
-Install the standalone client on Linux or macOS (amd64 or arm64) from a release that includes a `doodshipctl` archive:
+Install the standalone client on Linux or macOS (amd64 or arm64):
 
 ```sh
 curl -fsSLo install-cli.sh https://raw.githubusercontent.com/Doout/dispatch/main/scripts/install-cli.sh
-bash install-cli.sh --doodshipctl
+bash install-cli.sh
 ```
 
-The installer verifies the archive against the release checksums and installs to `~/.local/bin`. Use `--doodshipctl --version vX.Y.Z` to pin a release in CI. Linux controller archives retain the previous `dispatchctl` executable for existing scripts. The client still accepts `DISPATCH_URL` and `DISPATCH_TOKEN_FILE` when their Doodship counterparts are unset. To build from source, run `go build -o doodshipctl ./cmd/doodshipctl`.
+The installer verifies the archive against the release checksums and installs to `~/.local/bin`. Use `--version vX.Y.Z` to pin a release in CI. Linux controller archives retain the previous `dispatchctl` executable for existing scripts. The client still accepts `DISPATCH_URL` and `DISPATCH_TOKEN_FILE` when their Doodship counterparts are unset. To build from source, run `go build -o doodship ./cmd/doodship`.
 
-Run `doodshipctl --help` for its supported commands. The underscore form, such as `deployment_preview`, is also accepted and matches the MCP tool name.
+Run `doodship automation --help` for its supported commands. The underscore form, such as `deployment_preview`, is also accepted and matches the MCP tool name.
 
 An executable integration test exercises the CLI and MCP against an isolated
 controller using simulated deployment and an owned service fixture. It verifies
@@ -27,7 +27,7 @@ Save the issued token in a mode 0600 file. Keep the file out of Git and shell hi
 ```sh
 export DOODSHIP_URL=https://doodship.example.com
 export DOODSHIP_TOKEN_FILE=/run/secrets/doodship-token
-doodshipctl auth status
+doodship automation auth status
 ```
 
 The client accepts HTTPS, with HTTP allowed for loopback development. Redirects are not followed. It never prints the authentication header and redacts an echoed token from responses. Each response is limited to 4 MiB; request files and MCP messages are limited to 1 MiB. The default HTTP timeout is 30 seconds; use the global `--request-timeout 60s` option before a command when needed.
@@ -37,26 +37,26 @@ The client accepts HTTPS, with HTTP allowed for loopback development. Redirects 
 Use an existing application whose target and credentials were assigned by its owner:
 
 ```sh
-doodshipctl projects list
-doodshipctl apps list --project PROJECT_ID
-doodshipctl deployment preview --app APP_ID --revision FULL_COMMIT_SHA > preview.json
+doodship automation projects list
+doodship automation apps list --project PROJECT_ID
+doodship automation deployment preview --app APP_ID --revision FULL_COMMIT_SHA > preview.json
 ```
 
 Read `preview.json`, including checks and the exact source revision. A preview does not approve a protected source or a pending human gate. Supply its review unchanged after the required approval:
 
 ```sh
 jq '{commitSha: .data.revision, review: .data.review}' preview.json > deployment.json
-doodshipctl deployment start --app APP_ID --key ci-release-2026-001 --input deployment.json > accepted.json
+doodship automation deployment start --app APP_ID --key ci-release-2026-001 --input deployment.json > accepted.json
 jq '.data | {id, operationId, state, recoveryActions}' accepted.json
 ```
 
 Save the request file, application ID and key until its outcome is resolved. If the reply is lost, repeat that exact command and key. Do not create another key merely because a network request timed out. A changed request with the same key is rejected by the server.
 
 ```sh
-doodshipctl receipt wait --receipt RECEIPT_ID --timeout 120
-doodshipctl deployment get --deployment DEPLOYMENT_ID
-doodshipctl deployment logs --deployment DEPLOYMENT_ID --limit 100 --after 0
-doodshipctl deployment diagnose --deployment DEPLOYMENT_ID
+doodship automation receipt wait --receipt RECEIPT_ID --timeout 120
+doodship automation deployment get --deployment DEPLOYMENT_ID
+doodship automation deployment logs --deployment DEPLOYMENT_ID --limit 100 --after 0
+doodship automation deployment diagnose --deployment DEPLOYMENT_ID
 ```
 
 A wait timeout or Ctrl-C stops the client. It does not cancel accepted work. The result includes a `continuation` with the receipt or deployment ID. Resume with that ID. Log entry IDs are continuation cursors; pass the last received ID as `--after` for the next bounded page.
@@ -66,8 +66,8 @@ readiness. Inspect or wait for the original server after its creation receipt
 succeeds:
 
 ```sh
-doodshipctl server get --server SERVER_ID
-doodshipctl server wait --server SERVER_ID --timeout 120
+doodship automation server get --server SERVER_ID
+doodship automation server wait --server SERVER_ID --timeout 120
 ```
 
 These commands report allocation, enrollment and fresh runtime evidence and
@@ -103,10 +103,10 @@ credentials must be configured through the approved owner workflow or inherited
 from an existing template.
 
 ```sh
-doodshipctl app create --key app-definition-001 --input app.json
-doodshipctl receipt wait --receipt RECEIPT_ID --timeout 120
-doodshipctl app get --app APP_ID
-doodshipctl app sync --app APP_ID
+doodship automation app create --key app-definition-001 --input app.json
+doodship automation receipt wait --receipt RECEIPT_ID --timeout 120
+doodship automation app get --app APP_ID
+doodship automation app sync --app APP_ID
 ```
 
 Keep the creation file and key. Repeating the exact request returns its original
@@ -125,7 +125,7 @@ idle manual application with the digest from its current inspection:
 ```
 
 ```sh
-doodshipctl app update --app APP_ID --input app-update.json
+doodship automation app update --app APP_ID --input app-update.json
 ```
 
 Only supplied fields change. The app keeps its identity, target, deployment
@@ -139,12 +139,12 @@ Service mappings, Helm overrides and health policy have separate inspect and
 replace commands:
 
 ```sh
-doodshipctl app bindings get --app APP_ID
-doodshipctl app bindings set --app APP_ID --input bindings.json
-doodshipctl app helm values get --app APP_ID
-doodshipctl app helm values set --app APP_ID --input helm-values.json
-doodshipctl app health get --app APP_ID
-doodshipctl app health set --app APP_ID --input health-policy.json
+doodship automation app bindings get --app APP_ID
+doodship automation app bindings set --app APP_ID --input bindings.json
+doodship automation app helm values get --app APP_ID
+doodship automation app helm values set --app APP_ID --input helm-values.json
+doodship automation app health get --app APP_ID
+doodship automation app health set --app APP_ID --input health-policy.json
 ```
 
 `bindings.json` is the complete service-binding array. `helm-values.json` contains
@@ -158,10 +158,10 @@ edited in its source.
 ## Cancel or roll back a deployment
 
 ```sh
-doodshipctl deployment cancel --deployment DEPLOYMENT_ID
-doodshipctl deployment get --deployment DEPLOYMENT_ID
-doodshipctl app deployments --app APP_ID
-doodshipctl deployment rollback review --deployment RETAINED_DEPLOYMENT_ID
+doodship automation deployment cancel --deployment DEPLOYMENT_ID
+doodship automation deployment get --deployment DEPLOYMENT_ID
+doodship automation app deployments --app APP_ID
+doodship automation deployment rollback review --deployment RETAINED_DEPLOYMENT_ID
 ```
 
 Cancellation requires `deployment.cancel`. It requests a stop and does not
@@ -182,8 +182,8 @@ that the rollback does not revert database migrations:
 ```
 
 ```sh
-doodshipctl deployment rollback --deployment RETAINED_DEPLOYMENT_ID --key rollback-release-001 --input rollback.json
-doodshipctl receipt wait --receipt RECEIPT_ID --timeout 120
+doodship automation deployment rollback --deployment RETAINED_DEPLOYMENT_ID --key rollback-release-001 --input rollback.json
+doodship automation receipt wait --receipt RECEIPT_ID --timeout 120
 ```
 
 Rollback requires `deployment.run`, retained supported artifacts and unchanged
@@ -197,8 +197,8 @@ The owner must register a provider, assign it and an SSH public key to the proje
 Discover the assigned providers and their supported choices before preparing a review:
 
 ```sh
-doodshipctl providers list --project PROJECT_ID
-printf '%s\n' '{"kind":"sizes","config":{}}' | doodshipctl provider options --project PROJECT_ID --provider PROVIDER_ID --input -
+doodship automation providers list --project PROJECT_ID
+printf '%s\n' '{"kind":"sizes","config":{}}' | doodship automation provider options --project PROJECT_ID --provider PROVIDER_ID --input -
 ```
 
 Use `regions`, `images` and `networks` for the other option kinds. The provider manifest describes public configuration fields. Scoped clients cannot supply owner-only provider secret references.
@@ -222,16 +222,16 @@ Prepare `server.json` using provider-supported choices:
 Use the public mock provider from [the provider API documentation](provider-api.md) for an allocation rehearsal without cloud credentials. Its server record is simulated and is not a real VM. Supported providers can request reviewed cloud-init through an optional `bootstrap` object with `method`, `platform`, `imageFamily` and `installRuntime`. The controller supplies and pins the installer artifact and identity.
 
 ```sh
-doodshipctl server review --input server.json > server-review.json
+doodship automation server review --input server.json > server-review.json
 ```
 
 Read the review before writing `accept-server.json` with its `reviewId`, `digest` and exact `confirmName`. The client does not fill in those confirmation fields.
 
 ```sh
-doodshipctl server create --key create-environment-001 --input accept-server.json
-doodshipctl receipt wait --receipt RECEIPT_ID --timeout 120
-doodshipctl servers list --project PROJECT_ID
-doodshipctl server operations --server SERVER_ID
+doodship automation server create --key create-environment-001 --input accept-server.json
+doodship automation receipt wait --receipt RECEIPT_ID --timeout 120
+doodship automation servers list --project PROJECT_ID
+doodship automation server operations --server SERVER_ID
 ```
 
 Allocation success is separate from agent enrollment and workload readiness. Inspect the server states before deploying. A partial allocation can still consume quota. Follow the original operation's recovery state; do not create a replacement to hide an unresolved outcome.
@@ -239,14 +239,14 @@ Allocation success is separate from agent enrollment and workload readiness. Ins
 After detaching workloads and addressing retained data, request a deletion review:
 
 ```sh
-doodshipctl server delete review --server SERVER_ID > delete-review.json
+doodship automation server delete review --server SERVER_ID > delete-review.json
 ```
 
 Read the consequences and resolve any protected storage. Supply the reviewed `digest` and exact `confirmName` in `delete-server.json`, then:
 
 ```sh
-doodshipctl server delete --server SERVER_ID --key delete-environment-001 --input delete-server.json
-doodshipctl receipt wait --receipt DELETE_RECEIPT_ID --timeout 120
+doodship automation server delete --server SERVER_ID --key delete-environment-001 --input delete-server.json
+doodship automation receipt wait --receipt DELETE_RECEIPT_ID --timeout 120
 ```
 
 ## Recover server allocation and enrollment
@@ -254,9 +254,9 @@ doodshipctl receipt wait --receipt DELETE_RECEIPT_ID --timeout 120
 Inspect the original server's operations before choosing a recovery action:
 
 ```sh
-doodshipctl server operations --server SERVER_ID
-doodshipctl server retry --server SERVER_ID --operation OPERATION_ID
-doodshipctl server cancel --server SERVER_ID --operation OPERATION_ID
+doodship automation server operations --server SERVER_ID
+doodship automation server retry --server SERVER_ID --operation OPERATION_ID
+doodship automation server cancel --server SERVER_ID --operation OPERATION_ID
 ```
 
 Retry and cancel require the operation's current infrastructure permission.
@@ -279,8 +279,8 @@ and reviewed name:
 ```
 
 ```sh
-doodshipctl server adopt --server SERVER_ID --input adopt.json
-doodshipctl servers list --project PROJECT_ID
+doodship automation server adopt --server SERVER_ID --input adopt.json
+doodship automation servers list --project PROJECT_ID
 ```
 
 Adoption requires `infrastructure.modify` and verified original ownership.
@@ -292,7 +292,7 @@ An allocated machine without an approved bootstrap can request its first
 enrollment credential explicitly:
 
 ```sh
-doodshipctl server enrollment --server SERVER_ID > enrollment.json
+doodship automation server enrollment --server SERVER_ID > enrollment.json
 ```
 
 Create the destination file privately, for example with `umask 077`, before
@@ -309,15 +309,15 @@ Current `infrastructure.inspect` access and target/provider assignments permit
 inspection of accepted installation receipts:
 
 ```sh
-doodshipctl bootstraps list --project PROJECT_ID --server SERVER_ID
-doodshipctl bootstrap get --bootstrap BOOTSTRAP_ID
+doodship automation bootstraps list --project PROJECT_ID --server SERVER_ID
+doodship automation bootstrap get --bootstrap BOOTSTRAP_ID
 ```
 
 For a failed accepted SSH installation, write `bootstrap-retry.json` containing
 its original `digest`, then explicitly retry with `infrastructure.modify`:
 
 ```sh
-doodshipctl bootstrap retry --bootstrap BOOTSTRAP_ID --input bootstrap-retry.json
+doodship automation bootstrap retry --bootstrap BOOTSTRAP_ID --input bootstrap-retry.json
 ```
 
 Retry preserves the receipt, machine, reviewed artifact and encrypted credentials.
@@ -335,9 +335,9 @@ revision from `server get` in `power.json`:
 ```
 
 ```sh
-doodshipctl server power --server SERVER_ID --key maintenance-stop-001 --input power.json
-doodshipctl receipt wait --receipt RECEIPT_ID --timeout 120
-doodshipctl server get --server SERVER_ID
+doodship automation server power --server SERVER_ID --key maintenance-stop-001 --input power.json
+doodship automation receipt wait --receipt RECEIPT_ID --timeout 120
+doodship automation server get --server SERVER_ID
 ```
 
 `start` and `reboot` use the same command with their own request files and keys.
@@ -348,22 +348,22 @@ Keep the exact file and key across response loss. An acknowledged operation with
 an uncertain result can be inspected explicitly without submitting another action:
 
 ```sh
-doodshipctl server action resolve --server SERVER_ID --operation OPERATION_ID
+doodship automation server action resolve --server SERVER_ID --operation OPERATION_ID
 ```
 
 For an isolated snapshot clone, inspect its original machine and restore evidence:
 
 ```sh
-doodshipctl clone inspect --server CLONE_SERVER_ID
+doodship automation clone inspect --server CLONE_SERVER_ID
 ```
 
 Prepare `promote.json` with an advertised workload `network`, the current
 `revision` and exact clone `confirmName`, then submit:
 
 ```sh
-doodshipctl clone promote --server CLONE_SERVER_ID --key clone-promote-001 --input promote.json
-doodshipctl receipt wait --receipt RECEIPT_ID --timeout 120
-doodshipctl server wait --server CLONE_SERVER_ID --timeout 120
+doodship automation clone promote --server CLONE_SERVER_ID --key clone-promote-001 --input promote.json
+doodship automation receipt wait --receipt RECEIPT_ID --timeout 120
+doodship automation server wait --server CLONE_SERVER_ID --timeout 120
 ```
 
 Promotion also requires `infrastructure.restore`. It preserves snapshot ancestry
@@ -390,16 +390,16 @@ The assigned provider must advertise snapshot support and the project must permi
 An optional `retainUntil` is an RFC3339 timestamp within the next year; omission retains the snapshot for seven days. A machine snapshot does not establish database consistency. Read the resolved disk identities and retention in the review:
 
 ```sh
-doodshipctl snapshot review --server SERVER_ID --input snapshot.json > snapshot-review.json
+doodship automation snapshot review --server SERVER_ID --input snapshot.json > snapshot-review.json
 ```
 
 Supply that review's `reviewId`, `digest` and exact `confirmName` in `accept-snapshot.json`. Use a distinct stable key for this capture:
 
 ```sh
-doodshipctl snapshot accept --key snapshot-before-upgrade-001 --input accept-snapshot.json
-doodshipctl receipt wait --receipt CAPTURE_RECEIPT_ID --timeout 120
-doodshipctl snapshots list --project PROJECT_ID
-doodshipctl snapshot get --snapshot SNAPSHOT_ID
+doodship automation snapshot accept --key snapshot-before-upgrade-001 --input accept-snapshot.json
+doodship automation receipt wait --receipt CAPTURE_RECEIPT_ID --timeout 120
+doodship automation snapshots list --project PROJECT_ID
+doodship automation snapshot get --snapshot SNAPSHOT_ID
 ```
 
 To restore, add `sourceSnapshotId` to the server review request, use the provider's isolated restore network and supply a fresh `bootstrap` plan. Submit it through `server review` and `server create` with a new key. The server requires both create and restore grants. A verified clone stays isolated until explicitly promoted. See [machine snapshots](machine-snapshots.md) for the identity checks and current provider limitations.
@@ -415,8 +415,8 @@ also require `project.configure` and `deployment.run`. Cleanup additionally need
 `deployment.cancel`.
 
 ```sh
-doodshipctl environment options --project PROJECT_ID
-doodshipctl environments list --project PROJECT_ID
+doodship automation environment options --project PROJECT_ID
+doodship automation environments list --project PROJECT_ID
 ```
 
 Choose a listed template and target. Write `environment.json` with `projectId`,
@@ -424,7 +424,7 @@ Choose a listed template and target. Write `environment.json` with `projectId`,
 `lifetimeSeconds`. For example, use `3600` for one hour.
 
 ```sh
-doodshipctl environment review --input environment.json > environment-review.json
+doodship automation environment review --input environment.json > environment-review.json
 ```
 
 Read the clone settings and omissions in the review. Production routes, template
@@ -440,9 +440,9 @@ The client cannot request a production hostname. Supply its `reviewId`, `digest`
 `confirmName` in `accept-environment.json`:
 
 ```sh
-doodshipctl environment create --key agent-environment-001 --input accept-environment.json
-doodshipctl receipt wait --receipt CREATE_RECEIPT_ID --timeout 120
-doodshipctl environment get --environment ENVIRONMENT_ID
+doodship automation environment create --key agent-environment-001 --input accept-environment.json
+doodship automation receipt wait --receipt CREATE_RECEIPT_ID --timeout 120
+doodship automation environment get --environment ENVIRONMENT_ID
 ```
 
 The environment records its deployment ID and expiration. Use the deployment
@@ -459,16 +459,16 @@ not a mutation receipt.
 Expiry starts cleanup under the accepted policy. To request it earlier:
 
 ```sh
-doodshipctl environment cleanup review --environment ENVIRONMENT_ID > cleanup-review.json
+doodship automation environment cleanup review --environment ENVIRONMENT_ID > cleanup-review.json
 ```
 
 Read the owned and retained resource list. Supply the reviewed `revision`,
 `digest` and exact `confirmName` in `cleanup.json`:
 
 ```sh
-doodshipctl environment destroy --environment ENVIRONMENT_ID --key cleanup-environment-001 --input cleanup.json
-doodshipctl receipt wait --receipt CLEANUP_RECEIPT_ID --timeout 120
-doodshipctl environment get --environment ENVIRONMENT_ID
+doodship automation environment destroy --environment ENVIRONMENT_ID --key cleanup-environment-001 --input cleanup.json
+doodship automation receipt wait --receipt CLEANUP_RECEIPT_ID --timeout 120
+doodship automation environment get --environment ENVIRONMENT_ID
 ```
 
 Preserve the cleanup request and key across retries. Unknown runtime outcomes
@@ -484,8 +484,8 @@ and `service.provision`. Custom scripts and production-data copy remain outside
 this path.
 
 ```sh
-doodshipctl service templates list --project PROJECT_ID
-doodshipctl service template get --template TEMPLATE_ID
+doodship automation service templates list --project PROJECT_ID
+doodship automation service template get --template TEMPLATE_ID
 ```
 
 Inspect the template's inputs and approved target before writing `service.json`:
@@ -501,10 +501,10 @@ Inspect the template's inputs and approved target before writing `service.json`:
 Supply the exact inputs required by the chosen template. Then:
 
 ```sh
-doodshipctl service provision --template TEMPLATE_ID --key provision-database-001 --input service.json
-doodshipctl receipt wait --receipt RECEIPT_ID --timeout 120
-doodshipctl service run get --run SERVICE_RUN_ID
-doodshipctl service get --run SERVICE_RUN_ID
+doodship automation service provision --template TEMPLATE_ID --key provision-database-001 --input service.json
+doodship automation receipt wait --receipt RECEIPT_ID --timeout 120
+doodship automation service run get --run SERVICE_RUN_ID
+doodship automation service get --run SERVICE_RUN_ID
 ```
 
 Keep the template ID, request file and key until the original run is resolved.
@@ -519,8 +519,8 @@ Use the service provision run ID, which identifies the owned workload even if
 its connection registration or template has been removed:
 
 ```sh
-doodshipctl service get --run SERVICE_RUN_ID
-doodshipctl service inspect --run SERVICE_RUN_ID
+doodship automation service get --run SERVICE_RUN_ID
+doodship automation service inspect --run SERVICE_RUN_ID
 ```
 
 Inspection requires `project.configure`. Recovery also requires `deployment.run`.
@@ -528,8 +528,8 @@ After inspecting the resource and its `recoveryAfter` deadline, choose the actio
 that matches the recorded outcome:
 
 ```sh
-doodshipctl service reconcile --run SERVICE_RUN_ID
-doodshipctl service get --run SERVICE_RUN_ID
+doodship automation service reconcile --run SERVICE_RUN_ID
+doodship automation service get --run SERVICE_RUN_ID
 ```
 
 Reconcile recovers the original binding or resumes its original cleanup. A
@@ -542,7 +542,7 @@ and original operation, not a new mutation receipt.
 For deletion, obtain a current review:
 
 ```sh
-doodshipctl service delete review --run SERVICE_RUN_ID > service-delete-review.json
+doodship automation service delete review --run SERVICE_RUN_ID > service-delete-review.json
 ```
 
 Read the consumers, retained storage and blockers. Write `delete-service.json`
@@ -560,9 +560,9 @@ with the returned resource ID and version, and type the exact reviewed name:
 ```
 
 ```sh
-doodshipctl service delete --run SERVICE_RUN_ID --key service-cleanup-001 --input delete-service.json
-doodshipctl receipt get --receipt RECEIPT_ID
-doodshipctl service get --run SERVICE_RUN_ID
+doodship automation service delete --run SERVICE_RUN_ID --key service-cleanup-001 --input delete-service.json
+doodship automation receipt get --receipt RECEIPT_ID
+doodship automation service get --run SERVICE_RUN_ID
 ```
 
 Keep the same request and key across retries. Protected storage, credentials and
@@ -576,9 +576,9 @@ owner's saved runtime policy. It cannot change policy or delete history. Read th
 saved policy and prepare a runtime review without changing it:
 
 ```sh
-doodshipctl retention policy --project PROJECT_ID > policy.json
+doodship automation retention policy --project PROJECT_ID > policy.json
 jq '{scope: "runtime", expectedPolicy: .data}' policy.json > runtime-review-input.json
-doodshipctl retention review --project PROJECT_ID --input runtime-review-input.json > runtime-review.json
+doodship automation retention review --project PROJECT_ID --input runtime-review-input.json > runtime-review.json
 ```
 
 Inspect `.data.runtime`, including its exact candidates, protection reasons,
@@ -590,8 +590,8 @@ The client requires every saved policy field, including zero-valued runtime
 ages. It never substitutes the current policy or invents confirmation.
 
 ```sh
-doodshipctl retention apply --project PROJECT_ID --input runtime-apply.json
-doodshipctl retention get --project PROJECT_ID --review REVIEW_ID
+doodship automation retention apply --project PROJECT_ID --input runtime-apply.json
+doodship automation retention get --project PROJECT_ID --review REVIEW_ID
 ```
 
 The review ID and digest are the server's retry identity; this API has no
@@ -623,10 +623,10 @@ the exact policy name to acknowledge removal of older verified policy archives:
 ```
 
 ```sh
-doodshipctl backup policy create --key daily-postgres-policy-001 --input capture-policy.json
-doodshipctl receipt wait --receipt RECEIPT_ID --timeout 120
-doodshipctl backup policies list --project PROJECT_ID
-doodshipctl backup policy get --policy POLICY_ID
+doodship automation backup policy create --key daily-postgres-policy-001 --input capture-policy.json
+doodship automation receipt wait --receipt RECEIPT_ID --timeout 120
+doodship automation backup policies list --project PROJECT_ID
+doodship automation backup policy get --policy POLICY_ID
 ```
 
 Creation needs `project.view`, `project.configure` and `deployment.run`, an
@@ -662,8 +662,8 @@ exact policy name. For example, `pause-policy.json` contains:
 ```
 
 ```sh
-doodshipctl backup policy set --policy POLICY_ID --input pause-policy.json
-doodshipctl backup policy get --policy POLICY_ID
+doodship automation backup policy set --policy POLICY_ID --input pause-policy.json
+doodship automation backup policy get --policy POLICY_ID
 ```
 
 Pause and resume have no mutation receipt. Inspect the policy after response loss
@@ -699,13 +699,13 @@ checks are optional; at most 16 queries and expected values of 4096 bytes each
 are accepted. The server validates read-only SQL and keeps assertions encrypted.
 
 ```sh
-doodshipctl backup create --key database-backup-001 --input backup.json
-doodshipctl receipt get --receipt RECEIPT_ID
-doodshipctl backups list --project PROJECT_ID
-doodshipctl backup get --backup BACKUP_ID
-doodshipctl backup verify --backup BACKUP_ID --key database-verify-001
-doodshipctl backup operations --backup BACKUP_ID
-doodshipctl backup operation get --operation OPERATION_ID
+doodship automation backup create --key database-backup-001 --input backup.json
+doodship automation receipt get --receipt RECEIPT_ID
+doodship automation backups list --project PROJECT_ID
+doodship automation backup get --backup BACKUP_ID
+doodship automation backup verify --backup BACKUP_ID --key database-verify-001
+doodship automation backup operations --backup BACKUP_ID
+doodship automation backup operation get --operation OPERATION_ID
 ```
 
 Verification restores into isolated temporary storage and requires integrity
@@ -715,7 +715,7 @@ state; a retained archive alone does not establish a successful restore.
 After an interrupted operation's `recoveryAfter` deadline:
 
 ```sh
-doodshipctl backup reconcile --backup BACKUP_ID --operation ORIGINAL_OPERATION_ID
+doodship automation backup reconcile --backup BACKUP_ID --operation ORIGINAL_OPERATION_ID
 ```
 
 Reconciliation inspects the original evidence and cleans owned interrupted
@@ -728,11 +728,11 @@ Store registration and signing credentials remain outside ordinary agent tools.
 Write `export.json` with the selected `storeId`:
 
 ```sh
-doodshipctl backup stores list --project PROJECT_ID
-doodshipctl backup store get --store STORE_ID
+doodship automation backup stores list --project PROJECT_ID
+doodship automation backup store get --store STORE_ID
 printf '{"storeId":"STORE_ID"}\n' > export.json
-doodshipctl backup export --backup BACKUP_ID --key database-export-001 --input export.json
-doodshipctl receipt wait --receipt RECEIPT_ID
+doodship automation backup export --backup BACKUP_ID --key database-export-001 --input export.json
+doodship automation receipt wait --receipt RECEIPT_ID
 ```
 
 Keep the original backup ID, input and key after a lost response. Export preserves
@@ -746,7 +746,7 @@ including a fresh target when the original server is unavailable. Write
 
 ```sh
 printf '{"destinationRunId":"FRESH_SERVICE_RUN_ID"}\n' > verify-target.json
-doodshipctl backup verify --backup BACKUP_ID --key database-fresh-verify-001 --input verify-target.json
+doodship automation backup verify --backup BACKUP_ID --key database-fresh-verify-001 --input verify-target.json
 ```
 
 The selected service identifies the verification target. Verification uses an
@@ -759,7 +759,7 @@ project. A different target requires a confirmed offsite copy. Resolve the
 destination's active consumers first:
 
 ```sh
-doodshipctl backup restore review --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID > restore-review.json
+doodship automation backup restore review --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID > restore-review.json
 ```
 
 Read the overwrite consequences. Write `restore.json` using the same
@@ -768,7 +768,7 @@ backup ID, `action` set to `restore`, `expectedVersion` copied from the review's
 `version`, and the exact destination service name as `confirmName`:
 
 ```sh
-doodshipctl backup restore --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID --key database-restore-001 --input restore.json
+doodship automation backup restore --backup BACKUP_ID --destination DESTINATION_SERVICE_RUN_ID --key database-restore-001 --input restore.json
 ```
 
 Save the destination, input file and key. If the response is lost, recover the
@@ -781,7 +781,7 @@ After reviewing blockers, supply its version and backup ID confirmation in
 `delete-backup.json`, with `action: "delete"`, then run:
 
 ```sh
-doodshipctl backup delete --backup BACKUP_ID --key database-archive-delete-001 --input delete-backup.json
+doodship automation backup delete --backup BACKUP_ID --key database-archive-delete-001 --input delete-backup.json
 ```
 
 The server retains encrypted operation history. An unsupported provider,
@@ -790,14 +790,14 @@ these commands provide no force, approval or arbitrary execution option.
 
 ## MCP
 
-Launch `doodshipctl mcp` as a stdio server with the same scoped credential configuration. For clients using an `mcpServers` configuration:
+Launch `doodship automation mcp` as a stdio server with the same scoped credential configuration. For clients using an `mcpServers` configuration:
 
 ```json
 {
   "mcpServers": {
-    "dispatch": {
-      "command": "/usr/local/bin/doodshipctl",
-      "args": ["mcp"],
+    "doodship": {
+      "command": "/usr/local/bin/doodship",
+      "args": ["automation", "mcp"],
       "env": {
         "DOODSHIP_URL": "https://doodship.example.com",
         "DOODSHIP_TOKEN_FILE": "/run/secrets/doodship-token"
