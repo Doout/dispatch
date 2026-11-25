@@ -132,7 +132,7 @@ export function WorkflowConfigSourceForm({ overview, source, onCancel, onSaved }
     <label>
       <span>Repository</span>
       <input aria-label="Repository" list={githubAppID ? repositoryListID : undefined} value={repository} onChange={(event) => { setRepository(event.target.value); setRepositoryID(repositories.find(item => item.fullName.toLowerCase() === event.target.value.trim().toLowerCase())?.id ?? 0); }} placeholder={loadingRepositories ? "Loading repositories..." : githubAppID ? "owner/repository" : "git@host:owner/repository.git"} required spellCheck={false} />
-      <datalist id={repositoryListID}>{repositories.map((item) => <option key={item.id} value={item.fullName}>{item.archived ? "Archived" : item.disabled ? "Disabled" : `Repository ${item.id}`}</option>)}</datalist>
+      <datalist id={repositoryListID}>{repositories.map((item) => <option key={item.id} value={item.fullName}>{item.fullName}{item.archived ? " (archived)" : item.disabled ? " (disabled)" : ""}</option>)}</datalist>
       {githubAppID && loadingRepositories && <small role="status">Loading repositories...</small>}
       {githubAppID && !loadingRepositories && !repositoryError && !repositories.length && <small>No accessible repositories. Check the App installation and try again.</small>}
       {repositoryError && <small role="alert">{repositoryError}</small>}
