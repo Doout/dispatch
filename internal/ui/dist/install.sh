@@ -10,7 +10,7 @@ usage() {
 Usage: sh install.sh [setup options] < connection.json
 
 Requires Linux amd64 or arm64, a local Docker engine and 2 GiB of free Docker storage.
-Needs 512 MiB free on the home filesystem and compatible glibc/libstdc++6 libraries.
+Needs 512 MiB free on the home filesystem.
 Installs under $HOME/.doodship. Compose runs inside the installer image.
 
   --name NAME           Compose project name (default: doodship)
@@ -158,7 +158,7 @@ check_native_cli() {
     --mount "type=bind,src=$bootstrap_scratch,dst=/host-check" \
     --entrypoint sh "$bootstrap_image_id" -c 'cp /usr/local/bin/dispatch /host-check/dispatch && chmod 755 /host-check/dispatch' </dev/null || fail 'Cannot copy the CLI for its compatibility check.'
   [ -f "$bootstrap_scratch/dispatch" ] && [ ! -L "$bootstrap_scratch/dispatch" ] || fail 'The image must contain a regular CLI binary.'
-  "$bootstrap_scratch/dispatch" version >/dev/null </dev/null || fail 'This host cannot run the CLI. It requires compatible glibc and libstdc++6 libraries.'
+  "$bootstrap_scratch/dispatch" version >/dev/null </dev/null || fail 'This host cannot run the CLI from the selected image. Check the image version and CPU architecture.'
   cleanup_cli_check
   trap - 0 HUP INT TERM
 }

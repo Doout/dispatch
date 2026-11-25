@@ -54,8 +54,8 @@ rollback. Retention must account for these references before deleting data.
 ## Native builds
 
 The controller uses the official DuckDB Go driver and requires CGO and a C++
-toolchain. Build with CGO_ENABLED=1 go build ./cmd/dispatch. Linux controller
-binaries require glibc and libstdc++; the Docker image provides both. Edge, relay,
+toolchain. Build with CGO_ENABLED=1 go build ./cmd/dispatch. Linux release
+builds link the controller and hosted platform statically, including the C++ runtime. Edge, relay,
 and hook binaries remain pure Go. Release builds require x86_64 and aarch64 GNU
 C/C++ cross-compilers, installed by the container build and CI.
 

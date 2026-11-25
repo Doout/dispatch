@@ -18,7 +18,7 @@ The installer container runs as root to manage Docker. The supplied command pass
 "$HOME/.doodship/bin/dispatch" export --output "$HOME/doodship-export.tar.gz"
 ```
 
-The installed CLI finds its configuration directory automatically. Upgrades replace it with the binary from the new controller image. The host binary requires glibc and libstdc++6. On hosts without those libraries, run management commands through the controller image with the installation directory and Docker socket mounted at their original paths and host networking enabled, as in the setup command.
+The installed CLI finds its configuration directory automatically. Upgrades replace it with the binary from the new controller image. The Linux amd64 and arm64 release binaries are statically linked and run independently of the host’s glibc and C++ runtime versions.
 
 Setup enables daily automatic updates through a separate Docker updater. Both services restart after a host reboot. No systemd, cron, or host service is installed. Automatic upgrades use backups, health checks, and rollback. They can interrupt running jobs. Disable them with `auto-upgrade disable`, or pass `--auto-update=false` in the setup command.
 
