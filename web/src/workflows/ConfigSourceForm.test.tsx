@@ -15,6 +15,18 @@ beforeEach(() => {
 });
 afterEach(()=>{cleanup();vi.restoreAllMocks()});
 function show(item=source){render(<WorkflowConfigSourceForm overview={overview} source={item} onCancel={()=>{}} onSaved={async()=>{}}/>)}
+it("shows owner and repository names for every suggestion", async () => {
+ vi.mocked(api.configSourceRepositories).mockResolvedValue([
+  repository, { ...repository, id: 43, fullName: "other/archive", archived: true },
+  { ...repository, id: 44, fullName: "other/disabled", disabled: true },
+ ]);
+ show();
+ const input = screen.getByLabelText("Repository", { selector: "input" }) as HTMLInputElement;
+ await waitFor(() => expect(Array.from(input.list!.options, option => [option.value, option.label])).toEqual([
+  ["org/current", "org/current"], ["other/archive", "other/archive (archived)"],
+  ["other/disabled", "other/disabled (disabled)"],
+ ]));
+});
 it("keeps the repository and branch until an explicit rename is saved",async()=>{
  show();await waitFor(()=>expect(api.configSourceRepositories).toHaveBeenCalledWith("config"));
  expect((screen.getByLabelText("Repository",{selector:"input"}) as HTMLInputElement).value).toBe("org/old");

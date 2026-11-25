@@ -92,7 +92,17 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
   const canAddGroup = overview.identity?.systemRole === "owner" && helmSources.length > 0 && overview.githubApps.some((connection) => !connection.readOnly && connection.installationId && connection.state !== "needs_installation");
   const repositoryCredentials = overview.secrets.some((secret) => secret.type === "ssh_private_key" || secret.type === "github_token" || secret.type === "api_token");
   const canAddConfig = overview.identity?.systemRole === "owner" && canConfigure && hasProject && (repositoryCredentials || overview.githubApps.some((connection) => connection.state === "ready"));
-  const canAddTemporaryPreview = overview.identity?.systemRole === "owner" && (overview.configSources ?? []).some((source) => source.active) && overview.githubApps.some((connection) => !connection.readOnly && connection.state === "ready" && connection.installationId);
+  const previewRequirements = [];
+  if (overview.identity?.systemRole !== "owner") {
+    previewRequirements.push("An instance owner can create PR previews.");
+  } else {
+    if (!overview.githubApps.some(app => !app.readOnly && app.state === "ready" && app.installationId)) {
+      previewRequirements.push("Install a GitHub App with PR automation access in Settings → Connections.");
+    }
+    if (!(overview.configSources ?? []).some(source => source.active)) {
+      previewRequirements.push("Add or enable a repository configuration.");
+    }
+  }
   const editorTitle = creating ? "New application" : creatingTemplate ? "New template" : creatingHelm ? "New Helm source" : configSourceEdit ? configSourceEdit === "new" ? "Import configuration" : "Edit configuration" : previewTemplateEdit ? previewTemplateEdit === "new" ? "New PR preview template" : `Edit ${previewTemplateEdit.name}` : temporaryPreviewEdit ? temporaryPreviewEdit === "new" ? "New one-off PR preview" : `Edit ${temporaryPreviewEdit.name}` : undefined;
   const action = creating
     ? { label: "Cancel", onClick: onToggleCreate, icon: <X size={16} weight="bold" />, tone: "quiet" as const }
@@ -151,7 +161,7 @@ export function ApplicationsPage({ overview, section, applicationID, configurati
   </div>;
 
   return <div className="page-layout applications-page">
-    <PageHeader view="applications" action={previewGroupEditing ? undefined : action} trailing={!editorTitle && !previewGroupEditing && (canAddApplication || canAddHelm || canAddTemplate || canAddGroup || canAddConfig || canAddTemporaryPreview) ? <ApplicationAddMenu canAddApplication={canAddApplication} canAddHelm={canAddHelm} canAddTemplate={canAddTemplate} canAddGroup={canAddGroup} canAddConfig={canAddConfig} canAddTemporaryPreview={canAddTemporaryPreview} onApplication={onToggleCreate} onHelm={() => setCreatingHelm(true)} onTemplate={() => setCreatingTemplate(true)} onGroup={() => setPreviewGroupEdit("new")} onConfig={() => setConfigSourceEdit("new")} onPreviewTemplate={() => setPreviewTemplateEdit("new")} onTemporaryPreview={() => setTemporaryPreviewEdit("new")} /> : undefined} title={editorTitle ?? (previewGroupEditing ? "Preview group" : undefined)} />
+    <PageHeader view="applications" action={previewGroupEditing ? undefined : action} trailing={!editorTitle && !previewGroupEditing && (canAddApplication || canAddHelm || canAddTemplate || canAddGroup || canAddConfig || !previewRequirements.length) ? <ApplicationAddMenu canAddApplication={canAddApplication} canAddHelm={canAddHelm} canAddTemplate={canAddTemplate} canAddGroup={canAddGroup} canAddConfig={canAddConfig} previewRequirements={previewRequirements} onApplication={onToggleCreate} onHelm={() => setCreatingHelm(true)} onTemplate={() => setCreatingTemplate(true)} onGroup={() => setPreviewGroupEdit("new")} onConfig={() => setConfigSourceEdit("new")} onPreviewTemplate={() => setPreviewTemplateEdit("new")} onTemporaryPreview={() => setTemporaryPreviewEdit("new")} /> : undefined} title={editorTitle ?? (previewGroupEditing ? "Preview group" : undefined)} />
     {creating && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-application-title"><div className="inline-create-body"><h2 className="sr-only" id="new-application-title">New application</h2><AppForm data={overview} onChanged={onChanged} focusName /></div></section>}
     {creatingTemplate && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-template-title"><div className="inline-create-body"><h2 className="sr-only" id="new-template-title">New template</h2><AppForm data={overview} onChanged={async () => { await onChanged(); setCreatingTemplate(false); }} focusName initialSourceType="repository" template /></div></section>}
     {creatingHelm && <section className="inline-create focused-editor compact-editor" aria-labelledby="new-helm-source-title"><div className="inline-create-body"><h2 className="sr-only" id="new-helm-source-title">New Helm source</h2><AppForm data={overview} onChanged={async () => { await onChanged(); setCreatingHelm(false); }} focusName initialSourceType="helm" sourceTypeLocked /></div></section>}
@@ -209,7 +219,7 @@ function workflowResourceSummary(source: ConfigSource, resources: WorkflowResour
   return { state: active ?? "paused", label: active ? workflowResourceStatusLabel(active) : `${ready}/${resources.length} ready`, detail: synced };
 }
 
-function ApplicationAddMenu({ canAddApplication, canAddHelm, canAddTemplate, canAddGroup, canAddConfig, canAddTemporaryPreview, onApplication, onHelm, onTemplate, onGroup, onConfig, onPreviewTemplate, onTemporaryPreview }: { canAddApplication: boolean; canAddHelm: boolean; canAddTemplate: boolean; canAddGroup: boolean; canAddConfig: boolean; canAddTemporaryPreview: boolean; onApplication: () => void; onHelm: () => void; onTemplate: () => void; onGroup: () => void; onConfig: () => void; onPreviewTemplate: () => void; onTemporaryPreview: () => void }) {
+function ApplicationAddMenu({ canAddApplication, canAddHelm, canAddTemplate, canAddGroup, canAddConfig, previewRequirements, onApplication, onHelm, onTemplate, onGroup, onConfig, onPreviewTemplate, onTemporaryPreview }: { canAddApplication: boolean; canAddHelm: boolean; canAddTemplate: boolean; canAddGroup: boolean; canAddConfig: boolean; previewRequirements: string[]; onApplication: () => void; onHelm: () => void; onTemplate: () => void; onGroup: () => void; onConfig: () => void; onPreviewTemplate: () => void; onTemporaryPreview: () => void }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild><button className="primary-button add-resource-menu" type="button"><Plus size={16} weight="bold" />Add</button></DropdownMenu.Trigger>
     <DropdownMenu.Portal>
@@ -223,8 +233,9 @@ function ApplicationAddMenu({ canAddApplication, canAddHelm, canAddTemplate, can
         <DropdownMenu.Separator className="action-menu-separator" />
         <DropdownMenu.Group aria-label="PR previews">
           <DropdownMenu.Label className="add-resource-group-label">PR previews</DropdownMenu.Label>
-          <MenuAction icon={<Copy size={16} />} label="PR preview template" disabled={!canAddTemporaryPreview} onClick={onPreviewTemplate} />
-          <MenuAction icon={<RocketLaunch size={16} />} label="One-off PR preview" disabled={!canAddTemporaryPreview} onClick={onTemporaryPreview} />
+          <MenuAction icon={<Copy size={16} />} label="PR preview template" disabled={previewRequirements.length > 0} onClick={onPreviewTemplate} />
+          <MenuAction icon={<RocketLaunch size={16} />} label="One-off PR preview" disabled={previewRequirements.length > 0} onClick={onTemporaryPreview} />
+          {previewRequirements.map(requirement => <p className="preview-menu-requirement" key={requirement}>{requirement}</p>)}
           {canAddGroup && <MenuAction icon={<PlugsConnected size={16} />} label="Preview group" onClick={onGroup} />}
         </DropdownMenu.Group>
         <DropdownMenu.Separator className="action-menu-separator" />

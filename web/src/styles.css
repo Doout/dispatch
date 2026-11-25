@@ -353,6 +353,7 @@
 .application-add-options { width: 238px; max-width: calc(100vw - 24px); padding: 5px; box-shadow: 0 8px 24px rgba(23,40,54,.12); }
 .application-add-options .add-resource-group-label { padding: 5px 9px 3px; font-size: 10px; font-weight: 600; letter-spacing: 0; text-transform: none; }
 .application-add-options .action-menu-item { align-items: center; min-height: 32px; padding: 6px 9px; gap: 8px; }
+.preview-menu-requirement { margin: 3px 9px 6px; color: var(--muted-strong); font-size: 12px; line-height: 1.4; }
 .application-add-options .action-menu-item strong { font-weight: 550; }
 .application-add-options .action-menu-item svg { margin-top: 0; }
 .row-action-menu { display: inline-grid !important; width: 34px; height: 34px; min-height: 34px !important; padding: 0 !important; color: #53626e !important; background: transparent !important; border: 1px solid transparent !important; border-radius: 7px; cursor: pointer; place-items: center; }

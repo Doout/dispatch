@@ -321,6 +321,9 @@ describe("applications overview", () => {
     render(<ApplicationsPage overview={configured} section="applications" creating={false} onToggleCreate={() => undefined} onChanged={async () => undefined} onDeploy={() => undefined} onDelete={() => undefined} onDeleteGroup={() => undefined} onNavigate={() => undefined} />);
 
     await user.click(screen.getByText("Add"));
+    expect(screen.getByRole("menuitem", { name: "PR preview template" }).getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText("Add or enable a repository configuration.")).toBeTruthy();
+    expect(screen.getByText(/Install a GitHub App with PR automation access/)).toBeTruthy();
     await user.click(screen.getByRole("menuitem", { name: "Repository configuration" }));
 
     expect(screen.getByRole("heading", { name: "Import configuration" })).not.toBeNull();
