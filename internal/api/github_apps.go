@@ -515,6 +515,11 @@ func (a *API) startGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	origin := externalOrigin(r)
+	if manager := a.eventConfig.InstanceConnection; manager != nil {
+		if remote := manager.RemoteOrigin(r); remote != "" {
+			origin = remote
+		}
+	}
 	webhookURL := ""
 	relayWebhookID := ""
 	if delivery == "direct" {

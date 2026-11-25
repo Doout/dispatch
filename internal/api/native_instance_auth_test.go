@@ -232,6 +232,30 @@ func TestInstanceNativeAuthenticationOverOutboundConnection(t *testing.T) {
 	if w := call("GET", "/api/v1/access", "", ownerSession); w.Code != 200 || !strings.Contains(w.Body.String(), `"localAccountsAvailable":true`) {
 		t.Fatalf("access capabilities: %d %s", w.Code, w.Body.String())
 	}
+	t.Run("GitHub App registration uses the connected tenant origin", func(t *testing.T) {
+		w := call("POST", "/api/v1/github-apps/manifest", `{"name":"Portal fixture","ownerType":"personal","eventDelivery":"none","proxy":{"url":"http://proxy.example.test:3128"}}`, ownerSession)
+		if w.Code != http.StatusOK {
+			t.Fatalf("start GitHub App registration: %d %s", w.Code, w.Body.String())
+		}
+		var response struct {
+			Manifest struct {
+				URL         string `json:"url"`
+				RedirectURL string `json:"redirect_url"`
+				SetupURL    string `json:"setup_url"`
+			} `json:"manifest"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		manifest := response.Manifest
+		if manifest.URL != origin || manifest.RedirectURL != origin+"/api/v1/github-apps/manifest/callback" {
+			t.Errorf("unexpected manifest home %q or callback %q", manifest.URL, manifest.RedirectURL)
+		}
+		setup, err := url.Parse(manifest.SetupURL)
+		if err != nil || setup.Scheme+"://"+setup.Host != origin || setup.Path != "/" || setup.Query().Get("view") != "connections" || setup.Query().Get("githubAppSetup") == "" {
+			t.Errorf("unexpected installation setup URL %q", manifest.SetupURL)
+		}
+	})
 	for i, callbackSession := range []*http.Cookie{nil, session, ownerSession} {
 		state := fmt.Sprintf("manifest-owner-%d", i)
 		actorID := owner.ID
