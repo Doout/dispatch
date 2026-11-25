@@ -25,7 +25,7 @@ services:
         max-file: '3'
 
   gateway:
-    image: nginxinc/nginx-unprivileged:1.28-alpine
+    image: nginx/nginx-unprivileged:1.31.10-alpine@sha256:86628f2c9eaa5e84e3b98d25e26563c4a4f9b0ead9cf5656da4731d86e0621de
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]

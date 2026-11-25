@@ -3,6 +3,9 @@ import type { HostedTenant } from "./client";
 
 export const HostedTenantContext = createContext<HostedTenant | null>(null);
 export const useHostedTenant = () => useContext(HostedTenantContext);
+export function usesSelfHostedController(tenant: HostedTenant | null) {
+  return tenant === null || tenant.backendMode === "connected";
+}
 export function accountURL(tenant: HostedTenant, view = "account") {
   const url = new URL(tenant.loginUrl);
   url.pathname = "/";
