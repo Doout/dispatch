@@ -446,8 +446,11 @@ func (m *Manager) install(ctx context.Context, c Config, envFile string, pull bo
 		return err
 	}
 	hostBundle, _, err := findHostCABundle(ctx, m.Run, c.ImageID)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
-		return err
+		fmt.Fprintln(m.Out, "Host CA bundle unavailable. The controller will use its image certificates.")
 	}
 	c.HostCABundle = hostBundle
 	random := make([]byte, 16)

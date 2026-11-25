@@ -427,7 +427,7 @@ func TestGitHubAppManifestCallbackKeepsCodeOutOfDiagnostics(t *testing.T) {
 	const code = "fixture/code+secret"
 	const tlsCause = "proxyconnect tcp: tls: failed to verify certificate: x509: certificate signed by unknown authority"
 	for _, tc := range []struct{ name, cause, want string }{
-		{"TLS verification", tlsCause, tlsCause},
+		{"TLS verification", tlsCause, "does not trust the HTTPS proxy certificate"},
 		{"edge echoed path", "edge failed: /app-manifests/" + url.PathEscape(code) + "/conversions", "connection request failed"},
 		{"upstream echoed code", "", "HTTP 403"},
 		{"nested transport echoed credentials", "proxy diagnostic: " + url.QueryEscape(url.PathEscape(code)), "connection request failed"},

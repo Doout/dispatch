@@ -71,14 +71,20 @@ func validPublicCABundle(data []byte) bool {
 		if !bytes.HasPrefix(rest, []byte("-----BEGIN CERTIFICATE-----")) {
 			return false
 		}
-		block, next := pem.Decode(rest)
+		const end = "-----END CERTIFICATE-----"
+		last := bytes.Index(rest, []byte(end))
+		if last < 0 {
+			return false
+		}
+		last += len(end)
+		block, _ := pem.Decode(rest[:last])
 		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
 			return false
 		}
 		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
 			return false
 		}
-		rest = bytes.TrimSpace(next)
+		rest = bytes.TrimSpace(rest[last:])
 	}
 	return true
 }
